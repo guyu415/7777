@@ -1,0 +1,25 @@
+name = "ac-mcp-controller"
+main = "src/index.ts"
+compatibility_date = "2025-03-01"
+compatibility_flags = ["nodejs_compat"]
+
+# Durable Object for the AC MCP Agent (persistent state across requests)
+[durable_objects]
+bindings = [
+  { name = "AcMcpAgent", class_name = "AcMcpAgent" }
+]
+
+[[migrations]]
+tag = "v1"
+new_classes = ["AcMcpAgent"]
+
+# KV namespace for OAuth token storage
+# Run: wrangler kv namespace create OAUTH_KV
+# Then paste the returned id below
+[[kv_namespaces]]
+binding = "OAUTH_KV"
+id = "YOUR_KV_NAMESPACE_ID_HERE"
+
+[vars]
+# Change this to a long random string before deploying
+COOKIE_SECRET = "replace-with-a-secure-random-secret-min-32-chars"
