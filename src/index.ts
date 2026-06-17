@@ -42,6 +42,12 @@ export interface Env {
   OAUTH_KV: KVNamespace;
   AcMcpAgent: DurableObjectNamespace;
   COOKIE_SECRET: string;
+  // Tuya API (vars + secret)
+  TUYA_BASE_URL: string;
+  TUYA_CLIENT_ID: string;
+  TUYA_CLIENT_SECRET: string;
+  TUYA_IR_ID: string;
+  TUYA_AC_ID: string;
   /** Injected at runtime by OAuthProvider — not a real wrangler binding */
   OAUTH_PROVIDER: OAuthHelpers;
 }
