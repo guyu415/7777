@@ -49,6 +49,7 @@ export const useStore = create(
     (set, get) => ({
       // Settings
       apiKey: '',
+      apiBaseUrl: 'https://api.anthropic.com',
       model: 'claude-sonnet-4-6',
       systemPrompt: '你是小漫，一个温柔可爱的AI助手。你说话简洁、有趣，偶尔会用一些可爱的语气词。',
       memoryEnabled: false,
@@ -63,6 +64,7 @@ export const useStore = create(
       messages: [],
 
       setApiKey: (key) => set({ apiKey: key }),
+      setApiBaseUrl: (url) => set({ apiBaseUrl: url }),
       setModel: (model) => set({ model }),
       setSystemPrompt: (prompt) => set({ systemPrompt: prompt }),
       setMemoryEnabled: (v) => set({ memoryEnabled: v }),
@@ -80,6 +82,7 @@ export const useStore = create(
       name: 'pink-chat-settings',
       partialize: (state) => ({
         apiKey: state.apiKey,
+        apiBaseUrl: state.apiBaseUrl,
         model: state.model,
         systemPrompt: state.systemPrompt,
         memoryEnabled: state.memoryEnabled,

@@ -10,7 +10,7 @@ const CONVERSATION_ID = 'main'
 
 export function useChat() {
   const {
-    apiKey, model, systemPrompt,
+    apiKey, apiBaseUrl, model, systemPrompt,
     messages, addMessage, updateMessage, setMessages,
     isLoading, setIsLoading, streamingMessageId, setStreamingMessageId
   } = useStore()
@@ -57,7 +57,7 @@ export function useChat() {
       const allMessages = [...messages, userMsg]
       let fullContent = ''
 
-      for await (const chunk of streamChat({ apiKey, model, systemPrompt, messages: allMessages })) {
+      for await (const chunk of streamChat({ apiKey, apiBaseUrl, model, systemPrompt, messages: allMessages })) {
         fullContent += chunk
         updateMessage(assistantId, { content: fullContent })
       }

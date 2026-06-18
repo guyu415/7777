@@ -9,6 +9,7 @@ const MODELS = Object.keys(MODEL_LABELS)
 export default function SettingsPage() {
   const {
     apiKey, setApiKey,
+    apiBaseUrl, setApiBaseUrl,
     model, setModel,
     systemPrompt, setSystemPrompt,
     memoryEnabled, setMemoryEnabled,
@@ -55,6 +56,17 @@ export default function SettingsPage() {
             </button>
           </div>
           <p className="text-xs text-gray-400 mt-1.5 pl-1">Key 存储在浏览器本地，不会上传</p>
+          <div className="mt-3">
+            <label className="text-xs text-gray-500 pl-1 mb-1 block">API Base URL</label>
+            <input
+              type="url"
+              value={apiBaseUrl}
+              onChange={e => setApiBaseUrl(e.target.value)}
+              placeholder="https://api.anthropic.com"
+              className="w-full bg-white border border-pink-200 rounded-xl px-4 py-2.5 text-sm text-gray-700 focus:outline-none focus:border-pink-400"
+            />
+            <p className="text-xs text-gray-400 mt-1.5 pl-1">可填中转代理地址，留空则使用官方</p>
+          </div>
         </Section>
 
         {/* Model */}
