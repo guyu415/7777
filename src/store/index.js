@@ -2,7 +2,6 @@ import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import { openDB } from 'idb'
 
-// IndexedDB for messages (handles large blobs like images/audio)
 let db
 
 async function getDB() {
@@ -43,7 +42,6 @@ export async function getBlob(id) {
   return record?.blob
 }
 
-// Zustand store for settings and UI state
 export const useStore = create(
   persist(
     (set, get) => ({
@@ -54,13 +52,15 @@ export const useStore = create(
       systemPrompt: '你是小漫，一个温柔可爱的AI助手。你说话简洁、有趣，偶尔会用一些可爱的语气词。',
       memoryEnabled: false,
       memoryEndpoint: 'https://memory.xiaoman.xyz',
+      // Avatar & name
+      userAvatar: '',   // base64 or empty → use emoji
+      aiAvatar: '',     // base64 or empty → use emoji
+      aiName: '小漫',
 
       // UI State
-      currentView: 'chat', // 'chat' | 'settings'
+      currentView: 'chat',
       isLoading: false,
       streamingMessageId: null,
-
-      // Messages in memory (subset, full history in IDB)
       messages: [],
 
       setApiKey: (key) => set({ apiKey: key }),
@@ -69,6 +69,9 @@ export const useStore = create(
       setSystemPrompt: (prompt) => set({ systemPrompt: prompt }),
       setMemoryEnabled: (v) => set({ memoryEnabled: v }),
       setMemoryEndpoint: (v) => set({ memoryEndpoint: v }),
+      setUserAvatar: (v) => set({ userAvatar: v }),
+      setAiAvatar: (v) => set({ aiAvatar: v }),
+      setAiName: (name) => set({ aiName: name }),
       setCurrentView: (view) => set({ currentView: view }),
       setIsLoading: (v) => set({ isLoading: v }),
       setStreamingMessageId: (id) => set({ streamingMessageId: id }),
@@ -87,6 +90,9 @@ export const useStore = create(
         systemPrompt: state.systemPrompt,
         memoryEnabled: state.memoryEnabled,
         memoryEndpoint: state.memoryEndpoint,
+        userAvatar: state.userAvatar,
+        aiAvatar: state.aiAvatar,
+        aiName: state.aiName,
       }),
     }
   )
