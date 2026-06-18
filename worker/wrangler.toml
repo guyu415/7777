@@ -1,0 +1,16 @@
+name = "scheduled-message-worker"
+main = "scheduled-message-worker.js"
+compatibility_date = "2024-09-23"
+
+[[kv_namespaces]]
+binding = "CHAT_KV"
+id = "FILL_IN_YOUR_KV_NAMESPACE_ID"
+preview_id = "FILL_IN_YOUR_KV_PREVIEW_ID"
+
+[triggers]
+crons = ["*/30 * * * *"]
+
+[vars]
+CLAUDE_API_BASE_URL = "https://api.anthropic.com"
+# CLAUDE_API_KEY 请用 secret 方式配置：
+# wrangler secret put CLAUDE_API_KEY
