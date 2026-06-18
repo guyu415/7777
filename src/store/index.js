@@ -57,6 +57,7 @@ export const useStore = create(
       systemPrompt: '你是小漫，一个温柔可爱的AI助手。你说话简洁、有趣，偶尔会用一些可爱的语气词。',
       memoryEnabled: false,
       memoryEndpoint: 'https://memory.xiaoman.xyz',
+      workerUrl: '',
       // Avatar & name
       userAvatar: '',   // base64 or empty → use emoji
       aiAvatar: '',     // base64 or empty → use emoji
@@ -74,6 +75,7 @@ export const useStore = create(
       setSystemPrompt: (prompt) => set({ systemPrompt: prompt }),
       setMemoryEnabled: (v) => set({ memoryEnabled: v }),
       setMemoryEndpoint: (v) => set({ memoryEndpoint: v }),
+      setWorkerUrl: (v) => set({ workerUrl: v }),
       setUserAvatar: (v) => set({ userAvatar: v }),
       setAiAvatar: (v) => set({ aiAvatar: v }),
       setAiName: (name) => set({ aiName: name }),
@@ -102,6 +104,7 @@ export const useStore = create(
         systemPrompt: state.systemPrompt,
         memoryEnabled: state.memoryEnabled,
         memoryEndpoint: state.memoryEndpoint,
+        workerUrl: state.workerUrl,
         userAvatar: state.userAvatar,
         aiAvatar: state.aiAvatar,
         aiName: state.aiName,

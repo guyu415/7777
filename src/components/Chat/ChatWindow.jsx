@@ -4,10 +4,12 @@ import MessageBubble from './MessageBubble'
 import MessageInput from './MessageInput'
 import MemoryModal from './MemoryModal'
 import { useChat } from '../../hooks/useChat'
+import { useScheduledMessages } from '../../hooks/useScheduledMessages'
 import { useStore, deleteMessageFromDB } from '../../store'
 
 export default function ChatWindow() {
   const { messages, sendMessage, loadHistory, isLoading, regenerate, deleteMsg } = useChat()
+  const { fetchPendingMessages, updateActiveTime } = useScheduledMessages()
   const { setCurrentView, apiKey, aiAvatar, aiName, deleteMessagesFrom, memoryEndpoint } = useStore()
   const bottomRef = useRef(null)
   const inputRef = useRef(null)
@@ -20,17 +22,28 @@ export default function ChatWindow() {
     setTimeout(() => setToast(false), 2200)
   }
 
-  useEffect(() => { loadHistory() }, [])
+  useEffect(() => {
+    const init = async () => {
+      await loadHistory()
+      const hasNew = await fetchPendingMessages()
+      if (hasNew) await loadHistory()
+    }
+    init()
+  }, [])
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages.length, messages[messages.length - 1]?.content?.length])
 
-  const handleSendVoice = ({ id, url, duration }) =>
+  const handleSendVoice = ({ id, url, duration }) => {
+    updateActiveTime()
     sendMessage('', 'voice', { voiceBlobId: id, voiceUrl: url, duration })
+  }
 
-  const handleSendImage = ({ imageData, imageType, imageUrl }) =>
+  const handleSendImage = ({ imageData, imageType, imageUrl }) => {
+    updateActiveTime()
     sendMessage('', 'image', { imageData, imageType, imageUrl })
+  }
 
   const handleEdit = async (msg) => {
     setMenuMsg(null)
@@ -164,7 +177,7 @@ export default function ChatWindow() {
       {/* Input */}
       <MessageInput
         ref={inputRef}
-        onSend={(text) => sendMessage(text, 'text')}
+        onSend={(text) => { updateActiveTime(); sendMessage(text, 'text') }}
         onSendVoice={handleSendVoice}
         onSendImage={handleSendImage}
         disabled={isLoading}

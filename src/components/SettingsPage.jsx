@@ -68,6 +68,7 @@ export default function SettingsPage() {
     systemPrompt, setSystemPrompt,
     memoryEnabled, setMemoryEnabled,
     memoryEndpoint, setMemoryEndpoint,
+    workerUrl, setWorkerUrl,
     userAvatar, setUserAvatar,
     aiAvatar, setAiAvatar,
     aiName, setAiName,
@@ -226,6 +227,20 @@ export default function SettingsPage() {
               style={inputStyle}
             />
           )}
+        </GlassCard>
+
+        {/* Proactive messages worker */}
+        <GlassCard icon="💌" title="主动消息">
+          <p className="text-xs mb-2" style={{ color: '#d4a0b0' }}>
+            填入 scheduled-message-worker 的部署地址，AI 会在你不在线时主动发消息。
+          </p>
+          <input
+            type="url"
+            value={workerUrl}
+            onChange={e => setWorkerUrl(e.target.value)}
+            placeholder="https://scheduled-message-worker.your-subdomain.workers.dev"
+            style={inputStyle}
+          />
         </GlassCard>
 
         {/* Danger */}
