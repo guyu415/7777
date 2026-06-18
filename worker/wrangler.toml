@@ -1,11 +1,11 @@
 name = "scheduled-message-worker"
 main = "scheduled-message-worker.js"
 compatibility_date = "2024-09-23"
+account_id = "e364fa0eb012df759b774bfcada11422"
 
 [[kv_namespaces]]
 binding = "CHAT_KV"
-id = "FILL_IN_YOUR_KV_NAMESPACE_ID"
-preview_id = "FILL_IN_YOUR_KV_PREVIEW_ID"
+id = "ee2f737d334c4af7b56a89f83b61092c"
 
 [triggers]
 crons = ["*/30 * * * *"]

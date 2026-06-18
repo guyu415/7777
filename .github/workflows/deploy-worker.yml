@@ -1,0 +1,31 @@
+name: Deploy Scheduled Message Worker
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'worker/**'
+  workflow_dispatch:
+
+jobs:
+  deploy-worker:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Deploy Worker
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: e364fa0eb012df759b774bfcada11422
+          workingDirectory: worker
+          command: deploy
+
+      - name: Set CLAUDE_API_KEY secret
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: e364fa0eb012df759b774bfcada11422
+        run: echo "${{ secrets.CLAUDE_API_KEY }}" | npx wrangler@3 secret put CLAUDE_API_KEY --name scheduled-message-worker
