@@ -2,15 +2,23 @@ import { useEffect, useRef, useState } from 'react'
 import { Settings } from 'lucide-react'
 import MessageBubble from './MessageBubble'
 import MessageInput from './MessageInput'
+import MemoryModal from './MemoryModal'
 import { useChat } from '../../hooks/useChat'
 import { useStore, deleteMessageFromDB } from '../../store'
 
 export default function ChatWindow() {
   const { messages, sendMessage, loadHistory, isLoading, regenerate, deleteMsg } = useChat()
-  const { setCurrentView, apiKey, aiAvatar, aiName, deleteMessagesFrom } = useStore()
+  const { setCurrentView, apiKey, aiAvatar, aiName, deleteMessagesFrom, memoryEndpoint } = useStore()
   const bottomRef = useRef(null)
   const inputRef = useRef(null)
   const [menuMsg, setMenuMsg] = useState(null)
+  const [memoryMsg, setMemoryMsg] = useState(null)
+  const [toast, setToast] = useState(false)
+
+  const showToast = () => {
+    setToast(true)
+    setTimeout(() => setToast(false), 2200)
+  }
 
   useEffect(() => { loadHistory() }, [])
 
@@ -133,6 +141,15 @@ export default function ChatWindow() {
                 ✏️ 编辑
               </button>
             )}
+            {menuMsg.type === 'text' && menuMsg.content && (
+              <button
+                onClick={() => { setMenuMsg(null); setMemoryMsg(menuMsg) }}
+                className="w-full flex items-center gap-3 px-5 py-3.5 text-sm hover:bg-pink-50 transition-colors"
+                style={{ color: '#8b5060', borderBottom: '1px solid rgba(255,182,209,0.25)' }}
+              >
+                🧠 存入记忆
+              </button>
+            )}
             <button
               onClick={() => handleDelete(menuMsg)}
               className="w-full flex items-center gap-3 px-5 py-3.5 text-sm hover:bg-red-50 transition-colors"
@@ -152,6 +169,39 @@ export default function ChatWindow() {
         onSendImage={handleSendImage}
         disabled={isLoading}
       />
+
+      {/* Memory modal */}
+      {memoryMsg && (
+        <MemoryModal
+          message={memoryMsg}
+          endpoint={memoryEndpoint}
+          onClose={() => setMemoryMsg(null)}
+          onSuccess={showToast}
+        />
+      )}
+
+      {/* Success toast */}
+      {toast && (
+        <div
+          className="fixed z-50 left-1/2 -translate-x-1/2 animate-fade-up"
+          style={{
+            bottom: 100,
+            background: 'rgba(255,255,255,0.92)',
+            backdropFilter: 'blur(16px)',
+            WebkitBackdropFilter: 'blur(16px)',
+            padding: '8px 22px',
+            borderRadius: 20,
+            boxShadow: '0 4px 20px rgba(255,133,179,0.3)',
+            color: '#8b5060',
+            fontSize: 14,
+            fontWeight: 500,
+            border: '1px solid rgba(255,182,209,0.3)',
+            whiteSpace: 'nowrap',
+          }}
+        >
+          ✨ 已记住~
+        </div>
+      )}
     </div>
   )
 }
