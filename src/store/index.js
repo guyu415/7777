@@ -42,6 +42,11 @@ export async function getBlob(id) {
   return record?.blob
 }
 
+export async function deleteMessageFromDB(id) {
+  const database = await getDB()
+  await database.delete('messages', id)
+}
+
 export const useStore = create(
   persist(
     (set, get) => ({
@@ -80,6 +85,13 @@ export const useStore = create(
       updateMessage: (id, updates) => set((state) => ({
         messages: state.messages.map(m => m.id === id ? { ...m, ...updates } : m)
       })),
+      deleteMessage: (id) => set((state) => ({
+        messages: state.messages.filter(m => m.id !== id)
+      })),
+      deleteMessagesFrom: (id) => set((state) => {
+        const idx = state.messages.findIndex(m => m.id === id)
+        return idx === -1 ? {} : { messages: state.messages.slice(0, idx) }
+      }),
     }),
     {
       name: 'pink-chat-settings',
