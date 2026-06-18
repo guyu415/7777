@@ -1,8 +1,6 @@
-import { useState, useRef } from 'react'
+import { useState, useRef, forwardRef, useImperativeHandle } from 'react'
 import VoiceRecorder from '../Voice/VoiceRecorder'
-import clsx from 'clsx'
 
-// Cute SVG icons
 function MicIcon() {
   return (
     <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -23,11 +21,6 @@ function ImageIcon() {
   )
 }
 
-// Paw send icon
-function PawIcon({ active }) {
-  return <span style={{ fontSize: 18, lineHeight: 1 }}>🐾</span>
-}
-
 const btnBase = {
   width: 36, height: 36,
   borderRadius: '50%',
@@ -40,16 +33,33 @@ const btnBase = {
   background: 'rgba(255,182,209,0.25)',
 }
 
-export default function MessageInput({ onSend, onSendVoice, onSendImage, disabled }) {
+const MessageInput = forwardRef(function MessageInput({ onSend, onSendVoice, onSendImage, disabled }, ref) {
   const [text, setText] = useState('')
   const [showVoice, setShowVoice] = useState(false)
   const fileRef = useRef(null)
+  const textareaRef = useRef(null)
   const canSend = text.trim() && !disabled
+
+  useImperativeHandle(ref, () => ({
+    fill(content) {
+      setText(content)
+      setTimeout(() => {
+        const el = textareaRef.current
+        if (!el) return
+        el.focus()
+        el.style.height = 'auto'
+        el.style.height = Math.min(el.scrollHeight, 96) + 'px'
+      }, 0)
+    }
+  }), [])
 
   const handleSend = () => {
     if (!canSend) return
     onSend(text.trim())
     setText('')
+    if (textareaRef.current) {
+      textareaRef.current.style.height = 'auto'
+    }
   }
 
   const handleKey = (e) => {
@@ -101,6 +111,7 @@ export default function MessageInput({ onSend, onSendVoice, onSendImage, disable
         boxShadow: 'inset 0 1px 4px rgba(255,133,179,0.08)',
       }}>
         <textarea
+          ref={textareaRef}
           value={text}
           onChange={e => setText(e.target.value)}
           onKeyDown={handleKey}
@@ -139,8 +150,10 @@ export default function MessageInput({ onSend, onSendVoice, onSendImage, disable
           color: canSend ? '#fff' : 'rgba(255,133,179,0.4)',
         }}
       >
-        <PawIcon active={canSend} />
+        <span style={{ fontSize: 18, lineHeight: 1 }}>🐾</span>
       </button>
     </div>
   )
-}
+})
+
+export default MessageInput

@@ -1,3 +1,17 @@
+const VALID_MEDIA_TYPES = new Set(['image/jpeg', 'image/png', 'image/gif', 'image/webp'])
+
+function detectMediaType(base64data) {
+  try {
+    const raw = atob(base64data.slice(0, 16))
+    const b = (i) => raw.charCodeAt(i)
+    if (b(0) === 0xFF && b(1) === 0xD8) return 'image/jpeg'
+    if (b(0) === 0x89 && b(1) === 0x50 && b(2) === 0x4E && b(3) === 0x47) return 'image/png'
+    if (b(0) === 0x47 && b(1) === 0x49 && b(2) === 0x46) return 'image/gif'
+    if (b(0) === 0x52 && b(1) === 0x49 && b(2) === 0x46 && b(8) === 0x57) return 'image/webp'
+  } catch {}
+  return 'image/jpeg'
+}
+
 const MODELS = {
   'claude-sonnet-4-6': 'claude-sonnet-4-6',
   'claude-opus-4-8': 'claude-opus-4-8',
@@ -18,22 +32,20 @@ function buildMessages(messages) {
         return { role: m.role, content: m.content }
       }
       if (m.type === 'image') {
+        const media_type = VALID_MEDIA_TYPES.has(m.imageType)
+          ? m.imageType
+          : detectMediaType(m.imageData)
         return {
           role: m.role,
           content: [
             {
               type: 'image',
-              source: {
-                type: 'base64',
-                media_type: m.imageType || 'image/jpeg',
-                data: m.imageData,
-              }
+              source: { type: 'base64', media_type, data: m.imageData }
             },
             ...(m.content ? [{ type: 'text', text: m.content }] : [])
           ]
         }
       }
-      // voice messages: send transcript if available, else skip
       if (m.type === 'voice' && m.transcript) {
         return { role: m.role, content: `[语音消息] ${m.transcript}` }
       }

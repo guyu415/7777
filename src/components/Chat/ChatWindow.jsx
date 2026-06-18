@@ -1,14 +1,16 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Settings } from 'lucide-react'
 import MessageBubble from './MessageBubble'
 import MessageInput from './MessageInput'
 import { useChat } from '../../hooks/useChat'
-import { useStore } from '../../store'
+import { useStore, deleteMessageFromDB } from '../../store'
 
 export default function ChatWindow() {
-  const { messages, sendMessage, loadHistory, isLoading } = useChat()
-  const { setCurrentView, apiKey, aiAvatar, aiName } = useStore()
+  const { messages, sendMessage, loadHistory, isLoading, regenerate, deleteMsg } = useChat()
+  const { setCurrentView, apiKey, aiAvatar, aiName, deleteMessagesFrom } = useStore()
   const bottomRef = useRef(null)
+  const inputRef = useRef(null)
+  const [menuMsg, setMenuMsg] = useState(null)
 
   useEffect(() => { loadHistory() }, [])
 
@@ -22,9 +24,28 @@ export default function ChatWindow() {
   const handleSendImage = ({ imageData, imageType, imageUrl }) =>
     sendMessage('', 'image', { imageData, imageType, imageUrl })
 
+  const handleEdit = async (msg) => {
+    setMenuMsg(null)
+    const idx = messages.findIndex(m => m.id === msg.id)
+    if (idx === -1) return
+    for (const m of messages.slice(idx)) {
+      await deleteMessageFromDB(m.id)
+    }
+    deleteMessagesFrom(msg.id)
+    inputRef.current?.fill(msg.type === 'text' ? msg.content : '')
+  }
+
+  const handleDelete = async (msg) => {
+    setMenuMsg(null)
+    await deleteMsg(msg.id)
+  }
+
+  // Find the last assistant message id (the only one that gets a regenerate button)
+  const lastAiId = messages.reduceRight((acc, m) => acc ?? (m.role === 'assistant' ? m.id : null), null)
+
   return (
     <div className="flex flex-col h-full" style={{ background: 'transparent' }}>
-      {/* Header — glass */}
+      {/* Header */}
       <div className="glass flex items-center justify-between px-4 py-3 safe-top"
         style={{ boxShadow: '0 2px 16px rgba(255,133,179,0.12)' }}>
         <div className="flex items-center gap-2.5">
@@ -73,12 +94,59 @@ export default function ChatWindow() {
             )}
           </div>
         )}
-        {messages.map(msg => <MessageBubble key={msg.id} message={msg} />)}
+        {messages.map(msg => (
+          <MessageBubble
+            key={msg.id}
+            message={msg}
+            onLongPress={setMenuMsg}
+            onRegenerate={msg.id === lastAiId ? regenerate : null}
+            isLoading={isLoading}
+          />
+        ))}
         <div ref={bottomRef} />
       </div>
 
+      {/* Long-press message menu */}
+      {menuMsg && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center"
+          style={{ background: 'rgba(0,0,0,0.18)', backdropFilter: 'blur(2px)' }}
+          onClick={() => setMenuMsg(null)}
+        >
+          <div
+            className="rounded-2xl overflow-hidden"
+            style={{
+              background: 'rgba(255,255,255,0.96)',
+              backdropFilter: 'blur(20px)',
+              WebkitBackdropFilter: 'blur(20px)',
+              boxShadow: '0 8px 40px rgba(0,0,0,0.18)',
+              minWidth: 160,
+            }}
+            onClick={e => e.stopPropagation()}
+          >
+            {menuMsg.role === 'user' && menuMsg.type === 'text' && (
+              <button
+                onClick={() => handleEdit(menuMsg)}
+                className="w-full flex items-center gap-3 px-5 py-3.5 text-sm hover:bg-pink-50 transition-colors"
+                style={{ color: '#8b5060', borderBottom: '1px solid rgba(255,182,209,0.25)' }}
+              >
+                ✏️ 编辑
+              </button>
+            )}
+            <button
+              onClick={() => handleDelete(menuMsg)}
+              className="w-full flex items-center gap-3 px-5 py-3.5 text-sm hover:bg-red-50 transition-colors"
+              style={{ color: '#e07070' }}
+            >
+              🗑️ 删除
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Input */}
       <MessageInput
+        ref={inputRef}
         onSend={(text) => sendMessage(text, 'text')}
         onSendVoice={handleSendVoice}
         onSendImage={handleSendImage}
