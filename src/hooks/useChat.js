@@ -220,6 +220,12 @@ export function useChat() {
       ...extra,
     }
 
+    // Auto-name session from first message
+    if (messages.length === 0) {
+      const autoName = type === 'text' ? content.slice(0, 20).trim() : '[图片]'
+      if (autoName) updateSession(CONVERSATION_ID, { name: autoName })
+    }
+
     addMessage(userMsg)
     updateSession(CONVERSATION_ID, {
       lastMsgPreview: type === 'text' ? (content || '').slice(0, 40) : '[图片]',

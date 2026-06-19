@@ -1,6 +1,7 @@
 import { useState, useRef } from 'react'
 import { Trash2 } from 'lucide-react'
 import { useStore, clearAllData, getAllMessages, getMessages, saveCustomFont, deleteCustomFont } from '../store'
+
 import { THEMES } from '../themes'
 import MemoryPanel from './MemoryPanel'
 import ProviderSettings from './ProviderSettings'
@@ -94,7 +95,7 @@ export default function GlobalSettings({ theme }) {
     aiVoiceEnabled, setAiVoiceEnabled,
     aiVoiceFrequency, setAiVoiceFrequency,
     acWorkerUrl, setAcWorkerUrl,
-    sessions, currentSessionId,
+    sessions,
   } = useStore()
 
   const primary = theme?.primary || '#4aacf0'
@@ -135,43 +136,37 @@ export default function GlobalSettings({ theme }) {
     removeCustomFont(font.id)
   }
 
-  const currentSession = sessions?.find(s => s.id === currentSessionId)
-
-  const handleExportJSON = async () => {
-    if (!currentSession) return
-    const msgs = await getMessages(currentSessionId)
-    msgs.sort((a, b) => a.timestamp - b.timestamp)
-    const data = { session: currentSession, messages: msgs }
+  const handleExportAllJSON = async () => {
+    const allMsgs = await getAllMessages()
+    const data = { sessions, messages: allMsgs }
     const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' })
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
     a.href = url
-    const d = new Date().toISOString().slice(0, 10)
-    const safeName = (currentSession.name || 'chat').replace(/[^\w一-龥]/g, '_')
-    a.download = `${safeName}-${d}.json`
+    a.download = `all-chats-${new Date().toISOString().slice(0, 10)}.json`
     a.click()
     URL.revokeObjectURL(url)
   }
 
-  const handleExportTxt = async () => {
-    if (!currentSession) return
-    const msgs = await getMessages(currentSessionId)
-    msgs.sort((a, b) => a.timestamp - b.timestamp)
-    let text = `== ${currentSession.name} ==\n`
-    for (const msg of msgs) {
-      const time = new Date(msg.timestamp).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' })
-      const role = msg.role === 'user' ? '我' : 'AI'
-      const content = msg.type === 'text' ? msg.content : msg.type === 'voice' ? '[语音消息]' : '[图片]'
-      text += `[${time}] ${role}: ${content}\n`
+  const handleExportAllTxt = async () => {
+    let text = ''
+    for (const sess of (sessions || [])) {
+      const msgs = await getMessages(sess.id)
+      msgs.sort((a, b) => a.timestamp - b.timestamp)
+      text += `== ${sess.name} ==\n`
+      for (const msg of msgs) {
+        const time = new Date(msg.timestamp).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' })
+        const role = msg.role === 'user' ? '我' : 'AI'
+        const content = msg.type === 'text' ? msg.content : msg.type === 'voice' ? '[语音消息]' : '[图片]'
+        text += `[${time}] ${role}: ${content}\n`
+      }
+      text += '\n'
     }
-    // UTF-8 BOM prevents garbled Chinese in Windows
     const blob = new Blob(['﻿' + text], { type: 'text/plain;charset=utf-8' })
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
     a.href = url
-    const d = new Date().toISOString().slice(0, 10)
-    const safeName = (currentSession.name || 'chat').replace(/[^\w一-龥]/g, '_')
-    a.download = `${safeName}-${d}.txt`
+    a.download = `all-chats-${new Date().toISOString().slice(0, 10)}.txt`
     a.click()
     URL.revokeObjectURL(url)
   }
@@ -329,15 +324,18 @@ export default function GlobalSettings({ theme }) {
           </div>
         </GlassCard>
 
-        {/* Export */}
-        <GlassCard icon="📤" title="导出当前对话">
+        {/* Export all */}
+        <GlassCard icon="📤" title="导出所有对话">
+          <p className="text-xs mb-3" style={{ color: '#7a9cc0' }}>
+            导出全部会话的聊天记录。单个会话的导出在会话设置里。
+          </p>
           <div className="flex gap-2">
-            <button onClick={handleExportJSON}
+            <button onClick={handleExportAllJSON}
               className="flex-1 py-2.5 rounded-full text-sm font-medium text-white transition-all duration-200"
               style={{ background: `linear-gradient(135deg, ${primary}, ${primaryDark})`, boxShadow: `0 4px 12px ${primary}40`, border: 'none' }}>
               导出 JSON
             </button>
-            <button onClick={handleExportTxt}
+            <button onClick={handleExportAllTxt}
               className="flex-1 py-2.5 rounded-full text-sm font-medium transition-all duration-200"
               style={{ background: 'rgba(255,255,255,0.6)', color: '#6a90b8', border: '1px solid rgba(200,220,255,0.4)' }}>
               导出 TXT

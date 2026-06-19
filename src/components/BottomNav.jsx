@@ -1,10 +1,9 @@
 import clsx from 'clsx'
 
 const TABS = [
-  { id: 'chat',            icon: '💬', label: '聊天' },
-  { id: 'sessions',        icon: '📋', label: '会话' },
-  { id: 'globalSettings',  icon: '⚙️', label: '全局' },
-  { id: 'sessionSettings', icon: '🎨', label: '当前会话' },
+  { id: 'chat',           icon: '💬', label: '聊天' },
+  { id: 'sessions',       icon: '📋', label: '会话' },
+  { id: 'globalSettings', icon: '⚙️', label: '全局设置' },
 ]
 
 export default function BottomNav({ currentView, onChange, theme }) {

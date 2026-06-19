@@ -95,7 +95,7 @@ export default function MessageBubble({ message, onLongPress, onRegenerate, isLo
         {message.type === 'text' && !message.voiceLoading && (
           <div
             className={clsx('relative rounded-[20px] leading-relaxed select-none cursor-default', pressed ? 'bubble-press' : '')}
-            style={{ ...(isUser ? userBubbleStyle : aiBubbleStyle), fontSize: 'var(--msg-font-size, 16px)' }}
+            style={isUser ? userBubbleStyle : aiBubbleStyle}
             {...pressProps}
           >
             <span className={isUser ? 'bubble-user' : 'bubble-ai'} style={{ position:'absolute', inset:0, borderRadius:'inherit', pointerEvents:'none' }} />

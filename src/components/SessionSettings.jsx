@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
-import { useStore } from '../store'
-import { THEMES } from '../themes'
+import { ChevronLeft } from 'lucide-react'
+import { useStore, getMessages } from '../store'
 
 const inputStyle = {
   width: '100%',
@@ -8,35 +8,16 @@ const inputStyle = {
   border: '1px solid rgba(200,220,255,0.4)',
   borderRadius: 14,
   padding: '10px 16px',
-  fontSize: 14,
   color: '#2c5282',
   outline: 'none',
   fontFamily: 'inherit',
+  fontSize: 'inherit',
 }
 
-function Toggle({ value, onChange, primary }) {
-  return (
-    <button
-      onClick={() => onChange(!value)}
-      className="relative flex-shrink-0 transition-all duration-300"
-      style={{
-        width: 48, height: 26, borderRadius: 13,
-        background: value
-          ? `linear-gradient(135deg, ${primary || '#4aacf0'}, ${primary || '#4aacf0'}cc)`
-          : 'rgba(180,200,220,0.4)',
-        border: 'none', cursor: 'pointer',
-        boxShadow: value ? `0 2px 8px ${primary || '#4aacf0'}55` : 'none',
-      }}
-    >
-      <div style={{
-        position: 'absolute', top: 3, width: 20, height: 20, borderRadius: '50%',
-        background: '#fff',
-        boxShadow: '0 1px 4px rgba(0,0,0,0.15)',
-        transition: 'left 0.25s ease-in-out',
-        left: value ? 25 : 3,
-      }} />
-    </button>
-  )
+const selectStyle = {
+  ...inputStyle,
+  cursor: 'pointer',
+  paddingRight: 12,
 }
 
 function GlassCard({ icon, title, children }) {
@@ -74,7 +55,7 @@ const FONT_LIST = [
 
 export default function SessionSettings({ theme }) {
   const {
-    sessions, currentSessionId, updateSession,
+    sessions, currentSessionId, updateSession, setCurrentView,
     setSessionAiName, setSessionAiAvatar, setSessionSignature,
     setSessionTheme, setSessionFont, setSessionFontSize,
     setSessionMemoryEnabled, setSessionSystemPrompt,
@@ -89,7 +70,6 @@ export default function SessionSettings({ theme }) {
   const primary = theme?.primary || '#4aacf0'
   const primaryDark = theme?.primaryDark || '#2196d3'
 
-  // Local state for text fields — sync on session change
   const [localName, setLocalName] = useState('')
   const [localSignature, setLocalSignature] = useState('')
   const [localSystemPrompt, setLocalSystemPrompt] = useState('')
@@ -119,22 +99,55 @@ export default function SessionSettings({ theme }) {
     fontWeight: active ? 600 : 400,
   })
 
-  const effectiveThemeId = currentSession.themeId ?? globalThemeId
   const effectiveFontFamily = currentSession.fontFamily ?? 'noto'
   const effectiveFontSize = currentSession.fontSize ?? defaultFontSize
-  const memoryOverride = currentSession.memoryEnabled // null = inherit, true/false = override
+  const memoryOverride = currentSession.memoryEnabled
 
-  // Model/provider for this session
   const sessionProviderId = currentSession.providerId || selectedProviderId
   const sessionModelId = currentSession.modelId || selectedModelId
   const sessionProvider = providers?.find(p => p.id === sessionProviderId)
 
   const allFonts = [...FONT_LIST, ...customFonts.map(f => ({ id: f.id, label: f.name }))]
 
+  const handleExportJSON = async () => {
+    const msgs = await getMessages(currentSessionId)
+    msgs.sort((a, b) => a.timestamp - b.timestamp)
+    const blob = new Blob([JSON.stringify({ session: currentSession, messages: msgs }, null, 2)], { type: 'application/json' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    const d = new Date().toISOString().slice(0, 10)
+    const safeName = (currentSession.name || 'chat').replace(/[^\w一-鿿]/g, '_')
+    a.download = `${safeName}-${d}.json`
+    a.click()
+    URL.revokeObjectURL(url)
+  }
+
+  const handleExportTxt = async () => {
+    const msgs = await getMessages(currentSessionId)
+    msgs.sort((a, b) => a.timestamp - b.timestamp)
+    let text = `== ${currentSession.name} ==\n`
+    for (const msg of msgs) {
+      const time = new Date(msg.timestamp).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' })
+      const role = msg.role === 'user' ? '我' : 'AI'
+      const content = msg.type === 'text' ? msg.content : msg.type === 'voice' ? '[语音消息]' : '[图片]'
+      text += `[${time}] ${role}: ${content}\n`
+    }
+    const blob = new Blob(['﻿' + text], { type: 'text/plain;charset=utf-8' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    const d = new Date().toISOString().slice(0, 10)
+    const safeName = (currentSession.name || 'chat').replace(/[^\w一-鿿]/g, '_')
+    a.download = `${safeName}-${d}.txt`
+    a.click()
+    URL.revokeObjectURL(url)
+  }
+
   return (
     <div className="flex flex-col h-full" style={{ background: 'transparent' }}>
       {/* Header */}
-      <div className="flex items-center justify-between px-4 py-3 safe-top flex-shrink-0"
+      <div className="flex items-center gap-3 px-4 py-3 safe-top flex-shrink-0"
         style={{
           background: 'rgba(255,255,255,0.72)',
           backdropFilter: 'blur(24px)',
@@ -142,17 +155,24 @@ export default function SessionSettings({ theme }) {
           borderBottom: '1px solid rgba(200,220,255,0.25)',
           boxShadow: '0 2px 12px rgba(74,172,240,0.08)',
         }}>
-        <span className="font-semibold text-sm" style={{ color: '#2c5282' }}>当前会话设置</span>
-        <span className="text-sm font-medium truncate max-w-[140px]" style={{ color: '#7a9cc0' }}>
+        <button
+          onClick={() => setCurrentView('chat')}
+          className="w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 transition-all duration-200"
+          style={{ background: `${primary}18`, color: primary }}
+        >
+          <ChevronLeft size={18} />
+        </button>
+        <span className="font-semibold text-sm flex-1" style={{ color: '#2c5282' }}>当前会话设置</span>
+        <span className="text-xs truncate max-w-[100px]" style={{ color: '#7a9cc0' }}>
           {currentSession.name}
         </span>
       </div>
 
-      <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4">
+      <div className="flex-1 overflow-y-auto px-4 py-3 space-y-3">
 
         {/* AI Identity */}
         <GlassCard icon="🌸" title="AI 角色">
-          <div className="space-y-3">
+          <div className="space-y-2">
             <div>
               <label className="text-xs pl-1 mb-1 block" style={{ color: '#6a90b8' }}>AI 名字</label>
               <input
@@ -209,7 +229,7 @@ export default function SessionSettings({ theme }) {
         </GlassCard>
 
         {/* Model */}
-        <GlassCard icon="🤖" title="模型">
+        <GlassCard icon="🤖" title="供应商与模型">
           <div className="space-y-2">
             <div>
               <label className="text-xs pl-1 mb-1 block" style={{ color: '#6a90b8' }}>供应商</label>
@@ -222,7 +242,7 @@ export default function SessionSettings({ theme }) {
                     modelId: p?.models?.[0] || '',
                   })
                 }}
-                style={{ ...inputStyle, appearance: 'none', cursor: 'pointer' }}
+                style={selectStyle}
               >
                 {(providers || []).map(p => (
                   <option key={p.id} value={p.id}>{p.name}</option>
@@ -230,11 +250,11 @@ export default function SessionSettings({ theme }) {
               </select>
             </div>
             <div>
-              <label className="text-xs pl-1 mb-1 block" style={{ color: '#6a90b8' }}>模型</label>
+              <label className="text-xs pl-1 mb-1 block" style={{ color: '#6a90b8' }}>具体模型</label>
               <select
                 value={sessionModelId}
                 onChange={e => updateSession(currentSessionId, { modelId: e.target.value })}
-                style={{ ...inputStyle, appearance: 'none', cursor: 'pointer' }}
+                style={selectStyle}
               >
                 {(sessionProvider?.models || []).map(m => (
                   <option key={m} value={m}>{m}</option>
@@ -249,7 +269,7 @@ export default function SessionSettings({ theme }) {
           <p className="text-xs mb-3" style={{ color: '#7a9cc0' }}>
             覆盖全局记忆开关。当前全局：{globalMemoryEnabled ? '已开启' : '已关闭'}
           </p>
-          <div className="flex gap-2">
+          <div className="flex flex-wrap gap-2">
             {[
               { label: '跟随全局', value: null },
               { label: '本会话开启', value: true },
@@ -268,7 +288,6 @@ export default function SessionSettings({ theme }) {
 
         {/* Theme */}
         <GlassCard icon="🎨" title="配色方案">
-          <p className="text-xs mb-2" style={{ color: '#7a9cc0' }}>仅影响此会话。</p>
           <div className="flex flex-wrap gap-2">
             <button
               onClick={() => setSessionTheme(currentSessionId, null)}
@@ -279,7 +298,7 @@ export default function SessionSettings({ theme }) {
             {THEME_LIST.map(t => (
               <button key={t.id} onClick={() => setSessionTheme(currentSessionId, t.id)}
                 style={{ ...chipStyle(currentSession.themeId === t.id), display: 'flex', alignItems: 'center', gap: 6 }}>
-                <span style={{ width: 10, height: 10, borderRadius: '50%', background: t.dot, display: 'inline-block', boxShadow: `0 0 4px ${t.dot}88` }} />
+                <span style={{ width: 10, height: 10, borderRadius: '50%', background: t.dot, display: 'inline-block' }} />
                 {t.label}
               </button>
             ))}
@@ -288,12 +307,8 @@ export default function SessionSettings({ theme }) {
 
         {/* Font */}
         <GlassCard icon="🔤" title="字体与字号">
-          <p className="text-xs mb-2" style={{ color: '#7a9cc0' }}>仅影响此会话的消息字体。</p>
           <div className="flex flex-wrap gap-2 mb-3">
-            <button
-              onClick={() => setSessionFont(currentSessionId, null)}
-              style={chipStyle(currentSession.fontFamily === null)}
-            >
+            <button onClick={() => setSessionFont(currentSessionId, null)} style={chipStyle(currentSession.fontFamily === null)}>
               跟随全局
             </button>
             {allFonts.map(f => (
@@ -303,33 +318,38 @@ export default function SessionSettings({ theme }) {
               </button>
             ))}
           </div>
-
           <div>
             <div className="flex items-center justify-between mb-1">
-              <span className="text-sm" style={{ color: '#2c5282' }}>字号</span>
-              <div className="flex items-center gap-2">
-                <span className="text-xs" style={{ color: '#6a90b8' }}>{effectiveFontSize}px</span>
-                {currentSession.fontSize !== null && (
-                  <button
-                    onClick={() => setSessionFontSize(currentSessionId, null)}
-                    className="text-xs"
-                    style={{ color: '#7a9cc0', background: 'none', border: 'none', cursor: 'pointer' }}
-                  >
-                    重置
-                  </button>
-                )}
-              </div>
+              <span className="text-sm" style={{ color: '#2c5282' }}>字号 {effectiveFontSize}px</span>
+              {currentSession.fontSize !== null && (
+                <button onClick={() => setSessionFontSize(currentSessionId, null)}
+                  className="text-xs" style={{ color: '#7a9cc0', background: 'none', border: 'none', cursor: 'pointer' }}>
+                  重置
+                </button>
+              )}
             </div>
-            <input
-              type="range" min="12" max="20" step="1"
-              value={effectiveFontSize}
+            <input type="range" min="12" max="20" step="1" value={effectiveFontSize}
               onChange={e => setSessionFontSize(currentSessionId, Number(e.target.value))}
-              className="w-full"
-              style={{ accentColor: primary, cursor: 'pointer' }}
-            />
+              className="w-full" style={{ accentColor: primary, cursor: 'pointer' }} />
             <div className="flex justify-between text-[10px] mt-0.5" style={{ color: '#a0b8d0' }}>
               <span>12px</span><span>16px</span><span>20px</span>
             </div>
+          </div>
+        </GlassCard>
+
+        {/* Export */}
+        <GlassCard icon="📤" title="导出本对话">
+          <div className="flex gap-2">
+            <button onClick={handleExportJSON}
+              className="flex-1 py-2.5 rounded-full text-sm font-medium text-white transition-all duration-200"
+              style={{ background: `linear-gradient(135deg, ${primary}, ${primaryDark})`, boxShadow: `0 4px 12px ${primary}40`, border: 'none' }}>
+              导出 JSON
+            </button>
+            <button onClick={handleExportTxt}
+              className="flex-1 py-2.5 rounded-full text-sm font-medium transition-all duration-200"
+              style={{ background: 'rgba(255,255,255,0.6)', color: '#6a90b8', border: '1px solid rgba(200,220,255,0.4)' }}>
+              导出 TXT
+            </button>
           </div>
         </GlassCard>
 
