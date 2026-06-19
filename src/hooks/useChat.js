@@ -1,6 +1,7 @@
 import { useCallback } from 'react'
 import { useStore, saveMessage, getMessages, deleteMessageFromDB } from '../store'
 import { streamChat } from '../services/claude'
+import { fetchMemories, formatMemories } from '../services/memory'
 
 function genId() {
   return Date.now().toString(36) + Math.random().toString(36).slice(2)
@@ -11,6 +12,7 @@ const CONVERSATION_ID = 'main'
 export function useChat() {
   const {
     apiKey, apiBaseUrl, model, systemPrompt,
+    memoryEnabled, memoryEndpoint,
     messages, addMessage, updateMessage, setMessages,
     isLoading, setIsLoading, setStreamingMessageId,
     deleteMessage, deleteMessagesFrom,
@@ -39,8 +41,15 @@ export function useChat() {
     setStreamingMessageId(assistantId)
 
     try {
+      let effectiveSystemPrompt = systemPrompt
+      if (memoryEnabled && memoryEndpoint) {
+        const triplets = await fetchMemories(memoryEndpoint)
+        const memStr = formatMemories(triplets)
+        if (memStr) effectiveSystemPrompt = systemPrompt + '\n\n' + memStr
+      }
+
       let fullContent = ''
-      for await (const chunk of streamChat({ apiKey, apiBaseUrl, model, systemPrompt, messages: contextMessages })) {
+      for await (const chunk of streamChat({ apiKey, apiBaseUrl, model, systemPrompt: effectiveSystemPrompt, messages: contextMessages })) {
         fullContent += chunk
         updateMessage(assistantId, { content: fullContent })
       }
@@ -52,7 +61,7 @@ export function useChat() {
       setIsLoading(false)
       setStreamingMessageId(null)
     }
-  }, [apiKey, apiBaseUrl, model, systemPrompt, addMessage, updateMessage, setIsLoading, setStreamingMessageId])
+  }, [apiKey, apiBaseUrl, model, systemPrompt, memoryEnabled, memoryEndpoint, addMessage, updateMessage, setIsLoading, setStreamingMessageId])
 
   const sendMessage = useCallback(async (content, type = 'text', extra = {}) => {
     if (!apiKey) throw new Error('请先在设置中配置 API Key')
