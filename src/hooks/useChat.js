@@ -122,6 +122,10 @@ export function useChat() {
       if (voiceMatch && ttsApiKey && ttsGroupId && aiVoiceEnabled) {
         const voiceText = voiceMatch[1].trim()
         const surroundText = fullContent.replace(VOICE_TAG_RE, '').replace(AC_TAG_RE, '').trim()
+
+        // Immediately switch to loading state so streaming text doesn't flash then disappear
+        updateMessage(assistantId, { streaming: false, voiceLoading: true, content: surroundText })
+
         let voiceBlobId = null
         let duration = 0
 
@@ -145,8 +149,8 @@ export function useChat() {
         }
 
         const updates = voiceBlobId
-          ? { type: 'voice', voiceBlobId, duration, content: surroundText, voiceText, streaming: false, ...(acStatus ? { acStatus } : {}) }
-          : { content: voiceText + (surroundText ? '\n' + surroundText : ''), streaming: false, ...(acStatus ? { acStatus } : {}) }
+          ? { type: 'voice', voiceBlobId, duration, content: surroundText, voiceText, voiceLoading: false, streaming: false, ...(acStatus ? { acStatus } : {}) }
+          : { content: voiceText + (surroundText ? '\n' + surroundText : ''), voiceLoading: false, streaming: false, ...(acStatus ? { acStatus } : {}) }
         updateMessage(assistantId, updates)
         await saveMessage({ ...assistantMsg, ...updates })
         updateSession(CONVERSATION_ID, {
