@@ -46,8 +46,8 @@ function buildMessages(messages) {
           ]
         }
       }
-      if (m.type === 'voice' && m.transcript) {
-        return { role: m.role, content: `[语音消息] ${m.transcript}` }
+      if (m.type === 'voice') {
+        return { role: m.role, content: m.transcript ? `[语音消息] ${m.transcript}` : '[语音消息]' }
       }
       return null
     })
