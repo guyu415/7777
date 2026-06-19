@@ -1,10 +1,19 @@
 import { useCallback } from 'react'
-import { useStore, saveMessage, getMessages, deleteMessageFromDB } from '../store'
+import { useStore, saveMessage, saveBlob, getMessages, deleteMessageFromDB } from '../store'
 import { streamChat } from '../services/claude'
 import { listMemories, formatMemories } from '../services/memory'
 import { executeAcCommand } from '../services/ac'
+import { fetchTTSAudio } from '../services/tts'
 
 const AC_TAG_RE = /\[AC:([^\]]+)\]/
+const VOICE_TAG_RE = /\[VOICE\]([\s\S]*?)\[\/VOICE\]/
+
+function stripDisplayTags(content) {
+  return content
+    .replace(AC_TAG_RE, '')
+    .replace(/\[VOICE\]/g, '').replace(/\[\/VOICE\]/g, '')
+    .trim()
+}
 
 function genId() {
   return Date.now().toString(36) + Math.random().toString(36).slice(2)
@@ -14,6 +23,7 @@ export function useChat() {
   const {
     apiKey, apiBaseUrl, model, systemPrompt,
     memoryEnabled, workerUrl, acWorkerUrl,
+    ttsApiKey, ttsGroupId, ttsVoiceId, aiVoiceEnabled, aiVoiceFrequency,
     messages, addMessage, updateMessage, setMessages,
     isLoading, setIsLoading, setStreamingMessageId,
     deleteMessage, deleteMessagesFrom,
@@ -77,22 +87,27 @@ export function useChat() {
       if (acWorkerUrl) {
         builtSystemPrompt += '\n\n你有空调控制能力。当用户提到温度不舒适、想开/关空调、调温度时，在回复末尾自然地加上控制指令标签（不要向用户提及标签格式本身）。\n格式：[AC:动作,温度,模式,风速]\n- 动作：on(开机)/off(关机)/set(调节)\n- 温度：16-30 的整数（推断不到默认26）\n- 模式：cool(制冷)/heat(制热)/auto(自动)/fan(送风)/dry(除湿)\n- 风速：auto(自动)/low(低)/mid(中)/high(高)\n示例："好的已经帮你开空调啦～[AC:on,26,cool,auto]"'
       }
+      if (ttsApiKey && ttsGroupId && aiVoiceEnabled) {
+        const freqNote = aiVoiceFrequency < 0.3
+          ? '尽量少发语音，只在非常合适时（撒娇、道晚安）才用。'
+          : aiVoiceFrequency > 0.7
+          ? '多用语音，大部分日常闲聊都用语音回复。'
+          : '适度使用语音，约30-50%的闲聊可以用语音。'
+        builtSystemPrompt += `\n\n你可以选择用文字或语音回复。当你想发语音时，用标记 [VOICE]消息内容[/VOICE] 包裹（只包裹要转成语音的部分，不要提及标记格式本身）。适合语音：撒娇、道晚安、表达感情、短句闲聊。适合文字：回答问题、长段内容、需要复制的内容。${freqNote}`
+      }
 
       console.log('[System Prompt]\n' + effectiveSystemPrompt)
       let fullContent = ''
       for await (const chunk of streamChat({ apiKey: effectiveApiKey, apiBaseUrl: effectiveBaseUrl, model: effectiveModel, systemPrompt: builtSystemPrompt, messages: contextMessages })) {
         fullContent += chunk
-        updateMessage(assistantId, { content: fullContent.replace(AC_TAG_RE, '') })
+        updateMessage(assistantId, { content: stripDisplayTags(fullContent) })
       }
 
-      // Detect and execute AC command
+      // Handle AC command
       const acMatch = fullContent.match(AC_TAG_RE)
       let acStatus = null
-      let displayContent = fullContent
-
       if (acMatch && acWorkerUrl) {
         const [action, temp, mode, wind] = acMatch[1].split(',')
-        displayContent = fullContent.replace(AC_TAG_RE, '').trim()
         acStatus = { action, temp: temp || '26', mode: mode || 'cool', wind: wind || 'auto', success: false, error: null }
         try {
           await executeAcCommand(acWorkerUrl, action, temp || '26', mode || 'cool', wind || 'auto')
@@ -102,19 +117,58 @@ export function useChat() {
         }
       }
 
-      updateMessage(assistantId, { content: displayContent, streaming: false, ...(acStatus ? { acStatus } : {}) })
-      await saveMessage({ ...assistantMsg, content: displayContent, streaming: false, ...(acStatus ? { acStatus } : {}) })
-      updateSession(CONVERSATION_ID, {
-        lastMsgPreview: displayContent.slice(0, 40),
-        lastMsgTime: Date.now(),
-      })
+      // Handle VOICE tag
+      const voiceMatch = fullContent.match(VOICE_TAG_RE)
+      if (voiceMatch && ttsApiKey && ttsGroupId && aiVoiceEnabled) {
+        const voiceText = voiceMatch[1].trim()
+        const surroundText = fullContent.replace(VOICE_TAG_RE, '').replace(AC_TAG_RE, '').trim()
+        let voiceBlobId = null
+        let duration = 0
+
+        try {
+          const blob = await fetchTTSAudio(voiceText, {
+            apiKey: ttsApiKey, groupId: ttsGroupId,
+            voiceId: ttsVoiceId || 'English_Trustworthy_Man',
+          })
+          // Compute duration
+          try {
+            const ab = await blob.arrayBuffer()
+            const ac = new AudioContext()
+            const decoded = await ac.decodeAudioData(ab)
+            duration = Math.round(decoded.duration)
+            ac.close()
+          } catch {}
+          voiceBlobId = genId()
+          await saveBlob(voiceBlobId, blob)
+        } catch (e) {
+          console.error('[TTS]', e.message)
+        }
+
+        const updates = voiceBlobId
+          ? { type: 'voice', voiceBlobId, duration, content: surroundText, voiceText, streaming: false, ...(acStatus ? { acStatus } : {}) }
+          : { content: voiceText + (surroundText ? '\n' + surroundText : ''), streaming: false, ...(acStatus ? { acStatus } : {}) }
+        updateMessage(assistantId, updates)
+        await saveMessage({ ...assistantMsg, ...updates })
+        updateSession(CONVERSATION_ID, {
+          lastMsgPreview: voiceText.slice(0, 40),
+          lastMsgTime: Date.now(),
+        })
+      } else {
+        const displayContent = fullContent.replace(AC_TAG_RE, '').replace(VOICE_TAG_RE, '$1').trim()
+        updateMessage(assistantId, { content: displayContent, streaming: false, ...(acStatus ? { acStatus } : {}) })
+        await saveMessage({ ...assistantMsg, content: displayContent, streaming: false, ...(acStatus ? { acStatus } : {}) })
+        updateSession(CONVERSATION_ID, {
+          lastMsgPreview: displayContent.slice(0, 40),
+          lastMsgTime: Date.now(),
+        })
+      }
     } catch (err) {
       updateMessage(assistantId, { content: `❌ ${err.message}`, streaming: false, error: true })
     } finally {
       setIsLoading(false)
       setStreamingMessageId(null)
     }
-  }, [CONVERSATION_ID, effectiveApiKey, effectiveBaseUrl, effectiveModel, effectiveSystemPrompt, memoryEnabled, workerUrl, acWorkerUrl, addMessage, updateMessage, setIsLoading, setStreamingMessageId, updateSession])
+  }, [CONVERSATION_ID, effectiveApiKey, effectiveBaseUrl, effectiveModel, effectiveSystemPrompt, memoryEnabled, workerUrl, acWorkerUrl, ttsApiKey, ttsGroupId, ttsVoiceId, aiVoiceEnabled, aiVoiceFrequency, addMessage, updateMessage, setIsLoading, setStreamingMessageId, updateSession])
 
   const sendMessage = useCallback(async (content, type = 'text', extra = {}) => {
     if (!effectiveApiKey) throw new Error('请先在设置中配置 API Key')

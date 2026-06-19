@@ -20,9 +20,10 @@ function formatTime(ts) {
   return new Date(ts).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
 }
 
-export default function MessageBubble({ message, onLongPress, onRegenerate, isLoading, userAvatar, aiAvatar, theme, onTTS, ttsPlayingId, ttsLoadingId }) {
+export default function MessageBubble({ message, onLongPress, onRegenerate, isLoading, userAvatar, aiAvatar, theme }) {
   const [viewerSrc, setViewerSrc] = useState(null)
   const [pressed, setPressed] = useState(false)
+  const [showVoiceText, setShowVoiceText] = useState(false)
   const isUser = message.role === 'user'
   const pressTimer = useRef(null)
   const pressAnimTimer = useRef(null)
@@ -124,6 +125,24 @@ export default function MessageBubble({ message, onLongPress, onRegenerate, isLo
         {message.type === 'voice' && (
           <div {...pressProps}>
             <VoicePlayer blobId={message.voiceBlobId} url={message.voiceUrl} duration={message.duration} isUser={isUser} />
+            {/* Collapsible voice text for AI messages */}
+            {!isUser && message.voiceText && (
+              <div className="mt-1">
+                <button
+                  onClick={() => setShowVoiceText(v => !v)}
+                  className="text-[10px] px-2 py-0.5 rounded-full"
+                  style={{ color: '#c47a8a', border: '1px solid rgba(255,182,209,0.3)', background: 'rgba(255,255,255,0.5)' }}
+                >
+                  {showVoiceText ? '收起文字' : '查看文字'}
+                </button>
+                {showVoiceText && (
+                  <div className="mt-1 text-xs px-3 py-2 rounded-xl"
+                    style={{ background: 'rgba(255,255,255,0.55)', color: '#8b5060', border: '1px solid rgba(255,182,209,0.2)' }}>
+                    {message.voiceText}
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         )}
 
@@ -148,45 +167,24 @@ export default function MessageBubble({ message, onLongPress, onRegenerate, isLo
           <AcCard status={message.acStatus} />
         )}
 
-        {/* Action buttons — only for non-streaming AI text messages */}
-        {!isUser && !message.streaming && message.type === 'text' && message.content && (
-          <div className="flex items-center gap-1 mt-1">
-            {onTTS && (
-              <button
-                onClick={() => onTTS(message.id, message.content)}
-                title={ttsPlayingId === message.id ? '暂停' : '朗读'}
-                style={{
-                  background: 'none', border: 'none',
-                  cursor: 'pointer',
-                  fontSize: 14, padding: '2px 6px',
-                  color: '#c47a8a',
-                  opacity: 0.7,
-                  transition: 'opacity 0.2s',
-                  borderRadius: 8,
-                }}
-              >
-                {ttsLoadingId === message.id ? '⌛' : ttsPlayingId === message.id ? '⏸️' : '🔊'}
-              </button>
-            )}
-            {onRegenerate && (
-              <button
-                onClick={() => onRegenerate(message.id)}
-                disabled={isLoading}
-                title="重新生成"
-                style={{
-                  background: 'none', border: 'none',
-                  cursor: isLoading ? 'not-allowed' : 'pointer',
-                  fontSize: 13, padding: '2px 6px',
-                  color: isLoading ? 'rgba(196,122,138,0.35)' : '#c47a8a',
-                  opacity: isLoading ? 0.4 : 0.7,
-                  transition: 'opacity 0.2s',
-                  borderRadius: 8,
-                }}
-              >
-                🔄
-              </button>
-            )}
-          </div>
+        {/* Regenerate button — only for non-streaming AI messages */}
+        {!isUser && !message.streaming && onRegenerate && (
+          <button
+            onClick={() => onRegenerate(message.id)}
+            disabled={isLoading}
+            title="重新生成"
+            style={{
+              background: 'none', border: 'none',
+              cursor: isLoading ? 'not-allowed' : 'pointer',
+              fontSize: 13, padding: '2px 6px', marginTop: 2,
+              color: isLoading ? 'rgba(196,122,138,0.35)' : '#c47a8a',
+              opacity: isLoading ? 0.4 : 0.7,
+              transition: 'opacity 0.2s',
+              borderRadius: 8,
+            }}
+          >
+            🔄
+          </button>
         )}
 
         {/* Timestamp */}

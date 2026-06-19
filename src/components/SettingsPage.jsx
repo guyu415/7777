@@ -118,7 +118,8 @@ export default function SettingsPage({ theme }) {
     ttsApiKey, setTtsApiKey,
     ttsGroupId, setTtsGroupId,
     ttsVoiceId, setTtsVoiceId,
-    ttsAutoRead, setTtsAutoRead,
+    aiVoiceEnabled, setAiVoiceEnabled,
+    aiVoiceFrequency, setAiVoiceFrequency,
     acWorkerUrl, setAcWorkerUrl,
     setCurrentView,
     sessions, currentSessionId, updateSession,
@@ -441,9 +442,12 @@ export default function SettingsPage({ theme }) {
           </GlassCard>
         )}
 
-        {/* TTS */}
-        <GlassCard icon="🔊" title="语音朗读 (MiniMax TTS)">
+        {/* AI Voice */}
+        <GlassCard icon="🎙️" title="AI 语音消息 (MiniMax TTS)">
           <div className="space-y-2">
+            <p className="text-xs px-1" style={{ color: '#d4a0b0' }}>
+              配置后 AI 会自主判断是否用语音条回复，语音条可播放并可折叠查看原文。
+            </p>
             <div>
               <label className="text-xs pl-1 mb-1 block" style={{ color: '#c47a8a' }}>API Key</label>
               <input
@@ -474,21 +478,35 @@ export default function SettingsPage({ theme }) {
             </div>
             <div className="flex items-center justify-between px-1 pt-1">
               <div>
-                <span className="text-sm" style={{ color: '#8b5060' }}>自动朗读</span>
-                <p className="text-xs mt-0.5" style={{ color: '#d4a0b0' }}>AI 回复结束后自动播放</p>
+                <span className="text-sm" style={{ color: '#8b5060' }}>AI 语音消息</span>
+                <p className="text-xs mt-0.5" style={{ color: '#d4a0b0' }}>关闭后 AI 仅用文字回复</p>
               </div>
               <button
-                onClick={() => setTtsAutoRead(!ttsAutoRead)}
+                onClick={() => setAiVoiceEnabled(!aiVoiceEnabled)}
                 className="w-12 h-6 rounded-full transition-all duration-300 relative flex-shrink-0"
-                style={{
-                  background: ttsAutoRead
-                    ? 'linear-gradient(135deg, #ff85b3, #ff6b9d)'
-                    : 'rgba(210,180,195,0.3)',
-                }}
+                style={{ background: aiVoiceEnabled ? 'linear-gradient(135deg, #ff85b3, #ff6b9d)' : 'rgba(210,180,195,0.3)' }}
               >
                 <div className="w-5 h-5 rounded-full bg-white absolute top-0.5 transition-all duration-300"
-                  style={{ left: ttsAutoRead ? 26 : 2, boxShadow: '0 1px 4px rgba(0,0,0,0.15)' }} />
+                  style={{ left: aiVoiceEnabled ? 26 : 2, boxShadow: '0 1px 4px rgba(0,0,0,0.15)' }} />
               </button>
+            </div>
+            <div className="px-1 pt-1">
+              <div className="flex items-center justify-between mb-1">
+                <span className="text-sm" style={{ color: '#8b5060' }}>语音频率</span>
+                <span className="text-xs" style={{ color: '#c47a8a' }}>
+                  {aiVoiceFrequency < 0.3 ? '少发语音' : aiVoiceFrequency > 0.7 ? '多发语音' : '适中'}
+                </span>
+              </div>
+              <input
+                type="range" min="0" max="1" step="0.1"
+                value={aiVoiceFrequency}
+                onChange={e => setAiVoiceFrequency(parseFloat(e.target.value))}
+                className="w-full accent-pink-400"
+                style={{ cursor: 'pointer' }}
+              />
+              <div className="flex justify-between text-[10px] mt-0.5" style={{ color: '#d4a0b0' }}>
+                <span>少</span><span>适中</span><span>多</span>
+              </div>
             </div>
           </div>
         </GlassCard>
