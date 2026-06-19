@@ -119,6 +119,7 @@ export default function SettingsPage({ theme }) {
     ttsGroupId, setTtsGroupId,
     ttsVoiceId, setTtsVoiceId,
     ttsAutoRead, setTtsAutoRead,
+    acWorkerUrl, setAcWorkerUrl,
     setCurrentView,
     sessions, currentSessionId, updateSession,
     setSessionAiName, setSessionAiAvatar, setSessionUserAvatar, setSessionSignature,
@@ -380,6 +381,21 @@ export default function SettingsPage({ theme }) {
         </GlassCard>
 
         {/* Worker + Memory */}
+        {/* AC Control */}
+        <GlassCard icon="❄️" title="空调控制">
+          <div className="space-y-2">
+            <p className="text-xs px-1" style={{ color: '#d4a0b0' }}>
+              填入空调 Worker 地址，AI 将根据对话自动控制空调。留空则禁用。
+            </p>
+            <input
+              value={acWorkerUrl}
+              onChange={e => setAcWorkerUrl(e.target.value)}
+              placeholder="https://ac.xiaoman.xyz"
+              style={inputStyle}
+            />
+          </div>
+        </GlassCard>
+
         <GlassCard icon="☁️" title="Worker 配置">
           <p className="text-xs mb-2" style={{ color: '#d4a0b0' }}>
             填入 scheduled-message-worker 的部署地址，记忆存储和主动消息均通过此 Worker 访问 KV。

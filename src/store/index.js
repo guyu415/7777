@@ -97,6 +97,9 @@ export const useStore = create(
       ttsVoiceId: 'English_Trustworthy_Man',
       ttsAutoRead: false,
 
+      // AC control
+      acWorkerUrl: 'https://ac.xiaoman.xyz',
+
       sessions: DEFAULT_SESSIONS,
       currentSessionId: 'main',
       providers: DEFAULT_PROVIDERS,
@@ -124,6 +127,7 @@ export const useStore = create(
       setTtsGroupId: (v) => set({ ttsGroupId: v }),
       setTtsVoiceId: (v) => set({ ttsVoiceId: v }),
       setTtsAutoRead: (v) => set({ ttsAutoRead: v }),
+      setAcWorkerUrl: (v) => set({ acWorkerUrl: v }),
       setCurrentView: (view) => set({ currentView: view }),
       setIsLoading: (v) => set({ isLoading: v }),
       setStreamingMessageId: (id) => set({ streamingMessageId: id }),
@@ -190,7 +194,7 @@ export const useStore = create(
     }),
     {
       name: 'pink-chat-settings',
-      version: 5,
+      version: 6,
       migrate: (persisted, version) => {
         if (version < 2) {
           const providers = [
@@ -237,6 +241,9 @@ export const useStore = create(
             ...persisted,
           }
         }
+        if (version < 6) {
+          persisted = { acWorkerUrl: 'https://ac.xiaoman.xyz', ...persisted }
+        }
         return persisted
       },
       partialize: (state) => ({
@@ -261,6 +268,7 @@ export const useStore = create(
         ttsGroupId: state.ttsGroupId,
         ttsVoiceId: state.ttsVoiceId,
         ttsAutoRead: state.ttsAutoRead,
+        acWorkerUrl: state.acWorkerUrl,
       }),
     }
   )

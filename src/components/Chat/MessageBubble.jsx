@@ -2,6 +2,7 @@ import { useState, useRef } from 'react'
 import { CheckCheck } from 'lucide-react'
 import VoicePlayer from '../Voice/VoicePlayer'
 import ImageViewer from '../ImageViewer'
+import AcCard from './AcCard'
 import clsx from 'clsx'
 
 function TypingIndicator() {
@@ -140,6 +141,11 @@ export default function MessageBubble({ message, onLongPress, onRegenerate, isLo
               </div>
             )}
           </div>
+        )}
+
+        {/* AC status card */}
+        {!isUser && message.acStatus && (
+          <AcCard status={message.acStatus} />
         )}
 
         {/* Action buttons — only for non-streaming AI text messages */}

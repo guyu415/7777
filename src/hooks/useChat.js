@@ -2,6 +2,9 @@ import { useCallback } from 'react'
 import { useStore, saveMessage, getMessages, deleteMessageFromDB } from '../store'
 import { streamChat } from '../services/claude'
 import { listMemories, formatMemories } from '../services/memory'
+import { executeAcCommand } from '../services/ac'
+
+const AC_TAG_RE = /\[AC:([^\]]+)\]/
 
 function genId() {
   return Date.now().toString(36) + Math.random().toString(36).slice(2)
@@ -10,7 +13,7 @@ function genId() {
 export function useChat() {
   const {
     apiKey, apiBaseUrl, model, systemPrompt,
-    memoryEnabled, workerUrl,
+    memoryEnabled, workerUrl, acWorkerUrl,
     messages, addMessage, updateMessage, setMessages,
     isLoading, setIsLoading, setStreamingMessageId,
     deleteMessage, deleteMessagesFrom,
@@ -71,17 +74,38 @@ export function useChat() {
         const memStr = formatMemories(triplets)
         if (memStr) builtSystemPrompt = builtSystemPrompt + '\n\n' + memStr
       }
+      if (acWorkerUrl) {
+        builtSystemPrompt += '\n\n你有空调控制能力。当用户提到温度不舒适、想开/关空调、调温度时，在回复末尾自然地加上控制指令标签（不要向用户提及标签格式本身）。\n格式：[AC:动作,温度,模式,风速]\n- 动作：on(开机)/off(关机)/set(调节)\n- 温度：16-30 的整数（推断不到默认26）\n- 模式：cool(制冷)/heat(制热)/auto(自动)/fan(送风)/dry(除湿)\n- 风速：auto(自动)/low(低)/mid(中)/high(高)\n示例："好的已经帮你开空调啦～[AC:on,26,cool,auto]"'
+      }
 
       console.log('[System Prompt]\n' + effectiveSystemPrompt)
       let fullContent = ''
       for await (const chunk of streamChat({ apiKey: effectiveApiKey, apiBaseUrl: effectiveBaseUrl, model: effectiveModel, systemPrompt: builtSystemPrompt, messages: contextMessages })) {
         fullContent += chunk
-        updateMessage(assistantId, { content: fullContent })
+        updateMessage(assistantId, { content: fullContent.replace(AC_TAG_RE, '') })
       }
-      updateMessage(assistantId, { streaming: false })
-      await saveMessage({ ...assistantMsg, content: fullContent, streaming: false })
+
+      // Detect and execute AC command
+      const acMatch = fullContent.match(AC_TAG_RE)
+      let acStatus = null
+      let displayContent = fullContent
+
+      if (acMatch && acWorkerUrl) {
+        const [action, temp, mode, wind] = acMatch[1].split(',')
+        displayContent = fullContent.replace(AC_TAG_RE, '').trim()
+        acStatus = { action, temp: temp || '26', mode: mode || 'cool', wind: wind || 'auto', success: false, error: null }
+        try {
+          await executeAcCommand(acWorkerUrl, action, temp || '26', mode || 'cool', wind || 'auto')
+          acStatus.success = true
+        } catch (e) {
+          acStatus.error = e.message
+        }
+      }
+
+      updateMessage(assistantId, { content: displayContent, streaming: false, ...(acStatus ? { acStatus } : {}) })
+      await saveMessage({ ...assistantMsg, content: displayContent, streaming: false, ...(acStatus ? { acStatus } : {}) })
       updateSession(CONVERSATION_ID, {
-        lastMsgPreview: fullContent.slice(0, 40),
+        lastMsgPreview: displayContent.slice(0, 40),
         lastMsgTime: Date.now(),
       })
     } catch (err) {
@@ -90,7 +114,7 @@ export function useChat() {
       setIsLoading(false)
       setStreamingMessageId(null)
     }
-  }, [CONVERSATION_ID, effectiveApiKey, effectiveBaseUrl, effectiveModel, effectiveSystemPrompt, memoryEnabled, workerUrl, addMessage, updateMessage, setIsLoading, setStreamingMessageId, updateSession])
+  }, [CONVERSATION_ID, effectiveApiKey, effectiveBaseUrl, effectiveModel, effectiveSystemPrompt, memoryEnabled, workerUrl, acWorkerUrl, addMessage, updateMessage, setIsLoading, setStreamingMessageId, updateSession])
 
   const sendMessage = useCallback(async (content, type = 'text', extra = {}) => {
     if (!effectiveApiKey) throw new Error('请先在设置中配置 API Key')
