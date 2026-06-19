@@ -56,7 +56,6 @@ export const useStore = create(
       model: 'claude-sonnet-4-6',
       systemPrompt: '你是小漫，一个温柔可爱的AI助手。你说话简洁、有趣，偶尔会用一些可爱的语气词。',
       memoryEnabled: false,
-      memoryEndpoint: 'https://memory.xiaoman.xyz',
       workerUrl: '',
       // Avatar & name
       userAvatar: '',   // base64 or empty → use emoji
@@ -74,7 +73,6 @@ export const useStore = create(
       setModel: (model) => set({ model }),
       setSystemPrompt: (prompt) => set({ systemPrompt: prompt }),
       setMemoryEnabled: (v) => set({ memoryEnabled: v }),
-      setMemoryEndpoint: (v) => set({ memoryEndpoint: v }),
       setWorkerUrl: (v) => set({ workerUrl: v }),
       setUserAvatar: (v) => set({ userAvatar: v }),
       setAiAvatar: (v) => set({ aiAvatar: v }),
@@ -103,7 +101,6 @@ export const useStore = create(
         model: state.model,
         systemPrompt: state.systemPrompt,
         memoryEnabled: state.memoryEnabled,
-        memoryEndpoint: state.memoryEndpoint,
         workerUrl: state.workerUrl,
         userAvatar: state.userAvatar,
         aiAvatar: state.aiAvatar,

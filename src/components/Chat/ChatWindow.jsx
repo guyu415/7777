@@ -11,7 +11,7 @@ import { supportsSTT } from '../../hooks/useVoice'
 export default function ChatWindow() {
   const { messages, sendMessage, loadHistory, isLoading, regenerate, deleteMsg } = useChat()
   const { fetchPendingMessages, updateActiveTime } = useScheduledMessages()
-  const { setCurrentView, apiKey, aiAvatar, aiName, deleteMessagesFrom, memoryEndpoint } = useStore()
+  const { setCurrentView, apiKey, aiAvatar, aiName, deleteMessagesFrom, workerUrl } = useStore()
   const bottomRef = useRef(null)
   const inputRef = useRef(null)
   const [menuMsg, setMenuMsg] = useState(null)
@@ -197,7 +197,7 @@ export default function ChatWindow() {
       {memoryMsg && (
         <MemoryModal
           message={memoryMsg}
-          endpoint={memoryEndpoint}
+          endpoint={workerUrl}
           onClose={() => setMemoryMsg(null)}
           onSuccess={showToast}
         />

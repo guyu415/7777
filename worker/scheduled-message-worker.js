@@ -28,6 +28,35 @@ export default {
       return Response.json({ ok: true }, { headers: CORS })
     }
 
+    if (pathname === '/memory/remember' && request.method === 'POST') {
+      const { subject, predicate, value } = await request.json()
+      const key = `memory:${(subject || '').trim()}:${(predicate || '').trim()}`
+      await env.CHAT_KV.put(key, (value || '').trim())
+      return Response.json({ ok: true }, { headers: CORS })
+    }
+
+    if (pathname === '/memory/recall' && request.method === 'GET') {
+      const query = new URL(request.url).searchParams.get('query') || ''
+      const listed = await env.CHAT_KV.list({ prefix: 'memory:' })
+      const keys = listed.keys.map(k => k.name)
+      const values = await Promise.all(keys.map(k => env.CHAT_KV.get(k)))
+      const triplets = keys.map((k, i) => {
+        const withoutPrefix = k.slice('memory:'.length)
+        const colonIdx = withoutPrefix.indexOf(':')
+        return {
+          subject: colonIdx === -1 ? withoutPrefix : withoutPrefix.slice(0, colonIdx),
+          predicate: colonIdx === -1 ? '' : withoutPrefix.slice(colonIdx + 1),
+          value: values[i] || '',
+        }
+      })
+      const result = query
+        ? triplets.filter(t =>
+            t.subject.includes(query) || t.predicate.includes(query) || t.value.includes(query)
+          )
+        : triplets
+      return Response.json(result, { headers: CORS })
+    }
+
     return new Response('Not Found', { status: 404, headers: CORS })
   },
 
