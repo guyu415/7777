@@ -1,11 +1,8 @@
 import { useState, useRef } from 'react'
-import { ArrowLeft, Eye, EyeOff, Trash2 } from 'lucide-react'
-import { useStore, clearAllData } from '../store'
-import { MODEL_LABELS } from '../services/claude'
-import clsx from 'clsx'
+import { ArrowLeft, Trash2 } from 'lucide-react'
+import { useStore, clearAllData, getAllMessages } from '../store'
 import MemoryPanel from './MemoryPanel'
-
-const MODELS = Object.keys(MODEL_LABELS)
+import ProviderSettings from './ProviderSettings'
 
 const inputStyle = {
   width: '100%',
@@ -18,16 +15,6 @@ const inputStyle = {
   outline: 'none',
   transition: 'all 0.25s ease-in-out',
   fontFamily: 'inherit',
-}
-
-const cardStyle = {
-  background: 'rgba(255,255,255,0.45)',
-  backdropFilter: 'blur(16px)',
-  WebkitBackdropFilter: 'blur(16px)',
-  borderRadius: 20,
-  padding: '16px',
-  border: '1px solid rgba(255,182,209,0.25)',
-  boxShadow: '0 4px 20px rgba(255,133,179,0.08)',
 }
 
 function AvatarUpload({ label, value, onChange, defaultEmoji }) {
@@ -61,11 +48,16 @@ function AvatarUpload({ label, value, onChange, defaultEmoji }) {
   )
 }
 
+function formatDate(ts) {
+  return new Date(ts).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' })
+}
+
+function roleLabel(role) {
+  return role === 'user' ? '我' : 'AI'
+}
+
 export default function SettingsPage() {
   const {
-    apiKey, setApiKey,
-    apiBaseUrl, setApiBaseUrl,
-    model, setModel,
     systemPrompt, setSystemPrompt,
     memoryEnabled, setMemoryEnabled,
     workerUrl, setWorkerUrl,
@@ -73,14 +65,66 @@ export default function SettingsPage() {
     aiAvatar, setAiAvatar,
     aiName, setAiName,
     setCurrentView,
+    sessions,
   } = useStore()
 
-  const [showKey, setShowKey] = useState(false)
   const [saved, setSaved] = useState(false)
 
   const handleSave = () => {
     setSaved(true)
     setTimeout(() => setSaved(false), 1500)
+  }
+
+  const handleExportJSON = async () => {
+    const allMsgs = await getAllMessages()
+    const bySession = {}
+    for (const msg of allMsgs) {
+      const sid = msg.conversationId || 'main'
+      if (!bySession[sid]) bySession[sid] = []
+      bySession[sid].push(msg)
+    }
+    const data = (sessions || []).map(s => ({
+      session: s,
+      messages: (bySession[s.id] || []).sort((a, b) => a.timestamp - b.timestamp),
+    }))
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    const d = new Date().toISOString().slice(0, 10)
+    a.download = `chat-export-${d}.json`
+    a.click()
+    URL.revokeObjectURL(url)
+  }
+
+  const handleExportTxt = async () => {
+    const allMsgs = await getAllMessages()
+    const bySession = {}
+    for (const msg of allMsgs) {
+      const sid = msg.conversationId || 'main'
+      if (!bySession[sid]) bySession[sid] = []
+      bySession[sid].push(msg)
+    }
+    let text = ''
+    for (const session of (sessions || [])) {
+      text += `== ${session.name} ==\n`
+      const msgs = (bySession[session.id] || []).sort((a, b) => a.timestamp - b.timestamp)
+      for (const msg of msgs) {
+        const time = formatDate(msg.timestamp)
+        const role = roleLabel(msg.role)
+        const content = msg.type === 'text' ? msg.content : '[图片]'
+        text += `[${time}] ${role}: ${content}\n`
+      }
+      text += '\n'
+    }
+    const blob = new Blob([text], { type: 'text/plain;charset=utf-8' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    const d = new Date().toISOString().slice(0, 10)
+    a.download = `chat-export-${d}.txt`
+    a.click()
+    URL.revokeObjectURL(url)
   }
 
   return (
@@ -125,61 +169,9 @@ export default function SettingsPage() {
           </div>
         </GlassCard>
 
-        {/* API Key */}
-        <GlassCard icon="🔑" title="API 配置">
-          <div className="relative">
-            <input
-              type={showKey ? 'text' : 'password'}
-              value={apiKey}
-              onChange={e => setApiKey(e.target.value)}
-              placeholder="sk-ant-..."
-              style={{ ...inputStyle, paddingRight: 40 }}
-            />
-            <button
-              onClick={() => setShowKey(!showKey)}
-              className="absolute right-3 top-1/2 -translate-y-1/2"
-              style={{ color: '#d4a0b0' }}
-            >
-              {showKey ? <EyeOff size={16} /> : <Eye size={16} />}
-            </button>
-          </div>
-          <p className="text-xs mt-1.5 pl-1" style={{ color: '#d4a0b0' }}>Key 存储在浏览器本地，不会上传</p>
-          <div className="mt-3">
-            <label className="text-xs pl-1 mb-1 block" style={{ color: '#c47a8a' }}>API Base URL</label>
-            <input
-              type="url"
-              value={apiBaseUrl}
-              onChange={e => setApiBaseUrl(e.target.value)}
-              placeholder="https://api.anthropic.com"
-              style={inputStyle}
-            />
-            <p className="text-xs mt-1.5 pl-1" style={{ color: '#d4a0b0' }}>可填中转代理地址</p>
-          </div>
-        </GlassCard>
-
-        {/* Model */}
-        <GlassCard icon="🤖" title="模型选择">
-          <div className="grid grid-cols-3 gap-2">
-            {MODELS.map(m => (
-              <button
-                key={m}
-                onClick={() => setModel(m)}
-                className="py-2 px-1 rounded-full text-xs font-medium transition-all duration-300"
-                style={model === m ? {
-                  background: 'linear-gradient(135deg, #ff85b3, #ff6b9d)',
-                  color: '#fff',
-                  boxShadow: '0 4px 12px rgba(255,133,179,0.4)',
-                  border: 'none',
-                } : {
-                  background: 'rgba(255,255,255,0.5)',
-                  color: '#c47a8a',
-                  border: '1px solid rgba(255,182,209,0.3)',
-                }}
-              >
-                {MODEL_LABELS[m]}
-              </button>
-            ))}
-          </div>
+        {/* Provider Settings */}
+        <GlassCard icon="🤖" title="模型与供应商">
+          <ProviderSettings />
         </GlassCard>
 
         {/* System Prompt */}
@@ -238,6 +230,35 @@ export default function SettingsPage() {
             <MemoryPanel workerUrl={workerUrl} />
           </GlassCard>
         )}
+
+        {/* Export */}
+        <GlassCard icon="📤" title="导出记录">
+          <div className="flex gap-2">
+            <button
+              onClick={handleExportJSON}
+              className="flex-1 py-2.5 rounded-full text-sm font-medium transition-all duration-300"
+              style={{
+                background: 'linear-gradient(135deg, #ff85b3, #ff6b9d)',
+                color: '#fff',
+                boxShadow: '0 4px 12px rgba(255,133,179,0.35)',
+                border: 'none',
+              }}
+            >
+              导出 JSON
+            </button>
+            <button
+              onClick={handleExportTxt}
+              className="flex-1 py-2.5 rounded-full text-sm font-medium transition-all duration-300"
+              style={{
+                background: 'rgba(255,255,255,0.6)',
+                color: '#c47a8a',
+                border: '1px solid rgba(255,182,209,0.35)',
+              }}
+            >
+              导出 TXT
+            </button>
+          </div>
+        </GlassCard>
 
         {/* Danger */}
         <GlassCard icon="⚠️" title="危险操作">

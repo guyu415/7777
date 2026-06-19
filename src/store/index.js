@@ -53,22 +53,45 @@ export async function clearAllData() {
   await database.clear('blobs')
 }
 
+export async function deleteMessagesForSession(conversationId) {
+  const database = await getDB()
+  const msgs = await database.getAllFromIndex('messages', 'conversationId', conversationId)
+  for (const msg of msgs) {
+    await database.delete('messages', msg.id)
+  }
+}
+
+export async function getAllMessages() {
+  const database = await getDB()
+  return database.getAll('messages')
+}
+
+const DEFAULT_SESSIONS = [{ id: 'main', name: '默认对话', systemPrompt: '你是小漫，一个温柔可爱的AI助手。你说话简洁、有趣，偶尔会用一些可爱的语气词。', createdAt: Date.now() }]
+const DEFAULT_PROVIDERS = [
+  { id: 'anthropic', name: 'Anthropic', baseUrl: 'https://api.anthropic.com', apiKey: '', models: ['claude-sonnet-4-6', 'claude-opus-4-8', 'claude-haiku-4-5-20251001'] },
+  { id: 'openai', name: 'OpenAI', baseUrl: 'https://api.openai.com', apiKey: '', models: ['gpt-4o', 'gpt-4o-mini', 'gpt-4-turbo'] },
+  { id: 'deepseek', name: 'DeepSeek', baseUrl: 'https://api.deepseek.com', apiKey: '', models: ['deepseek-chat', 'deepseek-reasoner'] },
+]
+
 export const useStore = create(
   persist(
     (set, get) => ({
-      // Settings
       apiKey: '',
       apiBaseUrl: 'https://api.anthropic.com',
       model: 'claude-sonnet-4-6',
       systemPrompt: '你是小漫，一个温柔可爱的AI助手。你说话简洁、有趣，偶尔会用一些可爱的语气词。',
       memoryEnabled: false,
       workerUrl: '',
-      // Avatar & name
-      userAvatar: '',   // base64 or empty → use emoji
-      aiAvatar: '',     // base64 or empty → use emoji
+      userAvatar: '',
+      aiAvatar: '',
       aiName: '小漫',
 
-      // UI State
+      sessions: DEFAULT_SESSIONS,
+      currentSessionId: 'main',
+      providers: DEFAULT_PROVIDERS,
+      selectedProviderId: 'anthropic',
+      selectedModelId: 'claude-sonnet-4-6',
+
       currentView: 'chat',
       isLoading: false,
       streamingMessageId: null,
@@ -98,9 +121,51 @@ export const useStore = create(
         const idx = state.messages.findIndex(m => m.id === id)
         return idx === -1 ? {} : { messages: state.messages.slice(0, idx) }
       }),
+
+      setCurrentSessionId: (id) => set({ currentSessionId: id }),
+      addSession: (session) => set((state) => ({ sessions: [...state.sessions, session] })),
+      updateSession: (id, updates) => set((state) => ({
+        sessions: state.sessions.map(s => s.id === id ? { ...s, ...updates } : s)
+      })),
+      deleteSession: (id) => set((state) => {
+        const remaining = state.sessions.filter(s => s.id !== id)
+        return {
+          sessions: remaining,
+          currentSessionId: state.currentSessionId === id
+            ? (remaining[0]?.id || 'main')
+            : state.currentSessionId,
+        }
+      }),
+
+      setSelectedProviderId: (id) => set({ selectedProviderId: id }),
+      setSelectedModelId: (id) => set({ selectedModelId: id }),
+      updateProvider: (id, updates) => set((state) => ({
+        providers: state.providers.map(p => p.id === id ? { ...p, ...updates } : p)
+      })),
+      addProvider: (provider) => set((state) => ({ providers: [...state.providers, provider] })),
+      deleteProvider: (id) => set((state) => ({ providers: state.providers.filter(p => p.id !== id) })),
     }),
     {
       name: 'pink-chat-settings',
+      version: 2,
+      migrate: (persisted, version) => {
+        if (version < 2) {
+          const providers = [
+            { id: 'anthropic', name: 'Anthropic', baseUrl: persisted.apiBaseUrl || 'https://api.anthropic.com', apiKey: persisted.apiKey || '', models: ['claude-sonnet-4-6', 'claude-opus-4-8', 'claude-haiku-4-5-20251001'] },
+            { id: 'openai', name: 'OpenAI', baseUrl: 'https://api.openai.com', apiKey: '', models: ['gpt-4o', 'gpt-4o-mini', 'gpt-4-turbo'] },
+            { id: 'deepseek', name: 'DeepSeek', baseUrl: 'https://api.deepseek.com', apiKey: '', models: ['deepseek-chat', 'deepseek-reasoner'] },
+          ]
+          return {
+            ...persisted,
+            providers,
+            selectedProviderId: 'anthropic',
+            selectedModelId: persisted.model || 'claude-sonnet-4-6',
+            sessions: [{ id: 'main', name: '默认对话', systemPrompt: persisted.systemPrompt || '', createdAt: Date.now() }],
+            currentSessionId: 'main',
+          }
+        }
+        return persisted
+      },
       partialize: (state) => ({
         apiKey: state.apiKey,
         apiBaseUrl: state.apiBaseUrl,
@@ -111,6 +176,11 @@ export const useStore = create(
         userAvatar: state.userAvatar,
         aiAvatar: state.aiAvatar,
         aiName: state.aiName,
+        sessions: state.sessions,
+        currentSessionId: state.currentSessionId,
+        providers: state.providers,
+        selectedProviderId: state.selectedProviderId,
+        selectedModelId: state.selectedModelId,
       }),
     }
   )

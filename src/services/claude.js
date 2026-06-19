@@ -54,6 +54,28 @@ function buildMessages(messages) {
     .filter(Boolean)
 }
 
+export async function fetchModels({ baseUrl, apiKey }) {
+  const base = (baseUrl || 'https://api.anthropic.com').replace(/\/$/, '')
+  const isAnthropic = base.includes('anthropic.com')
+  const headers = isAnthropic
+    ? {
+        'x-api-key': apiKey,
+        'anthropic-version': '2023-06-01',
+        'anthropic-dangerous-direct-browser-access': 'true',
+      }
+    : {
+        'Authorization': `Bearer ${apiKey}`,
+      }
+  const response = await fetch(`${base}/v1/models`, { headers })
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({}))
+    throw new Error(err?.error?.message || `API Error ${response.status}`)
+  }
+  const data = await response.json()
+  const list = data.data || data.models || []
+  return list.map(m => m.id || m).filter(Boolean)
+}
+
 export async function* streamChat({ apiKey, apiBaseUrl = 'https://api.anthropic.com', model, systemPrompt, messages }) {
   const base = apiBaseUrl.replace(/\/$/, '')
   const response = await fetch(`${base}/v1/messages`, {

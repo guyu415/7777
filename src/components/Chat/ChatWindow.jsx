@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from 'react'
-import { Settings } from 'lucide-react'
+import { Settings, Menu } from 'lucide-react'
 import MessageBubble from './MessageBubble'
 import MessageInput from './MessageInput'
 import MemoryModal from './MemoryModal'
+import SessionSidebar from '../SessionSidebar'
 import { useChat } from '../../hooks/useChat'
 import { useScheduledMessages } from '../../hooks/useScheduledMessages'
 import { useStore, deleteMessageFromDB } from '../../store'
@@ -10,12 +11,16 @@ import { useStore, deleteMessageFromDB } from '../../store'
 export default function ChatWindow() {
   const { messages, sendMessage, loadHistory, isLoading, regenerate, deleteMsg } = useChat()
   const { fetchPendingMessages, updateActiveTime } = useScheduledMessages()
-  const { setCurrentView, apiKey, aiAvatar, aiName, deleteMessagesFrom, workerUrl } = useStore()
+  const { setCurrentView, apiKey, aiAvatar, aiName, deleteMessagesFrom, workerUrl, currentSessionId, providers, selectedProviderId } = useStore()
   const bottomRef = useRef(null)
   const inputRef = useRef(null)
   const [menuMsg, setMenuMsg] = useState(null)
   const [memoryMsg, setMemoryMsg] = useState(null)
   const [toast, setToast] = useState(null)
+  const [sidebarOpen, setSidebarOpen] = useState(false)
+
+  const selectedProvider = providers?.find(p => p.id === selectedProviderId)
+  const effectiveApiKey = selectedProvider?.apiKey || apiKey
 
   const showToast = (msg = '✨ 已记住~') => {
     setToast(msg)
@@ -23,8 +28,11 @@ export default function ChatWindow() {
   }
 
   useEffect(() => {
+    loadHistory()
+  }, [currentSessionId])
+
+  useEffect(() => {
     const init = async () => {
-      await loadHistory()
       const hasNew = await fetchPendingMessages()
       if (hasNew) await loadHistory()
     }
@@ -70,10 +78,19 @@ export default function ChatWindow() {
 
   return (
     <div className="flex flex-col h-full" style={{ background: 'transparent' }}>
+      <SessionSidebar open={sidebarOpen} onClose={() => setSidebarOpen(false)} />
+
       {/* Header */}
       <div className="glass flex items-center justify-between px-4 py-3 safe-top"
         style={{ boxShadow: '0 2px 16px rgba(255,133,179,0.12)' }}>
         <div className="flex items-center gap-2.5">
+          <button
+            onClick={() => setSidebarOpen(true)}
+            className="w-9 h-9 rounded-full flex items-center justify-center transition-all duration-300"
+            style={{ background: 'rgba(255,182,193,0.3)', color: '#c47a8a' }}
+          >
+            <Menu size={17} />
+          </button>
           <div className="w-10 h-10 rounded-full overflow-hidden flex items-center justify-center text-xl flex-shrink-0"
             style={{ background: 'rgba(255,182,193,0.4)', boxShadow: '0 2px 8px rgba(255,133,179,0.25)' }}>
             {aiAvatar
@@ -106,9 +123,9 @@ export default function ChatWindow() {
             <div className="text-5xl">🌸</div>
             <div className="font-medium" style={{ color: '#c47a8a' }}>你好，我是{aiName || '小漫'}！</div>
             <div className="text-sm max-w-[200px]" style={{ color: '#d4a0b0' }}>
-              {apiKey ? '说点什么开始聊天吧～' : '请先在设置中配置 API Key'}
+              {effectiveApiKey ? '说点什么开始聊天吧～' : '请先在设置中配置 API Key'}
             </div>
-            {!apiKey && (
+            {!effectiveApiKey && (
               <button
                 onClick={() => setCurrentView('settings')}
                 className="mt-2 px-6 py-2.5 rounded-full text-sm font-medium text-white transition-all duration-300"

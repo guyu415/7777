@@ -7,8 +7,6 @@ function genId() {
   return Date.now().toString(36) + Math.random().toString(36).slice(2)
 }
 
-const CONVERSATION_ID = 'main'
-
 export function useChat() {
   const {
     apiKey, apiBaseUrl, model, systemPrompt,
@@ -16,13 +14,34 @@ export function useChat() {
     messages, addMessage, updateMessage, setMessages,
     isLoading, setIsLoading, setStreamingMessageId,
     deleteMessage, deleteMessagesFrom,
+    currentSessionId, sessions, updateSession,
+    providers, selectedProviderId, selectedModelId,
   } = useStore()
+
+  const CONVERSATION_ID = currentSessionId || 'main'
+
+  const currentSession = sessions?.find(s => s.id === CONVERSATION_ID)
+  const selectedProvider = providers?.find(p => p.id === selectedProviderId)
+
+  const effectiveApiKey = selectedProvider?.apiKey || apiKey
+  const effectiveBaseUrl = selectedProvider?.baseUrl || apiBaseUrl
+  const effectiveModel = selectedModelId || model
+  const effectiveSystemPrompt = currentSession?.systemPrompt !== undefined
+    ? (currentSession.systemPrompt || systemPrompt)
+    : systemPrompt
 
   const loadHistory = useCallback(async () => {
     const history = await getMessages(CONVERSATION_ID)
     history.sort((a, b) => a.timestamp - b.timestamp)
     setMessages(history)
-  }, [setMessages])
+    if (history.length > 0) {
+      const last = history[history.length - 1]
+      updateSession(CONVERSATION_ID, {
+        lastMsgPreview: last.type === 'text' ? (last.content || '').slice(0, 40) : '[图片]',
+        lastMsgTime: last.timestamp,
+      })
+    }
+  }, [CONVERSATION_ID, setMessages, updateSession])
 
   const streamResponse = useCallback(async (contextMessages) => {
     const assistantId = genId()
@@ -44,31 +63,35 @@ export function useChat() {
       const _now = new Date()
       const _dateStr = _now.toLocaleDateString('zh-CN', { timeZone: 'Asia/Shanghai', year: 'numeric', month: 'long', day: 'numeric', weekday: 'long' })
       const _timeStr = _now.toLocaleTimeString('zh-CN', { timeZone: 'Asia/Shanghai', hour: '2-digit', minute: '2-digit', hour12: false })
-      let effectiveSystemPrompt = `当前时间：${_dateStr} ${_timeStr}（北京时间）\n\n${systemPrompt}`
+      let builtSystemPrompt = `当前时间：${_dateStr} ${_timeStr}（北京时间）\n\n${effectiveSystemPrompt}`
       if (memoryEnabled && workerUrl) {
         const triplets = await listMemories(workerUrl)
         const memStr = formatMemories(triplets)
-        if (memStr) effectiveSystemPrompt = effectiveSystemPrompt + '\n\n' + memStr
+        if (memStr) builtSystemPrompt = builtSystemPrompt + '\n\n' + memStr
       }
 
       console.log('[System Prompt]\n' + effectiveSystemPrompt)
       let fullContent = ''
-      for await (const chunk of streamChat({ apiKey, apiBaseUrl, model, systemPrompt: effectiveSystemPrompt, messages: contextMessages })) {
+      for await (const chunk of streamChat({ apiKey: effectiveApiKey, apiBaseUrl: effectiveBaseUrl, model: effectiveModel, systemPrompt: builtSystemPrompt, messages: contextMessages })) {
         fullContent += chunk
         updateMessage(assistantId, { content: fullContent })
       }
       updateMessage(assistantId, { streaming: false })
       await saveMessage({ ...assistantMsg, content: fullContent, streaming: false })
+      updateSession(CONVERSATION_ID, {
+        lastMsgPreview: fullContent.slice(0, 40),
+        lastMsgTime: Date.now(),
+      })
     } catch (err) {
       updateMessage(assistantId, { content: `❌ ${err.message}`, streaming: false, error: true })
     } finally {
       setIsLoading(false)
       setStreamingMessageId(null)
     }
-  }, [apiKey, apiBaseUrl, model, systemPrompt, memoryEnabled, workerUrl, addMessage, updateMessage, setIsLoading, setStreamingMessageId])
+  }, [CONVERSATION_ID, effectiveApiKey, effectiveBaseUrl, effectiveModel, effectiveSystemPrompt, memoryEnabled, workerUrl, addMessage, updateMessage, setIsLoading, setStreamingMessageId, updateSession])
 
   const sendMessage = useCallback(async (content, type = 'text', extra = {}) => {
-    if (!apiKey) throw new Error('请先在设置中配置 API Key')
+    if (!effectiveApiKey) throw new Error('请先在设置中配置 API Key')
     if (isLoading) return
 
     const userMsg = {
@@ -82,20 +105,23 @@ export function useChat() {
     }
 
     addMessage(userMsg)
+    updateSession(CONVERSATION_ID, {
+      lastMsgPreview: type === 'text' ? (content || '').slice(0, 40) : '[图片]',
+      lastMsgTime: Date.now(),
+    })
     try {
       await saveMessage(userMsg)
     } catch (e) {
       console.error('[DB] saveMessage failed:', e)
     }
     await streamResponse([...messages, userMsg])
-  }, [apiKey, isLoading, messages, addMessage, streamResponse])
+  }, [CONVERSATION_ID, effectiveApiKey, isLoading, messages, addMessage, streamResponse, updateSession])
 
   const regenerate = useCallback(async (assistantMsgId) => {
     if (isLoading) return
     const idx = messages.findIndex(m => m.id === assistantMsgId)
     if (idx < 0) return
     const contextMessages = messages.slice(0, idx)
-    // Delete the assistant message and everything after it
     for (const m of messages.slice(idx)) {
       await deleteMessageFromDB(m.id)
     }
