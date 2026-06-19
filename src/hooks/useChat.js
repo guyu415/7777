@@ -51,6 +51,7 @@ export function useChat() {
         if (memStr) effectiveSystemPrompt = effectiveSystemPrompt + '\n\n' + memStr
       }
 
+      console.log('[System Prompt]\n' + effectiveSystemPrompt)
       let fullContent = ''
       for await (const chunk of streamChat({ apiKey, apiBaseUrl, model, systemPrompt: effectiveSystemPrompt, messages: contextMessages })) {
         fullContent += chunk
