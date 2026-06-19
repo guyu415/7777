@@ -24,76 +24,100 @@ export const MODEL_LABELS = {
   'claude-haiku-4-5-20251001': 'Haiku 4.5',
 }
 
-function buildMessages(messages) {
+function isAnthropicUrl(base) {
+  return base.includes('anthropic.com')
+}
+
+function buildAnthropicMessages(messages) {
   return messages
     .filter(m => m.role !== 'system')
     .map(m => {
-      if (m.type === 'text') {
-        return { role: m.role, content: m.content }
-      }
+      if (m.type === 'text') return { role: m.role, content: m.content }
       if (m.type === 'image') {
-        const media_type = VALID_MEDIA_TYPES.has(m.imageType)
-          ? m.imageType
-          : detectMediaType(m.imageData)
+        const media_type = VALID_MEDIA_TYPES.has(m.imageType) ? m.imageType : detectMediaType(m.imageData)
         return {
           role: m.role,
           content: [
-            {
-              type: 'image',
-              source: { type: 'base64', media_type, data: m.imageData }
-            },
-            ...(m.content ? [{ type: 'text', text: m.content }] : [])
-          ]
+            { type: 'image', source: { type: 'base64', media_type, data: m.imageData } },
+            ...(m.content ? [{ type: 'text', text: m.content }] : []),
+          ],
         }
       }
-      if (m.type === 'voice') {
-        return { role: m.role, content: m.transcript ? `[语音消息] ${m.transcript}` : '[语音消息]' }
-      }
+      if (m.type === 'voice') return { role: m.role, content: m.transcript ? `[语音消息] ${m.transcript}` : '[语音消息]' }
       return null
     })
     .filter(Boolean)
 }
 
+function buildOpenAIMessages(systemPrompt, messages) {
+  const result = []
+  if (systemPrompt) result.push({ role: 'system', content: systemPrompt })
+  for (const m of messages) {
+    if (m.role === 'system') continue
+    if (m.type === 'text') {
+      result.push({ role: m.role, content: m.content || '' })
+    } else if (m.type === 'image') {
+      const media_type = VALID_MEDIA_TYPES.has(m.imageType) ? m.imageType : detectMediaType(m.imageData)
+      const parts = [{ type: 'image_url', image_url: { url: `data:${media_type};base64,${m.imageData}` } }]
+      if (m.content) parts.push({ type: 'text', text: m.content })
+      result.push({ role: m.role, content: parts })
+    } else if (m.type === 'voice') {
+      result.push({ role: m.role, content: m.transcript ? `[语音消息] ${m.transcript}` : '[语音消息]' })
+    }
+  }
+  return result
+}
+
 export async function fetchModels({ baseUrl, apiKey }) {
   const base = (baseUrl || 'https://api.anthropic.com').replace(/\/$/, '')
-  const isAnthropic = base.includes('anthropic.com')
-  const headers = isAnthropic
-    ? {
-        'x-api-key': apiKey,
-        'anthropic-version': '2023-06-01',
-        'anthropic-dangerous-direct-browser-access': 'true',
-      }
-    : {
-        'Authorization': `Bearer ${apiKey}`,
-      }
+  const headers = isAnthropicUrl(base)
+    ? { 'x-api-key': apiKey, 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true' }
+    : { 'Authorization': `Bearer ${apiKey}` }
   const response = await fetch(`${base}/v1/models`, { headers })
   if (!response.ok) {
     const err = await response.json().catch(() => ({}))
     throw new Error(err?.error?.message || `API Error ${response.status}`)
   }
   const data = await response.json()
-  const list = data.data || data.models || []
-  return list.map(m => m.id || m).filter(Boolean)
+  return (data.data || data.models || []).map(m => m.id || m).filter(Boolean)
 }
 
 export async function* streamChat({ apiKey, apiBaseUrl = 'https://api.anthropic.com', model, systemPrompt, messages }) {
   const base = apiBaseUrl.replace(/\/$/, '')
-  const response = await fetch(`${base}/v1/messages`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'x-api-key': apiKey,
-      'anthropic-version': '2023-06-01',
-      'anthropic-dangerous-direct-browser-access': 'true',
-    },
-    body: JSON.stringify({
-      model: MODELS[model] || model,
-      max_tokens: 4096,
-      system: systemPrompt,
-      stream: true,
-      messages: buildMessages(messages),
-    }),
-  })
+
+  let response
+  if (isAnthropicUrl(base)) {
+    response = await fetch(`${base}/v1/messages`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': apiKey,
+        'anthropic-version': '2023-06-01',
+        'anthropic-dangerous-direct-browser-access': 'true',
+      },
+      body: JSON.stringify({
+        model: MODELS[model] || model,
+        max_tokens: 4096,
+        system: systemPrompt,
+        stream: true,
+        messages: buildAnthropicMessages(messages),
+      }),
+    })
+  } else {
+    response = await fetch(`${base}/v1/chat/completions`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify({
+        model,
+        max_tokens: 4096,
+        stream: true,
+        messages: buildOpenAIMessages(systemPrompt, messages),
+      }),
+    })
+  }
 
   if (!response.ok) {
     const err = await response.json().catch(() => ({}))
@@ -119,8 +143,13 @@ export async function* streamChat({ apiKey, apiBaseUrl = 'https://api.anthropic.
 
       try {
         const event = JSON.parse(data)
+        // Anthropic format
         if (event.type === 'content_block_delta' && event.delta?.type === 'text_delta') {
           yield event.delta.text
+        }
+        // OpenAI format
+        if (event.choices?.[0]?.delta?.content) {
+          yield event.choices[0].delta.content
         }
       } catch {
         // ignore parse errors
