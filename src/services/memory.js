@@ -32,7 +32,7 @@ export async function fetchMemories(workerUrl, query = '') {
 
 export function formatMemories(triplets) {
   if (!triplets.length) return ''
-  return '[记忆]\n' + triplets.map(t => `${t.subject} ${t.predicate} ${t.value}`).join('\n')
+  return '【记忆库】\n' + triplets.map(t => `- ${t.subject}${t.predicate}：${t.value}`).join('\n')
 }
 
 export async function listMemories(workerUrl) {

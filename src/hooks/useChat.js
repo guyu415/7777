@@ -1,7 +1,7 @@
 import { useCallback } from 'react'
 import { useStore, saveMessage, getMessages, deleteMessageFromDB } from '../store'
 import { streamChat } from '../services/claude'
-import { fetchMemories, formatMemories } from '../services/memory'
+import { listMemories, formatMemories } from '../services/memory'
 
 function genId() {
   return Date.now().toString(36) + Math.random().toString(36).slice(2)
@@ -46,9 +46,7 @@ export function useChat() {
       const _timeStr = _now.toLocaleTimeString('zh-CN', { timeZone: 'Asia/Shanghai', hour: '2-digit', minute: '2-digit', hour12: false })
       let effectiveSystemPrompt = `当前时间：${_dateStr} ${_timeStr}（北京时间）\n\n${systemPrompt}`
       if (memoryEnabled && workerUrl) {
-        const lastUserMsg = contextMessages.filter(m => m.role === 'user').pop()
-        const query = lastUserMsg?.content || ''
-        const triplets = await fetchMemories(workerUrl, query)
+        const triplets = await listMemories(workerUrl)
         const memStr = formatMemories(triplets)
         if (memStr) effectiveSystemPrompt = effectiveSystemPrompt + '\n\n' + memStr
       }
