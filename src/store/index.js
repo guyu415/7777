@@ -91,11 +91,12 @@ export const useStore = create(
       chatBg: { type: 'gradient', value: '', opacity: 1.0 },
       fontFamily: 'noto',
 
-      // TTS
+      // TTS / AI voice
       ttsApiKey: '',
       ttsGroupId: '',
       ttsVoiceId: 'English_Trustworthy_Man',
-      ttsAutoRead: false,
+      aiVoiceEnabled: true,
+      aiVoiceFrequency: 0.5,
 
       // AC control
       acWorkerUrl: 'https://ac.xiaoman.xyz',
@@ -126,7 +127,8 @@ export const useStore = create(
       setTtsApiKey: (v) => set({ ttsApiKey: v }),
       setTtsGroupId: (v) => set({ ttsGroupId: v }),
       setTtsVoiceId: (v) => set({ ttsVoiceId: v }),
-      setTtsAutoRead: (v) => set({ ttsAutoRead: v }),
+      setAiVoiceEnabled: (v) => set({ aiVoiceEnabled: v }),
+      setAiVoiceFrequency: (v) => set({ aiVoiceFrequency: v }),
       setAcWorkerUrl: (v) => set({ acWorkerUrl: v }),
       setCurrentView: (view) => set({ currentView: view }),
       setIsLoading: (v) => set({ isLoading: v }),
@@ -194,7 +196,7 @@ export const useStore = create(
     }),
     {
       name: 'pink-chat-settings',
-      version: 6,
+      version: 7,
       migrate: (persisted, version) => {
         if (version < 2) {
           const providers = [
@@ -244,6 +246,10 @@ export const useStore = create(
         if (version < 6) {
           persisted = { acWorkerUrl: 'https://ac.xiaoman.xyz', ...persisted }
         }
+        if (version < 7) {
+          const { ttsAutoRead: _removed, ...rest } = persisted
+          persisted = { aiVoiceEnabled: true, aiVoiceFrequency: 0.5, ...rest }
+        }
         return persisted
       },
       partialize: (state) => ({
@@ -267,7 +273,8 @@ export const useStore = create(
         ttsApiKey: state.ttsApiKey,
         ttsGroupId: state.ttsGroupId,
         ttsVoiceId: state.ttsVoiceId,
-        ttsAutoRead: state.ttsAutoRead,
+        aiVoiceEnabled: state.aiVoiceEnabled,
+        aiVoiceFrequency: state.aiVoiceFrequency,
         acWorkerUrl: state.acWorkerUrl,
       }),
     }
