@@ -12,7 +12,7 @@ const CONVERSATION_ID = 'main'
 export function useChat() {
   const {
     apiKey, apiBaseUrl, model, systemPrompt,
-    memoryEnabled, memoryEndpoint,
+    memoryEnabled, workerUrl,
     messages, addMessage, updateMessage, setMessages,
     isLoading, setIsLoading, setStreamingMessageId,
     deleteMessage, deleteMessagesFrom,
@@ -42,10 +42,10 @@ export function useChat() {
 
     try {
       let effectiveSystemPrompt = systemPrompt
-      if (memoryEnabled && memoryEndpoint) {
+      if (memoryEnabled && workerUrl) {
         const lastUserMsg = contextMessages.filter(m => m.role === 'user').pop()
         const query = lastUserMsg?.content || ''
-        const triplets = await fetchMemories(memoryEndpoint, query)
+        const triplets = await fetchMemories(workerUrl, query)
         const memStr = formatMemories(triplets)
         if (memStr) effectiveSystemPrompt = systemPrompt + '\n\n' + memStr
       }
@@ -63,7 +63,7 @@ export function useChat() {
       setIsLoading(false)
       setStreamingMessageId(null)
     }
-  }, [apiKey, apiBaseUrl, model, systemPrompt, memoryEnabled, memoryEndpoint, addMessage, updateMessage, setIsLoading, setStreamingMessageId])
+  }, [apiKey, apiBaseUrl, model, systemPrompt, memoryEnabled, workerUrl, addMessage, updateMessage, setIsLoading, setStreamingMessageId])
 
   const sendMessage = useCallback(async (content, type = 'text', extra = {}) => {
     if (!apiKey) throw new Error('请先在设置中配置 API Key')

@@ -67,7 +67,6 @@ export default function SettingsPage() {
     model, setModel,
     systemPrompt, setSystemPrompt,
     memoryEnabled, setMemoryEnabled,
-    memoryEndpoint, setMemoryEndpoint,
     workerUrl, setWorkerUrl,
     userAvatar, setUserAvatar,
     aiAvatar, setAiAvatar,
@@ -193,13 +192,26 @@ export default function SettingsPage() {
           />
         </GlassCard>
 
-        {/* Memory */}
-        <GlassCard icon="🧠" title="记忆系统">
-          <div className="flex items-center justify-between mb-3">
-            <span className="text-sm" style={{ color: '#8b5060' }}>接入 MCP 记忆库</span>
+        {/* Worker + Memory */}
+        <GlassCard icon="☁️" title="Worker 配置">
+          <p className="text-xs mb-2" style={{ color: '#d4a0b0' }}>
+            填入 scheduled-message-worker 的部署地址，记忆存储和主动消息均通过此 Worker 访问 KV。
+          </p>
+          <input
+            type="url"
+            value={workerUrl}
+            onChange={e => setWorkerUrl(e.target.value)}
+            placeholder="https://scheduled-message-worker.your-subdomain.workers.dev"
+            style={inputStyle}
+          />
+          <div className="flex items-center justify-between mt-3">
+            <div>
+              <span className="text-sm" style={{ color: '#8b5060' }}>启用记忆注入</span>
+              <p className="text-xs mt-0.5" style={{ color: '#d4a0b0' }}>每次回复前从 KV 读取相关记忆</p>
+            </div>
             <button
               onClick={() => setMemoryEnabled(!memoryEnabled)}
-              className="relative transition-all duration-300"
+              className="relative flex-shrink-0 transition-all duration-300"
               style={{
                 width: 48, height: 26, borderRadius: 13,
                 background: memoryEnabled
@@ -218,29 +230,6 @@ export default function SettingsPage() {
               }} />
             </button>
           </div>
-          {memoryEnabled && (
-            <input
-              type="url"
-              value={memoryEndpoint}
-              onChange={e => setMemoryEndpoint(e.target.value)}
-              placeholder="https://memory.xiaoman.xyz"
-              style={inputStyle}
-            />
-          )}
-        </GlassCard>
-
-        {/* Proactive messages worker */}
-        <GlassCard icon="💌" title="主动消息">
-          <p className="text-xs mb-2" style={{ color: '#d4a0b0' }}>
-            填入 scheduled-message-worker 的部署地址，AI 会在你不在线时主动发消息。
-          </p>
-          <input
-            type="url"
-            value={workerUrl}
-            onChange={e => setWorkerUrl(e.target.value)}
-            placeholder="https://scheduled-message-worker.your-subdomain.workers.dev"
-            style={inputStyle}
-          />
         </GlassCard>
 
         {/* Danger */}

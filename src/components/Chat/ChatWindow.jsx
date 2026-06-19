@@ -6,12 +6,11 @@ import MemoryModal from './MemoryModal'
 import { useChat } from '../../hooks/useChat'
 import { useScheduledMessages } from '../../hooks/useScheduledMessages'
 import { useStore, deleteMessageFromDB } from '../../store'
-import { supportsSTT } from '../../hooks/useVoice'
 
 export default function ChatWindow() {
   const { messages, sendMessage, loadHistory, isLoading, regenerate, deleteMsg } = useChat()
   const { fetchPendingMessages, updateActiveTime } = useScheduledMessages()
-  const { setCurrentView, apiKey, aiAvatar, aiName, deleteMessagesFrom, memoryEndpoint } = useStore()
+  const { setCurrentView, apiKey, aiAvatar, aiName, deleteMessagesFrom, workerUrl } = useStore()
   const bottomRef = useRef(null)
   const inputRef = useRef(null)
   const [menuMsg, setMenuMsg] = useState(null)
@@ -36,17 +35,12 @@ export default function ChatWindow() {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages.length, messages[messages.length - 1]?.content?.length])
 
-  const handleSendVoice = ({ id, url, duration, transcript }) => {
+  const handleSendVoice = ({ transcript }) => {
     updateActiveTime()
-    if (!supportsSTT) {
-      showToast('此浏览器不支持语音识别，请直接输入文字')
-      return
-    }
     if (transcript) {
       sendMessage(transcript, 'text')
     } else {
-      // STT 支持但识别为空（静默），发 voice blob 作兜底
-      sendMessage('', 'voice', { voiceBlobId: id, voiceUrl: url, duration })
+      showToast('未能识别语音内容，请打字输入～')
     }
   }
 
@@ -197,7 +191,7 @@ export default function ChatWindow() {
       {memoryMsg && (
         <MemoryModal
           message={memoryMsg}
-          endpoint={memoryEndpoint}
+          endpoint={workerUrl}
           onClose={() => setMemoryMsg(null)}
           onSuccess={showToast}
         />
