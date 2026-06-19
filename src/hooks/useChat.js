@@ -80,7 +80,11 @@ export function useChat() {
     }
 
     addMessage(userMsg)
-    await saveMessage(userMsg)
+    try {
+      await saveMessage(userMsg)
+    } catch (e) {
+      console.error('[DB] saveMessage failed:', e)
+    }
     await streamResponse([...messages, userMsg])
   }, [apiKey, isLoading, messages, addMessage, streamResponse])
 

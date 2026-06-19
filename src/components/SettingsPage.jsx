@@ -1,6 +1,6 @@
 import { useState, useRef } from 'react'
 import { ArrowLeft, Eye, EyeOff, Trash2 } from 'lucide-react'
-import { useStore } from '../store'
+import { useStore, clearAllData } from '../store'
 import { MODEL_LABELS } from '../services/claude'
 import clsx from 'clsx'
 
@@ -235,9 +235,9 @@ export default function SettingsPage() {
         {/* Danger */}
         <GlassCard icon="⚠️" title="危险操作">
           <button
-            onClick={() => {
+            onClick={async () => {
               if (confirm('确定要清空所有聊天记录吗？')) {
-                indexedDB.deleteDatabase('pink-chat')
+                await clearAllData()
                 window.location.reload()
               }
             }}

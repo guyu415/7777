@@ -47,6 +47,12 @@ export async function deleteMessageFromDB(id) {
   await database.delete('messages', id)
 }
 
+export async function clearAllData() {
+  const database = await getDB()
+  await database.clear('messages')
+  await database.clear('blobs')
+}
+
 export const useStore = create(
   persist(
     (set, get) => ({
