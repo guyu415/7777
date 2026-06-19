@@ -19,7 +19,7 @@ function formatTime(ts) {
   return new Date(ts).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
 }
 
-export default function MessageBubble({ message, onLongPress, onRegenerate, isLoading, userAvatar, aiAvatar, theme }) {
+export default function MessageBubble({ message, onLongPress, onRegenerate, isLoading, userAvatar, aiAvatar, theme, onTTS, ttsPlayingId, ttsLoadingId }) {
   const [viewerSrc, setViewerSrc] = useState(null)
   const [pressed, setPressed] = useState(false)
   const isUser = message.role === 'user'
@@ -142,24 +142,45 @@ export default function MessageBubble({ message, onLongPress, onRegenerate, isLo
           </div>
         )}
 
-        {/* Regenerate button — only for non-streaming AI messages */}
-        {!isUser && !message.streaming && onRegenerate && (
-          <button
-            onClick={() => onRegenerate(message.id)}
-            disabled={isLoading}
-            title="重新生成"
-            style={{
-              background: 'none', border: 'none',
-              cursor: isLoading ? 'not-allowed' : 'pointer',
-              fontSize: 13, padding: '2px 6px', marginTop: 2,
-              color: isLoading ? 'rgba(196,122,138,0.35)' : '#c47a8a',
-              opacity: isLoading ? 0.4 : 0.7,
-              transition: 'opacity 0.2s',
-              borderRadius: 8,
-            }}
-          >
-            🔄
-          </button>
+        {/* Action buttons — only for non-streaming AI text messages */}
+        {!isUser && !message.streaming && message.type === 'text' && message.content && (
+          <div className="flex items-center gap-1 mt-1">
+            {onTTS && (
+              <button
+                onClick={() => onTTS(message.id, message.content)}
+                title={ttsPlayingId === message.id ? '暂停' : '朗读'}
+                style={{
+                  background: 'none', border: 'none',
+                  cursor: 'pointer',
+                  fontSize: 14, padding: '2px 6px',
+                  color: '#c47a8a',
+                  opacity: 0.7,
+                  transition: 'opacity 0.2s',
+                  borderRadius: 8,
+                }}
+              >
+                {ttsLoadingId === message.id ? '⌛' : ttsPlayingId === message.id ? '⏸️' : '🔊'}
+              </button>
+            )}
+            {onRegenerate && (
+              <button
+                onClick={() => onRegenerate(message.id)}
+                disabled={isLoading}
+                title="重新生成"
+                style={{
+                  background: 'none', border: 'none',
+                  cursor: isLoading ? 'not-allowed' : 'pointer',
+                  fontSize: 13, padding: '2px 6px',
+                  color: isLoading ? 'rgba(196,122,138,0.35)' : '#c47a8a',
+                  opacity: isLoading ? 0.4 : 0.7,
+                  transition: 'opacity 0.2s',
+                  borderRadius: 8,
+                }}
+              >
+                🔄
+              </button>
+            )}
+          </div>
         )}
 
         {/* Timestamp */}

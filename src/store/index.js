@@ -91,6 +91,12 @@ export const useStore = create(
       chatBg: { type: 'gradient', value: '', opacity: 1.0 },
       fontFamily: 'noto',
 
+      // TTS
+      ttsApiKey: '',
+      ttsGroupId: '',
+      ttsVoiceId: 'English_Trustworthy_Man',
+      ttsAutoRead: false,
+
       sessions: DEFAULT_SESSIONS,
       currentSessionId: 'main',
       providers: DEFAULT_PROVIDERS,
@@ -114,6 +120,10 @@ export const useStore = create(
       setChatTheme: (id) => set({ themeId: id }),
       setChatBg: (bg) => set({ chatBg: bg }),
       setFontFamily: (f) => set({ fontFamily: f }),
+      setTtsApiKey: (v) => set({ ttsApiKey: v }),
+      setTtsGroupId: (v) => set({ ttsGroupId: v }),
+      setTtsVoiceId: (v) => set({ ttsVoiceId: v }),
+      setTtsAutoRead: (v) => set({ ttsAutoRead: v }),
       setCurrentView: (view) => set({ currentView: view }),
       setIsLoading: (v) => set({ isLoading: v }),
       setStreamingMessageId: (id) => set({ streamingMessageId: id }),
@@ -180,7 +190,7 @@ export const useStore = create(
     }),
     {
       name: 'pink-chat-settings',
-      version: 4,
+      version: 5,
       migrate: (persisted, version) => {
         if (version < 2) {
           const providers = [
@@ -218,6 +228,15 @@ export const useStore = create(
             })),
           }
         }
+        if (version < 5) {
+          persisted = {
+            ttsApiKey: '',
+            ttsGroupId: '',
+            ttsVoiceId: 'English_Trustworthy_Man',
+            ttsAutoRead: false,
+            ...persisted,
+          }
+        }
         return persisted
       },
       partialize: (state) => ({
@@ -238,6 +257,10 @@ export const useStore = create(
         providers: state.providers,
         selectedProviderId: state.selectedProviderId,
         selectedModelId: state.selectedModelId,
+        ttsApiKey: state.ttsApiKey,
+        ttsGroupId: state.ttsGroupId,
+        ttsVoiceId: state.ttsVoiceId,
+        ttsAutoRead: state.ttsAutoRead,
       }),
     }
   )
