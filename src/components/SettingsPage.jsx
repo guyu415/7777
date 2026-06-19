@@ -115,6 +115,10 @@ export default function SettingsPage({ theme }) {
     themeId, setChatTheme,
     chatBg, setChatBg,
     fontFamily, setFontFamily,
+    ttsApiKey, setTtsApiKey,
+    ttsGroupId, setTtsGroupId,
+    ttsVoiceId, setTtsVoiceId,
+    ttsAutoRead, setTtsAutoRead,
     setCurrentView,
     sessions, currentSessionId, updateSession,
     setSessionAiName, setSessionAiAvatar, setSessionUserAvatar, setSessionSignature,
@@ -420,6 +424,58 @@ export default function SettingsPage({ theme }) {
             <MemoryPanel workerUrl={workerUrl} />
           </GlassCard>
         )}
+
+        {/* TTS */}
+        <GlassCard icon="🔊" title="语音朗读 (MiniMax TTS)">
+          <div className="space-y-2">
+            <div>
+              <label className="text-xs pl-1 mb-1 block" style={{ color: '#c47a8a' }}>API Key</label>
+              <input
+                type="password"
+                value={ttsApiKey}
+                onChange={e => setTtsApiKey(e.target.value)}
+                placeholder="MiniMax API Key"
+                style={inputStyle}
+              />
+            </div>
+            <div>
+              <label className="text-xs pl-1 mb-1 block" style={{ color: '#c47a8a' }}>Group ID</label>
+              <input
+                value={ttsGroupId}
+                onChange={e => setTtsGroupId(e.target.value)}
+                placeholder="MiniMax Group ID"
+                style={inputStyle}
+              />
+            </div>
+            <div>
+              <label className="text-xs pl-1 mb-1 block" style={{ color: '#c47a8a' }}>音色 ID</label>
+              <input
+                value={ttsVoiceId}
+                onChange={e => setTtsVoiceId(e.target.value)}
+                placeholder="English_Trustworthy_Man"
+                style={inputStyle}
+              />
+            </div>
+            <div className="flex items-center justify-between px-1 pt-1">
+              <div>
+                <span className="text-sm" style={{ color: '#8b5060' }}>自动朗读</span>
+                <p className="text-xs mt-0.5" style={{ color: '#d4a0b0' }}>AI 回复结束后自动播放</p>
+              </div>
+              <button
+                onClick={() => setTtsAutoRead(!ttsAutoRead)}
+                className="w-12 h-6 rounded-full transition-all duration-300 relative flex-shrink-0"
+                style={{
+                  background: ttsAutoRead
+                    ? 'linear-gradient(135deg, #ff85b3, #ff6b9d)'
+                    : 'rgba(210,180,195,0.3)',
+                }}
+              >
+                <div className="w-5 h-5 rounded-full bg-white absolute top-0.5 transition-all duration-300"
+                  style={{ left: ttsAutoRead ? 26 : 2, boxShadow: '0 1px 4px rgba(0,0,0,0.15)' }} />
+              </button>
+            </div>
+          </div>
+        </GlassCard>
 
         {/* Export */}
         <GlassCard icon="📤" title="导出记录">

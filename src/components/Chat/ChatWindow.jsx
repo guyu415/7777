@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, useCallback } from 'react'
 import { Settings, Menu } from 'lucide-react'
 import MessageBubble from './MessageBubble'
 import MessageInput from './MessageInput'
@@ -6,11 +6,13 @@ import MemoryModal from './MemoryModal'
 import SessionSidebar from '../SessionSidebar'
 import { useChat } from '../../hooks/useChat'
 import { useScheduledMessages } from '../../hooks/useScheduledMessages'
+import { useTTS } from '../../hooks/useTTS'
 import { useStore, deleteMessageFromDB } from '../../store'
 
 export default function ChatWindow({ theme }) {
   const { messages, sendMessage, loadHistory, isLoading, regenerate, deleteMsg } = useChat()
   const { fetchPendingMessages, updateActiveTime } = useScheduledMessages()
+  const { play: ttsPlay, stop: ttsStop, playingId: ttsPlayingId, loadingId: ttsLoadingId, ttsEnabled, ttsAutoRead } = useTTS()
   const {
     setCurrentView, apiKey, aiAvatar: globalAiAvatar, aiName: globalAiName,
     userAvatar: globalUserAvatar,
@@ -54,9 +56,21 @@ export default function ChatWindow({ theme }) {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages.length, messages[messages.length - 1]?.content?.length])
 
+  // Auto-read: play TTS when a new AI message finishes streaming
+  const lastAutoPlayedIdRef = useRef(null)
+  useEffect(() => {
+    if (!ttsAutoRead || !ttsEnabled) return
+    const lastAi = [...messages].reverse().find(m => m.role === 'assistant' && !m.streaming && m.type === 'text' && m.content)
+    if (lastAi && lastAi.id !== lastAutoPlayedIdRef.current) {
+      lastAutoPlayedIdRef.current = lastAi.id
+      ttsPlay(lastAi.id, lastAi.content)
+    }
+  }, [messages, ttsAutoRead, ttsEnabled, ttsPlay])
+
   const handleSendVoice = ({ transcript }) => {
     updateActiveTime()
     if (transcript) {
+      ttsStop()
       sendMessage(transcript, 'text')
     } else {
       showToast('未能识别语音内容，请打字输入～')
@@ -65,6 +79,7 @@ export default function ChatWindow({ theme }) {
 
   const handleSendImage = ({ imageData, imageType, imageUrl }) => {
     updateActiveTime()
+    ttsStop()
     sendMessage('', 'image', { imageData, imageType, imageUrl })
   }
 
@@ -176,6 +191,9 @@ export default function ChatWindow({ theme }) {
             userAvatar={effectiveUserAvatar}
             aiAvatar={effectiveAiAvatar}
             theme={theme}
+            onTTS={ttsEnabled ? ttsPlay : null}
+            ttsPlayingId={ttsPlayingId}
+            ttsLoadingId={ttsLoadingId}
           />
         ))}
         <div ref={bottomRef} />
@@ -244,7 +262,7 @@ export default function ChatWindow({ theme }) {
       {/* Input */}
       <MessageInput
         ref={inputRef}
-        onSend={(text) => { updateActiveTime(); sendMessage(text, 'text') }}
+        onSend={(text) => { updateActiveTime(); ttsStop(); sendMessage(text, 'text') }}
         onSendVoice={handleSendVoice}
         onSendImage={handleSendImage}
         disabled={isLoading}
