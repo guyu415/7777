@@ -73,7 +73,10 @@ export async function fetchModels({ baseUrl, apiKey }) {
   const headers = isAnthropicUrl(base)
     ? { 'x-api-key': apiKey, 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true' }
     : { 'Authorization': `Bearer ${apiKey}` }
-  const response = await fetch(`${base}/v1/models`, { headers })
+  // Anthropic keeps /v1 in path; others include it in base URL
+  const modelsUrl = isAnthropicUrl(base) ? `${base}/v1/models` : `${base}/models`
+  console.log('[fetchModels] URL:', modelsUrl)
+  const response = await fetch(modelsUrl, { headers })
   if (!response.ok) {
     const err = await response.json().catch(() => ({}))
     throw new Error(err?.error?.message || `API Error ${response.status}`)
@@ -104,7 +107,10 @@ export async function* streamChat({ apiKey, apiBaseUrl = 'https://api.anthropic.
       }),
     })
   } else {
-    response = await fetch(`${base}/v1/chat/completions`, {
+    // base URL already contains the version path (e.g. /v1 or /api/paas/v4)
+    const chatUrl = `${base}/chat/completions`
+    console.log('[streamChat] URL:', chatUrl, 'model:', model)
+    response = await fetch(chatUrl, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
