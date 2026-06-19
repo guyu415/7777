@@ -56,7 +56,8 @@ export default function App() {
   }, [effectiveFontFamily, customFonts])
 
   useEffect(() => {
-    document.documentElement.style.setProperty('--msg-font-size', `${effectiveFontSize}px`)
+    // Scale all rem-based Tailwind utilities globally
+    document.documentElement.style.fontSize = `${effectiveFontSize}px`
   }, [effectiveFontSize])
 
   // Load custom fonts from IndexedDB on mount
@@ -86,7 +87,7 @@ export default function App() {
 
   return (
     <div className="h-full w-full" style={wrapperBgStyle}>
-      {bgIsImage && effectiveChatBg.value && (
+      {bgIsImage && effectiveChatBg.value && currentView === 'chat' && (
         <div
           className="fixed inset-0 pointer-events-none"
           style={{
@@ -123,7 +124,9 @@ export default function App() {
           {currentView === 'sessionSettings' && <SessionSettings theme={theme} />}
         </div>
 
-        <BottomNav currentView={currentView} onChange={setCurrentView} theme={theme} />
+        {currentView !== 'sessionSettings' && (
+          <BottomNav currentView={currentView} onChange={setCurrentView} theme={theme} />
+        )}
       </div>
     </div>
   )

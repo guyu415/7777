@@ -87,7 +87,7 @@ export default function ChatWindow({ theme }) {
   return (
     <div className="flex flex-col h-full" style={{ background: 'transparent' }}>
       {/* Header */}
-      <div className="flex items-center px-4 py-3 safe-top"
+      <div className="flex items-center justify-between px-4 py-3 safe-top"
         style={{
           background: 'rgba(255,255,255,0.72)',
           backdropFilter: 'blur(24px)',
@@ -95,25 +95,33 @@ export default function ChatWindow({ theme }) {
           borderBottom: `1px solid ${theme?.primary || '#4aacf0'}22`,
           boxShadow: `0 2px 16px ${theme?.primary || '#4aacf0'}14`,
           flexShrink: 0,
-          gap: 12,
         }}>
-        <div className="w-10 h-10 rounded-full overflow-hidden flex items-center justify-center text-xl flex-shrink-0"
-          style={{
-            background: `${theme?.primary || '#4aacf0'}33`,
-            boxShadow: `0 2px 8px ${theme?.primary || '#4aacf0'}40, 0 0 16px ${theme?.primary || '#4aacf0'}30`,
-          }}>
-          {effectiveAiAvatar
-            ? <img src={effectiveAiAvatar} alt="" className="w-full h-full object-cover" />
-            : '🌸'}
-        </div>
-        <div>
-          <div className="font-semibold text-sm" style={{ color: theme?.primaryDark || '#2196d3' }}>
-            {effectiveAiName || '小漫'}
+        <div className="flex items-center gap-3">
+          <div className="w-10 h-10 rounded-full overflow-hidden flex items-center justify-center text-xl flex-shrink-0"
+            style={{
+              background: `${theme?.primary || '#4aacf0'}33`,
+              boxShadow: `0 2px 8px ${theme?.primary || '#4aacf0'}40, 0 0 16px ${theme?.primary || '#4aacf0'}30`,
+            }}>
+            {effectiveAiAvatar
+              ? <img src={effectiveAiAvatar} alt="" className="w-full h-full object-cover" />
+              : '🌸'}
           </div>
-          <div className="text-[11px]" style={{ color: `${theme?.primary || '#4aacf0'}bb` }}>
-            {effectiveSignature || '在线'}
+          <div>
+            <div className="font-semibold text-sm" style={{ color: theme?.primaryDark || '#2196d3' }}>
+              {effectiveAiName || '小漫'}
+            </div>
+            <div className="text-[11px]" style={{ color: `${theme?.primary || '#4aacf0'}bb` }}>
+              {effectiveSignature || '在线'}
+            </div>
           </div>
         </div>
+        <button
+          onClick={() => setCurrentView('sessionSettings')}
+          className="w-9 h-9 rounded-full flex items-center justify-center transition-all duration-200 text-base"
+          style={{ background: `${theme?.primary || '#4aacf0'}18`, color: theme?.primary || '#4aacf0' }}
+        >
+          ⚙️
+        </button>
       </div>
 
       {/* Wave divider */}
