@@ -11,6 +11,8 @@ id = "ee2f737d334c4af7b56a89f83b61092c"
 crons = ["*/30 * * * *"]
 
 [vars]
+# 中转 API 地址，若用官方则保持 https://api.anthropic.com
 CLAUDE_API_BASE_URL = "https://api.anthropic.com"
-# CLAUDE_API_KEY 请用 secret 方式配置：
+# CLAUDE_API_KEY 和 CLAUDE_API_BASE_URL 也可用 secret 覆盖：
 # wrangler secret put CLAUDE_API_KEY
+# wrangler secret put CLAUDE_API_BASE_URL
