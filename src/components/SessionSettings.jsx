@@ -1,0 +1,339 @@
+import { useState, useEffect } from 'react'
+import { useStore } from '../store'
+import { THEMES } from '../themes'
+
+const inputStyle = {
+  width: '100%',
+  background: 'rgba(255,255,255,0.6)',
+  border: '1px solid rgba(200,220,255,0.4)',
+  borderRadius: 14,
+  padding: '10px 16px',
+  fontSize: 14,
+  color: '#2c5282',
+  outline: 'none',
+  fontFamily: 'inherit',
+}
+
+function Toggle({ value, onChange, primary }) {
+  return (
+    <button
+      onClick={() => onChange(!value)}
+      className="relative flex-shrink-0 transition-all duration-300"
+      style={{
+        width: 48, height: 26, borderRadius: 13,
+        background: value
+          ? `linear-gradient(135deg, ${primary || '#4aacf0'}, ${primary || '#4aacf0'}cc)`
+          : 'rgba(180,200,220,0.4)',
+        border: 'none', cursor: 'pointer',
+        boxShadow: value ? `0 2px 8px ${primary || '#4aacf0'}55` : 'none',
+      }}
+    >
+      <div style={{
+        position: 'absolute', top: 3, width: 20, height: 20, borderRadius: '50%',
+        background: '#fff',
+        boxShadow: '0 1px 4px rgba(0,0,0,0.15)',
+        transition: 'left 0.25s ease-in-out',
+        left: value ? 25 : 3,
+      }} />
+    </button>
+  )
+}
+
+function GlassCard({ icon, title, children }) {
+  return (
+    <div style={{
+      background: 'rgba(255,255,255,0.42)',
+      backdropFilter: 'blur(16px)',
+      WebkitBackdropFilter: 'blur(16px)',
+      borderRadius: 20,
+      padding: 16,
+      border: '1px solid rgba(200,220,255,0.3)',
+      boxShadow: '0 4px 20px rgba(74,172,240,0.06)',
+    }}>
+      <div className="flex items-center gap-2 mb-3">
+        <span>{icon}</span>
+        <span className="font-medium text-sm" style={{ color: '#2c5282' }}>{title}</span>
+      </div>
+      {children}
+    </div>
+  )
+}
+
+const THEME_LIST = [
+  { id: 'pink', label: '粉色甜心', dot: '#ff85b3' },
+  { id: 'mint', label: '薄荷清新', dot: '#5cc8a0' },
+  { id: 'skyblue', label: '天蓝清爽', dot: '#4aacf0' },
+  { id: 'lavender', label: '薰衣草紫', dot: '#9b7fd4' },
+]
+
+const FONT_LIST = [
+  { id: 'noto', label: '思源黑体' },
+  { id: 'zcool', label: '站酷小薇' },
+  { id: 'mashan', label: '马善政楷体' },
+]
+
+export default function SessionSettings({ theme }) {
+  const {
+    sessions, currentSessionId, updateSession,
+    setSessionAiName, setSessionAiAvatar, setSessionSignature,
+    setSessionTheme, setSessionFont, setSessionFontSize,
+    setSessionMemoryEnabled, setSessionSystemPrompt,
+    providers, selectedProviderId, selectedModelId,
+    memoryEnabled: globalMemoryEnabled,
+    defaultFontSize, customFonts,
+    themeId: globalThemeId,
+    systemPrompt: globalSystemPrompt,
+  } = useStore()
+
+  const currentSession = sessions?.find(s => s.id === currentSessionId)
+  const primary = theme?.primary || '#4aacf0'
+  const primaryDark = theme?.primaryDark || '#2196d3'
+
+  // Local state for text fields — sync on session change
+  const [localName, setLocalName] = useState('')
+  const [localSignature, setLocalSignature] = useState('')
+  const [localSystemPrompt, setLocalSystemPrompt] = useState('')
+  const [localAvatar, setLocalAvatar] = useState('')
+
+  useEffect(() => {
+    if (!currentSession) return
+    setLocalName(currentSession.aiName || '')
+    setLocalSignature(currentSession.signature || '')
+    setLocalSystemPrompt(currentSession.systemPrompt ?? globalSystemPrompt ?? '')
+    setLocalAvatar(currentSession.aiAvatar || '')
+  }, [currentSessionId])
+
+  if (!currentSession) {
+    return (
+      <div className="flex items-center justify-center h-full">
+        <span style={{ color: '#7a9cc0' }}>没有活跃的会话</span>
+      </div>
+    )
+  }
+
+  const chipStyle = (active) => ({
+    padding: '6px 14px', borderRadius: 20, fontSize: 13, cursor: 'pointer', transition: 'all 0.2s',
+    border: active ? `1.5px solid ${primary}` : '1.5px solid rgba(200,220,255,0.4)',
+    background: active ? `${primary}22` : 'rgba(255,255,255,0.4)',
+    color: active ? primaryDark : '#6a90b8',
+    fontWeight: active ? 600 : 400,
+  })
+
+  const effectiveThemeId = currentSession.themeId ?? globalThemeId
+  const effectiveFontFamily = currentSession.fontFamily ?? 'noto'
+  const effectiveFontSize = currentSession.fontSize ?? defaultFontSize
+  const memoryOverride = currentSession.memoryEnabled // null = inherit, true/false = override
+
+  // Model/provider for this session
+  const sessionProviderId = currentSession.providerId || selectedProviderId
+  const sessionModelId = currentSession.modelId || selectedModelId
+  const sessionProvider = providers?.find(p => p.id === sessionProviderId)
+
+  const allFonts = [...FONT_LIST, ...customFonts.map(f => ({ id: f.id, label: f.name }))]
+
+  return (
+    <div className="flex flex-col h-full" style={{ background: 'transparent' }}>
+      {/* Header */}
+      <div className="flex items-center justify-between px-4 py-3 safe-top flex-shrink-0"
+        style={{
+          background: 'rgba(255,255,255,0.72)',
+          backdropFilter: 'blur(24px)',
+          WebkitBackdropFilter: 'blur(24px)',
+          borderBottom: '1px solid rgba(200,220,255,0.25)',
+          boxShadow: '0 2px 12px rgba(74,172,240,0.08)',
+        }}>
+        <span className="font-semibold text-sm" style={{ color: '#2c5282' }}>当前会话设置</span>
+        <span className="text-sm font-medium truncate max-w-[140px]" style={{ color: '#7a9cc0' }}>
+          {currentSession.name}
+        </span>
+      </div>
+
+      <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4">
+
+        {/* AI Identity */}
+        <GlassCard icon="🌸" title="AI 角色">
+          <div className="space-y-3">
+            <div>
+              <label className="text-xs pl-1 mb-1 block" style={{ color: '#6a90b8' }}>AI 名字</label>
+              <input
+                value={localName}
+                onChange={e => setLocalName(e.target.value)}
+                onBlur={() => setSessionAiName(currentSessionId, localName.trim() || '小漫')}
+                placeholder="小漫"
+                style={inputStyle}
+              />
+            </div>
+            <div>
+              <label className="text-xs pl-1 mb-1 block" style={{ color: '#6a90b8' }}>头像 URL</label>
+              <input
+                value={localAvatar}
+                onChange={e => setLocalAvatar(e.target.value)}
+                onBlur={() => setSessionAiAvatar(currentSessionId, localAvatar.trim())}
+                placeholder="留空使用默认 🌸"
+                style={inputStyle}
+              />
+            </div>
+            <div>
+              <label className="text-xs pl-1 mb-1 block" style={{ color: '#6a90b8' }}>签名 / 状态</label>
+              <input
+                value={localSignature}
+                onChange={e => setLocalSignature(e.target.value)}
+                onBlur={() => setSessionSignature(currentSessionId, localSignature)}
+                placeholder="小漫一直在这里等你～"
+                style={inputStyle}
+              />
+            </div>
+          </div>
+        </GlassCard>
+
+        {/* System Prompt */}
+        <GlassCard icon="💬" title="系统提示词">
+          <textarea
+            value={localSystemPrompt}
+            onChange={e => setLocalSystemPrompt(e.target.value)}
+            onBlur={() => setSessionSystemPrompt(currentSessionId, localSystemPrompt)}
+            rows={5}
+            placeholder="输入此会话的系统提示词…"
+            style={{ ...inputStyle, resize: 'vertical', lineHeight: 1.6 }}
+          />
+          <button
+            onClick={() => {
+              setLocalSystemPrompt(globalSystemPrompt || '')
+              setSessionSystemPrompt(currentSessionId, globalSystemPrompt || '')
+            }}
+            className="mt-2 text-xs"
+            style={{ color: '#7a9cc0', background: 'none', border: 'none', cursor: 'pointer', padding: '2px 4px' }}
+          >
+            ↩ 恢复全局默认
+          </button>
+        </GlassCard>
+
+        {/* Model */}
+        <GlassCard icon="🤖" title="模型">
+          <div className="space-y-2">
+            <div>
+              <label className="text-xs pl-1 mb-1 block" style={{ color: '#6a90b8' }}>供应商</label>
+              <select
+                value={sessionProviderId}
+                onChange={e => {
+                  const p = providers?.find(p => p.id === e.target.value)
+                  updateSession(currentSessionId, {
+                    providerId: e.target.value,
+                    modelId: p?.models?.[0] || '',
+                  })
+                }}
+                style={{ ...inputStyle, appearance: 'none', cursor: 'pointer' }}
+              >
+                {(providers || []).map(p => (
+                  <option key={p.id} value={p.id}>{p.name}</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="text-xs pl-1 mb-1 block" style={{ color: '#6a90b8' }}>模型</label>
+              <select
+                value={sessionModelId}
+                onChange={e => updateSession(currentSessionId, { modelId: e.target.value })}
+                style={{ ...inputStyle, appearance: 'none', cursor: 'pointer' }}
+              >
+                {(sessionProvider?.models || []).map(m => (
+                  <option key={m} value={m}>{m}</option>
+                ))}
+              </select>
+            </div>
+          </div>
+        </GlassCard>
+
+        {/* Memory */}
+        <GlassCard icon="🧠" title="记忆注入">
+          <p className="text-xs mb-3" style={{ color: '#7a9cc0' }}>
+            覆盖全局记忆开关。当前全局：{globalMemoryEnabled ? '已开启' : '已关闭'}
+          </p>
+          <div className="flex gap-2">
+            {[
+              { label: '跟随全局', value: null },
+              { label: '本会话开启', value: true },
+              { label: '本会话关闭', value: false },
+            ].map(opt => (
+              <button
+                key={String(opt.value)}
+                onClick={() => setSessionMemoryEnabled(currentSessionId, opt.value)}
+                style={chipStyle(memoryOverride === opt.value)}
+              >
+                {opt.label}
+              </button>
+            ))}
+          </div>
+        </GlassCard>
+
+        {/* Theme */}
+        <GlassCard icon="🎨" title="配色方案">
+          <p className="text-xs mb-2" style={{ color: '#7a9cc0' }}>仅影响此会话。</p>
+          <div className="flex flex-wrap gap-2">
+            <button
+              onClick={() => setSessionTheme(currentSessionId, null)}
+              style={chipStyle(currentSession.themeId === null)}
+            >
+              跟随全局
+            </button>
+            {THEME_LIST.map(t => (
+              <button key={t.id} onClick={() => setSessionTheme(currentSessionId, t.id)}
+                style={{ ...chipStyle(currentSession.themeId === t.id), display: 'flex', alignItems: 'center', gap: 6 }}>
+                <span style={{ width: 10, height: 10, borderRadius: '50%', background: t.dot, display: 'inline-block', boxShadow: `0 0 4px ${t.dot}88` }} />
+                {t.label}
+              </button>
+            ))}
+          </div>
+        </GlassCard>
+
+        {/* Font */}
+        <GlassCard icon="🔤" title="字体与字号">
+          <p className="text-xs mb-2" style={{ color: '#7a9cc0' }}>仅影响此会话的消息字体。</p>
+          <div className="flex flex-wrap gap-2 mb-3">
+            <button
+              onClick={() => setSessionFont(currentSessionId, null)}
+              style={chipStyle(currentSession.fontFamily === null)}
+            >
+              跟随全局
+            </button>
+            {allFonts.map(f => (
+              <button key={f.id} onClick={() => setSessionFont(currentSessionId, f.id)}
+                style={chipStyle(effectiveFontFamily === f.id && currentSession.fontFamily !== null)}>
+                {f.label}
+              </button>
+            ))}
+          </div>
+
+          <div>
+            <div className="flex items-center justify-between mb-1">
+              <span className="text-sm" style={{ color: '#2c5282' }}>字号</span>
+              <div className="flex items-center gap-2">
+                <span className="text-xs" style={{ color: '#6a90b8' }}>{effectiveFontSize}px</span>
+                {currentSession.fontSize !== null && (
+                  <button
+                    onClick={() => setSessionFontSize(currentSessionId, null)}
+                    className="text-xs"
+                    style={{ color: '#7a9cc0', background: 'none', border: 'none', cursor: 'pointer' }}
+                  >
+                    重置
+                  </button>
+                )}
+              </div>
+            </div>
+            <input
+              type="range" min="12" max="20" step="1"
+              value={effectiveFontSize}
+              onChange={e => setSessionFontSize(currentSessionId, Number(e.target.value))}
+              className="w-full"
+              style={{ accentColor: primary, cursor: 'pointer' }}
+            />
+            <div className="flex justify-between text-[10px] mt-0.5" style={{ color: '#a0b8d0' }}>
+              <span>12px</span><span>16px</span><span>20px</span>
+            </div>
+          </div>
+        </GlassCard>
+
+      </div>
+    </div>
+  )
+}

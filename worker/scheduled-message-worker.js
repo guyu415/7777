@@ -1,7 +1,7 @@
 const CORS = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-  'Access-Control-Allow-Headers': 'Content-Type',
+  'Access-Control-Allow-Headers': 'Content-Type, X-Api-Key, X-Target-Url',
 }
 
 export default {
@@ -96,12 +96,44 @@ export default {
       return Response.json(result, { headers: CORS })
     }
 
+    if (pathname === '/chat' && request.method === 'POST') {
+      return handleChatProxy(request)
+    }
+
     return new Response('Not Found', { status: 404, headers: CORS })
   },
 
   async scheduled(event, env, ctx) {
     ctx.waitUntil(maybeGenerateMessage(env))
   },
+}
+
+async function handleChatProxy(request) {
+  const targetUrl = request.headers.get('X-Target-Url')
+  const apiKey = request.headers.get('X-Api-Key')
+  if (!targetUrl || !apiKey) {
+    return new Response(JSON.stringify({ error: 'Missing X-Target-Url or X-Api-Key header' }), {
+      status: 400, headers: { 'Content-Type': 'application/json', ...CORS },
+    })
+  }
+  const isAnthropic = targetUrl.includes('anthropic.com')
+  const upstreamHeaders = { 'Content-Type': 'application/json' }
+  if (isAnthropic) {
+    upstreamHeaders['x-api-key'] = apiKey
+    upstreamHeaders['anthropic-version'] = '2023-06-01'
+  } else {
+    upstreamHeaders['Authorization'] = `Bearer ${apiKey}`
+  }
+  const body = await request.arrayBuffer()
+  const upstreamRes = await fetch(targetUrl, { method: 'POST', headers: upstreamHeaders, body })
+  return new Response(upstreamRes.body, {
+    status: upstreamRes.status,
+    headers: {
+      'Content-Type': upstreamRes.headers.get('Content-Type') || 'text/event-stream',
+      'Cache-Control': 'no-cache',
+      ...CORS,
+    },
+  })
 }
 
 async function callClaude(env, systemPrompt) {
