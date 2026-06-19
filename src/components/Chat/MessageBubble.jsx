@@ -2,7 +2,6 @@ import { useState, useRef } from 'react'
 import { CheckCheck } from 'lucide-react'
 import VoicePlayer from '../Voice/VoicePlayer'
 import ImageViewer from '../ImageViewer'
-import { useStore } from '../../store'
 import clsx from 'clsx'
 
 function TypingIndicator() {
@@ -20,13 +19,19 @@ function formatTime(ts) {
   return new Date(ts).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
 }
 
-export default function MessageBubble({ message, onLongPress, onRegenerate, isLoading }) {
+export default function MessageBubble({ message, onLongPress, onRegenerate, isLoading, userAvatar, aiAvatar, theme }) {
   const [viewerSrc, setViewerSrc] = useState(null)
-  const { userAvatar, aiAvatar } = useStore()
+  const [pressed, setPressed] = useState(false)
   const isUser = message.role === 'user'
   const pressTimer = useRef(null)
+  const pressAnimTimer = useRef(null)
 
   const handlePressStart = (e) => {
+    // Jelly animation
+    setPressed(true)
+    clearTimeout(pressAnimTimer.current)
+    pressAnimTimer.current = setTimeout(() => setPressed(false), 300)
+
     pressTimer.current = setTimeout(() => {
       onLongPress?.(message)
       navigator.vibrate?.(15)
@@ -48,8 +53,10 @@ export default function MessageBubble({ message, onLongPress, onRegenerate, isLo
   const avatarEl = (
     <div className="w-9 h-9 rounded-full overflow-hidden flex items-center justify-center text-lg flex-shrink-0 mb-1"
       style={{
-        background: isUser ? 'rgba(255,133,179,0.3)' : 'rgba(255,255,255,0.55)',
-        boxShadow: '0 2px 8px rgba(255,133,179,0.2)',
+        background: isUser ? `${theme?.primary}4d` : 'rgba(255,255,255,0.55)',
+        boxShadow: isUser
+          ? `0 2px 8px ${theme?.userBubbleShadow || 'rgba(255,133,179,0.2)'}, 0 0 12px ${theme?.primary || '#ff85b3'}40`
+          : `0 2px 8px ${theme?.aiBubbleShadow || 'rgba(160,220,180,0.2)'}, 0 0 12px ${theme?.aiBubbleShadow || 'rgba(160,220,180,0.2)'}`,
         border: '1.5px solid rgba(255,182,209,0.4)'
       }}>
       {isUser
@@ -60,22 +67,22 @@ export default function MessageBubble({ message, onLongPress, onRegenerate, isLo
 
   const userBubbleStyle = {
     padding: '10px 16px',
-    background: 'rgba(255, 133, 179, 0.32)',
+    background: theme?.userBubble || 'rgba(255,133,179,0.32)',
     backdropFilter: 'blur(12px)',
     WebkitBackdropFilter: 'blur(12px)',
-    border: '1px solid rgba(255, 133, 179, 0.35)',
-    boxShadow: '0 4px 16px rgba(255,133,179,0.18)',
-    color: '#fff',
+    border: `1px solid ${theme?.userBubbleBorder || 'rgba(255,133,179,0.35)'}`,
+    boxShadow: `0 4px 16px ${theme?.userBubbleShadow || 'rgba(255,133,179,0.18)'}, inset 0 1px 0 rgba(255,255,255,0.4)`,
+    color: theme?.userBubbleText || '#fff',
   }
 
   const aiBubbleStyle = {
     padding: '10px 16px',
-    background: 'rgba(255, 255, 255, 0.62)',
+    background: theme?.aiBubble || 'rgba(200,235,210,0.6)',
     backdropFilter: 'blur(12px)',
     WebkitBackdropFilter: 'blur(12px)',
-    border: '1px solid rgba(255, 182, 209, 0.3)',
-    boxShadow: '0 4px 16px rgba(255,182,209,0.15)',
-    color: '#8b5060',
+    border: `1px solid ${theme?.aiBubbleBorder || 'rgba(160,220,180,0.4)'}`,
+    boxShadow: `0 4px 16px ${theme?.aiBubbleShadow || 'rgba(160,220,180,0.2)'}, inset 0 1px 0 rgba(255,255,255,0.4)`,
+    color: theme?.aiBubbleText || '#3d6b52',
   }
 
   return (
@@ -85,11 +92,22 @@ export default function MessageBubble({ message, onLongPress, onRegenerate, isLo
       <div className={clsx('relative max-w-[72vw] flex flex-col', isUser ? 'items-end' : 'items-start')}>
         {message.type === 'text' && (
           <div
-            className="relative rounded-[20px] text-sm leading-relaxed select-none cursor-default"
+            className={clsx('relative rounded-[20px] text-sm leading-relaxed select-none cursor-default', pressed ? 'bubble-press' : '')}
             style={isUser ? userBubbleStyle : aiBubbleStyle}
             {...pressProps}
           >
             <span className={isUser ? 'bubble-user' : 'bubble-ai'} style={{ position:'absolute', inset:0, borderRadius:'inherit', pointerEvents:'none' }} />
+            {/* Corner ornament */}
+            <span style={{
+              position: 'absolute',
+              top: -4,
+              [isUser ? 'right' : 'left']: -4,
+              fontSize: 10,
+              pointerEvents: 'none',
+              zIndex: 1,
+            }}>
+              {isUser ? '🐾' : '🌿'}
+            </span>
             {message.streaming && !message.content ? (
               <TypingIndicator />
             ) : (
@@ -111,13 +129,13 @@ export default function MessageBubble({ message, onLongPress, onRegenerate, isLo
         {message.type === 'image' && (
           <div
             className="cursor-pointer rounded-[20px] overflow-hidden max-w-[200px] select-none"
-            style={{ boxShadow: '0 4px 16px rgba(255,133,179,0.2)' }}
+            style={{ boxShadow: `0 4px 16px ${theme?.userBubbleShadow || 'rgba(255,133,179,0.2)'}` }}
             onClick={() => setViewerSrc(message.imageUrl || `data:${message.imageType};base64,${message.imageData}`)}
             {...pressProps}
           >
             <img src={message.imageUrl || `data:${message.imageType};base64,${message.imageData}`} alt="" className="w-full object-cover" />
             {message.content && (
-              <div className="px-3 py-2 text-sm" style={{ background: isUser ? 'rgba(255,133,179,0.5)' : 'rgba(255,255,255,0.7)', color: isUser ? '#fff' : '#8b5060' }}>
+              <div className="px-3 py-2 text-sm" style={{ background: isUser ? `${theme?.userBubble || 'rgba(255,133,179,0.5)'}` : 'rgba(255,255,255,0.7)', color: isUser ? (theme?.userBubbleText || '#fff') : (theme?.aiBubbleText || '#3d6b52') }}>
                 {message.content}
               </div>
             )}

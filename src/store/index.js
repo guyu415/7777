@@ -66,7 +66,7 @@ export async function getAllMessages() {
   return database.getAll('messages')
 }
 
-const DEFAULT_SESSIONS = [{ id: 'main', name: '默认对话', systemPrompt: '你是小漫，一个温柔可爱的AI助手。你说话简洁、有趣，偶尔会用一些可爱的语气词。', createdAt: Date.now() }]
+const DEFAULT_SESSIONS = [{ id: 'main', name: '默认对话', systemPrompt: '你是小漫，一个温柔可爱的AI助手。你说话简洁、有趣，偶尔会用一些可爱的语气词。', createdAt: Date.now(), signature: '小漫一直在这里等你～' }]
 const DEFAULT_PROVIDERS = [
   { id: 'anthropic', name: 'Anthropic', baseUrl: 'https://api.anthropic.com', apiKey: '', models: ['claude-sonnet-4-6', 'claude-opus-4-8', 'claude-haiku-4-5-20251001'] },
   { id: 'openai', name: 'OpenAI', baseUrl: 'https://api.openai.com/v1', apiKey: '', models: ['gpt-4o', 'gpt-4o-mini', 'gpt-4-turbo'] },
@@ -85,6 +85,11 @@ export const useStore = create(
       userAvatar: '',
       aiAvatar: '',
       aiName: '小漫',
+
+      // Theme, background, font
+      themeId: 'pink',
+      chatBg: { type: 'gradient', value: '', opacity: 1.0 },
+      fontFamily: 'noto',
 
       sessions: DEFAULT_SESSIONS,
       currentSessionId: 'main',
@@ -106,6 +111,9 @@ export const useStore = create(
       setUserAvatar: (v) => set({ userAvatar: v }),
       setAiAvatar: (v) => set({ aiAvatar: v }),
       setAiName: (name) => set({ aiName: name }),
+      setChatTheme: (id) => set({ themeId: id }),
+      setChatBg: (bg) => set({ chatBg: bg }),
+      setFontFamily: (f) => set({ fontFamily: f }),
       setCurrentView: (view) => set({ currentView: view }),
       setIsLoading: (v) => set({ isLoading: v }),
       setStreamingMessageId: (id) => set({ streamingMessageId: id }),
@@ -123,7 +131,18 @@ export const useStore = create(
       }),
 
       setCurrentSessionId: (id) => set({ currentSessionId: id }),
-      addSession: (session) => set((state) => ({ sessions: [...state.sessions, session] })),
+      addSession: (session) => set((state) => {
+        const { aiName, aiAvatar, userAvatar } = state
+        return {
+          sessions: [...state.sessions, {
+            aiName,
+            aiAvatar,
+            userAvatar,
+            signature: '小漫一直在这里等你～',
+            ...session,
+          }]
+        }
+      }),
       updateSession: (id, updates) => set((state) => ({
         sessions: state.sessions.map(s => s.id === id ? { ...s, ...updates } : s)
       })),
@@ -137,6 +156,20 @@ export const useStore = create(
         }
       }),
 
+      // Per-session avatar/name/signature actions
+      setSessionAiName: (sessionId, name) => set((state) => ({
+        sessions: state.sessions.map(s => s.id === sessionId ? { ...s, aiName: name } : s)
+      })),
+      setSessionAiAvatar: (sessionId, url) => set((state) => ({
+        sessions: state.sessions.map(s => s.id === sessionId ? { ...s, aiAvatar: url } : s)
+      })),
+      setSessionUserAvatar: (sessionId, url) => set((state) => ({
+        sessions: state.sessions.map(s => s.id === sessionId ? { ...s, userAvatar: url } : s)
+      })),
+      setSessionSignature: (sessionId, sig) => set((state) => ({
+        sessions: state.sessions.map(s => s.id === sessionId ? { ...s, signature: sig } : s)
+      })),
+
       setSelectedProviderId: (id) => set({ selectedProviderId: id }),
       setSelectedModelId: (id) => set({ selectedModelId: id }),
       updateProvider: (id, updates) => set((state) => ({
@@ -147,7 +180,7 @@ export const useStore = create(
     }),
     {
       name: 'pink-chat-settings',
-      version: 3,
+      version: 4,
       migrate: (persisted, version) => {
         if (version < 2) {
           const providers = [
@@ -160,7 +193,7 @@ export const useStore = create(
             providers,
             selectedProviderId: 'anthropic',
             selectedModelId: persisted.model || 'claude-sonnet-4-6',
-            sessions: [{ id: 'main', name: '默认对话', systemPrompt: persisted.systemPrompt || '', createdAt: Date.now() }],
+            sessions: [{ id: 'main', name: '默认对话', systemPrompt: persisted.systemPrompt || '', createdAt: Date.now(), signature: '小漫一直在这里等你～' }],
             currentSessionId: 'main',
           }
         }
@@ -170,6 +203,19 @@ export const useStore = create(
           persisted = {
             ...persisted,
             providers: (persisted.providers || []).map(p => urlFix[p.baseUrl] ? { ...p, baseUrl: urlFix[p.baseUrl] } : p),
+          }
+        }
+        if (version < 4) {
+          // Add new fields for theme, bg, font, per-session signatures
+          persisted = {
+            themeId: 'pink',
+            chatBg: { type: 'gradient', value: '', opacity: 1.0 },
+            fontFamily: 'noto',
+            ...persisted,
+            sessions: (persisted.sessions || []).map(s => ({
+              signature: '小漫一直在这里等你～',
+              ...s,
+            })),
           }
         }
         return persisted
@@ -184,6 +230,9 @@ export const useStore = create(
         userAvatar: state.userAvatar,
         aiAvatar: state.aiAvatar,
         aiName: state.aiName,
+        themeId: state.themeId,
+        chatBg: state.chatBg,
+        fontFamily: state.fontFamily,
         sessions: state.sessions,
         currentSessionId: state.currentSessionId,
         providers: state.providers,

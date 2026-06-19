@@ -1,6 +1,7 @@
 import { useState, useRef } from 'react'
 import { ArrowLeft, Trash2 } from 'lucide-react'
 import { useStore, clearAllData, getAllMessages } from '../store'
+import { THEMES } from '../themes'
 import MemoryPanel from './MemoryPanel'
 import ProviderSettings from './ProviderSettings'
 
@@ -48,6 +49,34 @@ function AvatarUpload({ label, value, onChange, defaultEmoji }) {
   )
 }
 
+function ImageUpload({ value, onChange }) {
+  const ref = useRef(null)
+  const handleFile = (e) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    const reader = new FileReader()
+    reader.onload = () => onChange(reader.result)
+    reader.readAsDataURL(file)
+    e.target.value = ''
+  }
+  return (
+    <div className="flex flex-col items-center gap-2">
+      <button
+        onClick={() => ref.current?.click()}
+        className="w-full py-2.5 rounded-full text-sm font-medium transition-all duration-300"
+        style={{
+          background: value ? 'rgba(92,200,160,0.15)' : 'rgba(255,182,209,0.2)',
+          border: '1px dashed rgba(255,133,179,0.4)',
+          color: '#c47a8a',
+        }}
+      >
+        {value ? '✓ 已选图片（点击更换）' : '📁 上传背景图片'}
+      </button>
+      <input ref={ref} type="file" accept="image/*" className="hidden" onChange={handleFile} />
+    </div>
+  )
+}
+
 function formatDate(ts) {
   return new Date(ts).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' })
 }
@@ -56,23 +85,65 @@ function roleLabel(role) {
   return role === 'user' ? '我' : 'AI'
 }
 
-export default function SettingsPage() {
+const THEME_LIST = [
+  { id: 'pink', label: '粉色甜心', dot: '#ff85b3' },
+  { id: 'mint', label: '薄荷清新', dot: '#5cc8a0' },
+  { id: 'milktea', label: '奶茶暖棕', dot: '#c8956c' },
+  { id: 'lavender', label: '薰衣草紫', dot: '#9b7fd4' },
+]
+
+const FONT_LIST = [
+  { id: 'noto', label: '思源黑体', sample: 'Aa' },
+  { id: 'zcool', label: '站酷小薇', sample: 'Aa' },
+  { id: 'mashan', label: '马善政楷体', sample: 'Aa' },
+]
+
+const FONT_MAP = {
+  noto: "'Noto Sans SC', 'PingFang SC', -apple-system, sans-serif",
+  zcool: "'ZCOOL XiaoWei', serif",
+  mashan: "'Ma Shan Zheng', cursive",
+}
+
+export default function SettingsPage({ theme }) {
   const {
     systemPrompt, setSystemPrompt,
     memoryEnabled, setMemoryEnabled,
     workerUrl, setWorkerUrl,
-    userAvatar, setUserAvatar,
-    aiAvatar, setAiAvatar,
-    aiName, setAiName,
+    userAvatar: globalUserAvatar, setUserAvatar,
+    aiAvatar: globalAiAvatar, setAiAvatar,
+    aiName: globalAiName, setAiName,
+    themeId, setChatTheme,
+    chatBg, setChatBg,
+    fontFamily, setFontFamily,
     setCurrentView,
-    sessions,
+    sessions, currentSessionId, updateSession,
+    setSessionAiName, setSessionAiAvatar, setSessionUserAvatar, setSessionSignature,
   } = useStore()
+
+  const currentSession = sessions?.find(s => s.id === currentSessionId)
+  const effectiveAiName = currentSession?.aiName ?? globalAiName
+  const effectiveAiAvatar = currentSession?.aiAvatar ?? globalAiAvatar
+  const effectiveUserAvatar = currentSession?.userAvatar ?? globalUserAvatar
 
   const [saved, setSaved] = useState(false)
 
   const handleSave = () => {
     setSaved(true)
     setTimeout(() => setSaved(false), 1500)
+  }
+
+  // Per-session avatar/name handlers (also update global as default)
+  const handleUserAvatarChange = (v) => {
+    setUserAvatar(v)
+    if (currentSessionId) setSessionUserAvatar(currentSessionId, v)
+  }
+  const handleAiAvatarChange = (v) => {
+    setAiAvatar(v)
+    if (currentSessionId) setSessionAiAvatar(currentSessionId, v)
+  }
+  const handleAiNameChange = (name) => {
+    setAiName(name)
+    if (currentSessionId) setSessionAiName(currentSessionId, name)
   }
 
   const handleExportJSON = async () => {
@@ -127,14 +198,28 @@ export default function SettingsPage() {
     URL.revokeObjectURL(url)
   }
 
+  const currentTheme = THEMES[themeId] || THEMES.pink
+
+  const chipBtnStyle = (active) => ({
+    padding: '6px 14px',
+    borderRadius: 20,
+    fontSize: 13,
+    border: active ? `1.5px solid ${currentTheme.primary}` : '1.5px solid rgba(255,182,209,0.3)',
+    background: active ? `${currentTheme.primary}22` : 'rgba(255,255,255,0.4)',
+    color: active ? currentTheme.primaryDark : '#c47a8a',
+    cursor: 'pointer',
+    transition: 'all 0.2s',
+    fontWeight: active ? 600 : 400,
+  })
+
   return (
     <div className="flex flex-col h-full" style={{ background: 'transparent' }}>
       {/* Header */}
       <div className="flex items-center gap-3 px-4 py-3 safe-top"
         style={{
-          background: 'rgba(255,255,255,0.45)',
-          backdropFilter: 'blur(20px)',
-          WebkitBackdropFilter: 'blur(20px)',
+          background: 'rgba(255,255,255,0.72)',
+          backdropFilter: 'blur(24px)',
+          WebkitBackdropFilter: 'blur(24px)',
           borderBottom: '1px solid rgba(255,182,209,0.2)',
           boxShadow: '0 2px 16px rgba(255,133,179,0.08)',
         }}>
@@ -151,21 +236,126 @@ export default function SettingsPage() {
 
       <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4">
 
-        {/* Avatars */}
-        <GlassCard icon="🎨" title="头像设置">
+        {/* Avatars + Name + Signature */}
+        <GlassCard icon="🎨" title="会话信息">
           <div className="flex justify-around pt-1">
-            <AvatarUpload label="我的头像" value={userAvatar} onChange={setUserAvatar} defaultEmoji="🐣" />
+            <AvatarUpload label="我的头像" value={effectiveUserAvatar} onChange={handleUserAvatarChange} defaultEmoji="🐣" />
             <div className="w-px" style={{ background: 'rgba(255,182,209,0.3)' }} />
-            <AvatarUpload label="AI头像" value={aiAvatar} onChange={setAiAvatar} defaultEmoji="🌸" />
+            <AvatarUpload label="AI头像" value={effectiveAiAvatar} onChange={handleAiAvatarChange} defaultEmoji="🌸" />
           </div>
           <div className="mt-3">
             <label className="text-xs pl-1 mb-1 block" style={{ color: '#c47a8a' }}>AI 名字</label>
             <input
-              value={aiName}
-              onChange={e => setAiName(e.target.value)}
+              value={effectiveAiName}
+              onChange={e => handleAiNameChange(e.target.value)}
               placeholder="小漫"
               style={inputStyle}
             />
+          </div>
+          <div className="mt-3">
+            <label className="text-xs pl-1 mb-1 block" style={{ color: '#c47a8a' }}>签名</label>
+            <input
+              value={currentSession?.signature ?? ''}
+              onChange={e => currentSessionId && setSessionSignature(currentSessionId, e.target.value)}
+              placeholder="小漫一直在这里等你～"
+              style={inputStyle}
+            />
+          </div>
+        </GlassCard>
+
+        {/* Theme */}
+        <GlassCard icon="🎨" title="主题配色">
+          <div className="flex flex-wrap gap-2 pt-1">
+            {THEME_LIST.map(t => (
+              <button
+                key={t.id}
+                onClick={() => setChatTheme(t.id)}
+                style={{
+                  ...chipBtnStyle(themeId === t.id),
+                  display: 'flex', alignItems: 'center', gap: 6,
+                }}
+              >
+                <span style={{
+                  width: 10, height: 10, borderRadius: '50%',
+                  background: t.dot, display: 'inline-block', flexShrink: 0,
+                  boxShadow: `0 0 4px ${t.dot}88`,
+                }} />
+                {t.label}
+              </button>
+            ))}
+          </div>
+        </GlassCard>
+
+        {/* Font */}
+        <GlassCard icon="🔤" title="字体">
+          <div className="flex flex-wrap gap-2 pt-1">
+            {FONT_LIST.map(f => (
+              <button
+                key={f.id}
+                onClick={() => setFontFamily(f.id)}
+                style={{
+                  ...chipBtnStyle(fontFamily === f.id),
+                  fontFamily: FONT_MAP[f.id],
+                }}
+              >
+                {f.label}
+              </button>
+            ))}
+          </div>
+        </GlassCard>
+
+        {/* Chat Background */}
+        <GlassCard icon="🖼️" title="聊天背景">
+          {/* Type chips */}
+          <div className="flex gap-2 mb-3">
+            {[{ v: 'gradient', l: '渐变' }, { v: 'color', l: '纯色' }, { v: 'image', l: '图片' }].map(({ v, l }) => (
+              <button
+                key={v}
+                onClick={() => setChatBg({ ...(chatBg || {}), type: v })}
+                style={chipBtnStyle((chatBg?.type || 'gradient') === v)}
+              >
+                {l}
+              </button>
+            ))}
+          </div>
+
+          {/* Color picker */}
+          {chatBg?.type === 'color' && (
+            <div className="flex items-center gap-3 mb-3">
+              <label className="text-xs" style={{ color: '#c47a8a' }}>背景颜色</label>
+              <input
+                type="color"
+                value={chatBg?.value || '#fce4ec'}
+                onChange={e => setChatBg({ ...chatBg, value: e.target.value })}
+                style={{ width: 40, height: 28, borderRadius: 8, border: '1px solid rgba(255,182,209,0.3)', cursor: 'pointer', padding: 2 }}
+              />
+              <span className="text-xs" style={{ color: '#d4a0b0' }}>{chatBg?.value || '#fce4ec'}</span>
+            </div>
+          )}
+
+          {/* Image upload */}
+          {chatBg?.type === 'image' && (
+            <div className="mb-3">
+              <ImageUpload
+                value={chatBg?.value}
+                onChange={(v) => setChatBg({ ...chatBg, value: v })}
+              />
+            </div>
+          )}
+
+          {/* Opacity slider */}
+          <div className="flex items-center gap-3">
+            <label className="text-xs flex-shrink-0" style={{ color: '#c47a8a' }}>不透明度</label>
+            <input
+              type="range"
+              min="0" max="1" step="0.05"
+              value={chatBg?.opacity ?? 1.0}
+              onChange={e => setChatBg({ ...(chatBg || {}), opacity: parseFloat(e.target.value) })}
+              style={{ flex: 1, accentColor: currentTheme.primary }}
+            />
+            <span className="text-xs w-8 text-right" style={{ color: '#d4a0b0' }}>
+              {Math.round((chatBg?.opacity ?? 1.0) * 100)}%
+            </span>
           </div>
         </GlassCard>
 
@@ -208,10 +398,10 @@ export default function SettingsPage() {
               style={{
                 width: 48, height: 26, borderRadius: 13,
                 background: memoryEnabled
-                  ? 'linear-gradient(135deg, #ff85b3, #ff6b9d)'
+                  ? `linear-gradient(135deg, ${currentTheme.primary}, ${currentTheme.primaryDark})`
                   : 'rgba(210,180,195,0.4)',
                 border: 'none', cursor: 'pointer',
-                boxShadow: memoryEnabled ? '0 2px 8px rgba(255,133,179,0.4)' : 'none',
+                boxShadow: memoryEnabled ? `0 2px 8px ${currentTheme.primary}66` : 'none',
               }}
             >
               <div style={{
@@ -238,9 +428,9 @@ export default function SettingsPage() {
               onClick={handleExportJSON}
               className="flex-1 py-2.5 rounded-full text-sm font-medium transition-all duration-300"
               style={{
-                background: 'linear-gradient(135deg, #ff85b3, #ff6b9d)',
+                background: `linear-gradient(135deg, ${currentTheme.primary}, ${currentTheme.primaryDark})`,
                 color: '#fff',
-                boxShadow: '0 4px 12px rgba(255,133,179,0.35)',
+                boxShadow: `0 4px 12px ${currentTheme.primary}59`,
                 border: 'none',
               }}
             >
@@ -291,8 +481,8 @@ export default function SettingsPage() {
             background: 'linear-gradient(135deg, #6dcf90, #4db875)',
             boxShadow: '0 6px 20px rgba(100,200,130,0.4)',
           } : {
-            background: 'linear-gradient(135deg, #ff85b3, #ff6b9d, #ff85b3)',
-            boxShadow: '0 6px 20px rgba(255,133,179,0.45)',
+            background: `linear-gradient(135deg, ${currentTheme.primary}, ${currentTheme.primaryDark}, ${currentTheme.primary})`,
+            boxShadow: `0 6px 20px ${currentTheme.primary}73`,
           }}
         >
           {saved ? '✅ 已保存' : '保存设置 ✿'}

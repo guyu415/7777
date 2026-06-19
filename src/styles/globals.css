@@ -11,6 +11,9 @@
   --blur-md: blur(20px);
   --safe-bottom: env(safe-area-inset-bottom, 0px);
   --safe-top: env(safe-area-inset-top, 0px);
+  --tail-user: rgba(255, 133, 179, 0.45);
+  --tail-ai: rgba(200, 235, 210, 0.6);
+  --app-font: 'Noto Sans SC', 'PingFang SC', -apple-system, sans-serif;
 }
 
 * {
@@ -25,7 +28,7 @@ html, body, #root {
 }
 
 body {
-  font-family: 'Noto Sans SC', 'PingFang SC', -apple-system, sans-serif;
+  font-family: var(--app-font);
   -webkit-font-smoothing: antialiased;
   color: var(--rose);
 }
@@ -60,7 +63,7 @@ body {
   bottom: 10px;
   width: 0;
   height: 0;
-  border-left: 8px solid rgba(255, 133, 179, 0.45);
+  border-left: 8px solid var(--tail-user);
   border-top: 6px solid transparent;
   border-bottom: 6px solid transparent;
   filter: drop-shadow(1px 0 1px rgba(255,133,179,0.1));
@@ -73,7 +76,7 @@ body {
   bottom: 10px;
   width: 0;
   height: 0;
-  border-right: 8px solid rgba(255, 255, 255, 0.6);
+  border-right: 8px solid var(--tail-ai);
   border-top: 6px solid transparent;
   border-bottom: 6px solid transparent;
 }
@@ -133,3 +136,12 @@ body {
   to   { transform: translateY(0); opacity: 1; }
 }
 .animate-fade-up { animation: fadeUp 0.25s ease-out; }
+
+/* Jelly bubble press effect */
+@keyframes bubble-press {
+  0%   { transform: scale(1); }
+  40%  { transform: scale(0.97); }
+  70%  { transform: scale(1.02); }
+  100% { transform: scale(1); }
+}
+.bubble-press { animation: bubble-press 0.3s ease-out; }

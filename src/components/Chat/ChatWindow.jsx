@@ -8,10 +8,21 @@ import { useChat } from '../../hooks/useChat'
 import { useScheduledMessages } from '../../hooks/useScheduledMessages'
 import { useStore, deleteMessageFromDB } from '../../store'
 
-export default function ChatWindow() {
+export default function ChatWindow({ theme }) {
   const { messages, sendMessage, loadHistory, isLoading, regenerate, deleteMsg } = useChat()
   const { fetchPendingMessages, updateActiveTime } = useScheduledMessages()
-  const { setCurrentView, apiKey, aiAvatar, aiName, deleteMessagesFrom, workerUrl, currentSessionId, providers, selectedProviderId } = useStore()
+  const {
+    setCurrentView, apiKey, aiAvatar: globalAiAvatar, aiName: globalAiName,
+    userAvatar: globalUserAvatar,
+    deleteMessagesFrom, workerUrl, currentSessionId, sessions, providers, selectedProviderId,
+  } = useStore()
+
+  const currentSession = sessions?.find(s => s.id === currentSessionId)
+  const effectiveAiName = currentSession?.aiName ?? globalAiName
+  const effectiveAiAvatar = currentSession?.aiAvatar ?? globalAiAvatar
+  const effectiveUserAvatar = currentSession?.userAvatar ?? globalUserAvatar
+  const effectiveSignature = currentSession?.signature ?? '在线'
+
   const bottomRef = useRef(null)
   const inputRef = useRef(null)
   const [menuMsg, setMenuMsg] = useState(null)
@@ -81,8 +92,15 @@ export default function ChatWindow() {
       <SessionSidebar open={sidebarOpen} onClose={() => setSidebarOpen(false)} />
 
       {/* Header */}
-      <div className="glass flex items-center justify-between px-4 py-3 safe-top"
-        style={{ boxShadow: '0 2px 16px rgba(255,133,179,0.12)' }}>
+      <div className="flex items-center justify-between px-4 py-3 safe-top"
+        style={{
+          background: 'rgba(255,255,255,0.72)',
+          backdropFilter: 'blur(24px)',
+          WebkitBackdropFilter: 'blur(24px)',
+          borderBottom: '1px solid rgba(255,182,209,0.15)',
+          boxShadow: '0 2px 16px rgba(255,133,179,0.12)',
+          flexShrink: 0,
+        }}>
         <div className="flex items-center gap-2.5">
           <button
             onClick={() => setSidebarOpen(true)}
@@ -92,18 +110,20 @@ export default function ChatWindow() {
             <Menu size={17} />
           </button>
           <div className="w-10 h-10 rounded-full overflow-hidden flex items-center justify-center text-xl flex-shrink-0"
-            style={{ background: 'rgba(255,182,193,0.4)', boxShadow: '0 2px 8px rgba(255,133,179,0.25)' }}>
-            {aiAvatar
-              ? <img src={aiAvatar} alt="" className="w-full h-full object-cover" />
+            style={{
+              background: 'rgba(255,182,193,0.4)',
+              boxShadow: `0 2px 8px ${theme?.primary || '#ff85b3'}40, 0 0 16px ${theme?.primary || '#ff85b3'}30`,
+            }}>
+            {effectiveAiAvatar
+              ? <img src={effectiveAiAvatar} alt="" className="w-full h-full object-cover" />
               : '🌸'}
           </div>
           <div>
             <div className="font-semibold text-sm" style={{ color: '#8b5060' }}>
-              {aiName || '小漫'} <span className="text-pink-300">✿</span>
+              {effectiveAiName || '小漫'} <span className="text-pink-300">✿</span>
             </div>
-            <div className="flex items-center gap-1 text-[11px]" style={{ color: '#c47a8a' }}>
-              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 inline-block shadow-sm" />
-              在线
+            <div className="text-[11px]" style={{ color: '#c47a8a' }}>
+              {effectiveSignature || '在线'}
             </div>
           </div>
         </div>
@@ -116,12 +136,22 @@ export default function ChatWindow() {
         </button>
       </div>
 
+      {/* Wave divider */}
+      <div style={{ height: 8, overflow: 'hidden', marginTop: -1, flexShrink: 0 }}>
+        <svg viewBox="0 0 400 8" preserveAspectRatio="none" style={{ width: '100%', height: '100%' }}>
+          <path d="M0,4 C50,0 100,8 150,4 C200,0 250,8 300,4 C350,0 400,8 400,4 L400,8 L0,8 Z"
+            fill={`${theme?.primary || '#ff85b3'}20`} />
+          <path d="M0,4 C50,0 100,8 150,4 C200,0 250,8 300,4 C350,0 400,8 400,4"
+            fill="none" stroke="#FFE4A1" strokeWidth="1.5" />
+        </svg>
+      </div>
+
       {/* Messages */}
       <div className="flex-1 overflow-y-auto px-3 py-4">
         {messages.length === 0 && (
           <div className="flex flex-col items-center justify-center h-full text-center gap-3">
             <div className="text-5xl">🌸</div>
-            <div className="font-medium" style={{ color: '#c47a8a' }}>你好，我是{aiName || '小漫'}！</div>
+            <div className="font-medium" style={{ color: '#c47a8a' }}>你好，我是{effectiveAiName || '小漫'}！</div>
             <div className="text-sm max-w-[200px]" style={{ color: '#d4a0b0' }}>
               {effectiveApiKey ? '说点什么开始聊天吧～' : '请先在设置中配置 API Key'}
             </div>
@@ -129,7 +159,7 @@ export default function ChatWindow() {
               <button
                 onClick={() => setCurrentView('settings')}
                 className="mt-2 px-6 py-2.5 rounded-full text-sm font-medium text-white transition-all duration-300"
-                style={{ background: 'linear-gradient(135deg, #ff85b3, #ff6b9d)', boxShadow: '0 4px 16px rgba(255,133,179,0.4)' }}
+                style={{ background: `linear-gradient(135deg, ${theme?.primary || '#ff85b3'}, ${theme?.primaryDark || '#ff6b9d'})`, boxShadow: `0 4px 16px ${theme?.primary || '#ff85b3'}66` }}
               >
                 去配置 ⚙️
               </button>
@@ -143,6 +173,9 @@ export default function ChatWindow() {
             onLongPress={setMenuMsg}
             onRegenerate={msg.id === lastAiId ? regenerate : null}
             isLoading={isLoading}
+            userAvatar={effectiveUserAvatar}
+            aiAvatar={effectiveAiAvatar}
+            theme={theme}
           />
         ))}
         <div ref={bottomRef} />
@@ -215,6 +248,7 @@ export default function ChatWindow() {
         onSendVoice={handleSendVoice}
         onSendImage={handleSendImage}
         disabled={isLoading}
+        theme={theme}
       />
 
       {/* Memory modal */}
