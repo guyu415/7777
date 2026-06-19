@@ -69,8 +69,8 @@ export async function getAllMessages() {
 const DEFAULT_SESSIONS = [{ id: 'main', name: '默认对话', systemPrompt: '你是小漫，一个温柔可爱的AI助手。你说话简洁、有趣，偶尔会用一些可爱的语气词。', createdAt: Date.now() }]
 const DEFAULT_PROVIDERS = [
   { id: 'anthropic', name: 'Anthropic', baseUrl: 'https://api.anthropic.com', apiKey: '', models: ['claude-sonnet-4-6', 'claude-opus-4-8', 'claude-haiku-4-5-20251001'] },
-  { id: 'openai', name: 'OpenAI', baseUrl: 'https://api.openai.com', apiKey: '', models: ['gpt-4o', 'gpt-4o-mini', 'gpt-4-turbo'] },
-  { id: 'deepseek', name: 'DeepSeek', baseUrl: 'https://api.deepseek.com', apiKey: '', models: ['deepseek-chat', 'deepseek-reasoner'] },
+  { id: 'openai', name: 'OpenAI', baseUrl: 'https://api.openai.com/v1', apiKey: '', models: ['gpt-4o', 'gpt-4o-mini', 'gpt-4-turbo'] },
+  { id: 'deepseek', name: 'DeepSeek', baseUrl: 'https://api.deepseek.com/v1', apiKey: '', models: ['deepseek-chat', 'deepseek-reasoner'] },
 ]
 
 export const useStore = create(
@@ -147,21 +147,29 @@ export const useStore = create(
     }),
     {
       name: 'pink-chat-settings',
-      version: 2,
+      version: 3,
       migrate: (persisted, version) => {
         if (version < 2) {
           const providers = [
             { id: 'anthropic', name: 'Anthropic', baseUrl: persisted.apiBaseUrl || 'https://api.anthropic.com', apiKey: persisted.apiKey || '', models: ['claude-sonnet-4-6', 'claude-opus-4-8', 'claude-haiku-4-5-20251001'] },
-            { id: 'openai', name: 'OpenAI', baseUrl: 'https://api.openai.com', apiKey: '', models: ['gpt-4o', 'gpt-4o-mini', 'gpt-4-turbo'] },
-            { id: 'deepseek', name: 'DeepSeek', baseUrl: 'https://api.deepseek.com', apiKey: '', models: ['deepseek-chat', 'deepseek-reasoner'] },
+            { id: 'openai', name: 'OpenAI', baseUrl: 'https://api.openai.com/v1', apiKey: '', models: ['gpt-4o', 'gpt-4o-mini', 'gpt-4-turbo'] },
+            { id: 'deepseek', name: 'DeepSeek', baseUrl: 'https://api.deepseek.com/v1', apiKey: '', models: ['deepseek-chat', 'deepseek-reasoner'] },
           ]
-          return {
+          persisted = {
             ...persisted,
             providers,
             selectedProviderId: 'anthropic',
             selectedModelId: persisted.model || 'claude-sonnet-4-6',
             sessions: [{ id: 'main', name: '默认对话', systemPrompt: persisted.systemPrompt || '', createdAt: Date.now() }],
             currentSessionId: 'main',
+          }
+        }
+        if (version < 3) {
+          // Fix provider base URLs: /v1 now goes in the base URL, not in the fetch path
+          const urlFix = { 'https://api.openai.com': 'https://api.openai.com/v1', 'https://api.deepseek.com': 'https://api.deepseek.com/v1' }
+          persisted = {
+            ...persisted,
+            providers: (persisted.providers || []).map(p => urlFix[p.baseUrl] ? { ...p, baseUrl: urlFix[p.baseUrl] } : p),
           }
         }
         return persisted
