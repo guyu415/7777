@@ -19,7 +19,7 @@ function genId() {
 }
 
 export default function SessionSidebar({ open, onClose }) {
-  const { sessions, currentSessionId, setCurrentSessionId, addSession, updateSession, deleteSession, systemPrompt, setMessages } = useStore()
+  const { sessions, currentSessionId, setCurrentSessionId, addSession, updateSession, deleteSession, systemPrompt, setMessages, selectedProviderId, selectedModelId } = useStore()
   const [editingId, setEditingId] = useState(null)
   const [editName, setEditName] = useState('')
   const [editingPromptId, setEditingPromptId] = useState(null)
@@ -27,7 +27,7 @@ export default function SessionSidebar({ open, onClose }) {
 
   const handleNewSession = () => {
     const id = genId()
-    addSession({ id, name: '新对话', systemPrompt: systemPrompt || '', createdAt: Date.now() })
+    addSession({ id, name: '新对话', systemPrompt: systemPrompt || '', createdAt: Date.now(), providerId: selectedProviderId, modelId: selectedModelId })
     setCurrentSessionId(id)
     setMessages([])
     onClose()

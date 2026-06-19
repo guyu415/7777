@@ -16,11 +16,18 @@ const inputStyle = {
 }
 
 export default function ProviderSettings() {
-  const { providers, selectedProviderId, selectedModelId, setSelectedProviderId, setSelectedModelId, updateProvider } = useStore()
+  const {
+    providers, selectedProviderId, selectedModelId, setSelectedProviderId, setSelectedModelId, updateProvider,
+    currentSessionId, sessions, updateSession,
+  } = useStore()
   const [expandedId, setExpandedId] = useState(null)
   const [showKeys, setShowKeys] = useState({})
   const [fetchingId, setFetchingId] = useState(null)
   const [fetchError, setFetchError] = useState({})
+
+  const currentSession = sessions?.find(s => s.id === currentSessionId)
+  const activeProviderId = currentSession?.providerId || selectedProviderId
+  const activeModelId = currentSession?.modelId || selectedModelId
 
   const toggleExpand = (id) => setExpandedId(prev => prev === id ? null : id)
   const toggleShowKey = (id) => setShowKeys(prev => ({ ...prev, [id]: !prev[id] }))
@@ -39,15 +46,23 @@ export default function ProviderSettings() {
   }
 
   const handleSelectProvider = (id) => {
-    setSelectedProviderId(id)
     const p = providers.find(p => p.id === id)
-    if (p?.models?.length) setSelectedModelId(p.models[0])
+    const firstModel = p?.models?.[0] || ''
+    setSelectedProviderId(id)
+    if (firstModel) setSelectedModelId(firstModel)
+    if (currentSessionId) updateSession(currentSessionId, { providerId: id, modelId: firstModel || activeModelId })
+  }
+
+  const handleSelectModel = (providerId, modelId) => {
+    setSelectedProviderId(providerId)
+    setSelectedModelId(modelId)
+    if (currentSessionId) updateSession(currentSessionId, { providerId, modelId })
   }
 
   return (
     <div className="space-y-3">
       {(providers || []).map(provider => {
-        const isActive = provider.id === selectedProviderId
+        const isActive = provider.id === activeProviderId
         const isExpanded = expandedId === provider.id
         return (
           <div
@@ -139,11 +154,11 @@ export default function ProviderSettings() {
                 {(provider.models || []).length > 0 && (
                   <div className="flex flex-wrap gap-1.5 mt-1">
                     {provider.models.map(m => {
-                      const isSelected = isActive && selectedModelId === m
+                      const isSelected = isActive && activeModelId === m
                       return (
                         <button
                           key={m}
-                          onClick={() => { setSelectedProviderId(provider.id); setSelectedModelId(m) }}
+                          onClick={() => handleSelectModel(provider.id, m)}
                           className="px-2.5 py-1 rounded-full text-xs font-medium transition-all"
                           style={isSelected ? {
                             background: 'linear-gradient(135deg, #ff85b3, #ff6b9d)',
