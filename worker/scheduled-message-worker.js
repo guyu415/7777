@@ -35,6 +35,40 @@ export default {
       return Response.json({ ok: true }, { headers: CORS })
     }
 
+    if (pathname === '/memory/list' && request.method === 'GET') {
+      const listed = await env.CHAT_KV.list({ prefix: 'memory:' })
+      const keys = listed.keys.map(k => k.name)
+      const values = await Promise.all(keys.map(k => env.CHAT_KV.get(k)))
+      const triplets = keys.map((k, i) => {
+        const withoutPrefix = k.slice('memory:'.length)
+        const colonIdx = withoutPrefix.indexOf(':')
+        return {
+          key: k,
+          subject: colonIdx === -1 ? withoutPrefix : withoutPrefix.slice(0, colonIdx),
+          predicate: colonIdx === -1 ? '' : withoutPrefix.slice(colonIdx + 1),
+          value: values[i] || '',
+        }
+      })
+      return Response.json(triplets, { headers: CORS })
+    }
+
+    if (pathname === '/memory/delete' && request.method === 'POST') {
+      const { key } = await request.json()
+      if (!key?.startsWith('memory:')) return Response.json({ error: 'invalid key' }, { status: 400, headers: CORS })
+      await env.CHAT_KV.delete(key)
+      return Response.json({ ok: true }, { headers: CORS })
+    }
+
+    if (pathname === '/memory/update' && request.method === 'POST') {
+      const { oldKey, subject, predicate, value } = await request.json()
+      const newKey = `memory:${(subject || '').trim()}:${(predicate || '').trim()}`
+      if (oldKey && oldKey !== newKey && oldKey.startsWith('memory:')) {
+        await env.CHAT_KV.delete(oldKey)
+      }
+      await env.CHAT_KV.put(newKey, (value || '').trim())
+      return Response.json({ ok: true }, { headers: CORS })
+    }
+
     if (pathname === '/memory/recall' && request.method === 'GET') {
       const query = new URL(request.url).searchParams.get('query') || ''
       const listed = await env.CHAT_KV.list({ prefix: 'memory:' })
