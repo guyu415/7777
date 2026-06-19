@@ -92,7 +92,7 @@ export default function MessageBubble({ message, onLongPress, onRegenerate, isLo
       {avatarEl}
 
       <div className={clsx('relative max-w-[72vw] flex flex-col', isUser ? 'items-end' : 'items-start')}>
-        {message.type === 'text' && (
+        {message.type === 'text' && !message.voiceLoading && (
           <div
             className={clsx('relative rounded-[20px] text-sm leading-relaxed select-none cursor-default', pressed ? 'bubble-press' : '')}
             style={isUser ? userBubbleStyle : aiBubbleStyle}
@@ -122,27 +122,54 @@ export default function MessageBubble({ message, onLongPress, onRegenerate, isLo
           </div>
         )}
 
-        {message.type === 'voice' && (
-          <div {...pressProps}>
-            <VoicePlayer blobId={message.voiceBlobId} url={message.voiceUrl} duration={message.duration} isUser={isUser} />
-            {/* Collapsible voice text for AI messages */}
-            {!isUser && message.voiceText && (
-              <div className="mt-1">
+        {/* Voice loading indicator — shows while TTS is being fetched */}
+        {message.voiceLoading && !isUser && (
+          <div className="relative rounded-[20px]" style={{ ...aiBubbleStyle, padding: '10px 16px' }}>
+            <span className="bubble-ai" style={{ position: 'absolute', inset: 0, borderRadius: 'inherit', pointerEvents: 'none' }} />
+            <span style={{ position: 'absolute', top: -4, left: -4, fontSize: 10, pointerEvents: 'none', zIndex: 1 }}>🌿</span>
+            <div className="flex items-center gap-2">
+              <div className="flex items-end gap-[3px]">
+                {[0, 1, 2].map(i => (
+                  <div key={i} className="w-1.5 h-1.5 rounded-full typing-dot"
+                    style={{ background: 'rgba(61,107,82,0.5)', animationDelay: `${i * 0.2}s` }} />
+                ))}
+              </div>
+              <span className="text-xs" style={{ color: 'rgba(61,107,82,0.6)' }}>语音生成中…</span>
+            </div>
+          </div>
+        )}
+
+        {message.type === 'voice' && !isUser && (
+          <div
+            className={clsx('relative rounded-[20px] select-none cursor-default', pressed ? 'bubble-press' : '')}
+            style={{ ...aiBubbleStyle, padding: '10px 14px' }}
+            {...pressProps}
+          >
+            <span className="bubble-ai" style={{ position: 'absolute', inset: 0, borderRadius: 'inherit', pointerEvents: 'none' }} />
+            <span style={{ position: 'absolute', top: -4, left: -4, fontSize: 10, pointerEvents: 'none', zIndex: 1 }}>🌿</span>
+            <VoicePlayer blobId={message.voiceBlobId} url={message.voiceUrl} duration={message.duration} isUser={false} naked />
+            {message.voiceText && (
+              <div className="mt-2 pt-2" style={{ borderTop: '1px solid rgba(160,220,180,0.3)' }}>
                 <button
                   onClick={() => setShowVoiceText(v => !v)}
                   className="text-[10px] px-2 py-0.5 rounded-full"
-                  style={{ color: '#c47a8a', border: '1px solid rgba(255,182,209,0.3)', background: 'rgba(255,255,255,0.5)' }}
+                  style={{ color: '#3d6b52', border: '1px solid rgba(160,220,180,0.4)', background: 'rgba(255,255,255,0.3)' }}
                 >
                   {showVoiceText ? '收起文字' : '查看文字'}
                 </button>
                 {showVoiceText && (
-                  <div className="mt-1 text-xs px-3 py-2 rounded-xl"
-                    style={{ background: 'rgba(255,255,255,0.55)', color: '#8b5060', border: '1px solid rgba(255,182,209,0.2)' }}>
+                  <div className="mt-1.5 text-xs leading-relaxed whitespace-pre-wrap" style={{ color: '#3d6b52' }}>
                     {message.voiceText}
                   </div>
                 )}
               </div>
             )}
+          </div>
+        )}
+
+        {message.type === 'voice' && isUser && (
+          <div {...pressProps}>
+            <VoicePlayer blobId={message.voiceBlobId} url={message.voiceUrl} duration={message.duration} isUser={true} />
           </div>
         )}
 
@@ -167,8 +194,8 @@ export default function MessageBubble({ message, onLongPress, onRegenerate, isLo
           <AcCard status={message.acStatus} />
         )}
 
-        {/* Regenerate button — only for non-streaming AI messages */}
-        {!isUser && !message.streaming && onRegenerate && (
+        {/* Regenerate button — only for non-streaming, non-loading AI messages */}
+        {!isUser && !message.streaming && !message.voiceLoading && onRegenerate && (
           <button
             onClick={() => onRegenerate(message.id)}
             disabled={isLoading}
