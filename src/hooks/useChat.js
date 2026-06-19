@@ -43,7 +43,9 @@ export function useChat() {
     try {
       let effectiveSystemPrompt = systemPrompt
       if (memoryEnabled && memoryEndpoint) {
-        const triplets = await fetchMemories(memoryEndpoint)
+        const lastUserMsg = contextMessages.filter(m => m.role === 'user').pop()
+        const query = lastUserMsg?.content || ''
+        const triplets = await fetchMemories(memoryEndpoint, query)
         const memStr = formatMemories(triplets)
         if (memStr) effectiveSystemPrompt = systemPrompt + '\n\n' + memStr
       }

@@ -6,6 +6,7 @@ import MemoryModal from './MemoryModal'
 import { useChat } from '../../hooks/useChat'
 import { useScheduledMessages } from '../../hooks/useScheduledMessages'
 import { useStore, deleteMessageFromDB } from '../../store'
+import { supportsSTT } from '../../hooks/useVoice'
 
 export default function ChatWindow() {
   const { messages, sendMessage, loadHistory, isLoading, regenerate, deleteMsg } = useChat()
@@ -15,11 +16,11 @@ export default function ChatWindow() {
   const inputRef = useRef(null)
   const [menuMsg, setMenuMsg] = useState(null)
   const [memoryMsg, setMemoryMsg] = useState(null)
-  const [toast, setToast] = useState(false)
+  const [toast, setToast] = useState(null)
 
-  const showToast = () => {
-    setToast(true)
-    setTimeout(() => setToast(false), 2200)
+  const showToast = (msg = '✨ 已记住~') => {
+    setToast(msg)
+    setTimeout(() => setToast(null), 2200)
   }
 
   useEffect(() => {
@@ -35,9 +36,18 @@ export default function ChatWindow() {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages.length, messages[messages.length - 1]?.content?.length])
 
-  const handleSendVoice = ({ id, url, duration }) => {
+  const handleSendVoice = ({ id, url, duration, transcript }) => {
     updateActiveTime()
-    sendMessage('', 'voice', { voiceBlobId: id, voiceUrl: url, duration })
+    if (!supportsSTT) {
+      showToast('此浏览器不支持语音识别，请直接输入文字')
+      return
+    }
+    if (transcript) {
+      sendMessage(transcript, 'text')
+    } else {
+      // STT 支持但识别为空（静默），发 voice blob 作兜底
+      sendMessage('', 'voice', { voiceBlobId: id, voiceUrl: url, duration })
+    }
   }
 
   const handleSendImage = ({ imageData, imageType, imageUrl }) => {
@@ -212,7 +222,7 @@ export default function ChatWindow() {
             whiteSpace: 'nowrap',
           }}
         >
-          ✨ 已记住~
+          {toast}
         </div>
       )}
     </div>

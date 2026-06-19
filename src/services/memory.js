@@ -12,14 +12,21 @@ export async function g1Remember(endpoint, { subject, predicate, value }) {
 }
 
 
-export async function fetchMemories(endpoint) {
+export async function fetchMemories(endpoint, query = '') {
   try {
     const base = (endpoint || 'https://memory.xiaoman.xyz').replace(/\/$/, '')
-    const res = await fetch(`${base}/g1_recall`)
+    const url = query
+      ? `${base}/g1_recall?query=${encodeURIComponent(query)}`
+      : `${base}/g1_recall`
+    console.log('[Memory] 请求:', url)
+    const res = await fetch(url)
+    console.log('[Memory] 状态:', res.status)
     if (!res.ok) return []
     const data = await res.json()
+    console.log('[Memory] 返回:', data)
     return Array.isArray(data) ? data : []
-  } catch {
+  } catch (e) {
+    console.error('[Memory] 请求失败:', e)
     return []
   }
 }
