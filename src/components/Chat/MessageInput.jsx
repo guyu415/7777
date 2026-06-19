@@ -33,7 +33,7 @@ const btnBase = {
   background: 'rgba(255,182,209,0.25)',
 }
 
-const MessageInput = forwardRef(function MessageInput({ onSend, onSendVoice, onSendImage, disabled }, ref) {
+const MessageInput = forwardRef(function MessageInput({ onSend, onSendVoice, onSendImage, disabled, theme }, ref) {
   const [text, setText] = useState('')
   const [showVoice, setShowVoice] = useState(false)
   const fileRef = useRef(null)
@@ -85,15 +85,25 @@ const MessageInput = forwardRef(function MessageInput({ onSend, onSendVoice, onS
   }
 
   return (
-    <div className="safe-bottom" style={{
-      display: 'flex', alignItems: 'flex-end', gap: 8,
-      padding: '10px 12px',
-      background: 'rgba(255,255,255,0.45)',
-      backdropFilter: 'blur(20px)',
-      WebkitBackdropFilter: 'blur(20px)',
-      borderTop: '1px solid rgba(255,182,209,0.2)',
-      boxShadow: '0 -4px 20px rgba(255,133,179,0.08)',
-    }}>
+    <div className="safe-bottom" style={{ flexShrink: 0 }}>
+      {/* Wave divider above input */}
+      <div style={{ height: 8, overflow: 'hidden', marginBottom: -1 }}>
+        <svg viewBox="0 0 400 8" preserveAspectRatio="none" style={{ width: '100%', height: '100%' }}>
+          <path d="M0,4 C50,8 100,0 150,4 C200,8 250,0 300,4 C350,8 400,0 400,4 L400,0 L0,0 Z"
+            fill={`${theme?.primary || '#ff85b3'}20`} />
+          <path d="M0,4 C50,8 100,0 150,4 C200,8 250,0 300,4 C350,8 400,0 400,4"
+            fill="none" stroke="#FFE4A1" strokeWidth="1.5" />
+        </svg>
+      </div>
+      <div style={{
+        display: 'flex', alignItems: 'flex-end', gap: 8,
+        padding: '10px 12px',
+        background: 'rgba(255,255,255,0.72)',
+        backdropFilter: 'blur(24px)',
+        WebkitBackdropFilter: 'blur(24px)',
+        borderTop: '1px solid rgba(255,182,209,0.2)',
+        boxShadow: '0 -4px 20px rgba(255,133,179,0.08)',
+      }}>
       <button onClick={() => setShowVoice(true)} style={btnBase}>
         <MicIcon />
       </button>
@@ -152,6 +162,7 @@ const MessageInput = forwardRef(function MessageInput({ onSend, onSendVoice, onS
       >
         <span style={{ fontSize: 18, lineHeight: 1 }}>🐾</span>
       </button>
+      </div>
     </div>
   )
 })
