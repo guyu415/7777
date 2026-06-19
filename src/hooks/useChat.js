@@ -21,11 +21,13 @@ export function useChat() {
   const CONVERSATION_ID = currentSessionId || 'main'
 
   const currentSession = sessions?.find(s => s.id === CONVERSATION_ID)
-  const selectedProvider = providers?.find(p => p.id === selectedProviderId)
+  const effectiveProviderId = currentSession?.providerId || selectedProviderId
+  const effectiveModelId = currentSession?.modelId || selectedModelId
+  const selectedProvider = providers?.find(p => p.id === effectiveProviderId)
 
   const effectiveApiKey = selectedProvider?.apiKey || apiKey
   const effectiveBaseUrl = selectedProvider?.baseUrl || apiBaseUrl
-  const effectiveModel = selectedModelId || model
+  const effectiveModel = effectiveModelId || model
   const effectiveSystemPrompt = currentSession?.systemPrompt !== undefined
     ? (currentSession.systemPrompt || systemPrompt)
     : systemPrompt
