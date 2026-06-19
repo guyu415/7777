@@ -6,7 +6,6 @@ import MemoryModal from './MemoryModal'
 import { useChat } from '../../hooks/useChat'
 import { useScheduledMessages } from '../../hooks/useScheduledMessages'
 import { useStore, deleteMessageFromDB } from '../../store'
-import { supportsSTT } from '../../hooks/useVoice'
 
 export default function ChatWindow() {
   const { messages, sendMessage, loadHistory, isLoading, regenerate, deleteMsg } = useChat()
@@ -36,17 +35,12 @@ export default function ChatWindow() {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages.length, messages[messages.length - 1]?.content?.length])
 
-  const handleSendVoice = ({ id, url, duration, transcript }) => {
+  const handleSendVoice = ({ transcript }) => {
     updateActiveTime()
-    if (!supportsSTT) {
-      showToast('此浏览器不支持语音识别，请直接输入文字')
-      return
-    }
     if (transcript) {
       sendMessage(transcript, 'text')
     } else {
-      // STT 支持但识别为空（静默），发 voice blob 作兜底
-      sendMessage('', 'voice', { voiceBlobId: id, voiceUrl: url, duration })
+      showToast('未能识别语音内容，请打字输入～')
     }
   }
 
