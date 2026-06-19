@@ -160,6 +160,19 @@ export default function ChatWindow() {
             )}
             {menuMsg.type === 'text' && menuMsg.content && (
               <button
+                onClick={() => {
+                  navigator.clipboard.writeText(menuMsg.content)
+                  setMenuMsg(null)
+                  showToast('已复制~')
+                }}
+                className="w-full flex items-center gap-3 px-5 py-3.5 text-sm hover:bg-pink-50 transition-colors"
+                style={{ color: '#8b5060', borderBottom: '1px solid rgba(255,182,209,0.25)' }}
+              >
+                📋 复制
+              </button>
+            )}
+            {menuMsg.type === 'text' && menuMsg.content && (
+              <button
                 onClick={() => { setMenuMsg(null); setMemoryMsg(menuMsg) }}
                 className="w-full flex items-center gap-3 px-5 py-3.5 text-sm hover:bg-pink-50 transition-colors"
                 style={{ color: '#8b5060', borderBottom: '1px solid rgba(255,182,209,0.25)' }}

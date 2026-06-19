@@ -41,13 +41,16 @@ export function useChat() {
     setStreamingMessageId(assistantId)
 
     try {
-      let effectiveSystemPrompt = systemPrompt
+      const _now = new Date()
+      const _dateStr = _now.toLocaleDateString('zh-CN', { timeZone: 'Asia/Shanghai', year: 'numeric', month: 'long', day: 'numeric', weekday: 'long' })
+      const _timeStr = _now.toLocaleTimeString('zh-CN', { timeZone: 'Asia/Shanghai', hour: '2-digit', minute: '2-digit', hour12: false })
+      let effectiveSystemPrompt = `当前时间：${_dateStr} ${_timeStr}（北京时间）\n\n${systemPrompt}`
       if (memoryEnabled && workerUrl) {
         const lastUserMsg = contextMessages.filter(m => m.role === 'user').pop()
         const query = lastUserMsg?.content || ''
         const triplets = await fetchMemories(workerUrl, query)
         const memStr = formatMemories(triplets)
-        if (memStr) effectiveSystemPrompt = systemPrompt + '\n\n' + memStr
+        if (memStr) effectiveSystemPrompt = effectiveSystemPrompt + '\n\n' + memStr
       }
 
       let fullContent = ''

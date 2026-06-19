@@ -3,6 +3,7 @@ import { ArrowLeft, Eye, EyeOff, Trash2 } from 'lucide-react'
 import { useStore, clearAllData } from '../store'
 import { MODEL_LABELS } from '../services/claude'
 import clsx from 'clsx'
+import MemoryPanel from './MemoryPanel'
 
 const MODELS = Object.keys(MODEL_LABELS)
 
@@ -231,6 +232,12 @@ export default function SettingsPage() {
             </button>
           </div>
         </GlassCard>
+
+        {workerUrl && (
+          <GlassCard icon="🧠" title="记忆管理">
+            <MemoryPanel workerUrl={workerUrl} />
+          </GlassCard>
+        )}
 
         {/* Danger */}
         <GlassCard icon="⚠️" title="危险操作">
