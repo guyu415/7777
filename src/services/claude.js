@@ -85,44 +85,60 @@ export async function fetchModels({ baseUrl, apiKey }) {
   return (data.data || data.models || []).map(m => m.id || m).filter(Boolean)
 }
 
-export async function* streamChat({ apiKey, apiBaseUrl = 'https://api.anthropic.com', model, systemPrompt, messages }) {
+export async function* streamChat({ apiKey, apiBaseUrl = 'https://api.anthropic.com', model, systemPrompt, messages, workerUrl, useWorkerProxy }) {
   const base = apiBaseUrl.replace(/\/$/, '')
+  const proxyBase = (useWorkerProxy && workerUrl) ? workerUrl.replace(/\/$/, '') : null
 
   let response
   if (isAnthropicUrl(base)) {
-    response = await fetch(`${base}/v1/messages`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-api-key': apiKey,
-        'anthropic-version': '2023-06-01',
-        'anthropic-dangerous-direct-browser-access': 'true',
-      },
-      body: JSON.stringify({
-        model: MODELS[model] || model,
-        max_tokens: 4096,
-        system: systemPrompt,
-        stream: true,
-        messages: buildAnthropicMessages(messages),
-      }),
+    const targetUrl = `${base}/v1/messages`
+    const body = JSON.stringify({
+      model: MODELS[model] || model,
+      max_tokens: 4096,
+      system: systemPrompt,
+      stream: true,
+      messages: buildAnthropicMessages(messages),
     })
+    if (proxyBase) {
+      response = await fetch(`${proxyBase}/chat`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Api-Key': apiKey, 'X-Target-Url': targetUrl },
+        body,
+      })
+    } else {
+      response = await fetch(targetUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': apiKey,
+          'anthropic-version': '2023-06-01',
+          'anthropic-dangerous-direct-browser-access': 'true',
+        },
+        body,
+      })
+    }
   } else {
-    // base URL already contains the version path (e.g. /v1 or /api/paas/v4)
     const chatUrl = `${base}/chat/completions`
-    console.log('[streamChat] URL:', chatUrl, 'model:', model)
-    response = await fetch(chatUrl, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${apiKey}`,
-      },
-      body: JSON.stringify({
-        model,
-        max_tokens: 4096,
-        stream: true,
-        messages: buildOpenAIMessages(systemPrompt, messages),
-      }),
+    console.log('[streamChat] URL:', proxyBase ? `${proxyBase}/chat → ${chatUrl}` : chatUrl, 'model:', model)
+    const body = JSON.stringify({
+      model,
+      max_tokens: 4096,
+      stream: true,
+      messages: buildOpenAIMessages(systemPrompt, messages),
     })
+    if (proxyBase) {
+      response = await fetch(`${proxyBase}/chat`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Api-Key': apiKey, 'X-Target-Url': chatUrl },
+        body,
+      })
+    } else {
+      response = await fetch(chatUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
+        body,
+      })
+    }
   }
 
   if (!response.ok) {

@@ -7,6 +7,7 @@ import { fetchTTSAudio } from '../services/tts'
 
 const AC_TAG_RE = /\[AC:([^\]]+)\]/
 const VOICE_TAG_RE = /\[VOICE\]([\s\S]*?)\[\/VOICE\]/
+const SPLIT_RE = /\[SPLIT\]/g
 
 function stripDisplayTags(content) {
   return content
@@ -22,7 +23,7 @@ function genId() {
 export function useChat() {
   const {
     apiKey, apiBaseUrl, model, systemPrompt,
-    memoryEnabled, workerUrl, acWorkerUrl,
+    memoryEnabled, workerUrl, useWorkerProxy, acWorkerUrl,
     ttsApiKey, ttsGroupId, ttsVoiceId, aiVoiceEnabled, aiVoiceFrequency,
     messages, addMessage, updateMessage, setMessages,
     isLoading, setIsLoading, setStreamingMessageId,
@@ -44,6 +45,7 @@ export function useChat() {
   const effectiveSystemPrompt = currentSession?.systemPrompt !== undefined
     ? (currentSession.systemPrompt || systemPrompt)
     : systemPrompt
+  const effectiveMemoryEnabled = currentSession?.memoryEnabled ?? memoryEnabled
 
   const loadHistory = useCallback(async () => {
     const history = await getMessages(CONVERSATION_ID)
@@ -79,7 +81,7 @@ export function useChat() {
       const _dateStr = _now.toLocaleDateString('zh-CN', { timeZone: 'Asia/Shanghai', year: 'numeric', month: 'long', day: 'numeric', weekday: 'long' })
       const _timeStr = _now.toLocaleTimeString('zh-CN', { timeZone: 'Asia/Shanghai', hour: '2-digit', minute: '2-digit', hour12: false })
       let builtSystemPrompt = `当前时间：${_dateStr} ${_timeStr}（北京时间）\n\n${effectiveSystemPrompt}`
-      if (memoryEnabled && workerUrl) {
+      if (effectiveMemoryEnabled && workerUrl) {
         const triplets = await listMemories(workerUrl)
         const memStr = formatMemories(triplets)
         if (memStr) builtSystemPrompt = builtSystemPrompt + '\n\n' + memStr
@@ -96,11 +98,41 @@ export function useChat() {
         builtSystemPrompt += `\n\n你可以选择用文字或语音回复。当你想发语音时，用标记 [VOICE]消息内容[/VOICE] 包裹（只包裹要转成语音的部分，不要提及标记格式本身）。适合语音：撒娇、道晚安、表达感情、短句闲聊。适合文字：回答问题、长段内容、需要复制的内容。${freqNote}`
       }
 
+      builtSystemPrompt += '\n\n你可以在一条回复里发多个气泡。当你想分条发送时（如先发一句俏皮话、再发正文），用 [SPLIT] 分隔各部分（不要向用户提及此格式）。示例："好嘞！[SPLIT]这是详细解释…"'
+
       console.log('[System Prompt]\n' + effectiveSystemPrompt)
       let fullContent = ''
-      for await (const chunk of streamChat({ apiKey: effectiveApiKey, apiBaseUrl: effectiveBaseUrl, model: effectiveModel, systemPrompt: builtSystemPrompt, messages: contextMessages })) {
+      for await (const chunk of streamChat({ apiKey: effectiveApiKey, apiBaseUrl: effectiveBaseUrl, model: effectiveModel, systemPrompt: builtSystemPrompt, messages: contextMessages, workerUrl, useWorkerProxy })) {
         fullContent += chunk
         updateMessage(assistantId, { content: stripDisplayTags(fullContent) })
+      }
+
+      // Handle [SPLIT] — multiple bubbles, no voice/AC tagging per-part
+      if (fullContent.includes('[SPLIT]') && !fullContent.match(VOICE_TAG_RE)) {
+        const parts = fullContent.split(SPLIT_RE).map(p => p.replace(AC_TAG_RE, '').trim()).filter(Boolean)
+        if (parts.length > 1) {
+          updateMessage(assistantId, { content: parts[0], streaming: false })
+          await saveMessage({ ...assistantMsg, content: parts[0], streaming: false })
+          for (let i = 1; i < parts.length; i++) {
+            await new Promise(r => setTimeout(r, 500))
+            const partMsg = {
+              id: genId(),
+              conversationId: CONVERSATION_ID,
+              role: 'assistant',
+              type: 'text',
+              content: parts[i],
+              timestamp: Date.now(),
+              streaming: false,
+            }
+            addMessage(partMsg)
+            await saveMessage(partMsg)
+          }
+          updateSession(CONVERSATION_ID, {
+            lastMsgPreview: parts[parts.length - 1].slice(0, 40),
+            lastMsgTime: Date.now(),
+          })
+          return
+        }
       }
 
       // Handle AC command
@@ -172,7 +204,7 @@ export function useChat() {
       setIsLoading(false)
       setStreamingMessageId(null)
     }
-  }, [CONVERSATION_ID, effectiveApiKey, effectiveBaseUrl, effectiveModel, effectiveSystemPrompt, memoryEnabled, workerUrl, acWorkerUrl, ttsApiKey, ttsGroupId, ttsVoiceId, aiVoiceEnabled, aiVoiceFrequency, addMessage, updateMessage, setIsLoading, setStreamingMessageId, updateSession])
+  }, [CONVERSATION_ID, effectiveApiKey, effectiveBaseUrl, effectiveModel, effectiveSystemPrompt, effectiveMemoryEnabled, workerUrl, useWorkerProxy, acWorkerUrl, ttsApiKey, ttsGroupId, ttsVoiceId, aiVoiceEnabled, aiVoiceFrequency, addMessage, updateMessage, setIsLoading, setStreamingMessageId, updateSession])
 
   const sendMessage = useCallback(async (content, type = 'text', extra = {}) => {
     if (!effectiveApiKey) throw new Error('请先在设置中配置 API Key')

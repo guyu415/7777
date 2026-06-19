@@ -42,6 +42,22 @@ export async function getBlob(id) {
   return record?.blob
 }
 
+export async function saveCustomFont(fontId, blob) {
+  const database = await getDB()
+  await database.put('blobs', { id: `font:${fontId}`, blob })
+}
+
+export async function getCustomFont(fontId) {
+  const database = await getDB()
+  const record = await database.get('blobs', `font:${fontId}`)
+  return record?.blob
+}
+
+export async function deleteCustomFont(fontId) {
+  const database = await getDB()
+  await database.delete('blobs', `font:${fontId}`)
+}
+
 export async function deleteMessageFromDB(id) {
   const database = await getDB()
   await database.delete('messages', id)
@@ -66,7 +82,20 @@ export async function getAllMessages() {
   return database.getAll('messages')
 }
 
-const DEFAULT_SESSIONS = [{ id: 'main', name: '默认对话', systemPrompt: '你是小漫，一个温柔可爱的AI助手。你说话简洁、有趣，偶尔会用一些可爱的语气词。', createdAt: Date.now(), signature: '小漫一直在这里等你～' }]
+const DEFAULT_SESSIONS = [{
+  id: 'main',
+  name: '默认对话',
+  systemPrompt: '你是小漫，一个温柔可爱的AI助手。你说话简洁、有趣，偶尔会用一些可爱的语气词。',
+  createdAt: Date.now(),
+  signature: '小漫一直在这里等你～',
+  // per-session overrides (null = use global default)
+  themeId: null,
+  chatBg: null,
+  fontFamily: null,
+  fontSize: null,
+  memoryEnabled: null,
+}]
+
 const DEFAULT_PROVIDERS = [
   { id: 'anthropic', name: 'Anthropic', baseUrl: 'https://api.anthropic.com', apiKey: '', models: ['claude-sonnet-4-6', 'claude-opus-4-8', 'claude-haiku-4-5-20251001'] },
   { id: 'openai', name: 'OpenAI', baseUrl: 'https://api.openai.com/v1', apiKey: '', models: ['gpt-4o', 'gpt-4o-mini', 'gpt-4-turbo'] },
@@ -82,14 +111,19 @@ export const useStore = create(
       systemPrompt: '你是小漫，一个温柔可爱的AI助手。你说话简洁、有趣，偶尔会用一些可爱的语气词。',
       memoryEnabled: false,
       workerUrl: '',
+      useWorkerProxy: false,
       userAvatar: '',
       aiAvatar: '',
       aiName: '小漫',
 
-      // Theme, background, font
+      // Theme, background, font (global defaults)
       themeId: 'pink',
       chatBg: { type: 'gradient', value: '', opacity: 1.0 },
       fontFamily: 'noto',
+      defaultFontSize: 16,
+
+      // Custom fonts (stored in IndexedDB, ids tracked here)
+      customFonts: [],
 
       // TTS / AI voice
       ttsApiKey: '',
@@ -118,12 +152,14 @@ export const useStore = create(
       setSystemPrompt: (prompt) => set({ systemPrompt: prompt }),
       setMemoryEnabled: (v) => set({ memoryEnabled: v }),
       setWorkerUrl: (v) => set({ workerUrl: v }),
+      setUseWorkerProxy: (v) => set({ useWorkerProxy: v }),
       setUserAvatar: (v) => set({ userAvatar: v }),
       setAiAvatar: (v) => set({ aiAvatar: v }),
       setAiName: (name) => set({ aiName: name }),
       setChatTheme: (id) => set({ themeId: id }),
       setChatBg: (bg) => set({ chatBg: bg }),
       setFontFamily: (f) => set({ fontFamily: f }),
+      setDefaultFontSize: (s) => set({ defaultFontSize: s }),
       setTtsApiKey: (v) => set({ ttsApiKey: v }),
       setTtsGroupId: (v) => set({ ttsGroupId: v }),
       setTtsVoiceId: (v) => set({ ttsVoiceId: v }),
@@ -155,6 +191,11 @@ export const useStore = create(
             aiAvatar,
             userAvatar,
             signature: '小漫一直在这里等你～',
+            themeId: null,
+            chatBg: null,
+            fontFamily: null,
+            fontSize: null,
+            memoryEnabled: null,
             ...session,
           }]
         }
@@ -185,6 +226,27 @@ export const useStore = create(
       setSessionSignature: (sessionId, sig) => set((state) => ({
         sessions: state.sessions.map(s => s.id === sessionId ? { ...s, signature: sig } : s)
       })),
+      setSessionTheme: (sessionId, themeId) => set((state) => ({
+        sessions: state.sessions.map(s => s.id === sessionId ? { ...s, themeId } : s)
+      })),
+      setSessionChatBg: (sessionId, chatBg) => set((state) => ({
+        sessions: state.sessions.map(s => s.id === sessionId ? { ...s, chatBg } : s)
+      })),
+      setSessionFont: (sessionId, fontFamily) => set((state) => ({
+        sessions: state.sessions.map(s => s.id === sessionId ? { ...s, fontFamily } : s)
+      })),
+      setSessionFontSize: (sessionId, fontSize) => set((state) => ({
+        sessions: state.sessions.map(s => s.id === sessionId ? { ...s, fontSize } : s)
+      })),
+      setSessionMemoryEnabled: (sessionId, memoryEnabled) => set((state) => ({
+        sessions: state.sessions.map(s => s.id === sessionId ? { ...s, memoryEnabled } : s)
+      })),
+      setSessionSystemPrompt: (sessionId, systemPrompt) => set((state) => ({
+        sessions: state.sessions.map(s => s.id === sessionId ? { ...s, systemPrompt } : s)
+      })),
+
+      addCustomFont: (font) => set((state) => ({ customFonts: [...state.customFonts, font] })),
+      removeCustomFont: (id) => set((state) => ({ customFonts: state.customFonts.filter(f => f.id !== id) })),
 
       setSelectedProviderId: (id) => set({ selectedProviderId: id }),
       setSelectedModelId: (id) => set({ selectedModelId: id }),
@@ -196,7 +258,7 @@ export const useStore = create(
     }),
     {
       name: 'pink-chat-settings',
-      version: 7,
+      version: 8,
       migrate: (persisted, version) => {
         if (version < 2) {
           const providers = [
@@ -214,7 +276,6 @@ export const useStore = create(
           }
         }
         if (version < 3) {
-          // Fix provider base URLs: /v1 now goes in the base URL, not in the fetch path
           const urlFix = { 'https://api.openai.com': 'https://api.openai.com/v1', 'https://api.deepseek.com': 'https://api.deepseek.com/v1' }
           persisted = {
             ...persisted,
@@ -222,26 +283,16 @@ export const useStore = create(
           }
         }
         if (version < 4) {
-          // Add new fields for theme, bg, font, per-session signatures
           persisted = {
             themeId: 'pink',
             chatBg: { type: 'gradient', value: '', opacity: 1.0 },
             fontFamily: 'noto',
             ...persisted,
-            sessions: (persisted.sessions || []).map(s => ({
-              signature: '小漫一直在这里等你～',
-              ...s,
-            })),
+            sessions: (persisted.sessions || []).map(s => ({ signature: '小漫一直在这里等你～', ...s })),
           }
         }
         if (version < 5) {
-          persisted = {
-            ttsApiKey: '',
-            ttsGroupId: '',
-            ttsVoiceId: 'English_Trustworthy_Man',
-            ttsAutoRead: false,
-            ...persisted,
-          }
+          persisted = { ttsApiKey: '', ttsGroupId: '', ttsVoiceId: 'English_Trustworthy_Man', ttsAutoRead: false, ...persisted }
         }
         if (version < 6) {
           persisted = { acWorkerUrl: 'https://ac.xiaoman.xyz', ...persisted }
@@ -249,6 +300,27 @@ export const useStore = create(
         if (version < 7) {
           const { ttsAutoRead: _removed, ...rest } = persisted
           persisted = { aiVoiceEnabled: true, aiVoiceFrequency: 0.5, ...rest }
+        }
+        if (version < 8) {
+          persisted = {
+            useWorkerProxy: false,
+            defaultFontSize: 16,
+            customFonts: [],
+            ...persisted,
+            // Rename milktea → skyblue
+            themeId: persisted.themeId === 'milktea' ? 'skyblue' : persisted.themeId,
+            // Add per-session nullable overrides
+            sessions: (persisted.sessions || []).map(s => ({
+              themeId: null,
+              chatBg: null,
+              fontFamily: null,
+              fontSize: null,
+              memoryEnabled: null,
+              ...s,
+              // also migrate per-session milktea
+              themeId: (s.themeId === 'milktea' ? 'skyblue' : s.themeId) ?? null,
+            })),
+          }
         }
         return persisted
       },
@@ -259,12 +331,15 @@ export const useStore = create(
         systemPrompt: state.systemPrompt,
         memoryEnabled: state.memoryEnabled,
         workerUrl: state.workerUrl,
+        useWorkerProxy: state.useWorkerProxy,
         userAvatar: state.userAvatar,
         aiAvatar: state.aiAvatar,
         aiName: state.aiName,
         themeId: state.themeId,
         chatBg: state.chatBg,
         fontFamily: state.fontFamily,
+        defaultFontSize: state.defaultFontSize,
+        customFonts: state.customFonts,
         sessions: state.sessions,
         currentSessionId: state.currentSessionId,
         providers: state.providers,
