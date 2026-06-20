@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { ChevronLeft } from 'lucide-react'
 import { useStore, getMessages } from '../store'
 
@@ -74,6 +74,21 @@ export default function SessionSettings({ theme }) {
   const [localSignature, setLocalSignature] = useState('')
   const [localSystemPrompt, setLocalSystemPrompt] = useState('')
   const [localAvatar, setLocalAvatar] = useState('')
+  const [showAvatarUrl, setShowAvatarUrl] = useState(false)
+  const avatarFileRef = useRef(null)
+
+  const handleAvatarFile = (e) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    const reader = new FileReader()
+    reader.onload = () => {
+      const dataUrl = reader.result
+      setLocalAvatar(dataUrl)
+      setSessionAiAvatar(currentSessionId, dataUrl)
+    }
+    reader.readAsDataURL(file)
+    e.target.value = ''
+  }
 
   useEffect(() => {
     if (!currentSession) return
@@ -184,14 +199,55 @@ export default function SessionSettings({ theme }) {
               />
             </div>
             <div>
-              <label className="text-xs pl-1 mb-1 block" style={{ color: '#6a90b8' }}>头像 URL</label>
-              <input
-                value={localAvatar}
-                onChange={e => setLocalAvatar(e.target.value)}
-                onBlur={() => setSessionAiAvatar(currentSessionId, localAvatar.trim())}
-                placeholder="留空使用默认 🌸"
-                style={inputStyle}
-              />
+              <label className="text-xs pl-1 mb-2 block" style={{ color: '#6a90b8' }}>AI 头像</label>
+              <div className="flex items-center gap-3 mb-1">
+                <div style={{
+                  width: 52, height: 52, borderRadius: '50%', overflow: 'hidden', flexShrink: 0,
+                  background: `${primary}18`, border: `2px solid ${primary}44`,
+                  display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 24,
+                }}>
+                  {localAvatar
+                    ? <img src={localAvatar} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                    : '🌸'}
+                </div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 6, flex: 1 }}>
+                  <button
+                    onClick={() => avatarFileRef.current?.click()}
+                    style={{
+                      padding: '7px 14px', borderRadius: 20, fontSize: 13, cursor: 'pointer',
+                      background: `${primary}18`, color: primaryDark,
+                      border: `1.5px solid ${primary}44`, textAlign: 'center',
+                    }}
+                  >
+                    📷 从相册上传
+                  </button>
+                  <button
+                    onClick={() => setShowAvatarUrl(v => !v)}
+                    style={{ fontSize: 12, color: '#7a9cc0', background: 'none', border: 'none', cursor: 'pointer', textAlign: 'left', padding: 0 }}
+                  >
+                    {showAvatarUrl ? '▾ 收起URL输入' : '▸ 或输入图片URL'}
+                  </button>
+                </div>
+                {localAvatar && (
+                  <button
+                    onClick={() => { setLocalAvatar(''); setSessionAiAvatar(currentSessionId, '') }}
+                    style={{ fontSize: 12, color: '#a0b8d0', background: 'none', border: 'none', cursor: 'pointer', padding: 4, flexShrink: 0 }}
+                  >
+                    ✕
+                  </button>
+                )}
+                <input ref={avatarFileRef} type="file" accept="image/*" className="hidden" onChange={handleAvatarFile} />
+              </div>
+              {showAvatarUrl && (
+                <input
+                  value={localAvatar.startsWith('data:') ? '' : localAvatar}
+                  onChange={e => setLocalAvatar(e.target.value)}
+                  onBlur={() => { if (!localAvatar.startsWith('data:')) setSessionAiAvatar(currentSessionId, localAvatar.trim()) }}
+                  placeholder={localAvatar.startsWith('data:') ? '（已上传图片）' : 'https://example.com/avatar.jpg'}
+                  style={{ ...inputStyle, marginTop: 6 }}
+                  disabled={localAvatar.startsWith('data:')}
+                />
+              )}
             </div>
             <div>
               <label className="text-xs pl-1 mb-1 block" style={{ color: '#6a90b8' }}>签名 / 状态</label>

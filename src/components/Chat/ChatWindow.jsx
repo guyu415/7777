@@ -6,6 +6,8 @@ import { useChat } from '../../hooks/useChat'
 import { useScheduledMessages } from '../../hooks/useScheduledMessages'
 import { useStore, deleteMessageFromDB } from '../../store'
 
+const draftsBySession = {}
+
 function Signature({ text, color }) {
   const wrapRef = useRef(null)
   const firstRef = useRef(null)
@@ -36,7 +38,7 @@ function Signature({ text, color }) {
 }
 
 export default function ChatWindow({ theme }) {
-  const { messages, sendMessage, loadHistory, isLoading, regenerate, deleteMsg } = useChat()
+  const { messages, sendMessage, loadHistory, isLoading, regenerate, deleteMsg, stopStreaming } = useChat()
   const { fetchPendingMessages, updateActiveTime } = useScheduledMessages()
   const {
     setCurrentView, apiKey, aiAvatar: globalAiAvatar, aiName: globalAiName,
@@ -79,6 +81,17 @@ export default function ChatWindow({ theme }) {
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages.length, messages[messages.length - 1]?.content?.length])
+
+  // Draft preservation: save on unmount/session-change, restore on mount/session-change
+  useEffect(() => {
+    const draft = draftsBySession[currentSessionId] || ''
+    if (draft) setTimeout(() => inputRef.current?.fill(draft), 0)
+    return () => {
+      const text = inputRef.current?.getText() || ''
+      if (text.trim()) draftsBySession[currentSessionId] = text
+      else delete draftsBySession[currentSessionId]
+    }
+  }, [currentSessionId])
 
   const handleSendVoice = ({ transcript }) => {
     updateActiveTime()
@@ -258,6 +271,32 @@ export default function ChatWindow({ theme }) {
               🗑️ 删除
             </button>
           </div>
+        </div>
+      )}
+
+      {/* Stop streaming button */}
+      {isLoading && (
+        <div className="flex justify-center py-1.5 flex-shrink-0">
+          <button
+            onClick={stopStreaming}
+            title="中断回复"
+            style={{
+              width: 34, height: 34, borderRadius: '50%',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              background: 'rgba(255,255,255,0.88)',
+              backdropFilter: 'blur(12px)',
+              WebkitBackdropFilter: 'blur(12px)',
+              border: `1.5px solid ${primaryColor}50`,
+              boxShadow: `0 2px 12px ${primaryColor}30`,
+              cursor: 'pointer',
+              color: primaryColor,
+              flexShrink: 0,
+            }}
+          >
+            <svg width="12" height="12" viewBox="0 0 12 12" fill="currentColor">
+              <rect x="1" y="1" width="10" height="10" rx="2" />
+            </svg>
+          </button>
         </div>
       )}
 

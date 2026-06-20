@@ -1,4 +1,4 @@
-import { useCallback } from 'react'
+import { useCallback, useRef } from 'react'
 import { useStore, saveMessage, saveBlob, getMessages, deleteMessageFromDB } from '../store'
 import { streamChat } from '../services/claude'
 import { listMemories, formatMemories } from '../services/memory'
@@ -47,6 +47,12 @@ export function useChat() {
     : systemPrompt
   const effectiveMemoryEnabled = currentSession?.memoryEnabled ?? memoryEnabled
 
+  const abortRef = useRef(null)
+
+  const stopStreaming = useCallback(() => {
+    abortRef.current?.()
+  }, [])
+
   const loadHistory = useCallback(async () => {
     const history = await getMessages(CONVERSATION_ID)
     history.sort((a, b) => a.timestamp - b.timestamp)
@@ -61,6 +67,9 @@ export function useChat() {
   }, [CONVERSATION_ID, setMessages, updateSession])
 
   const streamResponse = useCallback(async (contextMessages) => {
+    const controller = new AbortController()
+    abortRef.current = () => controller.abort()
+
     const assistantId = genId()
     const assistantMsg = {
       id: assistantId,
@@ -75,6 +84,8 @@ export function useChat() {
     addMessage(assistantMsg)
     setIsLoading(true)
     setStreamingMessageId(assistantId)
+
+    let fullContent = ''
 
     try {
       const _now = new Date()
@@ -98,42 +109,16 @@ export function useChat() {
         builtSystemPrompt += `\n\n你可以选择用文字或语音回复。当你想发语音时，用标记 [VOICE]消息内容[/VOICE] 包裹（只包裹要转成语音的部分，不要提及标记格式本身）。适合语音：撒娇、道晚安、表达感情、短句闲聊。适合文字：回答问题、长段内容、需要复制的内容。${freqNote}`
       }
 
-      builtSystemPrompt += '\n\n你可以在一条回复里发多个气泡。当你想分条发送时（如先发一句俏皮话、再发正文），用 [SPLIT] 分隔各部分（不要向用户提及此格式）。示例："好嘞！[SPLIT]这是详细解释…"'
+      builtSystemPrompt += '\n\n回复时请用空行（两个换行符）分隔不同的想法或段落，每段保持简短（1-2句话）。像发消息一样一段一段地说，不要大段堆砌。'
 
       console.log('[System Prompt]\n' + effectiveSystemPrompt)
-      let fullContent = ''
-      for await (const chunk of streamChat({ apiKey: effectiveApiKey, apiBaseUrl: effectiveBaseUrl, model: effectiveModel, systemPrompt: builtSystemPrompt, messages: contextMessages, workerUrl, useWorkerProxy })) {
+
+      for await (const chunk of streamChat({ apiKey: effectiveApiKey, apiBaseUrl: effectiveBaseUrl, model: effectiveModel, systemPrompt: builtSystemPrompt, messages: contextMessages, workerUrl, useWorkerProxy, signal: controller.signal })) {
         fullContent += chunk
         updateMessage(assistantId, { content: stripDisplayTags(fullContent) })
       }
 
-      // Handle [SPLIT] — multiple bubbles, no voice/AC tagging per-part
-      if (fullContent.includes('[SPLIT]') && !fullContent.match(VOICE_TAG_RE)) {
-        const parts = fullContent.split(SPLIT_RE).map(p => p.replace(AC_TAG_RE, '').trim()).filter(Boolean)
-        if (parts.length > 1) {
-          updateMessage(assistantId, { content: parts[0], streaming: false })
-          await saveMessage({ ...assistantMsg, content: parts[0], streaming: false })
-          for (let i = 1; i < parts.length; i++) {
-            await new Promise(r => setTimeout(r, 500))
-            const partMsg = {
-              id: genId(),
-              conversationId: CONVERSATION_ID,
-              role: 'assistant',
-              type: 'text',
-              content: parts[i],
-              timestamp: Date.now(),
-              streaming: false,
-            }
-            addMessage(partMsg)
-            await saveMessage(partMsg)
-          }
-          updateSession(CONVERSATION_ID, {
-            lastMsgPreview: parts[parts.length - 1].slice(0, 40),
-            lastMsgTime: Date.now(),
-          })
-          return
-        }
-      }
+      // --- Post-stream processing ---
 
       // Handle AC command
       const acMatch = fullContent.match(AC_TAG_RE)
@@ -149,62 +134,145 @@ export function useChat() {
         }
       }
 
-      // Handle VOICE tag
       const voiceMatch = fullContent.match(VOICE_TAG_RE)
+
       if (voiceMatch && ttsApiKey && ttsGroupId && aiVoiceEnabled) {
+        // Voice mode: emit surrounding text bubbles first, then an independent voice bubble
         const voiceText = voiceMatch[1].trim()
         const surroundText = fullContent.replace(VOICE_TAG_RE, '').replace(AC_TAG_RE, '').trim()
+        const textParts = surroundText.split(/\n\n+/).map(p => p.trim()).filter(Boolean)
 
-        // Immediately switch to loading state so streaming text doesn't flash then disappear
-        updateMessage(assistantId, { streaming: false, voiceLoading: true, content: surroundText })
+        if (textParts.length > 0) {
+          // First text part → reuse the streaming bubble
+          updateMessage(assistantId, { content: textParts[0], streaming: false })
+          await saveMessage({ ...assistantMsg, content: textParts[0], streaming: false })
 
-        let voiceBlobId = null
-        let duration = 0
+          // Additional text parts with delay
+          for (let i = 1; i < textParts.length; i++) {
+            await new Promise(r => setTimeout(r, 300))
+            const partMsg = {
+              id: genId(), conversationId: CONVERSATION_ID, role: 'assistant',
+              type: 'text', content: textParts[i], timestamp: Date.now(), streaming: false,
+            }
+            addMessage(partMsg)
+            await saveMessage(partMsg)
+          }
 
-        try {
-          const blob = await fetchTTSAudio(voiceText, {
-            apiKey: ttsApiKey, groupId: ttsGroupId,
-            voiceId: ttsVoiceId || 'English_Trustworthy_Man',
-          })
-          // Compute duration
+          // Delay before voice bubble
+          await new Promise(r => setTimeout(r, 300))
+
+          // Voice as a separate new bubble
+          const voiceMsgId = genId()
+          const voiceMsgBase = {
+            id: voiceMsgId, conversationId: CONVERSATION_ID, role: 'assistant',
+            type: 'text', content: '', timestamp: Date.now(), streaming: false, voiceLoading: true,
+          }
+          addMessage(voiceMsgBase)
+
+          let voiceBlobId = null, duration = 0
           try {
-            const ab = await blob.arrayBuffer()
-            const ac = new AudioContext()
-            const decoded = await ac.decodeAudioData(ab)
-            duration = Math.round(decoded.duration)
-            ac.close()
-          } catch {}
-          voiceBlobId = genId()
-          await saveBlob(voiceBlobId, blob)
-        } catch (e) {
-          console.error('[TTS]', e.message)
+            const blob = await fetchTTSAudio(voiceText, { apiKey: ttsApiKey, groupId: ttsGroupId, voiceId: ttsVoiceId || 'English_Trustworthy_Man' })
+            try {
+              const ab = await blob.arrayBuffer()
+              const ac = new AudioContext()
+              const decoded = await ac.decodeAudioData(ab)
+              duration = Math.round(decoded.duration)
+              ac.close()
+            } catch {}
+            voiceBlobId = genId()
+            await saveBlob(voiceBlobId, blob)
+          } catch (e) {
+            console.error('[TTS]', e.message)
+          }
+
+          const voiceUpdates = voiceBlobId
+            ? { type: 'voice', voiceBlobId, duration, content: '', voiceText, voiceLoading: false, streaming: false, ...(acStatus ? { acStatus } : {}) }
+            : { content: voiceText, voiceLoading: false, streaming: false, type: 'text', ...(acStatus ? { acStatus } : {}) }
+          updateMessage(voiceMsgId, voiceUpdates)
+          await saveMessage({ ...voiceMsgBase, ...voiceUpdates })
+          updateSession(CONVERSATION_ID, { lastMsgPreview: voiceText.slice(0, 40), lastMsgTime: Date.now() })
+
+        } else {
+          // No surrounding text — voice replaces the streaming bubble
+          updateMessage(assistantId, { streaming: false, voiceLoading: true, content: '' })
+
+          let voiceBlobId = null, duration = 0
+          try {
+            const blob = await fetchTTSAudio(voiceText, { apiKey: ttsApiKey, groupId: ttsGroupId, voiceId: ttsVoiceId || 'English_Trustworthy_Man' })
+            try {
+              const ab = await blob.arrayBuffer()
+              const ac = new AudioContext()
+              const decoded = await ac.decodeAudioData(ab)
+              duration = Math.round(decoded.duration)
+              ac.close()
+            } catch {}
+            voiceBlobId = genId()
+            await saveBlob(voiceBlobId, blob)
+          } catch (e) {
+            console.error('[TTS]', e.message)
+          }
+
+          const updates = voiceBlobId
+            ? { type: 'voice', voiceBlobId, duration, content: '', voiceText, voiceLoading: false, streaming: false, ...(acStatus ? { acStatus } : {}) }
+            : { content: voiceText, voiceLoading: false, streaming: false, type: 'text', ...(acStatus ? { acStatus } : {}) }
+          updateMessage(assistantId, updates)
+          await saveMessage({ ...assistantMsg, ...updates })
+          updateSession(CONVERSATION_ID, { lastMsgPreview: voiceText.slice(0, 40), lastMsgTime: Date.now() })
         }
 
-        const updates = voiceBlobId
-          ? { type: 'voice', voiceBlobId, duration, content: surroundText, voiceText, voiceLoading: false, streaming: false, ...(acStatus ? { acStatus } : {}) }
-          : { content: voiceText + (surroundText ? '\n' + surroundText : ''), voiceLoading: false, streaming: false, ...(acStatus ? { acStatus } : {}) }
-        updateMessage(assistantId, updates)
-        await saveMessage({ ...assistantMsg, ...updates })
-        updateSession(CONVERSATION_ID, {
-          lastMsgPreview: voiceText.slice(0, 40),
-          lastMsgTime: Date.now(),
-        })
       } else {
+        // Text-only: auto-split by paragraph breaks (also treat [SPLIT] as paragraph break)
         const displayContent = fullContent.replace(AC_TAG_RE, '').replace(VOICE_TAG_RE, '$1').trim()
-        updateMessage(assistantId, { content: displayContent, streaming: false, ...(acStatus ? { acStatus } : {}) })
-        await saveMessage({ ...assistantMsg, content: displayContent, streaming: false, ...(acStatus ? { acStatus } : {}) })
-        updateSession(CONVERSATION_ID, {
-          lastMsgPreview: displayContent.slice(0, 40),
-          lastMsgTime: Date.now(),
-        })
+        const splitContent = displayContent.replace(SPLIT_RE, '\n\n')
+        const parts = splitContent.split(/\n\n+/).map(p => p.trim()).filter(Boolean)
+
+        if (parts.length > 1) {
+          updateMessage(assistantId, { content: parts[0], streaming: false })
+          await saveMessage({ ...assistantMsg, content: parts[0], streaming: false })
+
+          for (let i = 1; i < parts.length; i++) {
+            await new Promise(r => setTimeout(r, 300))
+            const isLast = i === parts.length - 1
+            const partMsg = {
+              id: genId(), conversationId: CONVERSATION_ID, role: 'assistant',
+              type: 'text', content: parts[i], timestamp: Date.now(), streaming: false,
+              ...(isLast && acStatus ? { acStatus } : {}),
+            }
+            addMessage(partMsg)
+            await saveMessage(partMsg)
+          }
+
+          updateSession(CONVERSATION_ID, {
+            lastMsgPreview: parts[parts.length - 1].slice(0, 40),
+            lastMsgTime: Date.now(),
+          })
+        } else {
+          const content = parts[0] || displayContent
+          updateMessage(assistantId, { content, streaming: false, ...(acStatus ? { acStatus } : {}) })
+          await saveMessage({ ...assistantMsg, content, streaming: false, ...(acStatus ? { acStatus } : {}) })
+          updateSession(CONVERSATION_ID, { lastMsgPreview: content.slice(0, 40), lastMsgTime: Date.now() })
+        }
       }
+
     } catch (err) {
-      updateMessage(assistantId, { content: `❌ ${err.message}`, streaming: false, error: true })
+      if (err.name === 'AbortError') {
+        const savedContent = stripDisplayTags(fullContent)
+        if (savedContent.trim()) {
+          updateMessage(assistantId, { content: savedContent, streaming: false })
+          await saveMessage({ ...assistantMsg, content: savedContent, streaming: false })
+          updateSession(CONVERSATION_ID, { lastMsgPreview: savedContent.slice(0, 40), lastMsgTime: Date.now() })
+        } else {
+          deleteMessage(assistantId)
+        }
+      } else {
+        updateMessage(assistantId, { content: `❌ ${err.message}`, streaming: false, error: true })
+      }
     } finally {
+      abortRef.current = null
       setIsLoading(false)
       setStreamingMessageId(null)
     }
-  }, [CONVERSATION_ID, effectiveApiKey, effectiveBaseUrl, effectiveModel, effectiveSystemPrompt, effectiveMemoryEnabled, workerUrl, useWorkerProxy, acWorkerUrl, ttsApiKey, ttsGroupId, ttsVoiceId, aiVoiceEnabled, aiVoiceFrequency, addMessage, updateMessage, setIsLoading, setStreamingMessageId, updateSession])
+  }, [CONVERSATION_ID, effectiveApiKey, effectiveBaseUrl, effectiveModel, effectiveSystemPrompt, effectiveMemoryEnabled, workerUrl, useWorkerProxy, acWorkerUrl, ttsApiKey, ttsGroupId, ttsVoiceId, aiVoiceEnabled, aiVoiceFrequency, addMessage, updateMessage, deleteMessage, setIsLoading, setStreamingMessageId, updateSession])
 
   const sendMessage = useCallback(async (content, type = 'text', extra = {}) => {
     if (!effectiveApiKey) throw new Error('请先在设置中配置 API Key')
@@ -256,5 +324,5 @@ export function useChat() {
     deleteMessage(id)
   }, [deleteMessage])
 
-  return { messages, sendMessage, loadHistory, isLoading, regenerate, deleteMsg }
+  return { messages, sendMessage, loadHistory, isLoading, regenerate, deleteMsg, stopStreaming }
 }
