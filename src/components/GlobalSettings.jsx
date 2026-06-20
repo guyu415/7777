@@ -122,6 +122,7 @@ export default function GlobalSettings({ theme }) {
       await fontFace.load()
       document.fonts.add(fontFace)
       addCustomFont({ id, name, family })
+      setFontFamily(id)
     } catch (err) {
       alert('字体加载失败：' + err.message)
     }
