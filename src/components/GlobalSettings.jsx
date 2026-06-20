@@ -170,8 +170,10 @@ export default function GlobalSettings({ theme }) {
   return (
     <div className="flex flex-col h-full" style={{ background: 'transparent' }}>
       {/* Header */}
-      <div className="flex items-center justify-between px-4 py-3 safe-top flex-shrink-0"
+      <div className="flex items-center justify-between px-4 flex-shrink-0"
         style={{
+          paddingTop: 'calc(var(--safe-top) + 14px)',
+          paddingBottom: 12,
           background: 'rgba(255,255,255,0.72)',
           backdropFilter: 'blur(24px)',
           WebkitBackdropFilter: 'blur(24px)',
