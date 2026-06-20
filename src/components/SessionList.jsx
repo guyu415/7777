@@ -21,7 +21,7 @@ export default function SessionList({ theme, onSelectSession }) {
   const {
     sessions, currentSessionId, setCurrentSessionId,
     addSession, updateSession, deleteSession,
-    systemPrompt, setMessages, selectedProviderId, selectedModelId,
+    systemPrompt, setMessages,
   } = useStore()
 
   const [editingId, setEditingId] = useState(null)
@@ -32,7 +32,19 @@ export default function SessionList({ theme, onSelectSession }) {
 
   const handleNew = () => {
     const id = genId()
-    addSession({ id, name: '新对话', systemPrompt: systemPrompt || '', createdAt: Date.now(), providerId: selectedProviderId, modelId: selectedModelId })
+    const curSess = sessions?.find(s => s.id === currentSessionId)
+    addSession({
+      id, name: '新对话',
+      systemPrompt: curSess?.systemPrompt || systemPrompt || '',
+      createdAt: Date.now(),
+      apiKey: curSess?.apiKey || '',
+      baseUrl: curSess?.baseUrl || '',
+      providerName: curSess?.providerName || '',
+      model: curSess?.model || '',
+      ttsApiKey: curSess?.ttsApiKey || '',
+      ttsGroupId: curSess?.ttsGroupId || '',
+      ttsVoiceId: curSess?.ttsVoiceId || '',
+    })
     setCurrentSessionId(id)
     setMessages([])
     onSelectSession?.()
