@@ -59,7 +59,7 @@ export default function MessageBubble({ message, onLongPress, onRegenerate, isLo
         boxShadow: isUser
           ? `0 2px 8px ${theme?.userBubbleShadow || 'rgba(255,133,179,0.2)'}, 0 0 12px ${theme?.primary || '#ff85b3'}40`
           : `0 2px 8px ${theme?.aiBubbleShadow || 'rgba(160,220,180,0.2)'}, 0 0 12px ${theme?.aiBubbleShadow || 'rgba(160,220,180,0.2)'}`,
-        border: '1.5px solid rgba(255,182,209,0.4)'
+        border: '3px solid rgba(255,182,209,0.5)',
       }}>
       {isUser
         ? (userAvatar ? <img src={userAvatar} alt="" className="w-full h-full object-cover" /> : '🐣')
@@ -74,8 +74,8 @@ export default function MessageBubble({ message, onLongPress, onRegenerate, isLo
     WebkitBackdropFilter: 'blur(12px)',
     border: `1px solid ${theme?.userBubbleBorder || 'rgba(255,133,179,0.35)'}`,
     boxShadow: `0 4px 16px ${theme?.userBubbleShadow || 'rgba(255,133,179,0.18)'}, inset 0 1px 0 rgba(255,255,255,0.4)`,
-    color: theme?.userBubbleText || '#3A5A6A',
-    textShadow: '0 0 10px rgba(58, 90, 106, 0.18), 0 1px 2px rgba(255, 255, 255, 0.35)',
+    color: theme?.userBubbleText || '#D4A854',
+    textShadow: '0 0 10px rgba(212, 168, 84, 0.25), 0 1px 2px rgba(255, 255, 255, 0.4)',
   }
 
   const aiBubbleStyle = {
@@ -100,14 +100,14 @@ export default function MessageBubble({ message, onLongPress, onRegenerate, isLo
             {...pressProps}
           >
             <span className={isUser ? '' : 'bubble-ai'} style={{ position:'absolute', inset:0, borderRadius:'inherit', pointerEvents:'none' }} />
-            {/* AI bubble dog head decoration */}
+            {/* AI bubble dog head — paws 5-8px inside bubble top edge */}
             {!isUser && (
               <img
                 src="/assets/dog-head.png"
                 alt=""
                 style={{
                   position: 'absolute',
-                  top: -40,
+                  top: -43,
                   left: -6,
                   width: 50, height: 50,
                   objectFit: 'contain',
@@ -117,7 +117,7 @@ export default function MessageBubble({ message, onLongPress, onRegenerate, isLo
                 }}
               />
             )}
-            {/* User bubble dog tail decoration (replaces CSS triangle) */}
+            {/* User bubble dog tail — rotated 30° toward lower-right, clear of avatar */}
             {isUser && (
               <img
                 src="/assets/dog-tail.png"
@@ -130,6 +130,7 @@ export default function MessageBubble({ message, onLongPress, onRegenerate, isLo
                   objectFit: 'contain',
                   pointerEvents: 'none',
                   zIndex: 5,
+                  transform: 'rotate(30deg)',
                 }}
               />
             )}
