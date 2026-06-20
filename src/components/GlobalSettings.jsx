@@ -121,9 +121,12 @@ export default function GlobalSettings({ theme }) {
       const fontFace = new FontFace(family, `url(${url})`)
       await fontFace.load()
       document.fonts.add(fontFace)
+      console.log(`[FONT-UPLOAD] FontFace已注册: family=${family} id=${id}`)
       addCustomFont({ id, name, family })
       setFontFamily(id)
+      console.log(`[FONT-UPLOAD] addCustomFont + setFontFamily(${id}) 调用完毕`)
     } catch (err) {
+      console.error('[FONT-UPLOAD] 失败:', err)
       alert('字体加载失败：' + err.message)
     }
   }

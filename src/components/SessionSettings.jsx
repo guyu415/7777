@@ -103,9 +103,12 @@ export default function SessionSettings({ theme }) {
     if (!file) return
     e.target.value = ''
 
-    const ALLOWED = ['image/png', 'image/jpeg', 'image/jpg', 'image/webp', 'image/gif', 'image/bmp']
-    if (!ALLOWED.includes(file.type.toLowerCase())) {
-      const ext = file.name.split('.').pop().toLowerCase()
+    const ext = file.name.split('.').pop().toLowerCase()
+    const ALLOWED_TYPES = ['image/png', 'image/jpeg', 'image/webp', 'image/gif', 'image/bmp']
+    const ALLOWED_EXTS = ['png', 'jpg', 'jpeg', 'webp', 'gif', 'bmp']
+    const mimeOk = !file.type || ALLOWED_TYPES.includes(file.type.toLowerCase())
+    const extOk = ALLOWED_EXTS.includes(ext)
+    if (!mimeOk && !extOk) {
       if (ext === 'heic' || ext === 'heif') {
         alert('HEIC/HEIF 格式暂不支持，请先在相册中将图片转换为 JPG 再上传。')
       } else {
