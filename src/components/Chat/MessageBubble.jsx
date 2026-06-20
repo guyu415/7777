@@ -74,7 +74,8 @@ export default function MessageBubble({ message, onLongPress, onRegenerate, isLo
     WebkitBackdropFilter: 'blur(12px)',
     border: `1px solid ${theme?.userBubbleBorder || 'rgba(255,133,179,0.35)'}`,
     boxShadow: `0 4px 16px ${theme?.userBubbleShadow || 'rgba(255,133,179,0.18)'}, inset 0 1px 0 rgba(255,255,255,0.4)`,
-    color: theme?.userBubbleText || '#C78FCA',
+    color: theme?.userBubbleText || '#3A5A6A',
+    textShadow: '0 0 10px rgba(58, 90, 106, 0.18), 0 1px 2px rgba(255, 255, 255, 0.35)',
   }
 
   const aiBubbleStyle = {
@@ -98,18 +99,40 @@ export default function MessageBubble({ message, onLongPress, onRegenerate, isLo
             style={isUser ? userBubbleStyle : aiBubbleStyle}
             {...pressProps}
           >
-            <span className={isUser ? 'bubble-user' : 'bubble-ai'} style={{ position:'absolute', inset:0, borderRadius:'inherit', pointerEvents:'none' }} />
-            {/* Corner ornament */}
-            <span style={{
-              position: 'absolute',
-              top: -4,
-              [isUser ? 'right' : 'left']: -4,
-              fontSize: 10,
-              pointerEvents: 'none',
-              zIndex: 1,
-            }}>
-              {isUser ? '🐾' : '🌿'}
-            </span>
+            <span className={isUser ? '' : 'bubble-ai'} style={{ position:'absolute', inset:0, borderRadius:'inherit', pointerEvents:'none' }} />
+            {/* AI bubble dog head decoration */}
+            {!isUser && (
+              <img
+                src="/assets/dog-head.png"
+                alt=""
+                style={{
+                  position: 'absolute',
+                  top: -40,
+                  left: -6,
+                  width: 50, height: 50,
+                  objectFit: 'contain',
+                  pointerEvents: 'none',
+                  zIndex: 5,
+                  filter: 'drop-shadow(0 2px 5px rgba(0,0,0,0.12))',
+                }}
+              />
+            )}
+            {/* User bubble dog tail decoration (replaces CSS triangle) */}
+            {isUser && (
+              <img
+                src="/assets/dog-tail.png"
+                alt=""
+                style={{
+                  position: 'absolute',
+                  bottom: -10,
+                  right: -14,
+                  width: 30, height: 30,
+                  objectFit: 'contain',
+                  pointerEvents: 'none',
+                  zIndex: 5,
+                }}
+              />
+            )}
             {message.streaming && !message.content ? (
               <TypingIndicator />
             ) : (
