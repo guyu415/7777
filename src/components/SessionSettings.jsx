@@ -101,10 +101,60 @@ export default function SessionSettings({ theme }) {
   const handleBgFile = async (e) => {
     const file = e.target.files?.[0]
     if (!file) return
-    const blobKey = `bg:${currentSessionId}`
-    await saveBlob(blobKey, file)
-    setSessionChatBg(currentSessionId, { type: 'image', blobKey, opacity: currentSession?.chatBg?.opacity ?? 0.9 })
     e.target.value = ''
+
+    const ALLOWED = ['image/png', 'image/jpeg', 'image/jpg', 'image/webp', 'image/gif', 'image/bmp']
+    if (!ALLOWED.includes(file.type.toLowerCase())) {
+      const ext = file.name.split('.').pop().toLowerCase()
+      if (ext === 'heic' || ext === 'heif') {
+        alert('HEIC/HEIF 格式暂不支持，请先在相册中将图片转换为 JPG 再上传。')
+      } else {
+        alert(`不支持的图片格式：${file.type || ext}`)
+      }
+      return
+    }
+
+    try {
+      console.log(`[BG] 开始处理背景图：${file.name} (${(file.size / 1024 / 1024).toFixed(2)} MB)`)
+      let blob = file
+      const MAX_SIZE = 10 * 1024 * 1024
+      if (file.size > MAX_SIZE) {
+        console.log('[BG] 图片过大，正在压缩…')
+        blob = await new Promise((resolve, reject) => {
+          const img = new window.Image()
+          const url = URL.createObjectURL(file)
+          img.onload = () => {
+            URL.revokeObjectURL(url)
+            let { width, height } = img
+            const MAX_DIM = 1920
+            if (width > MAX_DIM || height > MAX_DIM) {
+              const scale = MAX_DIM / Math.max(width, height)
+              width = Math.round(width * scale)
+              height = Math.round(height * scale)
+            }
+            const canvas = document.createElement('canvas')
+            canvas.width = width
+            canvas.height = height
+            canvas.getContext('2d').drawImage(img, 0, 0, width, height)
+            canvas.toBlob(b => {
+              if (b) { console.log(`[BG] 压缩完成：${(b.size / 1024 / 1024).toFixed(2)} MB`); resolve(b) }
+              else reject(new Error('canvas.toBlob 失败'))
+            }, 'image/jpeg', 0.82)
+          }
+          img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('图片加载失败')) }
+          img.src = url
+        })
+      }
+
+      const blobKey = `bg:${currentSessionId}`
+      await saveBlob(blobKey, blob)
+      console.log('[BG] 已存入 IndexedDB，key:', blobKey)
+      setSessionChatBg(currentSessionId, { type: 'image', blobKey, opacity: currentSession?.chatBg?.opacity ?? 0.9 })
+      console.log('[BG] 背景已更新')
+    } catch (err) {
+      console.error('[BG] 背景图处理失败', err)
+      alert('背景图处理失败：' + err.message)
+    }
   }
 
   useEffect(() => {

@@ -64,24 +64,30 @@ export default function App() {
   // Load custom fonts from IndexedDB whenever the list changes
   useEffect(() => {
     if (!customFonts?.length) return
-    customFonts.forEach(async (font) => {
-      if (document.fonts.check(`12px "${font.family}"`)) return
-      try {
-        const blob = await getCustomFont(font.id)
-        if (!blob) return
-        const url = URL.createObjectURL(blob)
-        const face = new FontFace(font.family, `url(${url})`)
-        await face.load()
-        document.fonts.add(face)
-        console.log(`[Font] 已加载: ${font.family}`)
-        // Force the browser to re-evaluate var(--app-font) by removing then re-setting
-        const prev = document.documentElement.style.getPropertyValue('--app-font')
-        document.documentElement.style.removeProperty('--app-font')
-        requestAnimationFrame(() => document.documentElement.style.setProperty('--app-font', prev || `'${font.family}', sans-serif`))
-      } catch (e) {
-        console.warn(`[Font] 加载失败: ${font.family}`, e)
+    const loadAll = async () => {
+      for (const font of customFonts) {
+        if (document.fonts.check(`12px "${font.family}"`)) continue
+        try {
+          const blob = await getCustomFont(font.id)
+          if (!blob) continue
+          const url = URL.createObjectURL(blob)
+          const face = new FontFace(font.family, `url(${url})`)
+          await face.load()
+          document.fonts.add(face)
+          console.log(`[Font] 已加载: ${font.family}`)
+        } catch (e) {
+          console.warn(`[Font] 加载失败: ${font.family}`, e)
+        }
       }
-    })
+      // Re-apply --app-font after all fonts are loaded so the browser picks up
+      // any custom FontFace that was registered after the CSS var was first set
+      const current = document.documentElement.style.getPropertyValue('--app-font')
+      if (current) {
+        document.documentElement.style.removeProperty('--app-font')
+        requestAnimationFrame(() => document.documentElement.style.setProperty('--app-font', current))
+      }
+    }
+    loadAll()
   }, [customFonts])
 
   // Load background image from IndexedDB

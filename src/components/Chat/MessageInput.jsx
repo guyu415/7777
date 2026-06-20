@@ -118,7 +118,7 @@ const MessageInput = forwardRef(function MessageInput({ onSend, onSendVoice, onS
       )}
 
       <div style={{
-        flex: 1, display: 'flex', alignItems: 'flex-end',
+        flex: 1, minWidth: 0, display: 'flex', alignItems: 'flex-end',
         background: 'rgba(255,255,255,0.5)',
         backdropFilter: 'blur(8px)',
         WebkitBackdropFilter: 'blur(8px)',
