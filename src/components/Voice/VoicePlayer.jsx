@@ -69,7 +69,7 @@ export default function VoicePlayer({ blobId, url: initialUrl, duration, isUser,
           </div>
         )}
       </div>
-      <span className={`text-xs flex-shrink-0 ${timeCls}`}>{fmtDuration(duration || 0)}</span>
+      <span className={`text-sm flex-shrink-0 ${timeCls}`}>{fmtDuration(duration || 0)}</span>
     </div>
   )
 }

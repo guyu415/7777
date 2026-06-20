@@ -152,13 +152,13 @@ export default function MessageBubble({ message, onLongPress, onRegenerate, isLo
               <div className="mt-2 pt-2" style={{ borderTop: '1px solid rgba(160,220,180,0.3)' }}>
                 <button
                   onClick={() => setShowVoiceText(v => !v)}
-                  className="text-[10px] px-2 py-0.5 rounded-full"
-                  style={{ color: '#3d6b52', border: '1px solid rgba(160,220,180,0.4)', background: 'rgba(255,255,255,0.3)' }}
+                  className="px-2.5 py-1 rounded-full"
+                  style={{ fontSize: 14, color: '#3d6b52', border: '1px solid rgba(160,220,180,0.4)', background: 'rgba(255,255,255,0.3)' }}
                 >
                   {showVoiceText ? '收起文字' : '查看文字'}
                 </button>
                 {showVoiceText && (
-                  <div className="mt-1.5 text-xs leading-relaxed whitespace-pre-wrap" style={{ color: '#3d6b52' }}>
+                  <div className="mt-1.5 leading-relaxed whitespace-pre-wrap" style={{ fontSize: 16, color: '#3d6b52' }}>
                     {message.voiceText}
                   </div>
                 )}

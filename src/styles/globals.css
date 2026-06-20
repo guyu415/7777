@@ -137,6 +137,16 @@ body {
 }
 .animate-fade-up { animation: fadeUp 0.25s ease-out; }
 
+/* Signature marquee */
+@keyframes marquee {
+  from { transform: translateX(0); }
+  to   { transform: translateX(-50%); }
+}
+.marquee-scroll {
+  animation: marquee 8s linear infinite;
+  will-change: transform;
+}
+
 /* Jelly bubble press effect */
 @keyframes bubble-press {
   0%   { transform: scale(1); }

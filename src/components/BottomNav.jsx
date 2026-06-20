@@ -1,9 +1,7 @@
-import clsx from 'clsx'
-
 const TABS = [
-  { id: 'chat',           icon: '💬', label: '聊天' },
-  { id: 'sessions',       icon: '📋', label: '会话' },
-  { id: 'globalSettings', icon: '⚙️', label: '全局设置' },
+  { id: 'sessions',       label: '会话' },
+  { id: 'chat',           label: '聊天' },
+  { id: 'globalSettings', label: '设置' },
 ]
 
 export default function BottomNav({ currentView, onChange, theme }) {
@@ -14,14 +12,13 @@ export default function BottomNav({ currentView, onChange, theme }) {
     <div
       className="flex items-center justify-around safe-bottom flex-shrink-0"
       style={{
-        background: 'rgba(255,255,255,0.88)',
+        background: `linear-gradient(to bottom, ${primary}14, rgba(255,255,255,0.55))`,
         backdropFilter: 'blur(20px)',
         WebkitBackdropFilter: 'blur(20px)',
-        borderTop: '1px solid rgba(200,220,255,0.3)',
-        boxShadow: '0 -2px 20px rgba(74,172,240,0.08)',
-        paddingTop: 6,
-        paddingBottom: 6,
-        minHeight: 56,
+        borderTop: `1px solid ${primary}22`,
+        paddingTop: 4,
+        paddingBottom: 4,
+        minHeight: 44,
       }}
     >
       {TABS.map(tab => {
@@ -30,37 +27,28 @@ export default function BottomNav({ currentView, onChange, theme }) {
           <button
             key={tab.id}
             onClick={() => onChange(tab.id)}
-            className="flex flex-col items-center gap-0.5 flex-1 py-1 transition-all duration-200"
+            className="flex items-center justify-center flex-1 transition-all duration-200"
+            style={{ padding: '4px 0' }}
           >
             <span
-              className={clsx('text-xl transition-all duration-200', active ? 'scale-110' : 'scale-100 opacity-60')}
-              style={active ? {
-                filter: `drop-shadow(0 2px 4px ${primary}80)`,
-              } : {}}
-            >
-              {tab.icon}
-            </span>
-            <span
-              className="text-[10px] font-medium transition-all duration-200"
+              className="flex items-center justify-center transition-all duration-200"
               style={{
-                color: active ? primaryDark : '#a0b0c8',
-                fontWeight: active ? 600 : 400,
+                position: 'relative',
+                minWidth: 56,
+                padding: '6px 16px',
+                borderRadius: '18px 18px 18px 6px',
+                fontSize: 14,
+                fontWeight: active ? 700 : 500,
+                color: active ? '#fff' : primaryDark,
+                background: active
+                  ? `linear-gradient(135deg, ${primary}, ${primaryDark})`
+                  : `${primary}1f`,
+                boxShadow: active ? `0 3px 10px ${primary}55` : 'none',
+                transform: active ? 'translateY(-1px) scale(1.05)' : 'scale(1)',
               }}
             >
               {tab.label}
             </span>
-            {active && (
-              <span
-                className="block rounded-full"
-                style={{
-                  width: 20,
-                  height: 3,
-                  background: `linear-gradient(90deg, ${primary}, ${primaryDark})`,
-                  marginTop: 1,
-                  borderRadius: 2,
-                }}
-              />
-            )}
           </button>
         )
       })}

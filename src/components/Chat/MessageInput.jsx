@@ -84,25 +84,17 @@ const MessageInput = forwardRef(function MessageInput({ onSend, onSendVoice, onS
     )
   }
 
+  const primaryColor = theme?.primary || '#ff85b3'
+
   return (
-    <div className="safe-bottom" style={{ flexShrink: 0 }}>
-      {/* Wave divider above input */}
-      <div style={{ height: 8, overflow: 'hidden', marginBottom: -1 }}>
-        <svg viewBox="0 0 400 8" preserveAspectRatio="none" style={{ width: '100%', height: '100%' }}>
-          <path d="M0,4 C50,8 100,0 150,4 C200,8 250,0 300,4 C350,8 400,0 400,4 L400,0 L0,0 Z"
-            fill={`${theme?.primary || '#ff85b3'}20`} />
-          <path d="M0,4 C50,8 100,0 150,4 C200,8 250,0 300,4 C350,8 400,0 400,4"
-            fill="none" stroke="#FFE4A1" strokeWidth="1.5" />
-        </svg>
-      </div>
+    <div style={{ flexShrink: 0 }}>
       <div style={{
         display: 'flex', alignItems: 'flex-end', gap: 8,
-        padding: '10px 12px',
-        background: 'rgba(255,255,255,0.72)',
+        padding: '8px 12px 6px',
+        background: `linear-gradient(to bottom, rgba(255,255,255,0.4), ${primaryColor}14)`,
         backdropFilter: 'blur(24px)',
         WebkitBackdropFilter: 'blur(24px)',
-        borderTop: '1px solid rgba(255,182,209,0.2)',
-        boxShadow: '0 -4px 20px rgba(255,133,179,0.08)',
+        borderTop: `1px solid ${primaryColor}20`,
       }}>
       <button onClick={() => setShowVoice(true)} style={btnBase}>
         <MicIcon />
@@ -130,7 +122,7 @@ const MessageInput = forwardRef(function MessageInput({ onSend, onSendVoice, onS
           disabled={disabled}
           style={{
             flex: 1, background: 'transparent', border: 'none', outline: 'none',
-            fontSize: 14, lineHeight: '1.5',
+            fontSize: 16, lineHeight: '1.5',
             color: '#8b5060', resize: 'none', overflow: 'auto',
             maxHeight: 96, fontFamily: 'inherit',
           }}

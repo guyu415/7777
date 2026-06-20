@@ -1,10 +1,39 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, useLayoutEffect } from 'react'
 import MessageBubble from './MessageBubble'
 import MessageInput from './MessageInput'
 import MemoryModal from './MemoryModal'
 import { useChat } from '../../hooks/useChat'
 import { useScheduledMessages } from '../../hooks/useScheduledMessages'
 import { useStore, deleteMessageFromDB } from '../../store'
+
+function Signature({ text, color }) {
+  const wrapRef = useRef(null)
+  const firstRef = useRef(null)
+  const [overflow, setOverflow] = useState(false)
+
+  useLayoutEffect(() => {
+    const wrap = wrapRef.current
+    const first = firstRef.current
+    if (!wrap || !first) return
+    // Measure natural text width (first unit minus its trailing gap)
+    const natural = first.scrollWidth - (overflow ? 32 : 0)
+    setOverflow(natural > wrap.clientWidth + 1)
+  }, [text])
+
+  const unit = { display: 'inline-block', paddingRight: overflow ? 32 : 0 }
+
+  return (
+    <div ref={wrapRef} style={{ maxWidth: 160, overflow: 'hidden', whiteSpace: 'nowrap' }}>
+      <span
+        className={overflow ? 'marquee-scroll' : ''}
+        style={{ fontSize: 12, color, display: 'inline-block' }}
+      >
+        <span ref={firstRef} style={unit}>{text}</span>
+        {overflow && <span style={unit}>{text}</span>}
+      </span>
+    </div>
+  )
+}
 
 export default function ChatWindow({ theme }) {
   const { messages, sendMessage, loadHistory, isLoading, regenerate, deleteMsg } = useChat()
@@ -84,41 +113,44 @@ export default function ChatWindow({ theme }) {
   // Find the last assistant message id (the only one that gets a regenerate button)
   const lastAiId = messages.reduceRight((acc, m) => acc ?? (m.role === 'assistant' ? m.id : null), null)
 
+  const primaryColor = theme?.primary || '#4aacf0'
+  const primaryDarkColor = theme?.primaryDark || '#2196d3'
+
   return (
     <div className="flex flex-col h-full" style={{ background: 'transparent' }}>
       {/* Header */}
-      <div className="flex items-center justify-between px-4 py-3 safe-top"
+      <div className="flex items-center justify-between px-4 safe-top"
         style={{
-          background: 'rgba(255,255,255,0.72)',
+          paddingTop: 'calc(var(--safe-top) + 14px)',
+          paddingBottom: 12,
+          background: `linear-gradient(to bottom, ${primaryColor}1f, rgba(255,255,255,0.55))`,
           backdropFilter: 'blur(24px)',
           WebkitBackdropFilter: 'blur(24px)',
-          borderBottom: `1px solid ${theme?.primary || '#4aacf0'}22`,
-          boxShadow: `0 2px 16px ${theme?.primary || '#4aacf0'}14`,
+          borderBottom: `1px solid ${primaryColor}22`,
           flexShrink: 0,
         }}>
-        <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-full overflow-hidden flex items-center justify-center text-xl flex-shrink-0"
+        <div className="flex items-center gap-3 min-w-0">
+          <div className="w-11 h-11 rounded-full overflow-hidden flex items-center justify-center text-xl flex-shrink-0"
             style={{
-              background: `${theme?.primary || '#4aacf0'}33`,
-              boxShadow: `0 2px 8px ${theme?.primary || '#4aacf0'}40, 0 0 16px ${theme?.primary || '#4aacf0'}30`,
+              background: `${primaryColor}33`,
+              border: `3px solid ${primaryColor}`,
+              boxShadow: `0 2px 10px ${primaryColor}45, 0 0 16px ${primaryColor}30`,
             }}>
             {effectiveAiAvatar
               ? <img src={effectiveAiAvatar} alt="" className="w-full h-full object-cover" />
               : '🌸'}
           </div>
-          <div>
-            <div className="font-semibold text-sm" style={{ color: theme?.primaryDark || '#2196d3' }}>
+          <div className="min-w-0">
+            <div className="font-semibold text-sm" style={{ color: primaryDarkColor }}>
               {effectiveAiName || '小漫'}
             </div>
-            <div className="text-[11px]" style={{ color: `${theme?.primary || '#4aacf0'}bb` }}>
-              {effectiveSignature || '在线'}
-            </div>
+            <Signature text={effectiveSignature || '在线'} color={`${primaryColor}cc`} />
           </div>
         </div>
         <button
           onClick={() => setCurrentView('sessionSettings')}
-          className="w-9 h-9 rounded-full flex items-center justify-center transition-all duration-200 text-base"
-          style={{ background: `${theme?.primary || '#4aacf0'}18`, color: theme?.primary || '#4aacf0' }}
+          className="w-9 h-9 rounded-full flex items-center justify-center transition-all duration-200 text-base flex-shrink-0"
+          style={{ background: `${primaryColor}18`, color: primaryColor }}
         >
           ⚙️
         </button>
