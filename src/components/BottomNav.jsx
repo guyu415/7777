@@ -9,7 +9,7 @@ export default function BottomNav({ currentView, onChange, theme, bare = false }
   const primaryDark = theme?.primaryDark || '#2196d3'
 
   const containerStyle = bare
-    ? { display: 'flex', alignItems: 'center', justifyContent: 'space-around', paddingTop: 4, paddingBottom: 4, minHeight: 72 }
+    ? { display: 'flex', alignItems: 'center', justifyContent: 'space-around', paddingTop: 4, paddingBottom: 4, minHeight: 88 }
     : {
         display: 'flex', alignItems: 'center', justifyContent: 'space-around',
         background: `linear-gradient(to bottom, ${primary}08, rgba(255,255,255,0.22))`,
@@ -17,7 +17,7 @@ export default function BottomNav({ currentView, onChange, theme, bare = false }
         WebkitBackdropFilter: 'blur(22px)',
         borderTop: `1px solid ${primary}14`,
         paddingTop: 4, paddingBottom: 4,
-        minHeight: 72,
+        minHeight: 88,
       }
 
   return (
@@ -43,7 +43,7 @@ export default function BottomNav({ currentView, onChange, theme, bare = false }
             }}
           >
             {/* Flower wreath IS the tab frame — fills the tab area */}
-            <div style={{ position: 'relative', width: 64, height: 64 }}>
+            <div style={{ position: 'relative', width: 84, height: 84 }}>
               <img
                 src={tab.img}
                 alt={tab.label}

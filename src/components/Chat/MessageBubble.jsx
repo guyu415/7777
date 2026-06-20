@@ -74,8 +74,8 @@ export default function MessageBubble({ message, onLongPress, onRegenerate, isLo
     WebkitBackdropFilter: 'blur(12px)',
     border: `1px solid ${theme?.userBubbleBorder || 'rgba(255,133,179,0.35)'}`,
     boxShadow: `0 4px 16px ${theme?.userBubbleShadow || 'rgba(255,133,179,0.18)'}, inset 0 1px 0 rgba(255,255,255,0.4)`,
-    color: theme?.userBubbleText || '#D4A854',
-    textShadow: '0 0 10px rgba(212, 168, 84, 0.25), 0 1px 2px rgba(255, 255, 255, 0.4)',
+    color: theme?.userBubbleText || '#F0C040',
+    textShadow: '0 0 10px rgba(240, 192, 64, 0.3), 0 1px 2px rgba(255, 255, 255, 0.5)',
   }
 
   const aiBubbleStyle = {
