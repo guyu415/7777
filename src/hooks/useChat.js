@@ -41,6 +41,7 @@ export function useChat() {
   const effectiveTtsApiKey = currentSession?.ttsApiKey || ttsApiKey
   const effectiveTtsGroupId = currentSession?.ttsGroupId || ttsGroupId
   const effectiveTtsVoiceId = currentSession?.ttsVoiceId || ttsVoiceId
+  const effectiveVoiceFrequency = currentSession?.voiceFrequency ?? aiVoiceFrequency
   const effectiveSystemPrompt = currentSession?.systemPrompt !== undefined
     ? (currentSession.systemPrompt || systemPrompt)
     : systemPrompt
@@ -100,9 +101,9 @@ export function useChat() {
         builtSystemPrompt += '\n\n你有空调控制能力。当用户提到温度不舒适、想开/关空调、调温度时，在回复末尾自然地加上控制指令标签（不要向用户提及标签格式本身）。\n格式：[AC:动作,温度,模式,风速]\n- 动作：on(开机)/off(关机)/set(调节)\n- 温度：16-30 的整数（推断不到默认26）\n- 模式：cool(制冷)/heat(制热)/auto(自动)/fan(送风)/dry(除湿)\n- 风速：auto(自动)/low(低)/mid(中)/high(高)\n示例："好的已经帮你开空调啦～[AC:on,26,cool,auto]"'
       }
       if (effectiveTtsApiKey && effectiveTtsGroupId && aiVoiceEnabled) {
-        const freqNote = aiVoiceFrequency < 0.3
+        const freqNote = effectiveVoiceFrequency < 0.3
           ? '尽量少发语音，只在非常合适时（撒娇、道晚安）才用。'
-          : aiVoiceFrequency > 0.7
+          : effectiveVoiceFrequency > 0.7
           ? '多用语音，大部分日常闲聊都用语音回复。'
           : '适度使用语音，约30-50%的闲聊可以用语音。'
         builtSystemPrompt += `\n\n你可以选择用文字或语音回复。当你想发语音时，用标记 [VOICE]消息内容[/VOICE] 包裹（只包裹要转成语音的部分，不要提及标记格式本身）。适合语音：撒娇、道晚安、表达感情、短句闲聊。适合文字：回答问题、长段内容、需要复制的内容。${freqNote}`
@@ -271,11 +272,10 @@ export function useChat() {
       setIsLoading(false)
       setStreamingMessageId(null)
     }
-  }, [CONVERSATION_ID, effectiveApiKey, effectiveBaseUrl, effectiveModel, effectiveSystemPrompt, effectiveMemoryEnabled, workerUrl, useWorkerProxy, acWorkerUrl, effectiveTtsApiKey, effectiveTtsGroupId, effectiveTtsVoiceId, aiVoiceEnabled, aiVoiceFrequency, addMessage, updateMessage, deleteMessage, setIsLoading, setStreamingMessageId, updateSession])
+  }, [CONVERSATION_ID, effectiveApiKey, effectiveBaseUrl, effectiveModel, effectiveSystemPrompt, effectiveMemoryEnabled, workerUrl, useWorkerProxy, acWorkerUrl, effectiveTtsApiKey, effectiveTtsGroupId, effectiveTtsVoiceId, aiVoiceEnabled, effectiveVoiceFrequency, addMessage, updateMessage, deleteMessage, setIsLoading, setStreamingMessageId, updateSession])
 
   const sendMessage = useCallback(async (content, type = 'text', extra = {}) => {
     if (!effectiveApiKey) throw new Error('请先在设置中配置 API Key')
-    if (isLoading) return
 
     const userMsg = {
       id: genId(),
@@ -303,8 +303,24 @@ export function useChat() {
     } catch (e) {
       console.error('[DB] saveMessage failed:', e)
     }
+    // If AI is mid-stream, show the user message but don't start a new stream yet
+    if (isLoading) return
     await streamResponse([...messages, userMsg])
   }, [CONVERSATION_ID, effectiveApiKey, isLoading, messages, addMessage, streamResponse, updateSession])
+
+  const regenerateRound = useCallback(async () => {
+    if (isLoading) return
+    // Walk back from end to find the first consecutive assistant message in the last round
+    let firstIdx = messages.length - 1
+    while (firstIdx > 0 && messages[firstIdx - 1].role === 'assistant') firstIdx--
+    if (firstIdx < 0 || !messages[firstIdx] || messages[firstIdx].role !== 'assistant') return
+    const contextMessages = messages.slice(0, firstIdx)
+    for (const m of messages.slice(firstIdx)) {
+      await deleteMessageFromDB(m.id)
+    }
+    deleteMessagesFrom(messages[firstIdx].id)
+    await streamResponse(contextMessages)
+  }, [isLoading, messages, deleteMessagesFrom, streamResponse])
 
   const regenerate = useCallback(async (assistantMsgId) => {
     if (isLoading) return
@@ -323,5 +339,5 @@ export function useChat() {
     deleteMessage(id)
   }, [deleteMessage])
 
-  return { messages, sendMessage, loadHistory, isLoading, regenerate, deleteMsg, stopStreaming }
+  return { messages, sendMessage, loadHistory, isLoading, regenerate, regenerateRound, deleteMsg, stopStreaming }
 }

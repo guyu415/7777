@@ -60,10 +60,11 @@ export default function App() {
     document.documentElement.style.fontSize = `${effectiveFontSize}px`
   }, [effectiveFontSize])
 
-  // Load custom fonts from IndexedDB on mount
+  // Load custom fonts from IndexedDB whenever the list changes
   useEffect(() => {
     if (!customFonts?.length) return
     customFonts.forEach(async (font) => {
+      if (document.fonts.check(`12px "${font.family}"`)) return
       try {
         const blob = await getCustomFont(font.id)
         if (!blob) return
@@ -71,11 +72,15 @@ export default function App() {
         const face = new FontFace(font.family, `url(${url})`)
         await face.load()
         document.fonts.add(face)
-      } catch {
-        // font may no longer be in IDB — ignore
+        console.log(`[Font] 已加载: ${font.family}`)
+        // Force re-apply CSS var so the browser picks up the newly registered face
+        const current = document.documentElement.style.getPropertyValue('--app-font')
+        document.documentElement.style.setProperty('--app-font', current)
+      } catch (e) {
+        console.warn(`[Font] 加载失败: ${font.family}`, e)
       }
     })
-  }, [])
+  }, [customFonts])
 
   // Background from effective settings
   const bgIsColor = effectiveChatBg?.type === 'color'

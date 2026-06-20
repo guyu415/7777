@@ -21,15 +21,6 @@ function ImageIcon() {
   )
 }
 
-function SendIcon() {
-  return (
-    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-      <line x1="22" y1="2" x2="11" y2="13"/>
-      <polygon points="22 2 15 22 11 13 2 9 22 2"/>
-    </svg>
-  )
-}
-
 function StopIcon() {
   return (
     <svg width="14" height="14" viewBox="0 0 14 14" fill="currentColor">
@@ -55,7 +46,7 @@ const MessageInput = forwardRef(function MessageInput({ onSend, onSendVoice, onS
   const [showVoice, setShowVoice] = useState(false)
   const fileRef = useRef(null)
   const textareaRef = useRef(null)
-  const canSend = text.trim() && !disabled
+  const canSend = text.trim().length > 0  // always sendable when text exists
 
   useImperativeHandle(ref, () => ({
     fill(content) {
@@ -78,10 +69,6 @@ const MessageInput = forwardRef(function MessageInput({ onSend, onSendVoice, onS
     if (textareaRef.current) {
       textareaRef.current.style.height = 'auto'
     }
-  }
-
-  const handleKey = (e) => {
-    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend() }
   }
 
   const handleImage = (e) => {
@@ -108,7 +95,7 @@ const MessageInput = forwardRef(function MessageInput({ onSend, onSendVoice, onS
     <div style={{ flexShrink: 0 }}>
       <div style={{
         display: 'flex', alignItems: 'flex-end', gap: 8,
-        padding: '8px 12px 6px',
+        padding: '6px 12px 2px',
       }}>
       {isLoading ? (
         <button
@@ -146,10 +133,8 @@ const MessageInput = forwardRef(function MessageInput({ onSend, onSendVoice, onS
           ref={textareaRef}
           value={text}
           onChange={e => setText(e.target.value)}
-          onKeyDown={handleKey}
-          placeholder={isLoading ? 'AI 正在回复中…' : '说点什么吧～'}
+          placeholder="说点什么吧～"
           rows={1}
-          disabled={disabled}
           style={{
             flex: 1, background: 'transparent', border: 'none', outline: 'none',
             fontSize: 16, lineHeight: '1.5',
@@ -165,7 +150,7 @@ const MessageInput = forwardRef(function MessageInput({ onSend, onSendVoice, onS
       </div>
 
       <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={handleImage} />
-      <button onClick={() => fileRef.current?.click()} style={btnBase} disabled={isLoading}>
+      <button onClick={() => fileRef.current?.click()} style={btnBase}>
         <ImageIcon />
       </button>
 

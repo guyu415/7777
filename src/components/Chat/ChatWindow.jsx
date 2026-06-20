@@ -38,7 +38,7 @@ function Signature({ text, color, shadow }) {
 }
 
 export default function ChatWindow({ theme }) {
-  const { messages, sendMessage, loadHistory, isLoading, regenerate, deleteMsg, stopStreaming } = useChat()
+  const { messages, sendMessage, loadHistory, isLoading, regenerate, regenerateRound, deleteMsg, stopStreaming } = useChat()
   const { fetchPendingMessages, updateActiveTime } = useScheduledMessages()
   const {
     currentView, setCurrentView, apiKey, aiAvatar: globalAiAvatar, aiName: globalAiName,
@@ -210,6 +210,7 @@ export default function ChatWindow({ theme }) {
             message={msg}
             onLongPress={setMenuMsg}
             onRegenerate={msg.id === lastAiId ? regenerate : null}
+            onRegenerateRound={msg.id === lastAiId ? regenerateRound : null}
             isLoading={isLoading}
             userAvatar={effectiveUserAvatar}
             aiAvatar={effectiveAiAvatar}

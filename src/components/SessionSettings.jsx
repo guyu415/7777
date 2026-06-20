@@ -37,13 +37,14 @@ function GlassCard({ icon, title, children }) {
 export default function SessionSettings({ theme }) {
   const {
     sessions, currentSessionId, updateSession, setCurrentView,
-    setSessionAiName, setSessionAiAvatar, setSessionSignature,
+    setSessionAiName, setSessionAiAvatar, setSessionUserAvatar, setSessionSignature,
     setSessionMemoryEnabled, setSessionSystemPrompt,
     setSessionChatBg,
     setSessionApiKey, setSessionBaseUrl, setSessionProviderName, setSessionModel,
-    setSessionTtsApiKey, setSessionTtsGroupId, setSessionTtsVoiceId,
+    setSessionTtsApiKey, setSessionTtsGroupId, setSessionTtsVoiceId, setSessionVoiceFrequency,
     memoryEnabled: globalMemoryEnabled,
     systemPrompt: globalSystemPrompt,
+    aiVoiceFrequency: globalVoiceFrequency,
   } = useStore()
 
   const currentSession = sessions?.find(s => s.id === currentSessionId)
@@ -54,8 +55,10 @@ export default function SessionSettings({ theme }) {
   const [localSignature, setLocalSignature] = useState('')
   const [localSystemPrompt, setLocalSystemPrompt] = useState('')
   const [localAvatar, setLocalAvatar] = useState('')
+  const [localUserAvatar, setLocalUserAvatar] = useState('')
   const [showAvatarUrl, setShowAvatarUrl] = useState(false)
   const avatarFileRef = useRef(null)
+  const userAvatarFileRef = useRef(null)
   const bgFileRef = useRef(null)
 
   const [localApiKey, setLocalApiKey] = useState('')
@@ -81,6 +84,19 @@ export default function SessionSettings({ theme }) {
     e.target.value = ''
   }
 
+  const handleUserAvatarFile = (e) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    const reader = new FileReader()
+    reader.onload = () => {
+      const dataUrl = reader.result
+      setLocalUserAvatar(dataUrl)
+      setSessionUserAvatar(currentSessionId, dataUrl)
+    }
+    reader.readAsDataURL(file)
+    e.target.value = ''
+  }
+
   const handleBgFile = (e) => {
     const file = e.target.files?.[0]
     if (!file) return
@@ -98,6 +114,7 @@ export default function SessionSettings({ theme }) {
     setLocalSignature(currentSession.signature || '')
     setLocalSystemPrompt(currentSession.systemPrompt ?? globalSystemPrompt ?? '')
     setLocalAvatar(currentSession.aiAvatar || '')
+    setLocalUserAvatar(currentSession.userAvatar || '')
     setLocalApiKey(currentSession.apiKey || '')
     setLocalBaseUrl(currentSession.baseUrl || '')
     setLocalProviderName(currentSession.providerName || '')
@@ -253,6 +270,41 @@ export default function SessionSettings({ theme }) {
               )}
             </div>
             <div>
+              <label className="text-xs pl-1 mb-2 block" style={{ color: '#6a90b8' }}>用户头像</label>
+              <div className="flex items-center gap-3 mb-1">
+                <div style={{
+                  width: 52, height: 52, borderRadius: '50%', overflow: 'hidden', flexShrink: 0,
+                  background: `${primary}18`, border: `2px solid ${primary}44`,
+                  display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 24,
+                }}>
+                  {localUserAvatar
+                    ? <img src={localUserAvatar} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                    : '🐣'}
+                </div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 6, flex: 1 }}>
+                  <button
+                    onClick={() => userAvatarFileRef.current?.click()}
+                    style={{
+                      padding: '7px 14px', borderRadius: 20, fontSize: 13, cursor: 'pointer',
+                      background: `${primary}18`, color: primaryDark,
+                      border: `1.5px solid ${primary}44`, textAlign: 'center',
+                    }}
+                  >
+                    📷 从相册上传
+                  </button>
+                </div>
+                {localUserAvatar && (
+                  <button
+                    onClick={() => { setLocalUserAvatar(''); setSessionUserAvatar(currentSessionId, '') }}
+                    style={{ fontSize: 12, color: '#a0b8d0', background: 'none', border: 'none', cursor: 'pointer', padding: 4, flexShrink: 0 }}
+                  >
+                    ✕
+                  </button>
+                )}
+                <input ref={userAvatarFileRef} type="file" accept="image/*" className="hidden" onChange={handleUserAvatarFile} />
+              </div>
+            </div>
+            <div>
               <label className="text-xs pl-1 mb-1 block" style={{ color: '#6a90b8' }}>签名 / 状态</label>
               <input
                 value={localSignature}
@@ -389,6 +441,29 @@ export default function SessionSettings({ theme }) {
                 placeholder="English_Trustworthy_Man"
                 style={inputStyle}
               />
+            </div>
+            <div>
+              <label className="text-xs pl-1 mb-2 block" style={{ color: '#6a90b8' }}>
+                语音发送频率
+                <span className="ml-2" style={{ color: '#a0b8d0' }}>（跟随全局：{Math.round((globalVoiceFrequency ?? 0.5) * 100)}%）</span>
+              </label>
+              <div className="flex flex-wrap gap-2">
+                {[
+                  { label: '每条都发', value: 1.0 },
+                  { label: '经常发', value: 0.7 },
+                  { label: '偶尔发', value: 0.3 },
+                  { label: '从不发', value: 0.0 },
+                  { label: '跟随全局', value: null },
+                ].map(opt => (
+                  <button
+                    key={String(opt.value)}
+                    onClick={() => setSessionVoiceFrequency(currentSessionId, opt.value)}
+                    style={chipStyle((currentSession.voiceFrequency ?? null) === opt.value)}
+                  >
+                    {opt.label}
+                  </button>
+                ))}
+              </div>
             </div>
           </div>
         </GlassCard>

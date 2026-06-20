@@ -265,6 +265,7 @@ export const useStore = create(
       setSessionTtsApiKey: (sessionId, v) => set((state) => ({ sessions: state.sessions.map(s => s.id === sessionId ? { ...s, ttsApiKey: v } : s) })),
       setSessionTtsGroupId: (sessionId, v) => set((state) => ({ sessions: state.sessions.map(s => s.id === sessionId ? { ...s, ttsGroupId: v } : s) })),
       setSessionTtsVoiceId: (sessionId, v) => set((state) => ({ sessions: state.sessions.map(s => s.id === sessionId ? { ...s, ttsVoiceId: v } : s) })),
+      setSessionVoiceFrequency: (sessionId, v) => set((state) => ({ sessions: state.sessions.map(s => s.id === sessionId ? { ...s, voiceFrequency: v } : s) })),
 
       addCustomFont: (font) => set((state) => ({ customFonts: [...state.customFonts, font] })),
       removeCustomFont: (id) => set((state) => ({ customFonts: state.customFonts.filter(f => f.id !== id) })),
@@ -279,7 +280,7 @@ export const useStore = create(
     }),
     {
       name: 'pink-chat-settings',
-      version: 9,
+      version: 10,
       migrate: (persisted, version) => {
         if (version < 2) {
           const providers = [
@@ -363,6 +364,12 @@ export const useStore = create(
                 fontSize: null,
               }
             }),
+          }
+        }
+        if (version < 10) {
+          persisted = {
+            ...persisted,
+            sessions: (persisted.sessions || []).map(s => ({ voiceFrequency: null, ...s })),
           }
         }
         return persisted
