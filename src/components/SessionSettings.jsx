@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 import { ChevronLeft, Eye, EyeOff } from 'lucide-react'
-import { useStore, getMessages } from '../store'
+import { useStore, getMessages, saveBlob } from '../store'
 
 const inputStyle = {
   width: '100%',
@@ -42,6 +42,7 @@ export default function SessionSettings({ theme }) {
     setSessionChatBg,
     setSessionApiKey, setSessionBaseUrl, setSessionProviderName, setSessionModel,
     setSessionTtsApiKey, setSessionTtsGroupId, setSessionTtsVoiceId, setSessionVoiceFrequency,
+    setSessionFollowGlobalTts,
     memoryEnabled: globalMemoryEnabled,
     systemPrompt: globalSystemPrompt,
     aiVoiceFrequency: globalVoiceFrequency,
@@ -97,14 +98,12 @@ export default function SessionSettings({ theme }) {
     e.target.value = ''
   }
 
-  const handleBgFile = (e) => {
+  const handleBgFile = async (e) => {
     const file = e.target.files?.[0]
     if (!file) return
-    const reader = new FileReader()
-    reader.onload = () => {
-      setSessionChatBg(currentSessionId, { type: 'image', value: reader.result, opacity: currentSession.chatBg?.opacity ?? 0.9 })
-    }
-    reader.readAsDataURL(file)
+    const blobKey = `bg:${currentSessionId}`
+    await saveBlob(blobKey, file)
+    setSessionChatBg(currentSessionId, { type: 'image', blobKey, opacity: currentSession?.chatBg?.opacity ?? 0.9 })
     e.target.value = ''
   }
 
@@ -399,71 +398,102 @@ export default function SessionSettings({ theme }) {
 
         {/* TTS Config */}
         <GlassCard icon="🎙️" title="AI 语音">
-          <div className="space-y-2">
+          <div className="space-y-3">
+            {/* TTS config source */}
             <div>
-              <label className="text-xs pl-1 mb-1 block" style={{ color: '#6a90b8' }}>TTS API Key</label>
-              <div style={{ position: 'relative' }}>
-                <input
-                  type={showTtsKey ? 'text' : 'password'}
-                  value={localTtsApiKey}
-                  onChange={e => setLocalTtsApiKey(e.target.value)}
-                  onBlur={() => setSessionTtsApiKey(currentSessionId, localTtsApiKey.trim())}
-                  placeholder="MiniMax API Key"
-                  style={{ ...inputStyle, paddingRight: 44 }}
-                />
+              <label className="text-xs pl-1 mb-2 block" style={{ color: '#6a90b8' }}>TTS 配置来源</label>
+              <div className="flex gap-2">
                 <button
-                  onClick={() => setShowTtsKey(v => !v)}
-                  style={{
-                    position: 'absolute', right: 12, top: '50%', transform: 'translateY(-50%)',
-                    background: 'none', border: 'none', cursor: 'pointer', color: '#7a9cc0', padding: 0,
-                  }}
-                >
-                  {showTtsKey ? <EyeOff size={16} /> : <Eye size={16} />}
-                </button>
+                  onClick={() => setSessionFollowGlobalTts(currentSessionId, null)}
+                  style={chipStyle(currentSession.followGlobalTts !== false)}
+                >跟随全局</button>
+                <button
+                  onClick={() => setSessionFollowGlobalTts(currentSessionId, false)}
+                  style={chipStyle(currentSession.followGlobalTts === false)}
+                >本会话独立</button>
               </div>
             </div>
+
+            {/* Session-specific TTS fields — only shown when not following global */}
+            {currentSession.followGlobalTts === false && (
+              <div className="space-y-2">
+                <div>
+                  <label className="text-xs pl-1 mb-1 block" style={{ color: '#6a90b8' }}>TTS API Key</label>
+                  <div style={{ position: 'relative' }}>
+                    <input
+                      type={showTtsKey ? 'text' : 'password'}
+                      value={localTtsApiKey}
+                      onChange={e => setLocalTtsApiKey(e.target.value)}
+                      onBlur={() => setSessionTtsApiKey(currentSessionId, localTtsApiKey.trim())}
+                      placeholder="MiniMax API Key"
+                      style={{ ...inputStyle, paddingRight: 44 }}
+                    />
+                    <button
+                      onClick={() => setShowTtsKey(v => !v)}
+                      style={{
+                        position: 'absolute', right: 12, top: '50%', transform: 'translateY(-50%)',
+                        background: 'none', border: 'none', cursor: 'pointer', color: '#7a9cc0', padding: 0,
+                      }}
+                    >
+                      {showTtsKey ? <EyeOff size={16} /> : <Eye size={16} />}
+                    </button>
+                  </div>
+                </div>
+                <div>
+                  <label className="text-xs pl-1 mb-1 block" style={{ color: '#6a90b8' }}>Group ID</label>
+                  <input
+                    value={localTtsGroupId}
+                    onChange={e => setLocalTtsGroupId(e.target.value)}
+                    onBlur={() => setSessionTtsGroupId(currentSessionId, localTtsGroupId.trim())}
+                    placeholder="MiniMax Group ID"
+                    style={inputStyle}
+                  />
+                </div>
+                <div>
+                  <label className="text-xs pl-1 mb-1 block" style={{ color: '#6a90b8' }}>音色 ID</label>
+                  <input
+                    value={localTtsVoiceId}
+                    onChange={e => setLocalTtsVoiceId(e.target.value)}
+                    onBlur={() => setSessionTtsVoiceId(currentSessionId, localTtsVoiceId.trim())}
+                    placeholder="English_Trustworthy_Man"
+                    style={inputStyle}
+                  />
+                </div>
+              </div>
+            )}
+
+            {/* Voice frequency */}
             <div>
-              <label className="text-xs pl-1 mb-1 block" style={{ color: '#6a90b8' }}>Group ID</label>
-              <input
-                value={localTtsGroupId}
-                onChange={e => setLocalTtsGroupId(e.target.value)}
-                onBlur={() => setSessionTtsGroupId(currentSessionId, localTtsGroupId.trim())}
-                placeholder="MiniMax Group ID"
-                style={inputStyle}
-              />
-            </div>
-            <div>
-              <label className="text-xs pl-1 mb-1 block" style={{ color: '#6a90b8' }}>音色 ID</label>
-              <input
-                value={localTtsVoiceId}
-                onChange={e => setLocalTtsVoiceId(e.target.value)}
-                onBlur={() => setSessionTtsVoiceId(currentSessionId, localTtsVoiceId.trim())}
-                placeholder="English_Trustworthy_Man"
-                style={inputStyle}
-              />
-            </div>
-            <div>
-              <label className="text-xs pl-1 mb-2 block" style={{ color: '#6a90b8' }}>
-                语音发送频率
-                <span className="ml-2" style={{ color: '#a0b8d0' }}>（跟随全局：{Math.round((globalVoiceFrequency ?? 0.5) * 100)}%）</span>
-              </label>
+              <label className="text-xs pl-1 mb-2 block" style={{ color: '#6a90b8' }}>语音发送频率</label>
               <div className="flex flex-wrap gap-2">
                 {[
-                  { label: '每条都发', value: 1.0 },
-                  { label: '经常发', value: 0.7 },
-                  { label: '偶尔发', value: 0.3 },
-                  { label: '从不发', value: 0.0 },
-                  { label: '跟随全局', value: null },
+                  { label: '从不', value: 0.0 },
+                  { label: '偶尔', value: 0.3 },
+                  { label: '经常', value: 0.7 },
+                  { label: '总是', value: 1.0 },
                 ].map(opt => (
                   <button
-                    key={String(opt.value)}
+                    key={opt.value}
                     onClick={() => setSessionVoiceFrequency(currentSessionId, opt.value)}
-                    style={chipStyle((currentSession.voiceFrequency ?? null) === opt.value)}
+                    style={chipStyle(currentSession.voiceFrequency === opt.value)}
                   >
                     {opt.label}
                   </button>
                 ))}
               </div>
+              {(currentSession.voiceFrequency ?? null) === null ? (
+                <p className="text-xs mt-1.5 pl-1" style={{ color: '#a0b8d0' }}>
+                  跟随全局（{Math.round((globalVoiceFrequency ?? 0.5) * 100)}%）
+                </p>
+              ) : (
+                <button
+                  onClick={() => setSessionVoiceFrequency(currentSessionId, null)}
+                  className="mt-1.5 text-xs"
+                  style={{ color: '#7a9cc0', background: 'none', border: 'none', cursor: 'pointer', padding: '2px 4px' }}
+                >
+                  ↩ 恢复全局默认
+                </button>
+              )}
             </div>
           </div>
         </GlassCard>
@@ -496,7 +526,7 @@ export default function SessionSettings({ theme }) {
               )}
               <input ref={bgFileRef} type="file" accept="image/*" className="hidden" onChange={handleBgFile} />
             </div>
-            {currentSession.chatBg?.type === 'image' && currentSession.chatBg?.value && (
+            {currentSession.chatBg?.type === 'image' && (
               <div>
                 <div className="flex items-center justify-between mb-1">
                   <span className="text-xs" style={{ color: '#6a90b8' }}>透明度</span>

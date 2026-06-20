@@ -3,7 +3,7 @@ import VoiceRecorder from '../Voice/VoiceRecorder'
 
 function MicIcon() {
   return (
-    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
       <path d="M12 2a3 3 0 0 1 3 3v7a3 3 0 0 1-6 0V5a3 3 0 0 1 3-3z"/>
       <path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/>
       <line x1="8" y1="23" x2="16" y2="23"/>
@@ -13,7 +13,7 @@ function MicIcon() {
 
 function ImageIcon() {
   return (
-    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
       <rect x="3" y="3" width="18" height="18" rx="4" ry="4"/>
       <circle cx="8.5" cy="8.5" r="1.5"/>
       <polyline points="21 15 16 10 5 21"/>
@@ -30,7 +30,7 @@ function StopIcon() {
 }
 
 const btnBase = {
-  width: 36, height: 36,
+  width: 52, height: 52,
   borderRadius: '50%',
   display: 'flex', alignItems: 'center', justifyContent: 'center',
   flexShrink: 0,
@@ -95,7 +95,7 @@ const MessageInput = forwardRef(function MessageInput({ onSend, onSendVoice, onS
     <div style={{ flexShrink: 0 }}>
       <div style={{
         display: 'flex', alignItems: 'flex-end', gap: 8,
-        padding: '6px 12px 2px',
+        padding: '6px 12px 10px',
       }}>
       {isLoading ? (
         <button
@@ -137,7 +137,7 @@ const MessageInput = forwardRef(function MessageInput({ onSend, onSendVoice, onS
           rows={1}
           style={{
             flex: 1, background: 'transparent', border: 'none', outline: 'none',
-            fontSize: 16, lineHeight: '1.5',
+            fontSize: 18, lineHeight: '1.5',
             color: '#8b5060', resize: 'none', overflow: 'auto',
             maxHeight: 96, fontFamily: 'inherit',
           }}
@@ -158,7 +158,7 @@ const MessageInput = forwardRef(function MessageInput({ onSend, onSendVoice, onS
         onClick={handleSend}
         disabled={!canSend}
         style={{
-          width: 44, height: 44,
+          width: 56, height: 56,
           borderRadius: '50%',
           display: 'flex', alignItems: 'center', justifyContent: 'center',
           flexShrink: 0,
@@ -173,7 +173,7 @@ const MessageInput = forwardRef(function MessageInput({ onSend, onSendVoice, onS
           transition: 'all 0.25s ease-in-out',
         }}
       >
-        <img src="/assets/paw.png" alt="发送" style={{ width: 36, height: 36, objectFit: 'contain' }} />
+        <img src="/assets/paw.png" alt="发送" style={{ width: 48, height: 48, objectFit: 'contain' }} />
       </button>
       </div>
     </div>

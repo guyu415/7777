@@ -75,7 +75,6 @@ export default function MessageBubble({ message, onLongPress, onRegenerate, onRe
     border: `1px solid ${theme?.userBubbleBorder || 'rgba(255,133,179,0.35)'}`,
     boxShadow: `0 4px 16px ${theme?.userBubbleShadow || 'rgba(255,133,179,0.18)'}, inset 0 1px 0 rgba(255,255,255,0.4)`,
     color: theme?.userBubbleText || '#F0C040',
-    textShadow: '0 0 10px rgba(240, 192, 64, 0.3), 0 1px 2px rgba(255, 255, 255, 0.5)',
   }
 
   const aiBubbleStyle = {
@@ -201,6 +200,34 @@ export default function MessageBubble({ message, onLongPress, onRegenerate, onRe
             <span className="bubble-ai" style={{ position: 'absolute', inset: 0, borderRadius: 'inherit', pointerEvents: 'none' }} />
             <span style={{ position: 'absolute', top: -4, left: -4, fontSize: 10, pointerEvents: 'none', zIndex: 1 }}>🌿</span>
             <VoicePlayer blobId={message.voiceBlobId} url={message.voiceUrl} duration={message.duration} isUser={false} naked />
+            {onRegenerate && !message.streaming && (
+              <div className="flex gap-1 mt-2">
+                <button
+                  onClick={e => { e.stopPropagation(); onRegenerate(message.id) }}
+                  disabled={isLoading}
+                  title="只重说这条"
+                  style={{
+                    fontSize: 11, padding: '1px 6px', borderRadius: 8, lineHeight: 1.6,
+                    background: 'rgba(61,107,82,0.12)', border: '1px solid rgba(61,107,82,0.2)',
+                    color: isLoading ? 'rgba(61,107,82,0.3)' : '#3d6b52',
+                    cursor: isLoading ? 'not-allowed' : 'pointer', fontFamily: 'inherit',
+                  }}
+                >↻单</button>
+                {onRegenerateRound && (
+                  <button
+                    onClick={e => { e.stopPropagation(); onRegenerateRound() }}
+                    disabled={isLoading}
+                    title="重说整轮"
+                    style={{
+                      fontSize: 11, padding: '1px 6px', borderRadius: 8, lineHeight: 1.6,
+                      background: 'rgba(61,107,82,0.12)', border: '1px solid rgba(61,107,82,0.2)',
+                      color: isLoading ? 'rgba(61,107,82,0.3)' : '#3d6b52',
+                      cursor: isLoading ? 'not-allowed' : 'pointer', fontFamily: 'inherit',
+                    }}
+                  >↻轮</button>
+                )}
+              </div>
+            )}
             {message.voiceText && (
               <div className="mt-2 pt-2" style={{ borderTop: '1px solid rgba(160,220,180,0.3)' }}>
                 <button
