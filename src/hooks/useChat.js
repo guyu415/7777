@@ -29,19 +29,18 @@ export function useChat() {
     isLoading, setIsLoading, setStreamingMessageId,
     deleteMessage, deleteMessagesFrom,
     currentSessionId, sessions, updateSession,
-    providers, selectedProviderId, selectedModelId,
   } = useStore()
 
   const CONVERSATION_ID = currentSessionId || 'main'
 
   const currentSession = sessions?.find(s => s.id === CONVERSATION_ID)
-  const effectiveProviderId = currentSession?.providerId || selectedProviderId
-  const effectiveModelId = currentSession?.modelId || selectedModelId
-  const selectedProvider = providers?.find(p => p.id === effectiveProviderId)
 
-  const effectiveApiKey = selectedProvider?.apiKey || apiKey
-  const effectiveBaseUrl = selectedProvider?.baseUrl || apiBaseUrl
-  const effectiveModel = effectiveModelId || model
+  const effectiveApiKey = currentSession?.apiKey || apiKey
+  const effectiveBaseUrl = currentSession?.baseUrl || apiBaseUrl
+  const effectiveModel = currentSession?.model || model
+  const effectiveTtsApiKey = currentSession?.ttsApiKey || ttsApiKey
+  const effectiveTtsGroupId = currentSession?.ttsGroupId || ttsGroupId
+  const effectiveTtsVoiceId = currentSession?.ttsVoiceId || ttsVoiceId
   const effectiveSystemPrompt = currentSession?.systemPrompt !== undefined
     ? (currentSession.systemPrompt || systemPrompt)
     : systemPrompt
@@ -100,7 +99,7 @@ export function useChat() {
       if (acWorkerUrl) {
         builtSystemPrompt += '\n\n你有空调控制能力。当用户提到温度不舒适、想开/关空调、调温度时，在回复末尾自然地加上控制指令标签（不要向用户提及标签格式本身）。\n格式：[AC:动作,温度,模式,风速]\n- 动作：on(开机)/off(关机)/set(调节)\n- 温度：16-30 的整数（推断不到默认26）\n- 模式：cool(制冷)/heat(制热)/auto(自动)/fan(送风)/dry(除湿)\n- 风速：auto(自动)/low(低)/mid(中)/high(高)\n示例："好的已经帮你开空调啦～[AC:on,26,cool,auto]"'
       }
-      if (ttsApiKey && ttsGroupId && aiVoiceEnabled) {
+      if (effectiveTtsApiKey && effectiveTtsGroupId && aiVoiceEnabled) {
         const freqNote = aiVoiceFrequency < 0.3
           ? '尽量少发语音，只在非常合适时（撒娇、道晚安）才用。'
           : aiVoiceFrequency > 0.7
@@ -136,7 +135,7 @@ export function useChat() {
 
       const voiceMatch = fullContent.match(VOICE_TAG_RE)
 
-      if (voiceMatch && ttsApiKey && ttsGroupId && aiVoiceEnabled) {
+      if (voiceMatch && effectiveTtsApiKey && effectiveTtsGroupId && aiVoiceEnabled) {
         // Voice mode: emit surrounding text bubbles first, then an independent voice bubble
         const voiceText = voiceMatch[1].trim()
         const surroundText = fullContent.replace(VOICE_TAG_RE, '').replace(AC_TAG_RE, '').trim()
@@ -171,7 +170,7 @@ export function useChat() {
 
           let voiceBlobId = null, duration = 0
           try {
-            const blob = await fetchTTSAudio(voiceText, { apiKey: ttsApiKey, groupId: ttsGroupId, voiceId: ttsVoiceId || 'English_Trustworthy_Man' })
+            const blob = await fetchTTSAudio(voiceText, { apiKey: effectiveTtsApiKey, groupId: effectiveTtsGroupId, voiceId: effectiveTtsVoiceId || 'English_Trustworthy_Man' })
             try {
               const ab = await blob.arrayBuffer()
               const ac = new AudioContext()
@@ -198,7 +197,7 @@ export function useChat() {
 
           let voiceBlobId = null, duration = 0
           try {
-            const blob = await fetchTTSAudio(voiceText, { apiKey: ttsApiKey, groupId: ttsGroupId, voiceId: ttsVoiceId || 'English_Trustworthy_Man' })
+            const blob = await fetchTTSAudio(voiceText, { apiKey: effectiveTtsApiKey, groupId: effectiveTtsGroupId, voiceId: effectiveTtsVoiceId || 'English_Trustworthy_Man' })
             try {
               const ab = await blob.arrayBuffer()
               const ac = new AudioContext()
@@ -272,7 +271,7 @@ export function useChat() {
       setIsLoading(false)
       setStreamingMessageId(null)
     }
-  }, [CONVERSATION_ID, effectiveApiKey, effectiveBaseUrl, effectiveModel, effectiveSystemPrompt, effectiveMemoryEnabled, workerUrl, useWorkerProxy, acWorkerUrl, ttsApiKey, ttsGroupId, ttsVoiceId, aiVoiceEnabled, aiVoiceFrequency, addMessage, updateMessage, deleteMessage, setIsLoading, setStreamingMessageId, updateSession])
+  }, [CONVERSATION_ID, effectiveApiKey, effectiveBaseUrl, effectiveModel, effectiveSystemPrompt, effectiveMemoryEnabled, workerUrl, useWorkerProxy, acWorkerUrl, effectiveTtsApiKey, effectiveTtsGroupId, effectiveTtsVoiceId, aiVoiceEnabled, aiVoiceFrequency, addMessage, updateMessage, deleteMessage, setIsLoading, setStreamingMessageId, updateSession])
 
   const sendMessage = useCallback(async (content, type = 'text', extra = {}) => {
     if (!effectiveApiKey) throw new Error('请先在设置中配置 API Key')

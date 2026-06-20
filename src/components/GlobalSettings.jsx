@@ -4,7 +4,6 @@ import { useStore, clearAllData, getAllMessages, getMessages, saveCustomFont, de
 
 import { THEMES } from '../themes'
 import MemoryPanel from './MemoryPanel'
-import ProviderSettings from './ProviderSettings'
 
 function genId() {
   return Date.now().toString(36) + Math.random().toString(36).slice(2)
@@ -89,9 +88,6 @@ export default function GlobalSettings({ theme }) {
     memoryEnabled, setMemoryEnabled,
     workerUrl, setWorkerUrl,
     useWorkerProxy, setUseWorkerProxy,
-    ttsApiKey, setTtsApiKey,
-    ttsGroupId, setTtsGroupId,
-    ttsVoiceId, setTtsVoiceId,
     aiVoiceEnabled, setAiVoiceEnabled,
     aiVoiceFrequency, setAiVoiceFrequency,
     acWorkerUrl, setAcWorkerUrl,
@@ -188,11 +184,6 @@ export default function GlobalSettings({ theme }) {
 
       <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4">
 
-        {/* Provider & Model */}
-        <GlassCard icon="🤖" title="模型与供应商">
-          <ProviderSettings />
-        </GlassCard>
-
         {/* Worker Proxy */}
         <GlassCard icon="☁️" title="Worker 配置">
           <p className="text-xs mb-2" style={{ color: '#7a9cc0' }}>
@@ -226,40 +217,6 @@ export default function GlobalSettings({ theme }) {
             <MemoryPanel workerUrl={workerUrl} />
           </GlassCard>
         )}
-
-        {/* TTS */}
-        <GlassCard icon="🎙️" title="AI 语音 (MiniMax TTS)">
-          <div className="space-y-2">
-            <div>
-              <label className="text-xs pl-1 mb-1 block" style={{ color: '#6a90b8' }}>API Key</label>
-              <input type="password" value={ttsApiKey} onChange={e => setTtsApiKey(e.target.value)} placeholder="MiniMax API Key" style={inputStyle} />
-            </div>
-            <div>
-              <label className="text-xs pl-1 mb-1 block" style={{ color: '#6a90b8' }}>Group ID</label>
-              <input value={ttsGroupId} onChange={e => setTtsGroupId(e.target.value)} placeholder="MiniMax Group ID" style={inputStyle} />
-            </div>
-            <div>
-              <label className="text-xs pl-1 mb-1 block" style={{ color: '#6a90b8' }}>音色 ID</label>
-              <input value={ttsVoiceId} onChange={e => setTtsVoiceId(e.target.value)} placeholder="English_Trustworthy_Man" style={inputStyle} />
-            </div>
-            <div className="flex items-center justify-between px-1 pt-1">
-              <span className="text-sm" style={{ color: '#2c5282' }}>AI 语音消息</span>
-              <Toggle value={aiVoiceEnabled} onChange={setAiVoiceEnabled} primary={primary} />
-            </div>
-            <div className="px-1 pt-1">
-              <div className="flex items-center justify-between mb-1">
-                <span className="text-sm" style={{ color: '#2c5282' }}>语音频率</span>
-                <span className="text-xs" style={{ color: '#6a90b8' }}>
-                  {aiVoiceFrequency < 0.3 ? '少' : aiVoiceFrequency > 0.7 ? '多' : '适中'}
-                </span>
-              </div>
-              <input type="range" min="0" max="1" step="0.1" value={aiVoiceFrequency}
-                onChange={e => setAiVoiceFrequency(parseFloat(e.target.value))}
-                className="w-full" style={{ accentColor: primary, cursor: 'pointer' }}
-              />
-            </div>
-          </div>
-        </GlassCard>
 
         {/* AC Control */}
         <GlassCard icon="❄️" title="空调控制">

@@ -90,6 +90,7 @@ export async function* streamChat({ apiKey, apiBaseUrl = 'https://api.anthropic.
   const proxyBase = (useWorkerProxy && workerUrl) ? workerUrl.replace(/\/$/, '') : null
 
   let response
+  let actualUrl
   if (isAnthropicUrl(base)) {
     const targetUrl = `${base}/v1/messages`
     const body = JSON.stringify({
@@ -100,13 +101,15 @@ export async function* streamChat({ apiKey, apiBaseUrl = 'https://api.anthropic.
       messages: buildAnthropicMessages(messages),
     })
     if (proxyBase) {
-      response = await fetch(`${proxyBase}/chat`, {
+      actualUrl = `${proxyBase}/chat`
+      response = await fetch(actualUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'X-Api-Key': apiKey, 'X-Target-Url': targetUrl },
         body, signal,
       })
     } else {
-      response = await fetch(targetUrl, {
+      actualUrl = targetUrl
+      response = await fetch(actualUrl, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -119,7 +122,6 @@ export async function* streamChat({ apiKey, apiBaseUrl = 'https://api.anthropic.
     }
   } else {
     const chatUrl = `${base}/chat/completions`
-    console.log('[streamChat] URL:', proxyBase ? `${proxyBase}/chat → ${chatUrl}` : chatUrl, 'model:', model)
     const body = JSON.stringify({
       model,
       max_tokens: 4096,
@@ -127,13 +129,15 @@ export async function* streamChat({ apiKey, apiBaseUrl = 'https://api.anthropic.
       messages: buildOpenAIMessages(systemPrompt, messages),
     })
     if (proxyBase) {
-      response = await fetch(`${proxyBase}/chat`, {
+      actualUrl = `${proxyBase}/chat`
+      response = await fetch(actualUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'X-Api-Key': apiKey, 'X-Target-Url': chatUrl },
         body, signal,
       })
     } else {
-      response = await fetch(chatUrl, {
+      actualUrl = chatUrl
+      response = await fetch(actualUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
         body, signal,
@@ -141,9 +145,10 @@ export async function* streamChat({ apiKey, apiBaseUrl = 'https://api.anthropic.
     }
   }
 
+  console.log('[API] 请求地址:', actualUrl)
   if (!response.ok) {
     const err = await response.json().catch(() => ({}))
-    throw new Error(err?.error?.message || `API Error ${response.status}`)
+    throw new Error(`${err?.error?.message || `API Error ${response.status}`}\n请求地址: ${actualUrl}`)
   }
 
   const reader = response.body.getReader()

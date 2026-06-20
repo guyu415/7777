@@ -94,6 +94,13 @@ const DEFAULT_SESSIONS = [{
   fontFamily: null,
   fontSize: null,
   memoryEnabled: null,
+  apiKey: '',
+  baseUrl: '',
+  providerName: '',
+  model: '',
+  ttsApiKey: '',
+  ttsGroupId: '',
+  ttsVoiceId: '',
 }]
 
 const DEFAULT_PROVIDERS = [
@@ -196,6 +203,13 @@ export const useStore = create(
             fontFamily: null,
             fontSize: null,
             memoryEnabled: null,
+            apiKey: '',
+            baseUrl: '',
+            providerName: '',
+            model: '',
+            ttsApiKey: '',
+            ttsGroupId: '',
+            ttsVoiceId: '',
             ...session,
           }]
         }
@@ -244,6 +258,13 @@ export const useStore = create(
       setSessionSystemPrompt: (sessionId, systemPrompt) => set((state) => ({
         sessions: state.sessions.map(s => s.id === sessionId ? { ...s, systemPrompt } : s)
       })),
+      setSessionApiKey: (sessionId, v) => set((state) => ({ sessions: state.sessions.map(s => s.id === sessionId ? { ...s, apiKey: v } : s) })),
+      setSessionBaseUrl: (sessionId, v) => set((state) => ({ sessions: state.sessions.map(s => s.id === sessionId ? { ...s, baseUrl: v } : s) })),
+      setSessionProviderName: (sessionId, v) => set((state) => ({ sessions: state.sessions.map(s => s.id === sessionId ? { ...s, providerName: v } : s) })),
+      setSessionModel: (sessionId, v) => set((state) => ({ sessions: state.sessions.map(s => s.id === sessionId ? { ...s, model: v } : s) })),
+      setSessionTtsApiKey: (sessionId, v) => set((state) => ({ sessions: state.sessions.map(s => s.id === sessionId ? { ...s, ttsApiKey: v } : s) })),
+      setSessionTtsGroupId: (sessionId, v) => set((state) => ({ sessions: state.sessions.map(s => s.id === sessionId ? { ...s, ttsGroupId: v } : s) })),
+      setSessionTtsVoiceId: (sessionId, v) => set((state) => ({ sessions: state.sessions.map(s => s.id === sessionId ? { ...s, ttsVoiceId: v } : s) })),
 
       addCustomFont: (font) => set((state) => ({ customFonts: [...state.customFonts, font] })),
       removeCustomFont: (id) => set((state) => ({ customFonts: state.customFonts.filter(f => f.id !== id) })),
@@ -258,7 +279,7 @@ export const useStore = create(
     }),
     {
       name: 'pink-chat-settings',
-      version: 8,
+      version: 9,
       migrate: (persisted, version) => {
         if (version < 2) {
           const providers = [
@@ -320,6 +341,28 @@ export const useStore = create(
               // also migrate per-session milktea
               themeId: (s.themeId === 'milktea' ? 'skyblue' : s.themeId) ?? null,
             })),
+          }
+        }
+        if (version < 9) {
+          const providers = persisted.providers || []
+          persisted = {
+            ...persisted,
+            sessions: (persisted.sessions || []).map(s => {
+              const ep = providers.find(p => p.id === s.providerId) || providers[0]
+              return {
+                apiKey: ep?.apiKey || persisted.apiKey || '',
+                baseUrl: ep?.baseUrl || persisted.apiBaseUrl || '',
+                providerName: ep?.name || '',
+                model: s.modelId || persisted.selectedModelId || persisted.model || '',
+                ttsApiKey: persisted.ttsApiKey || '',
+                ttsGroupId: persisted.ttsGroupId || '',
+                ttsVoiceId: persisted.ttsVoiceId || '',
+                ...s,
+                themeId: null,
+                fontFamily: null,
+                fontSize: null,
+              }
+            }),
           }
         }
         return persisted

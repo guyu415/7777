@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
-import { ChevronLeft } from 'lucide-react'
+import { ChevronLeft, Eye, EyeOff } from 'lucide-react'
 import { useStore, getMessages } from '../store'
 
 const inputStyle = {
@@ -12,12 +12,6 @@ const inputStyle = {
   outline: 'none',
   fontFamily: 'inherit',
   fontSize: 'inherit',
-}
-
-const selectStyle = {
-  ...inputStyle,
-  cursor: 'pointer',
-  paddingRight: 12,
 }
 
 function GlassCard({ icon, title, children }) {
@@ -40,29 +34,15 @@ function GlassCard({ icon, title, children }) {
   )
 }
 
-const THEME_LIST = [
-  { id: 'pink', label: '粉色甜心', dot: '#ff85b3' },
-  { id: 'mint', label: '薄荷清新', dot: '#5cc8a0' },
-  { id: 'skyblue', label: '天蓝清爽', dot: '#4aacf0' },
-  { id: 'lavender', label: '薰衣草紫', dot: '#9b7fd4' },
-]
-
-const FONT_LIST = [
-  { id: 'noto', label: '思源黑体' },
-  { id: 'zcool', label: '站酷小薇' },
-  { id: 'mashan', label: '马善政楷体' },
-]
-
 export default function SessionSettings({ theme }) {
   const {
     sessions, currentSessionId, updateSession, setCurrentView,
     setSessionAiName, setSessionAiAvatar, setSessionSignature,
-    setSessionTheme, setSessionFont, setSessionFontSize,
     setSessionMemoryEnabled, setSessionSystemPrompt,
-    providers, selectedProviderId, selectedModelId,
+    setSessionChatBg,
+    setSessionApiKey, setSessionBaseUrl, setSessionProviderName, setSessionModel,
+    setSessionTtsApiKey, setSessionTtsGroupId, setSessionTtsVoiceId,
     memoryEnabled: globalMemoryEnabled,
-    defaultFontSize, customFonts,
-    themeId: globalThemeId,
     systemPrompt: globalSystemPrompt,
   } = useStore()
 
@@ -76,6 +56,17 @@ export default function SessionSettings({ theme }) {
   const [localAvatar, setLocalAvatar] = useState('')
   const [showAvatarUrl, setShowAvatarUrl] = useState(false)
   const avatarFileRef = useRef(null)
+  const bgFileRef = useRef(null)
+
+  const [localApiKey, setLocalApiKey] = useState('')
+  const [localBaseUrl, setLocalBaseUrl] = useState('')
+  const [localProviderName, setLocalProviderName] = useState('')
+  const [localModel, setLocalModel] = useState('')
+  const [localTtsApiKey, setLocalTtsApiKey] = useState('')
+  const [localTtsGroupId, setLocalTtsGroupId] = useState('')
+  const [localTtsVoiceId, setLocalTtsVoiceId] = useState('')
+  const [showApiKey, setShowApiKey] = useState(false)
+  const [showTtsKey, setShowTtsKey] = useState(false)
 
   const handleAvatarFile = (e) => {
     const file = e.target.files?.[0]
@@ -90,12 +81,30 @@ export default function SessionSettings({ theme }) {
     e.target.value = ''
   }
 
+  const handleBgFile = (e) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    const reader = new FileReader()
+    reader.onload = () => {
+      setSessionChatBg(currentSessionId, { type: 'image', value: reader.result, opacity: currentSession.chatBg?.opacity ?? 0.9 })
+    }
+    reader.readAsDataURL(file)
+    e.target.value = ''
+  }
+
   useEffect(() => {
     if (!currentSession) return
     setLocalName(currentSession.aiName || '')
     setLocalSignature(currentSession.signature || '')
     setLocalSystemPrompt(currentSession.systemPrompt ?? globalSystemPrompt ?? '')
     setLocalAvatar(currentSession.aiAvatar || '')
+    setLocalApiKey(currentSession.apiKey || '')
+    setLocalBaseUrl(currentSession.baseUrl || '')
+    setLocalProviderName(currentSession.providerName || '')
+    setLocalModel(currentSession.model || '')
+    setLocalTtsApiKey(currentSession.ttsApiKey || '')
+    setLocalTtsGroupId(currentSession.ttsGroupId || '')
+    setLocalTtsVoiceId(currentSession.ttsVoiceId || '')
   }, [currentSessionId])
 
   if (!currentSession) {
@@ -114,15 +123,7 @@ export default function SessionSettings({ theme }) {
     fontWeight: active ? 600 : 400,
   })
 
-  const effectiveFontFamily = currentSession.fontFamily ?? 'noto'
-  const effectiveFontSize = currentSession.fontSize ?? defaultFontSize
   const memoryOverride = currentSession.memoryEnabled
-
-  const sessionProviderId = currentSession.providerId || selectedProviderId
-  const sessionModelId = currentSession.modelId || selectedModelId
-  const sessionProvider = providers?.find(p => p.id === sessionProviderId)
-
-  const allFonts = [...FONT_LIST, ...customFonts.map(f => ({ id: f.id, label: f.name }))]
 
   const handleExportJSON = async () => {
     const msgs = await getMessages(currentSessionId)
@@ -284,39 +285,155 @@ export default function SessionSettings({ theme }) {
           </button>
         </GlassCard>
 
-        {/* Model */}
-        <GlassCard icon="🤖" title="供应商与模型">
+        {/* API Config */}
+        <GlassCard icon="🔑" title="API 配置">
           <div className="space-y-2">
             <div>
-              <label className="text-xs pl-1 mb-1 block" style={{ color: '#6a90b8' }}>供应商</label>
-              <select
-                value={sessionProviderId}
-                onChange={e => {
-                  const p = providers?.find(p => p.id === e.target.value)
-                  updateSession(currentSessionId, {
-                    providerId: e.target.value,
-                    modelId: p?.models?.[0] || '',
-                  })
-                }}
-                style={selectStyle}
-              >
-                {(providers || []).map(p => (
-                  <option key={p.id} value={p.id}>{p.name}</option>
-                ))}
-              </select>
+              <label className="text-xs pl-1 mb-1 block" style={{ color: '#6a90b8' }}>供应商名称</label>
+              <input
+                value={localProviderName}
+                onChange={e => setLocalProviderName(e.target.value)}
+                onBlur={() => setSessionProviderName(currentSessionId, localProviderName.trim())}
+                placeholder="如 OpenAI / DeepSeek"
+                style={inputStyle}
+              />
             </div>
             <div>
-              <label className="text-xs pl-1 mb-1 block" style={{ color: '#6a90b8' }}>具体模型</label>
-              <select
-                value={sessionModelId}
-                onChange={e => updateSession(currentSessionId, { modelId: e.target.value })}
-                style={selectStyle}
-              >
-                {(sessionProvider?.models || []).map(m => (
-                  <option key={m} value={m}>{m}</option>
-                ))}
-              </select>
+              <label className="text-xs pl-1 mb-1 block" style={{ color: '#6a90b8' }}>Base URL</label>
+              <input
+                value={localBaseUrl}
+                onChange={e => setLocalBaseUrl(e.target.value)}
+                onBlur={() => setSessionBaseUrl(currentSessionId, localBaseUrl.trim())}
+                placeholder="https://api.anthropic.com"
+                style={inputStyle}
+              />
             </div>
+            <div>
+              <label className="text-xs pl-1 mb-1 block" style={{ color: '#6a90b8' }}>API Key</label>
+              <div style={{ position: 'relative' }}>
+                <input
+                  type={showApiKey ? 'text' : 'password'}
+                  value={localApiKey}
+                  onChange={e => setLocalApiKey(e.target.value)}
+                  onBlur={() => setSessionApiKey(currentSessionId, localApiKey.trim())}
+                  placeholder="sk-..."
+                  style={{ ...inputStyle, paddingRight: 44 }}
+                />
+                <button
+                  onClick={() => setShowApiKey(v => !v)}
+                  style={{
+                    position: 'absolute', right: 12, top: '50%', transform: 'translateY(-50%)',
+                    background: 'none', border: 'none', cursor: 'pointer', color: '#7a9cc0', padding: 0,
+                  }}
+                >
+                  {showApiKey ? <EyeOff size={16} /> : <Eye size={16} />}
+                </button>
+              </div>
+            </div>
+            <div>
+              <label className="text-xs pl-1 mb-1 block" style={{ color: '#6a90b8' }}>模型</label>
+              <input
+                value={localModel}
+                onChange={e => setLocalModel(e.target.value)}
+                onBlur={() => setSessionModel(currentSessionId, localModel.trim())}
+                placeholder="claude-sonnet-4-6"
+                style={inputStyle}
+              />
+            </div>
+          </div>
+        </GlassCard>
+
+        {/* TTS Config */}
+        <GlassCard icon="🎙️" title="AI 语音">
+          <div className="space-y-2">
+            <div>
+              <label className="text-xs pl-1 mb-1 block" style={{ color: '#6a90b8' }}>TTS API Key</label>
+              <div style={{ position: 'relative' }}>
+                <input
+                  type={showTtsKey ? 'text' : 'password'}
+                  value={localTtsApiKey}
+                  onChange={e => setLocalTtsApiKey(e.target.value)}
+                  onBlur={() => setSessionTtsApiKey(currentSessionId, localTtsApiKey.trim())}
+                  placeholder="MiniMax API Key"
+                  style={{ ...inputStyle, paddingRight: 44 }}
+                />
+                <button
+                  onClick={() => setShowTtsKey(v => !v)}
+                  style={{
+                    position: 'absolute', right: 12, top: '50%', transform: 'translateY(-50%)',
+                    background: 'none', border: 'none', cursor: 'pointer', color: '#7a9cc0', padding: 0,
+                  }}
+                >
+                  {showTtsKey ? <EyeOff size={16} /> : <Eye size={16} />}
+                </button>
+              </div>
+            </div>
+            <div>
+              <label className="text-xs pl-1 mb-1 block" style={{ color: '#6a90b8' }}>Group ID</label>
+              <input
+                value={localTtsGroupId}
+                onChange={e => setLocalTtsGroupId(e.target.value)}
+                onBlur={() => setSessionTtsGroupId(currentSessionId, localTtsGroupId.trim())}
+                placeholder="MiniMax Group ID"
+                style={inputStyle}
+              />
+            </div>
+            <div>
+              <label className="text-xs pl-1 mb-1 block" style={{ color: '#6a90b8' }}>音色 ID</label>
+              <input
+                value={localTtsVoiceId}
+                onChange={e => setLocalTtsVoiceId(e.target.value)}
+                onBlur={() => setSessionTtsVoiceId(currentSessionId, localTtsVoiceId.trim())}
+                placeholder="English_Trustworthy_Man"
+                style={inputStyle}
+              />
+            </div>
+          </div>
+        </GlassCard>
+
+        {/* Chat Background */}
+        <GlassCard icon="🖼️" title="聊天背景">
+          <div className="space-y-3">
+            <div className="flex gap-2">
+              <button
+                onClick={() => bgFileRef.current?.click()}
+                style={{
+                  padding: '7px 14px', borderRadius: 20, fontSize: 13, cursor: 'pointer',
+                  background: `${primary}18`, color: primaryDark,
+                  border: `1.5px solid ${primary}44`,
+                }}
+              >
+                📷 上传背景图
+              </button>
+              {currentSession.chatBg && (
+                <button
+                  onClick={() => setSessionChatBg(currentSessionId, null)}
+                  style={{
+                    padding: '7px 14px', borderRadius: 20, fontSize: 13, cursor: 'pointer',
+                    background: 'rgba(255,100,100,0.08)', color: '#e07070',
+                    border: '1.5px solid rgba(255,100,100,0.2)',
+                  }}
+                >
+                  清除背景
+                </button>
+              )}
+              <input ref={bgFileRef} type="file" accept="image/*" className="hidden" onChange={handleBgFile} />
+            </div>
+            {currentSession.chatBg?.type === 'image' && currentSession.chatBg?.value && (
+              <div>
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-xs" style={{ color: '#6a90b8' }}>透明度</span>
+                  <span className="text-xs" style={{ color: '#6a90b8' }}>{Math.round((currentSession.chatBg?.opacity ?? 0.9) * 100)}%</span>
+                </div>
+                <input
+                  type="range" min="0.1" max="1.0" step="0.05"
+                  value={currentSession.chatBg?.opacity ?? 0.9}
+                  onChange={e => setSessionChatBg(currentSessionId, { ...currentSession.chatBg, opacity: Number(e.target.value) })}
+                  className="w-full"
+                  style={{ accentColor: primary, cursor: 'pointer' }}
+                />
+              </div>
+            )}
           </div>
         </GlassCard>
 
@@ -339,57 +456,6 @@ export default function SessionSettings({ theme }) {
                 {opt.label}
               </button>
             ))}
-          </div>
-        </GlassCard>
-
-        {/* Theme */}
-        <GlassCard icon="🎨" title="配色方案">
-          <div className="flex flex-wrap gap-2">
-            <button
-              onClick={() => setSessionTheme(currentSessionId, null)}
-              style={chipStyle(currentSession.themeId === null)}
-            >
-              跟随全局
-            </button>
-            {THEME_LIST.map(t => (
-              <button key={t.id} onClick={() => setSessionTheme(currentSessionId, t.id)}
-                style={{ ...chipStyle(currentSession.themeId === t.id), display: 'flex', alignItems: 'center', gap: 6 }}>
-                <span style={{ width: 10, height: 10, borderRadius: '50%', background: t.dot, display: 'inline-block' }} />
-                {t.label}
-              </button>
-            ))}
-          </div>
-        </GlassCard>
-
-        {/* Font */}
-        <GlassCard icon="🔤" title="字体与字号">
-          <div className="flex flex-wrap gap-2 mb-3">
-            <button onClick={() => setSessionFont(currentSessionId, null)} style={chipStyle(currentSession.fontFamily === null)}>
-              跟随全局
-            </button>
-            {allFonts.map(f => (
-              <button key={f.id} onClick={() => setSessionFont(currentSessionId, f.id)}
-                style={chipStyle(effectiveFontFamily === f.id && currentSession.fontFamily !== null)}>
-                {f.label}
-              </button>
-            ))}
-          </div>
-          <div>
-            <div className="flex items-center justify-between mb-1">
-              <span className="text-sm" style={{ color: '#2c5282' }}>字号 {effectiveFontSize}px</span>
-              {currentSession.fontSize !== null && (
-                <button onClick={() => setSessionFontSize(currentSessionId, null)}
-                  className="text-xs" style={{ color: '#7a9cc0', background: 'none', border: 'none', cursor: 'pointer' }}>
-                  重置
-                </button>
-              )}
-            </div>
-            <input type="range" min="12" max="20" step="1" value={effectiveFontSize}
-              onChange={e => setSessionFontSize(currentSessionId, Number(e.target.value))}
-              className="w-full" style={{ accentColor: primary, cursor: 'pointer' }} />
-            <div className="flex justify-between text-[10px] mt-0.5" style={{ color: '#a0b8d0' }}>
-              <span>12px</span><span>16px</span><span>20px</span>
-            </div>
           </div>
         </GlassCard>
 
