@@ -21,6 +21,15 @@ function ImageIcon() {
   )
 }
 
+function SendIcon() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+      <line x1="22" y1="2" x2="11" y2="13"/>
+      <polygon points="22 2 15 22 11 13 2 9 22 2"/>
+    </svg>
+  )
+}
+
 const btnBase = {
   width: 36, height: 36,
   borderRadius: '50%',
@@ -50,8 +59,9 @@ const MessageInput = forwardRef(function MessageInput({ onSend, onSendVoice, onS
         el.style.height = 'auto'
         el.style.height = Math.min(el.scrollHeight, 96) + 'px'
       }, 0)
-    }
-  }), [])
+    },
+    getText() { return text },
+  }), [text])
 
   const handleSend = () => {
     if (!canSend) return
@@ -152,7 +162,7 @@ const MessageInput = forwardRef(function MessageInput({ onSend, onSendVoice, onS
           color: canSend ? '#fff' : 'rgba(255,133,179,0.4)',
         }}
       >
-        <span style={{ fontSize: 18, lineHeight: 1 }}>🐾</span>
+        <SendIcon />
       </button>
       </div>
     </div>

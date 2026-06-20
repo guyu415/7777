@@ -85,7 +85,7 @@ export async function fetchModels({ baseUrl, apiKey }) {
   return (data.data || data.models || []).map(m => m.id || m).filter(Boolean)
 }
 
-export async function* streamChat({ apiKey, apiBaseUrl = 'https://api.anthropic.com', model, systemPrompt, messages, workerUrl, useWorkerProxy }) {
+export async function* streamChat({ apiKey, apiBaseUrl = 'https://api.anthropic.com', model, systemPrompt, messages, workerUrl, useWorkerProxy, signal }) {
   const base = apiBaseUrl.replace(/\/$/, '')
   const proxyBase = (useWorkerProxy && workerUrl) ? workerUrl.replace(/\/$/, '') : null
 
@@ -103,7 +103,7 @@ export async function* streamChat({ apiKey, apiBaseUrl = 'https://api.anthropic.
       response = await fetch(`${proxyBase}/chat`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'X-Api-Key': apiKey, 'X-Target-Url': targetUrl },
-        body,
+        body, signal,
       })
     } else {
       response = await fetch(targetUrl, {
@@ -114,7 +114,7 @@ export async function* streamChat({ apiKey, apiBaseUrl = 'https://api.anthropic.
           'anthropic-version': '2023-06-01',
           'anthropic-dangerous-direct-browser-access': 'true',
         },
-        body,
+        body, signal,
       })
     }
   } else {
@@ -130,13 +130,13 @@ export async function* streamChat({ apiKey, apiBaseUrl = 'https://api.anthropic.
       response = await fetch(`${proxyBase}/chat`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'X-Api-Key': apiKey, 'X-Target-Url': chatUrl },
-        body,
+        body, signal,
       })
     } else {
       response = await fetch(chatUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
-        body,
+        body, signal,
       })
     }
   }
