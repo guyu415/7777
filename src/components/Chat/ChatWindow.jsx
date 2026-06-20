@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, useLayoutEffect } from 'react'
 import MessageBubble from './MessageBubble'
 import MessageInput from './MessageInput'
 import MemoryModal from './MemoryModal'
+import BottomNav from '../BottomNav'
 import { useChat } from '../../hooks/useChat'
 import { useScheduledMessages } from '../../hooks/useScheduledMessages'
 import { useStore, deleteMessageFromDB } from '../../store'
@@ -40,7 +41,7 @@ export default function ChatWindow({ theme }) {
   const { messages, sendMessage, loadHistory, isLoading, regenerate, deleteMsg, stopStreaming } = useChat()
   const { fetchPendingMessages, updateActiveTime } = useScheduledMessages()
   const {
-    setCurrentView, apiKey, aiAvatar: globalAiAvatar, aiName: globalAiName,
+    currentView, setCurrentView, apiKey, aiAvatar: globalAiAvatar, aiName: globalAiName,
     userAvatar: globalUserAvatar,
     deleteMessagesFrom, workerUrl, currentSessionId, sessions, providers, selectedProviderId,
   } = useStore()
@@ -278,17 +279,33 @@ export default function ChatWindow({ theme }) {
         </div>
       )}
 
-      {/* Input */}
-      <MessageInput
-        ref={inputRef}
-        onSend={(text) => { updateActiveTime(); sendMessage(text, 'text') }}
-        onSendVoice={handleSendVoice}
-        onSendImage={handleSendImage}
-        disabled={isLoading}
-        theme={theme}
-        isLoading={isLoading}
-        onStop={stopStreaming}
-      />
+      {/* Unified input + nav — one shared glass panel, no seam */}
+      <div
+        className="safe-bottom flex-shrink-0"
+        style={{
+          background: `linear-gradient(to bottom, rgba(255,255,255,0.38), rgba(255,255,255,0.26))`,
+          backdropFilter: 'blur(22px)',
+          WebkitBackdropFilter: 'blur(22px)',
+          borderTop: `1px solid ${primaryColor}18`,
+        }}
+      >
+        <MessageInput
+          ref={inputRef}
+          onSend={(text) => { updateActiveTime(); sendMessage(text, 'text') }}
+          onSendVoice={handleSendVoice}
+          onSendImage={handleSendImage}
+          disabled={isLoading}
+          theme={theme}
+          isLoading={isLoading}
+          onStop={stopStreaming}
+        />
+        <BottomNav
+          currentView={currentView}
+          onChange={setCurrentView}
+          theme={theme}
+          bare
+        />
+      </div>
 
       {/* Memory modal */}
       {memoryMsg && (

@@ -109,10 +109,6 @@ const MessageInput = forwardRef(function MessageInput({ onSend, onSendVoice, onS
       <div style={{
         display: 'flex', alignItems: 'flex-end', gap: 8,
         padding: '8px 12px 6px',
-        background: `linear-gradient(to bottom, rgba(255,255,255,0.4), ${primaryColor}14)`,
-        backdropFilter: 'blur(24px)',
-        WebkitBackdropFilter: 'blur(24px)',
-        borderTop: `1px solid ${primaryColor}20`,
       }}>
       {isLoading ? (
         <button

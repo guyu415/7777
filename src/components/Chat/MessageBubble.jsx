@@ -100,15 +100,15 @@ export default function MessageBubble({ message, onLongPress, onRegenerate, isLo
             {...pressProps}
           >
             <span className={isUser ? '' : 'bubble-ai'} style={{ position:'absolute', inset:0, borderRadius:'inherit', pointerEvents:'none' }} />
-            {/* AI bubble dog head — paws 5-8px inside bubble top edge */}
+            {/* AI bubble dog head — chin at bubble border, paws ~25px inside */}
             {!isUser && (
               <img
                 src="/assets/dog-head.png"
                 alt=""
                 style={{
                   position: 'absolute',
-                  top: -43,
-                  left: -6,
+                  top: -25,
+                  left: -8,
                   width: 50, height: 50,
                   objectFit: 'contain',
                   pointerEvents: 'none',
