@@ -38,9 +38,10 @@ export function useChat() {
   const effectiveApiKey = currentSession?.apiKey || apiKey
   const effectiveBaseUrl = currentSession?.baseUrl || apiBaseUrl
   const effectiveModel = currentSession?.model || model
-  const effectiveTtsApiKey = currentSession?.ttsApiKey || ttsApiKey
-  const effectiveTtsGroupId = currentSession?.ttsGroupId || ttsGroupId
-  const effectiveTtsVoiceId = currentSession?.ttsVoiceId || ttsVoiceId
+  const followGlobalTts = currentSession?.followGlobalTts !== false
+  const effectiveTtsApiKey = followGlobalTts ? ttsApiKey : (currentSession?.ttsApiKey || ttsApiKey)
+  const effectiveTtsGroupId = followGlobalTts ? ttsGroupId : (currentSession?.ttsGroupId || ttsGroupId)
+  const effectiveTtsVoiceId = followGlobalTts ? ttsVoiceId : (currentSession?.ttsVoiceId || ttsVoiceId)
   const effectiveVoiceFrequency = currentSession?.voiceFrequency ?? aiVoiceFrequency
   const effectiveSystemPrompt = currentSession?.systemPrompt !== undefined
     ? (currentSession.systemPrompt || systemPrompt)

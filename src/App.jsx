@@ -1,6 +1,5 @@
-import { useEffect } from 'react'
-import { useStore } from './store'
-import { getCustomFont } from './store'
+import { useEffect, useState } from 'react'
+import { useStore, getCustomFont, getBlob } from './store'
 import { THEMES } from './themes'
 import ChatWindow from './components/Chat/ChatWindow'
 import GlobalSettings from './components/GlobalSettings'
@@ -36,6 +35,8 @@ export default function App() {
   const effectiveFontSize = currentSession?.fontSize ?? defaultFontSize
 
   const theme = THEMES[effectiveThemeId] || THEMES.pink
+
+  const [bgUrl, setBgUrl] = useState(null)
 
   // Set CSS vars for bubble tails and font
   useEffect(() => {
@@ -73,14 +74,27 @@ export default function App() {
         await face.load()
         document.fonts.add(face)
         console.log(`[Font] 已加载: ${font.family}`)
-        // Force re-apply CSS var so the browser picks up the newly registered face
-        const current = document.documentElement.style.getPropertyValue('--app-font')
-        document.documentElement.style.setProperty('--app-font', current)
+        // Force the browser to re-evaluate var(--app-font) by removing then re-setting
+        const prev = document.documentElement.style.getPropertyValue('--app-font')
+        document.documentElement.style.removeProperty('--app-font')
+        requestAnimationFrame(() => document.documentElement.style.setProperty('--app-font', prev || `'${font.family}', sans-serif`))
       } catch (e) {
         console.warn(`[Font] 加载失败: ${font.family}`, e)
       }
     })
   }, [customFonts])
+
+  // Load background image from IndexedDB
+  useEffect(() => {
+    if (effectiveChatBg?.type !== 'image') { setBgUrl(null); return }
+    if (effectiveChatBg.blobKey) {
+      getBlob(effectiveChatBg.blobKey).then(blob => setBgUrl(blob ? URL.createObjectURL(blob) : null))
+    } else if (effectiveChatBg.value) {
+      setBgUrl(effectiveChatBg.value)
+    } else {
+      setBgUrl(null)
+    }
+  }, [effectiveChatBg?.blobKey, effectiveChatBg?.type, effectiveChatBg?.value])
 
   // Background from effective settings
   const bgIsColor = effectiveChatBg?.type === 'color'
@@ -92,11 +106,11 @@ export default function App() {
 
   return (
     <div className="h-full w-full" style={wrapperBgStyle}>
-      {bgIsImage && effectiveChatBg.value && currentView === 'chat' && (
+      {bgIsImage && bgUrl && currentView === 'chat' && (
         <div
           className="fixed inset-0 pointer-events-none"
           style={{
-            backgroundImage: `url(${effectiveChatBg.value})`,
+            backgroundImage: `url(${bgUrl})`,
             backgroundSize: 'cover',
             backgroundPosition: 'center',
             opacity: effectiveChatBg.opacity ?? 1.0,

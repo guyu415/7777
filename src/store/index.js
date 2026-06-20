@@ -101,6 +101,7 @@ const DEFAULT_SESSIONS = [{
   ttsApiKey: '',
   ttsGroupId: '',
   ttsVoiceId: '',
+  followGlobalTts: null,
 }]
 
 const DEFAULT_PROVIDERS = [
@@ -210,6 +211,7 @@ export const useStore = create(
             ttsApiKey: '',
             ttsGroupId: '',
             ttsVoiceId: '',
+            followGlobalTts: null,
             ...session,
           }]
         }
@@ -266,6 +268,7 @@ export const useStore = create(
       setSessionTtsGroupId: (sessionId, v) => set((state) => ({ sessions: state.sessions.map(s => s.id === sessionId ? { ...s, ttsGroupId: v } : s) })),
       setSessionTtsVoiceId: (sessionId, v) => set((state) => ({ sessions: state.sessions.map(s => s.id === sessionId ? { ...s, ttsVoiceId: v } : s) })),
       setSessionVoiceFrequency: (sessionId, v) => set((state) => ({ sessions: state.sessions.map(s => s.id === sessionId ? { ...s, voiceFrequency: v } : s) })),
+      setSessionFollowGlobalTts: (sessionId, v) => set((state) => ({ sessions: state.sessions.map(s => s.id === sessionId ? { ...s, followGlobalTts: v } : s) })),
 
       addCustomFont: (font) => set((state) => ({ customFonts: [...state.customFonts, font] })),
       removeCustomFont: (id) => set((state) => ({ customFonts: state.customFonts.filter(f => f.id !== id) })),
@@ -280,7 +283,7 @@ export const useStore = create(
     }),
     {
       name: 'pink-chat-settings',
-      version: 10,
+      version: 11,
       migrate: (persisted, version) => {
         if (version < 2) {
           const providers = [
@@ -370,6 +373,16 @@ export const useStore = create(
           persisted = {
             ...persisted,
             sessions: (persisted.sessions || []).map(s => ({ voiceFrequency: null, ...s })),
+          }
+        }
+        if (version < 11) {
+          persisted = {
+            ...persisted,
+            sessions: (persisted.sessions || []).map(s => ({
+              // Sessions that had custom TTS keys keep them; others follow global
+              followGlobalTts: (s.ttsApiKey || s.ttsGroupId || s.ttsVoiceId) ? false : null,
+              ...s,
+            })),
           }
         }
         return persisted
