@@ -16,9 +16,9 @@ export default function BottomNav({ currentView, onChange, theme }) {
         backdropFilter: 'blur(20px)',
         WebkitBackdropFilter: 'blur(20px)',
         borderTop: `1px solid ${primary}22`,
-        paddingTop: 2,
-        paddingBottom: 2,
-        minHeight: 52,
+        paddingTop: 4,
+        paddingBottom: 4,
+        minHeight: 64,
       }}
     >
       {TABS.map(tab => {
@@ -30,7 +30,7 @@ export default function BottomNav({ currentView, onChange, theme }) {
             className="flex items-center justify-center flex-1 transition-all duration-200"
             style={{ padding: '2px 0' }}
           >
-            <div style={{ position: 'relative', width: 60, height: 60 }}>
+            <div style={{ position: 'relative', width: 56, height: 56 }}>
               <img
                 src={tab.img}
                 alt={tab.label}

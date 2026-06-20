@@ -177,17 +177,22 @@ const MessageInput = forwardRef(function MessageInput({ onSend, onSendVoice, onS
         onClick={handleSend}
         disabled={!canSend}
         style={{
-          ...btnBase,
+          width: 44, height: 44,
+          borderRadius: '50%',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          flexShrink: 0,
           background: 'transparent',
           border: 'none',
           boxShadow: 'none',
-          padding: 2,
+          padding: 0,
+          cursor: canSend ? 'pointer' : 'default',
           opacity: canSend ? 1 : 0.35,
           transform: canSend ? 'scale(1)' : 'scale(0.88)',
-          filter: canSend ? `drop-shadow(0 2px 6px ${primaryColor}88)` : 'none',
+          filter: canSend ? `drop-shadow(0 2px 8px ${primaryColor}99)` : 'none',
+          transition: 'all 0.25s ease-in-out',
         }}
       >
-        <img src="/assets/paw.png" alt="发送" style={{ width: 30, height: 30, objectFit: 'contain' }} />
+        <img src="/assets/paw.png" alt="发送" style={{ width: 36, height: 36, objectFit: 'contain' }} />
       </button>
       </div>
     </div>

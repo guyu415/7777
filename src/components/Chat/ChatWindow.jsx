@@ -158,11 +158,12 @@ export default function ChatWindow({ theme }) {
               alt=""
               style={{
                 position: 'absolute',
-                width: 22, height: 22,
-                top: -6, right: -8,
+                width: 40, height: 40,
+                top: -15, right: -10,
                 objectFit: 'contain',
                 filter: 'drop-shadow(0 1px 3px rgba(0,0,0,0.15))',
                 pointerEvents: 'none',
+                zIndex: 2,
               }}
             />
           </div>
