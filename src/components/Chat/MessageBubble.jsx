@@ -20,7 +20,7 @@ function formatTime(ts) {
   return new Date(ts).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
 }
 
-export default function MessageBubble({ message, onLongPress, onRegenerate, isLoading, userAvatar, aiAvatar, theme }) {
+export default function MessageBubble({ message, onLongPress, onRegenerate, onRegenerateRound, isLoading, userAvatar, aiAvatar, theme }) {
   const [viewerSrc, setViewerSrc] = useState(null)
   const [pressed, setPressed] = useState(false)
   const [showVoiceText, setShowVoiceText] = useState(false)
@@ -137,7 +137,36 @@ export default function MessageBubble({ message, onLongPress, onRegenerate, isLo
             {message.streaming && !message.content ? (
               <TypingIndicator />
             ) : (
-              <span className="whitespace-pre-wrap break-words">{message.content}</span>
+              <span className="whitespace-pre-wrap break-words">{message.content}
+                {onRegenerate && !message.streaming && (
+                  <span className="inline-flex gap-1 ml-2" style={{ verticalAlign: 'middle' }}>
+                    <button
+                      onClick={e => { e.stopPropagation(); onRegenerate(message.id) }}
+                      disabled={isLoading}
+                      title="只重说这条"
+                      style={{
+                        fontSize: 11, padding: '1px 6px', borderRadius: 8, lineHeight: 1.6,
+                        background: 'rgba(61,107,82,0.12)', border: '1px solid rgba(61,107,82,0.2)',
+                        color: isLoading ? 'rgba(61,107,82,0.3)' : '#3d6b52',
+                        cursor: isLoading ? 'not-allowed' : 'pointer', fontFamily: 'inherit',
+                      }}
+                    >↻单</button>
+                    {onRegenerateRound && (
+                      <button
+                        onClick={e => { e.stopPropagation(); onRegenerateRound() }}
+                        disabled={isLoading}
+                        title="重说整轮"
+                        style={{
+                          fontSize: 11, padding: '1px 6px', borderRadius: 8, lineHeight: 1.6,
+                          background: 'rgba(61,107,82,0.12)', border: '1px solid rgba(61,107,82,0.2)',
+                          color: isLoading ? 'rgba(61,107,82,0.3)' : '#3d6b52',
+                          cursor: isLoading ? 'not-allowed' : 'pointer', fontFamily: 'inherit',
+                        }}
+                      >↻轮</button>
+                    )}
+                  </span>
+                )}
+              </span>
             )}
             {message.streaming && message.content && (
               <span className="inline-block w-0.5 h-4 animate-pulse-soft ml-0.5 align-middle"
@@ -216,26 +245,6 @@ export default function MessageBubble({ message, onLongPress, onRegenerate, isLo
         {/* AC status card */}
         {!isUser && message.acStatus && (
           <AcCard status={message.acStatus} />
-        )}
-
-        {/* Regenerate button — only for non-streaming, non-loading AI messages */}
-        {!isUser && !message.streaming && !message.voiceLoading && onRegenerate && (
-          <button
-            onClick={() => onRegenerate(message.id)}
-            disabled={isLoading}
-            title="重新生成"
-            style={{
-              background: 'none', border: 'none',
-              cursor: isLoading ? 'not-allowed' : 'pointer',
-              fontSize: 13, padding: '2px 6px', marginTop: 2,
-              color: isLoading ? 'rgba(196,122,138,0.35)' : '#c47a8a',
-              opacity: isLoading ? 0.4 : 0.7,
-              transition: 'opacity 0.2s',
-              borderRadius: 8,
-            }}
-          >
-            🔄
-          </button>
         )}
 
         {/* Timestamp */}

@@ -22,6 +22,7 @@ export default function SessionList({ theme, onSelectSession }) {
     sessions, currentSessionId, setCurrentSessionId,
     addSession, updateSession, deleteSession,
     systemPrompt, setMessages,
+    aiAvatar: globalAiAvatar,
   } = useStore()
 
   const [editingId, setEditingId] = useState(null)
@@ -138,8 +139,8 @@ export default function SessionList({ theme, onSelectSession }) {
                     background: active ? `${primary}22` : 'rgba(200,220,255,0.3)',
                   }}
                 >
-                  {session.aiAvatar
-                    ? <img src={session.aiAvatar} alt="" className="w-full h-full object-cover rounded-full" />
+                  {(session.aiAvatar || globalAiAvatar)
+                    ? <img src={session.aiAvatar || globalAiAvatar} alt="" className="w-full h-full object-cover rounded-full" />
                     : '🌸'}
                 </div>
 
