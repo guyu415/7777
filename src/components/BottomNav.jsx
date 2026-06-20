@@ -4,22 +4,26 @@ const TABS = [
   { id: 'globalSettings', label: '设置', img: '/assets/nav3settings.png' },
 ]
 
-export default function BottomNav({ currentView, onChange, theme }) {
+export default function BottomNav({ currentView, onChange, theme, bare = false }) {
   const primary = theme?.primary || '#4aacf0'
   const primaryDark = theme?.primaryDark || '#2196d3'
 
+  const containerStyle = bare
+    ? { display: 'flex', alignItems: 'center', justifyContent: 'space-around', paddingTop: 4, paddingBottom: 4, minHeight: 72 }
+    : {
+        display: 'flex', alignItems: 'center', justifyContent: 'space-around',
+        background: `linear-gradient(to bottom, ${primary}08, rgba(255,255,255,0.22))`,
+        backdropFilter: 'blur(22px)',
+        WebkitBackdropFilter: 'blur(22px)',
+        borderTop: `1px solid ${primary}14`,
+        paddingTop: 4, paddingBottom: 4,
+        minHeight: 72,
+      }
+
   return (
     <div
-      className="flex items-center justify-around safe-bottom flex-shrink-0"
-      style={{
-        background: `linear-gradient(to bottom, ${primary}08, rgba(255,255,255,0.22))`,
-        backdropFilter: 'blur(20px)',
-        WebkitBackdropFilter: 'blur(20px)',
-        borderTop: `1px solid ${primary}14`,
-        paddingTop: 4,
-        paddingBottom: 4,
-        minHeight: 72,
-      }}
+      className={bare ? 'flex-shrink-0' : 'flex-shrink-0 safe-bottom'}
+      style={containerStyle}
     >
       {TABS.map((tab) => {
         const active = currentView === tab.id
@@ -27,15 +31,18 @@ export default function BottomNav({ currentView, onChange, theme }) {
           <button
             key={tab.id}
             onClick={() => onChange(tab.id)}
-            className="flex items-center justify-center flex-1"
             style={{
+              flex: 1,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
               padding: 0,
               background: 'none',
               border: 'none',
               cursor: 'pointer',
             }}
           >
-            {/* The flower wreath IS the tab frame — no separate circle */}
+            {/* Flower wreath IS the tab frame — fills the tab area */}
             <div style={{ position: 'relative', width: 64, height: 64 }}>
               <img
                 src={tab.img}
@@ -47,7 +54,7 @@ export default function BottomNav({ currentView, onChange, theme }) {
                   filter: active
                     ? `drop-shadow(0 0 7px ${primary}) drop-shadow(0 0 16px ${primary}aa) brightness(1.12)`
                     : 'opacity(0.42) saturate(0.5)',
-                  transform: active ? 'scale(1.08)' : 'scale(0.92)',
+                  transform: active ? 'scale(1.06)' : 'scale(1)',
                   transition: 'all 0.3s ease',
                 }}
               />

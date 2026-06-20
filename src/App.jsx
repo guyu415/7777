@@ -124,7 +124,8 @@ export default function App() {
           {currentView === 'sessionSettings' && <SessionSettings theme={theme} />}
         </div>
 
-        {currentView !== 'sessionSettings' && (
+        {/* BottomNav for sessions/globalSettings; chat view embeds it inside ChatWindow */}
+        {currentView !== 'sessionSettings' && currentView !== 'chat' && (
           <BottomNav currentView={currentView} onChange={setCurrentView} theme={theme} />
         )}
       </div>
