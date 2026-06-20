@@ -142,15 +142,29 @@ export default function ChatWindow({ theme }) {
           flexShrink: 0,
         }}>
         <div className="flex items-center gap-3 min-w-0">
-          <div className="w-11 h-11 rounded-full overflow-hidden flex items-center justify-center text-xl flex-shrink-0"
-            style={{
-              background: `${primaryColor}33`,
-              border: `3px solid ${primaryColor}`,
-              boxShadow: `0 2px 10px ${primaryColor}45, 0 0 16px ${primaryColor}30`,
-            }}>
-            {effectiveAiAvatar
-              ? <img src={effectiveAiAvatar} alt="" className="w-full h-full object-cover" />
-              : '🌸'}
+          <div style={{ position: 'relative', flexShrink: 0 }}>
+            <div className="w-11 h-11 rounded-full overflow-hidden flex items-center justify-center text-xl"
+              style={{
+                background: `${primaryColor}33`,
+                border: `3px solid ${primaryColor}`,
+                boxShadow: `0 2px 10px ${primaryColor}45, 0 0 16px ${primaryColor}30`,
+              }}>
+              {effectiveAiAvatar
+                ? <img src={effectiveAiAvatar} alt="" className="w-full h-full object-cover" />
+                : '🌸'}
+            </div>
+            <img
+              src="/assets/puppy-tag.png"
+              alt=""
+              style={{
+                position: 'absolute',
+                width: 22, height: 22,
+                top: -6, right: -8,
+                objectFit: 'contain',
+                filter: 'drop-shadow(0 1px 3px rgba(0,0,0,0.15))',
+                pointerEvents: 'none',
+              }}
+            />
           </div>
           <div className="min-w-0">
             <div className="font-semibold text-sm" style={{
