@@ -74,7 +74,7 @@ export default function MessageBubble({ message, onLongPress, onRegenerate, isLo
     WebkitBackdropFilter: 'blur(12px)',
     border: `1px solid ${theme?.userBubbleBorder || 'rgba(255,133,179,0.35)'}`,
     boxShadow: `0 4px 16px ${theme?.userBubbleShadow || 'rgba(255,133,179,0.18)'}, inset 0 1px 0 rgba(255,255,255,0.4)`,
-    color: theme?.userBubbleText || '#fff',
+    color: theme?.userBubbleText || '#C78FCA',
   }
 
   const aiBubbleStyle = {
@@ -182,7 +182,7 @@ export default function MessageBubble({ message, onLongPress, onRegenerate, isLo
           >
             <img src={message.imageUrl || `data:${message.imageType};base64,${message.imageData}`} alt="" className="w-full object-cover" />
             {message.content && (
-              <div className="px-3 py-2 text-sm" style={{ background: isUser ? `${theme?.userBubble || 'rgba(255,133,179,0.5)'}` : 'rgba(255,255,255,0.7)', color: isUser ? (theme?.userBubbleText || '#fff') : (theme?.aiBubbleText || '#3d6b52') }}>
+              <div className="px-3 py-2 text-sm" style={{ background: isUser ? `${theme?.userBubble || 'rgba(255,133,179,0.5)'}` : 'rgba(255,255,255,0.7)', color: isUser ? (theme?.userBubbleText || '#C78FCA') : (theme?.aiBubbleText || '#3d6b52') }}>
                 {message.content}
               </div>
             )}
