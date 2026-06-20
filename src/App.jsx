@@ -44,16 +44,51 @@ export default function App() {
     document.documentElement.style.setProperty('--tail-ai', theme.tailAi)
   }, [theme.tailUser, theme.tailAi])
 
+  // Combined font effect: load any unregistered custom FontFaces from IDB first,
+  // then set --app-font. This order ensures the CSS var is never set to an
+  // unregistered family (which would cause the browser to fall back to the
+  // :root default and stay there even after the font loads).
   useEffect(() => {
-    const fontId = effectiveFontFamily
-    const builtIn = FONT_MAP[fontId]
-    if (builtIn) {
-      document.documentElement.style.setProperty('--app-font', builtIn)
-    } else {
-      // Custom font by id — family name is stored in customFonts
-      const cf = customFonts?.find(f => f.id === fontId)
-      if (cf) document.documentElement.style.setProperty('--app-font', `'${cf.family}', sans-serif`)
+    const applyFont = async () => {
+      console.log(`[FONT] applyFont triggered — effectiveFontFamily: ${effectiveFontFamily}, customFonts: ${customFonts?.length ?? 0}个`)
+
+      // Step 1: load any unregistered custom FontFaces from IDB
+      const toLoad = (customFonts ?? []).filter(f => !document.fonts.check(`12px "${f.family}"`))
+      if (toLoad.length) {
+        console.log(`[FONT] 需从IDB加载: ${toLoad.map(f => f.family).join(', ')}`)
+      }
+      for (const font of toLoad) {
+        try {
+          const blob = await getCustomFont(font.id)
+          console.log(`[FONT] getCustomFont(${font.id}) → ${blob ? `blob ${(blob.size/1024).toFixed(1)}KB` : 'null'}`)
+          if (!blob) continue
+          const url = URL.createObjectURL(blob)
+          const face = new FontFace(font.family, `url(${url})`)
+          await face.load()
+          document.fonts.add(face)
+          console.log(`[FONT] FontFace已注册: ${font.family}`)
+        } catch (e) {
+          console.warn(`[FONT] 加载失败: ${font.family}`, e)
+        }
+      }
+
+      // Step 2: now that fonts are registered, set --app-font
+      const fontId = effectiveFontFamily
+      const builtIn = FONT_MAP[fontId]
+      if (builtIn) {
+        document.documentElement.style.setProperty('--app-font', builtIn)
+        console.log(`[FONT] 设置内置字体: ${fontId}`)
+      } else {
+        const cf = (customFonts ?? []).find(f => f.id === fontId)
+        if (cf) {
+          document.documentElement.style.setProperty('--app-font', `'${cf.family}', sans-serif`)
+          console.log(`[FONT] 设置自定义字体: ${cf.family}`)
+        } else {
+          console.log(`[FONT] 未找到字体ID: ${fontId}, customFonts ids: ${(customFonts ?? []).map(f => f.id).join(',')}`)
+        }
+      }
     }
+    applyFont()
   }, [effectiveFontFamily, customFonts])
 
   useEffect(() => {
@@ -61,41 +96,20 @@ export default function App() {
     document.documentElement.style.fontSize = `${effectiveFontSize}px`
   }, [effectiveFontSize])
 
-  // Load custom fonts from IndexedDB whenever the list changes
-  useEffect(() => {
-    if (!customFonts?.length) return
-    const loadAll = async () => {
-      for (const font of customFonts) {
-        if (document.fonts.check(`12px "${font.family}"`)) continue
-        try {
-          const blob = await getCustomFont(font.id)
-          if (!blob) continue
-          const url = URL.createObjectURL(blob)
-          const face = new FontFace(font.family, `url(${url})`)
-          await face.load()
-          document.fonts.add(face)
-          console.log(`[Font] 已加载: ${font.family}`)
-        } catch (e) {
-          console.warn(`[Font] 加载失败: ${font.family}`, e)
-        }
-      }
-      // Re-apply --app-font after all fonts are loaded so the browser picks up
-      // any custom FontFace that was registered after the CSS var was first set
-      const current = document.documentElement.style.getPropertyValue('--app-font')
-      if (current) {
-        document.documentElement.style.removeProperty('--app-font')
-        requestAnimationFrame(() => document.documentElement.style.setProperty('--app-font', current))
-      }
-    }
-    loadAll()
-  }, [customFonts])
-
   // Load background image from IndexedDB
   useEffect(() => {
+    console.log(`[BG-APP] effectiveChatBg:`, effectiveChatBg)
     if (effectiveChatBg?.type !== 'image') { setBgUrl(null); return }
     if (effectiveChatBg.blobKey) {
-      getBlob(effectiveChatBg.blobKey).then(blob => setBgUrl(blob ? URL.createObjectURL(blob) : null))
+      console.log(`[BG-APP] getBlob(${effectiveChatBg.blobKey}) 开始…`)
+      getBlob(effectiveChatBg.blobKey).then(blob => {
+        console.log(`[BG-APP] getBlob 返回:`, blob ? `blob ${(blob.size/1024).toFixed(1)}KB type=${blob.type}` : 'null')
+        const url = blob ? URL.createObjectURL(blob) : null
+        console.log(`[BG-APP] setBgUrl →`, url)
+        setBgUrl(url)
+      })
     } else if (effectiveChatBg.value) {
+      console.log(`[BG-APP] 使用 value URL`)
       setBgUrl(effectiveChatBg.value)
     } else {
       setBgUrl(null)
