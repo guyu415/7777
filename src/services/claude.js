@@ -145,10 +145,11 @@ export async function* streamChat({ apiKey, apiBaseUrl = 'https://api.anthropic.
     }
   }
 
-  console.log('[API] 请求地址:', actualUrl)
+  const proxyNote = proxyBase ? `Worker代理: ${proxyBase}` : '直连'
+  console.log(`[API] 请求地址: POST ${actualUrl} (${proxyNote})`)
   if (!response.ok) {
     const err = await response.json().catch(() => ({}))
-    throw new Error(`${err?.error?.message || `API Error ${response.status}`}\n请求地址: ${actualUrl}`)
+    throw new Error(`请求失败: POST ${actualUrl}\n${err?.error?.message || `HTTP ${response.status}`}`)
   }
 
   const reader = response.body.getReader()

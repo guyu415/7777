@@ -30,6 +30,14 @@ function SendIcon() {
   )
 }
 
+function StopIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 14 14" fill="currentColor">
+      <rect x="1" y="1" width="12" height="12" rx="2.5" />
+    </svg>
+  )
+}
+
 const btnBase = {
   width: 36, height: 36,
   borderRadius: '50%',
@@ -42,7 +50,7 @@ const btnBase = {
   background: 'rgba(255,182,209,0.25)',
 }
 
-const MessageInput = forwardRef(function MessageInput({ onSend, onSendVoice, onSendImage, disabled, theme }, ref) {
+const MessageInput = forwardRef(function MessageInput({ onSend, onSendVoice, onSendImage, disabled, theme, isLoading, onStop }, ref) {
   const [text, setText] = useState('')
   const [showVoice, setShowVoice] = useState(false)
   const fileRef = useRef(null)
@@ -106,9 +114,25 @@ const MessageInput = forwardRef(function MessageInput({ onSend, onSendVoice, onS
         WebkitBackdropFilter: 'blur(24px)',
         borderTop: `1px solid ${primaryColor}20`,
       }}>
-      <button onClick={() => setShowVoice(true)} style={btnBase}>
-        <MicIcon />
-      </button>
+      {isLoading ? (
+        <button
+          onClick={onStop}
+          title="停止回复"
+          style={{
+            ...btnBase,
+            background: `linear-gradient(135deg, ${primaryColor}40, ${primaryColor}25)`,
+            border: `1.5px solid ${primaryColor}60`,
+            color: primaryColor,
+            boxShadow: `0 2px 10px ${primaryColor}30`,
+          }}
+        >
+          <StopIcon />
+        </button>
+      ) : (
+        <button onClick={() => setShowVoice(true)} style={btnBase}>
+          <MicIcon />
+        </button>
+      )}
 
       <div style={{
         flex: 1, display: 'flex', alignItems: 'flex-end',
@@ -127,7 +151,7 @@ const MessageInput = forwardRef(function MessageInput({ onSend, onSendVoice, onS
           value={text}
           onChange={e => setText(e.target.value)}
           onKeyDown={handleKey}
-          placeholder="说点什么吧～"
+          placeholder={isLoading ? 'AI 正在回复中…' : '说点什么吧～'}
           rows={1}
           disabled={disabled}
           style={{
@@ -145,7 +169,7 @@ const MessageInput = forwardRef(function MessageInput({ onSend, onSendVoice, onS
       </div>
 
       <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={handleImage} />
-      <button onClick={() => fileRef.current?.click()} style={btnBase}>
+      <button onClick={() => fileRef.current?.click()} style={btnBase} disabled={isLoading}>
         <ImageIcon />
       </button>
 

@@ -8,7 +8,7 @@ import { useStore, deleteMessageFromDB } from '../../store'
 
 const draftsBySession = {}
 
-function Signature({ text, color }) {
+function Signature({ text, color, shadow }) {
   const wrapRef = useRef(null)
   const firstRef = useRef(null)
   const [overflow, setOverflow] = useState(false)
@@ -17,7 +17,6 @@ function Signature({ text, color }) {
     const wrap = wrapRef.current
     const first = firstRef.current
     if (!wrap || !first) return
-    // Measure natural text width (first unit minus its trailing gap)
     const natural = first.scrollWidth - (overflow ? 32 : 0)
     setOverflow(natural > wrap.clientWidth + 1)
   }, [text])
@@ -28,7 +27,7 @@ function Signature({ text, color }) {
     <div ref={wrapRef} style={{ maxWidth: 160, overflow: 'hidden', whiteSpace: 'nowrap' }}>
       <span
         className={overflow ? 'marquee-scroll' : ''}
-        style={{ fontSize: 12, color, display: 'inline-block' }}
+        style={{ fontSize: 12, color, textShadow: shadow, display: 'inline-block' }}
       >
         <span ref={firstRef} style={unit}>{text}</span>
         {overflow && <span style={unit}>{text}</span>}
@@ -154,10 +153,13 @@ export default function ChatWindow({ theme }) {
               : '🌸'}
           </div>
           <div className="min-w-0">
-            <div className="font-semibold text-sm" style={{ color: primaryDarkColor }}>
+            <div className="font-semibold text-sm" style={{
+              color: primaryColor,
+              textShadow: `0 0 8px ${primaryColor}cc, 0 0 18px ${primaryColor}80`,
+            }}>
               {effectiveAiName || '小漫'}
             </div>
-            <Signature text={effectiveSignature || '在线'} color={`${primaryColor}cc`} />
+            <Signature text={effectiveSignature || '在线'} color={primaryColor} shadow={`0 0 6px ${primaryColor}aa, 0 0 14px ${primaryColor}60`} />
           </div>
         </div>
         <button
@@ -274,32 +276,6 @@ export default function ChatWindow({ theme }) {
         </div>
       )}
 
-      {/* Stop streaming button */}
-      {isLoading && (
-        <div className="flex justify-center py-1.5 flex-shrink-0">
-          <button
-            onClick={stopStreaming}
-            title="中断回复"
-            style={{
-              width: 34, height: 34, borderRadius: '50%',
-              display: 'flex', alignItems: 'center', justifyContent: 'center',
-              background: 'rgba(255,255,255,0.88)',
-              backdropFilter: 'blur(12px)',
-              WebkitBackdropFilter: 'blur(12px)',
-              border: `1.5px solid ${primaryColor}50`,
-              boxShadow: `0 2px 12px ${primaryColor}30`,
-              cursor: 'pointer',
-              color: primaryColor,
-              flexShrink: 0,
-            }}
-          >
-            <svg width="12" height="12" viewBox="0 0 12 12" fill="currentColor">
-              <rect x="1" y="1" width="10" height="10" rx="2" />
-            </svg>
-          </button>
-        </div>
-      )}
-
       {/* Input */}
       <MessageInput
         ref={inputRef}
@@ -308,6 +284,8 @@ export default function ChatWindow({ theme }) {
         onSendImage={handleSendImage}
         disabled={isLoading}
         theme={theme}
+        isLoading={isLoading}
+        onStop={stopStreaming}
       />
 
       {/* Memory modal */}
