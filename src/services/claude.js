@@ -90,12 +90,11 @@ export async function* streamChat({ apiKey, apiBaseUrl = 'https://api.anthropic.
   const proxyBase = (useWorkerProxy && workerUrl) ? workerUrl.replace(/\/$/, '') : null
 
   // Build web search tools based on provider
+  // Claude via AiHubMix: web search is triggered by appending :surfing to model name, NOT via tools param
   let webSearchTools = null
   if (webSearch) {
     if (providerName === 'glm') {
       webSearchTools = [{ type: 'web_search', web_search: { enable: true, search_result: true } }]
-    } else if (providerName === 'claude') {
-      webSearchTools = [{ type: 'web_search_20250305', name: 'web_search' }]
     }
     console.log('[WEB] 联网开关=on | 供应商=', providerName || '(未设置)', '| 注入参数=', JSON.stringify(webSearchTools))
   } else {
@@ -139,8 +138,13 @@ export async function* streamChat({ apiKey, apiBaseUrl = 'https://api.anthropic.
     }
   } else {
     const chatUrl = `${base}/chat/completions`
+    // Claude via AiHubMix: append :surfing suffix to model name to enable web search
+    const effectiveModel = (webSearch && providerName === 'claude') ? `${model}:surfing` : model
+    if (webSearch && providerName === 'claude') {
+      console.log('[WEB] Claude联网模式: 模型后缀 :surfing →', effectiveModel)
+    }
     const body = JSON.stringify({
-      model,
+      model: effectiveModel,
       max_tokens: 4096,
       stream: true,
       messages: buildOpenAIMessages(systemPrompt, messages),
