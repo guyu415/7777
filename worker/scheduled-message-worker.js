@@ -206,24 +206,25 @@ async function handleChatProxy(request) {
 }
 
 async function callClaude(env, systemPrompt) {
-  const baseUrl = (env.CLAUDE_API_BASE_URL || 'https://api.anthropic.com').replace(/\/$/, '')
-  const res = await fetch(`${baseUrl}/v1/messages`, {
+  const baseUrl = (env.CLAUDE_API_BASE_URL || 'https://api.openai.com').replace(/\/$/, '')
+  const res = await fetch(`${baseUrl}/v1/chat/completions`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      'x-api-key': env.CLAUDE_API_KEY,
-      'anthropic-version': '2023-06-01',
+      'Authorization': `Bearer ${env.CLAUDE_API_KEY}`,
     },
     body: JSON.stringify({
       model: 'claude-haiku-4-5-20251001',
       max_tokens: 100,
-      system: systemPrompt,
-      messages: [{ role: 'user', content: '发一条消息给主人' }],
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: '发一条消息给主人' },
+      ],
     }),
   })
   const data = await res.json()
   if (!res.ok) throw new Error(`API ${res.status}: ${JSON.stringify(data)}`)
-  return data.content?.[0]?.text?.trim()
+  return data.choices?.[0]?.message?.content?.trim()
 }
 
 async function maybeGenerateMessage(env) {
@@ -275,8 +276,8 @@ async function maybeGenerateMessage(env) {
 async function debugGenerateMessage(env) {
   const now = Date.now()
   const model = 'claude-haiku-4-5-20251001'
-  const baseUrl = (env.CLAUDE_API_BASE_URL || 'https://api.anthropic.com').replace(/\/$/, '')
-  const apiUrl = `${baseUrl}/v1/messages`
+  const baseUrl = (env.CLAUDE_API_BASE_URL || 'https://api.openai.com').replace(/\/$/, '')
+  const apiUrl = `${baseUrl}/v1/chat/completions`
   const apiKeyLength = env.CLAUDE_API_KEY?.length ?? 0
 
   const lastActiveStr = await env.CHAT_KV.get('last_user_active_time')
@@ -301,14 +302,15 @@ async function debugGenerateMessage(env) {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'x-api-key': env.CLAUDE_API_KEY || '',
-        'anthropic-version': '2023-06-01',
+        'Authorization': `Bearer ${env.CLAUDE_API_KEY || ''}`,
       },
       body: JSON.stringify({
         model,
         max_tokens: 100,
-        system: systemPrompt,
-        messages: [{ role: 'user', content: '发一条消息给主人' }],
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: '发一条消息给主人' },
+        ],
       }),
     })
     apiStatus = res.status
@@ -318,7 +320,7 @@ async function debugGenerateMessage(env) {
     if (res.ok) {
       let data
       try { data = JSON.parse(rawText) } catch {}
-      generatedMessage = data?.content?.[0]?.text?.trim() ?? null
+      generatedMessage = data?.choices?.[0]?.message?.content?.trim() ?? null
 
       if (generatedMessage) {
         const kvRaw = await env.CHAT_KV.get('pending-messages')
