@@ -176,6 +176,8 @@ export async function* streamChat({ apiKey, apiBaseUrl = 'https://api.anthropic.
 
       try {
         const event = JSON.parse(data)
+        // Temporary debug: log first SSE event to console
+        if (!window.__sseDumped) { window.__sseDumped = true; console.log('[SSE-RAW-FIRST]', JSON.stringify(event)) }
         // Anthropic format
         if (event.type === 'content_block_delta' && event.delta?.type === 'text_delta') {
           yield { text: event.delta.text }
