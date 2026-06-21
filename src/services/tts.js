@@ -1,4 +1,4 @@
-export async function fetchTTSAudio(text, { apiKey, groupId, voiceId = 'English_Trustworthy_Man', speed = 1.0, vol = 1.0 }) {
+export async function fetchTTSAudio(text, { apiKey, groupId, voiceId = 'English_Trustworthy_Man', speed = 1.0, vol = 1.0, model = 'speech-2.6-hd' }) {
   const res = await fetch(`https://api.minimaxi.com/v1/t2a_v2?GroupId=${groupId}`, {
     method: 'POST',
     headers: {
@@ -6,7 +6,7 @@ export async function fetchTTSAudio(text, { apiKey, groupId, voiceId = 'English_
       'Authorization': `Bearer ${apiKey}`,
     },
     body: JSON.stringify({
-      model: 'speech-2.6-hd',
+      model,
       text,
       voice_setting: { voice_id: voiceId, speed, vol },
     }),

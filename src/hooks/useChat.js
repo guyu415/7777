@@ -42,10 +42,11 @@ export function useChat() {
   const effectiveApiKey = currentSession?.apiKey || selectedProvider?.apiKey || apiKey
   const effectiveBaseUrl = currentSession?.baseUrl || selectedProvider?.baseUrl || apiBaseUrl
   const effectiveModel = currentSession?.model || model
-  const followGlobalTts = currentSession?.followGlobalTts !== false
-  const effectiveTtsApiKey = followGlobalTts ? ttsApiKey : (currentSession?.ttsApiKey || ttsApiKey)
-  const effectiveTtsGroupId = followGlobalTts ? ttsGroupId : (currentSession?.ttsGroupId || ttsGroupId)
-  const effectiveTtsVoiceId = followGlobalTts ? ttsVoiceId : (currentSession?.ttsVoiceId || ttsVoiceId)
+  // Session TTS keys first, global as fallback
+  const effectiveTtsApiKey = currentSession?.ttsApiKey || ttsApiKey
+  const effectiveTtsGroupId = currentSession?.ttsGroupId || ttsGroupId
+  const effectiveTtsVoiceId = currentSession?.ttsVoiceId || ttsVoiceId
+  const effectiveTtsModel = currentSession?.ttsModel || 'speech-2.6-hd'
   const effectiveVoiceFrequency = currentSession?.voiceFrequency ?? aiVoiceFrequency
   const effectiveSystemPrompt = currentSession?.systemPrompt !== undefined
     ? (currentSession.systemPrompt || systemPrompt)
@@ -217,7 +218,7 @@ export function useChat() {
 
           let voiceBlobId = null, duration = 0
           try {
-            const blob = await fetchTTSAudio(voiceText, { apiKey: effectiveTtsApiKey, groupId: effectiveTtsGroupId, voiceId: effectiveTtsVoiceId || 'English_Trustworthy_Man' })
+            const blob = await fetchTTSAudio(voiceText, { apiKey: effectiveTtsApiKey, groupId: effectiveTtsGroupId, voiceId: effectiveTtsVoiceId || 'English_Trustworthy_Man', model: effectiveTtsModel })
             try {
               const ab = await blob.arrayBuffer()
               const ac = new AudioContext()
@@ -244,7 +245,7 @@ export function useChat() {
 
           let voiceBlobId = null, duration = 0
           try {
-            const blob = await fetchTTSAudio(voiceText, { apiKey: effectiveTtsApiKey, groupId: effectiveTtsGroupId, voiceId: effectiveTtsVoiceId || 'English_Trustworthy_Man' })
+            const blob = await fetchTTSAudio(voiceText, { apiKey: effectiveTtsApiKey, groupId: effectiveTtsGroupId, voiceId: effectiveTtsVoiceId || 'English_Trustworthy_Man', model: effectiveTtsModel })
             try {
               const ab = await blob.arrayBuffer()
               const ac = new AudioContext()
