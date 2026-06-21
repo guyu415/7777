@@ -184,7 +184,14 @@ export function useChat() {
       const voiceMatch = fullContent.match(VOICE_TAG_RE)
       console.log('[VOICE] voiceMatch=', !!voiceMatch, '| effectiveTtsApiKey长度=', effectiveTtsApiKey?.length ?? 0, '| effectiveTtsGroupId=', effectiveTtsGroupId || '(空)', '| aiVoiceEnabled=', aiVoiceEnabled)
 
-      if (voiceMatch && effectiveTtsApiKey && effectiveTtsGroupId && aiVoiceEnabled) {
+      const prob = effectiveVoiceFrequency  // 0=从不 0.3=偶尔 0.7=经常 1.0=总是
+      const rand = Math.random()
+      const shouldVoice = rand < prob
+      if (voiceMatch) {
+        console.log('[VOICE FREQ] 频率档=', effectiveVoiceFrequency, '对应概率=', prob, '本次随机=', rand.toFixed(3), '是否发语音=', shouldVoice)
+      }
+
+      if (voiceMatch && effectiveTtsApiKey && effectiveTtsGroupId && aiVoiceEnabled && shouldVoice) {
         const voiceText = voiceMatch[1].trim()
         console.log('[VOICE] 检测到VOICE标记，准备合成，文本=', voiceText.slice(0, 80))
         const surroundText = fullContent.replace(VOICE_TAG_RE, '').replace(AC_TAG_RE, '').trim()
