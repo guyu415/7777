@@ -53,31 +53,31 @@ export default function MessageBubble({ message, onLongPress, onRegenerate, onRe
   } : {}
 
   const avatarEl = (
-    <div className="flex-shrink-0 mb-1" style={{ position: 'relative', width: 50, height: 50, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-      <div className="w-9 h-9 rounded-full overflow-hidden flex items-center justify-center text-lg"
-        style={{
-          background: isUser ? `${theme?.primary}4d` : 'rgba(255,255,255,0.55)',
-          boxShadow: isUser
-            ? `0 2px 8px ${theme?.userBubbleShadow || 'rgba(255,133,179,0.2)'}, 0 0 12px ${theme?.primary || '#ff85b3'}40`
-            : `0 2px 8px ${theme?.aiBubbleShadow || 'rgba(160,220,180,0.2)'}, 0 0 12px ${theme?.aiBubbleShadow || 'rgba(160,220,180,0.2)'}`,
-        }}>
+    <div className="flex-shrink-0 mb-1" style={{ position: 'relative', display: 'inline-block', width: 40, height: 40 }}>
+      {/* Avatar — absolutely centered so it shares the same center as the frame */}
+      <div style={{
+        position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%, -50%)',
+        width: '100%', height: '100%',
+        borderRadius: '50%', overflow: 'hidden',
+        display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '1.125rem',
+        background: isUser ? `${theme?.primary}4d` : 'rgba(255,255,255,0.55)',
+        boxShadow: isUser
+          ? `0 2px 8px ${theme?.userBubbleShadow || 'rgba(255,133,179,0.2)'}, 0 0 12px ${theme?.primary || '#ff85b3'}40`
+          : `0 2px 8px ${theme?.aiBubbleShadow || 'rgba(160,220,180,0.2)'}, 0 0 12px ${theme?.aiBubbleShadow || 'rgba(160,220,180,0.2)'}`,
+      }}>
         {isUser
-          ? (userAvatar ? <img src={userAvatar} alt="" className="w-full h-full object-cover" /> : '🐣')
-          : (aiAvatar  ? <img src={aiAvatar}  alt="" className="w-full h-full object-cover" /> : '🌸')}
+          ? (userAvatar ? <img src={userAvatar} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : '🐣')
+          : (aiAvatar  ? <img src={aiAvatar}  alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : '🌸')}
       </div>
+      {/* Frame — same centering, 130% so ring surrounds avatar */}
       <img
         src="/assets/avatar-frame.png"
         alt=""
         style={{
-          position: 'absolute',
-          top: '50%',
-          left: '50%',
+          position: 'absolute', top: '50%', left: '50%',
           transform: 'translate(-50%, -50%)',
-          width: 108,
-          height: 108,
-          objectFit: 'contain',
-          pointerEvents: 'none',
-          zIndex: 2,
+          width: '130%', height: '130%',
+          objectFit: 'contain', pointerEvents: 'none', zIndex: 2,
         }}
       />
     </div>
