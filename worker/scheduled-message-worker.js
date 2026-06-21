@@ -150,42 +150,6 @@ export default {
       return Response.json({ ok: true }, { headers: CORS })
     }
 
-    // ── Asset (R2) ────────────────────────────────────────────────
-    if (pathname === '/asset/put' && request.method === 'POST') {
-      const form = await request.formData()
-      const password = form.get('password')
-      const key = form.get('key')
-      const file = form.get('file')
-      if (!password || !key || !file) return Response.json({ error: 'missing fields' }, { status: 400, headers: CORS })
-      if (!key.startsWith(`user:${password}:asset:`)) return Response.json({ error: 'forbidden' }, { status: 403, headers: CORS })
-      await env.ASSETS_R2.put(key, await file.arrayBuffer(), {
-        httpMetadata: { contentType: file.type || 'application/octet-stream' },
-      })
-      return Response.json({ ok: true, key }, { headers: CORS })
-    }
-
-    if (pathname === '/asset/get' && request.method === 'GET') {
-      const { searchParams } = new URL(request.url)
-      const password = searchParams.get('password')
-      const key = searchParams.get('key')
-      if (!password || !key) return Response.json({ error: 'missing params' }, { status: 400, headers: CORS })
-      if (!key.startsWith(`user:${password}:asset:`)) return Response.json({ error: 'forbidden' }, { status: 403, headers: CORS })
-      const obj = await env.ASSETS_R2.get(key)
-      if (!obj) return new Response('Not Found', { status: 404, headers: CORS })
-      const ct = obj.httpMetadata?.contentType || 'application/octet-stream'
-      return new Response(obj.body, {
-        headers: { 'Content-Type': ct, 'Cache-Control': 'max-age=3600', ...CORS },
-      })
-    }
-
-    if (pathname === '/asset/del' && request.method === 'DELETE') {
-      const { password, key } = await request.json()
-      if (!password || !key) return Response.json({ error: 'missing fields' }, { status: 400, headers: CORS })
-      if (!key.startsWith(`user:${password}:asset:`)) return Response.json({ error: 'forbidden' }, { status: 403, headers: CORS })
-      await env.ASSETS_R2.delete(key)
-      return Response.json({ ok: true }, { headers: CORS })
-    }
-
     if (pathname === '/sync/debug' && request.method === 'GET') {
       const { searchParams } = new URL(request.url)
       const password = searchParams.get('password')

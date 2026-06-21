@@ -68,37 +68,52 @@ export async function saveSessionMsgs(password, sessionId, msgs) {
   if (!res.ok) throw new Error(`HTTP ${res.status}: ${text}`)
 }
 
-// ── Asset (R2) ────────────────────────────────────────────────────
+// ── Asset (KV-backed base64 data URL) ────────────────────────────
 
-const _assetBlobCache = new Map()
+const _assetCache = new Map() // assetKey → data URL string
 
-export async function putAsset(password, key, blob, filename) {
-  const form = new FormData()
-  form.append('password', password)
-  form.append('key', key)
-  form.append('file', blob, filename)
-  const res = await fetch(`${SYNC_BASE}/asset/put`, { method: 'POST', body: form })
+function _blobToDataUrl(blob) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => resolve(reader.result)
+    reader.onerror = reject
+    reader.readAsDataURL(blob)
+  })
+}
+
+// Upload blob to KV as base64 data URL; returns the data URL for immediate use
+export async function putAsset(password, assetKey, blob) {
+  const dataUrl = await _blobToDataUrl(blob)
+  const res = await fetch(`${SYNC_BASE}/sync/set`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ password, key: assetKey, value: dataUrl }),
+  })
   if (!res.ok) {
     const t = await res.text()
     throw new Error(`HTTP ${res.status}: ${t}`)
   }
-  return res.json()
+  _assetCache.set(assetKey, dataUrl)
+  return dataUrl
 }
 
-export async function getAssetBlob(password, key) {
-  if (_assetBlobCache.has(key)) return _assetBlobCache.get(key)
-  const res = await fetch(`${SYNC_BASE}/asset/get?password=${encodeURIComponent(password)}&key=${encodeURIComponent(key)}`)
+// Fetch asset data URL from KV (in-memory cached)
+export async function getAssetDataUrl(password, assetKey) {
+  if (_assetCache.has(assetKey)) return _assetCache.get(assetKey)
+  const res = await fetch(`${SYNC_BASE}/sync/get?password=${encodeURIComponent(password)}&key=${encodeURIComponent(assetKey)}`)
   if (!res.ok) return null
-  const blob = await res.blob()
-  _assetBlobCache.set(key, blob)
-  return blob
+  const { value } = await res.json()
+  if (!value) return null
+  _assetCache.set(assetKey, value)
+  return value
 }
 
-export async function deleteAsset(password, key) {
-  const res = await fetch(`${SYNC_BASE}/asset/del`, {
+export async function deleteAsset(password, assetKey) {
+  _assetCache.delete(assetKey)
+  const res = await fetch(`${SYNC_BASE}/sync/del`, {
     method: 'DELETE',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ password, key }),
+    body: JSON.stringify({ password, key: assetKey }),
   })
   if (!res.ok) throw new Error(`HTTP ${res.status}`)
 }

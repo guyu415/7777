@@ -1,5 +1,5 @@
 import { useEffect, useState, useRef } from 'react'
-import { useStore, getCustomFont, getBlob, saveBlob, getMessages } from './store'
+import { useStore, getCustomFont, getBlob, getMessages } from './store'
 import { THEMES } from './themes'
 import ChatWindow from './components/Chat/ChatWindow'
 import GlobalSettings from './components/GlobalSettings'
@@ -7,7 +7,7 @@ import SessionSettings from './components/SessionSettings'
 import SessionList from './components/SessionList'
 import BottomNav from './components/BottomNav'
 import LoginPage from './components/LoginPage'
-import { getSettings, saveSettings, extractSettings, saveSessionMsgs, putAsset, getAssetBlob } from './services/sync'
+import { getSettings, saveSettings, extractSettings, saveSessionMsgs, putAsset, getAssetDataUrl } from './services/sync'
 
 const PETALS = ['🌸', '🌺', '✿', '🌸', '✾']
 
@@ -80,7 +80,7 @@ export default function App() {
     console.log('[FORCE-SYNC] 完成')
   }
 
-  // One-time migration: upload existing IDB fonts/backgrounds to R2
+  // One-time migration: upload existing IDB fonts/backgrounds to KV as base64
   const runAssetMigration = async (password) => {
     const { customFonts, sessions } = useStore.getState()
     const fontsToMigrate = (customFonts || []).filter(f => !f.assetKey)
@@ -98,11 +98,9 @@ export default function App() {
       try {
         const blob = await getCustomFont(font.id)
         if (blob) {
-          const ext = 'ttf'
-          const key = `user:${password}:asset:font:global:${font.id}.${ext}`
-          await putAsset(password, key, blob, `${font.id}.${ext}`)
-          await saveBlob(key, blob)
-          useStore.getState().updateCustomFont(font.id, { assetKey: key })
+          const assetKey = `asset:font:${font.id}`
+          await putAsset(password, assetKey, blob)
+          useStore.getState().updateCustomFont(font.id, { assetKey })
           console.log('[ASSET-MIGRATE] 字体完成:', font.id)
         }
       } catch (e) {
@@ -117,10 +115,9 @@ export default function App() {
         const blob = await getBlob(session.chatBg.blobKey)
         if (blob) {
           const randomId = Date.now().toString(36) + Math.random().toString(36).slice(2)
-          const key = `user:${password}:asset:bg:${session.id}:${randomId}.jpg`
-          await putAsset(password, key, blob, 'bg.jpg')
-          await saveBlob(key, blob)
-          useStore.getState().setSessionChatBg(session.id, { ...session.chatBg, assetKey: key, blobKey: undefined })
+          const assetKey = `asset:bg:${randomId}`
+          await putAsset(password, assetKey, blob)
+          useStore.getState().setSessionChatBg(session.id, { ...session.chatBg, assetKey, blobKey: undefined })
           console.log('[ASSET-MIGRATE] 背景完成:', session.id)
         }
       } catch (e) {
@@ -229,19 +226,15 @@ export default function App() {
       for (const font of customFonts) {
         if (document.fonts.check(`12px "${font.family}"`)) continue
         try {
-          let blob
-          if (font.assetKey) {
-            blob = await getBlob(font.assetKey)
-            if (!blob && password) {
-              blob = await getAssetBlob(password, font.assetKey)
-              if (blob) await saveBlob(font.assetKey, blob)
-            }
-          } else {
-            blob = await getCustomFont(font.id)
+          let fontUrl
+          if (font.assetKey && password) {
+            fontUrl = await getAssetDataUrl(password, font.assetKey)
+          } else if (!font.assetKey) {
+            const blob = await getCustomFont(font.id)
+            if (blob) fontUrl = URL.createObjectURL(blob)
           }
-          if (!blob) continue
-          const url = URL.createObjectURL(blob)
-          const face = new FontFace(font.family, `url(${url})`)
+          if (!fontUrl) continue
+          const face = new FontFace(font.family, `url(${fontUrl})`)
           await face.load()
           document.fonts.add(face)
         } catch (e) {
@@ -259,21 +252,10 @@ export default function App() {
 
   useEffect(() => {
     if (effectiveChatBg?.type !== 'image') { setBgUrl(null); return }
+    const password = localStorage.getItem('auth.password')
     if (effectiveChatBg.assetKey) {
-      const password = localStorage.getItem('auth.password')
-      getBlob(effectiveChatBg.assetKey).then(async (cached) => {
-        if (cached) { setBgUrl(URL.createObjectURL(cached)); return }
-        if (!password) { setBgUrl(null); return }
-        try {
-          const blob = await getAssetBlob(password, effectiveChatBg.assetKey)
-          if (blob) {
-            await saveBlob(effectiveChatBg.assetKey, blob)
-            setBgUrl(URL.createObjectURL(blob))
-          } else {
-            setBgUrl(null)
-          }
-        } catch { setBgUrl(null) }
-      })
+      if (!password) { setBgUrl(null); return }
+      getAssetDataUrl(password, effectiveChatBg.assetKey).then(dataUrl => setBgUrl(dataUrl || null))
     } else if (effectiveChatBg.blobKey) {
       getBlob(effectiveChatBg.blobKey).then(blob => setBgUrl(blob ? URL.createObjectURL(blob) : null))
     } else if (effectiveChatBg.value) {

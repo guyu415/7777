@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 import { ChevronLeft, Eye, EyeOff } from 'lucide-react'
-import { useStore, getMessages, saveBlob } from '../store'
+import { useStore, getMessages } from '../store'
 import { putAsset } from '../services/sync'
 
 const inputStyle = {
@@ -117,44 +117,49 @@ export default function SessionSettings({ theme }) {
 
     try {
       console.log(`[BG] 开始处理背景图：${file.name} (${(file.size / 1024 / 1024).toFixed(2)} MB)`)
-      let blob = file
-      const MAX_SIZE = 10 * 1024 * 1024
-      if (file.size > MAX_SIZE) {
-        console.log('[BG] 图片过大，正在压缩…')
-        blob = await new Promise((resolve, reject) => {
-          const img = new window.Image()
-          const url = URL.createObjectURL(file)
-          img.onload = () => {
-            URL.revokeObjectURL(url)
-            let { width, height } = img
-            const MAX_DIM = 1920
-            if (width > MAX_DIM || height > MAX_DIM) {
-              const scale = MAX_DIM / Math.max(width, height)
-              width = Math.round(width * scale)
-              height = Math.round(height * scale)
-            }
-            const canvas = document.createElement('canvas')
-            canvas.width = width
-            canvas.height = height
-            canvas.getContext('2d').drawImage(img, 0, 0, width, height)
-            canvas.toBlob(b => {
-              if (b) { console.log(`[BG] 压缩完成：${(b.size / 1024 / 1024).toFixed(2)} MB`); resolve(b) }
-              else reject(new Error('canvas.toBlob 失败'))
-            }, 'image/jpeg', 0.82)
+      // Compress to <2MB so base64 stays under ~2.7MB (KV 25MB limit has headroom)
+      const TARGET = 2 * 1024 * 1024
+      let blob = await new Promise((resolve, reject) => {
+        const img = new window.Image()
+        const url = URL.createObjectURL(file)
+        img.onload = () => {
+          URL.revokeObjectURL(url)
+          let { width, height } = img
+          const MAX_DIM = 1920
+          if (width > MAX_DIM || height > MAX_DIM) {
+            const scale = MAX_DIM / Math.max(width, height)
+            width = Math.round(width * scale)
+            height = Math.round(height * scale)
           }
-          img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('图片加载失败')) }
-          img.src = url
-        })
-      }
+          const canvas = document.createElement('canvas')
+          canvas.width = width
+          canvas.height = height
+          canvas.getContext('2d').drawImage(img, 0, 0, width, height)
+          // Iteratively lower quality until under TARGET
+          let quality = 0.85
+          const tryCompress = () => {
+            canvas.toBlob(b => {
+              if (!b) { reject(new Error('canvas.toBlob 失败')); return }
+              if (b.size <= TARGET || quality <= 0.1) {
+                console.log(`[BG] 压缩完成：${(b.size / 1024 / 1024).toFixed(2)} MB q=${quality.toFixed(2)}`)
+                resolve(b)
+              } else {
+                quality = Math.max(0.1, quality - 0.1)
+                tryCompress()
+              }
+            }, 'image/jpeg', quality)
+          }
+          tryCompress()
+        }
+        img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('图片加载失败')) }
+        img.src = url
+      })
 
       const password = localStorage.getItem('auth.password')
       const randomId = Date.now().toString(36) + Math.random().toString(36).slice(2)
-      const mimeToExt = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp', 'image/gif': 'gif' }
-      const ext = mimeToExt[blob.type] || 'jpg'
-      const assetKey = `user:${password}:asset:bg:${currentSessionId}:${randomId}.${ext}`
-      await putAsset(password, assetKey, blob, `bg.${ext}`)
-      await saveBlob(assetKey, blob)
-      console.log('[BG] 已上传R2并缓存IDB, key:', assetKey)
+      const assetKey = `asset:bg:${randomId}`
+      await putAsset(password, assetKey, blob) // uploads to KV as base64 data URL
+      console.log('[BG] 已上传KV, key:', assetKey)
       setSessionChatBg(currentSessionId, { type: 'image', assetKey, opacity: currentSession?.chatBg?.opacity ?? 0.9 })
       console.log('[BG] 背景已更新')
     } catch (err) {

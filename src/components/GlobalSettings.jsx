@@ -1,6 +1,6 @@
 import { useState, useRef } from 'react'
 import { Trash2 } from 'lucide-react'
-import { useStore, clearAllData, getAllMessages, getMessages, saveCustomFont, deleteCustomFont } from '../store'
+import { useStore, clearAllData, getAllMessages, getMessages, deleteCustomFont } from '../store'
 import { putAsset, deleteAsset } from '../services/sync'
 
 import { THEMES } from '../themes'
@@ -118,18 +118,18 @@ export default function GlobalSettings({ theme, onLogout, onForceSync }) {
       const ab = await file.arrayBuffer()
       const blob = new Blob([ab], { type: file.type || 'font/ttf' })
       const id = genId()
-      const ext = file.name.split('.').pop().toLowerCase() || 'ttf'
       const password = localStorage.getItem('auth.password')
 
+      let fontUrl
       let assetKey = null
       if (password) {
-        assetKey = `user:${password}:asset:font:global:${id}.${ext}`
-        await putAsset(password, assetKey, blob, file.name)
+        assetKey = `asset:font:${id}`
+        fontUrl = await putAsset(password, assetKey, blob) // uploads to KV, returns data URL
+      } else {
+        fontUrl = URL.createObjectURL(blob)
       }
-      await saveCustomFont(id, blob)
 
-      const url = URL.createObjectURL(blob)
-      const fontFace = new FontFace(family, `url(${url})`)
+      const fontFace = new FontFace(family, `url(${fontUrl})`)
       await fontFace.load()
       document.fonts.add(fontFace)
       addCustomFont({ id, name, family, assetKey })
