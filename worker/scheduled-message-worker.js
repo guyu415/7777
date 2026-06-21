@@ -169,38 +169,6 @@ export default {
       return Response.json({ ok: true, allCount: allKeys.length, allKeys, userCount: userKeys.length, userKeys }, { headers: CORS })
     }
 
-    // One-time prefix migration: copy all keys from one user prefix to another
-    if (pathname === '/sync/migrate-prefix' && request.method === 'GET') {
-      const { searchParams } = new URL(request.url)
-      const from = searchParams.get('from')
-      const to = searchParams.get('to')
-      const confirm = searchParams.get('confirm')
-      if (!from || !to) return Response.json({ error: 'missing from/to params' }, { status: 400, headers: CORS })
-      if (confirm !== 'yes') return Response.json({ error: 'add confirm=yes to proceed' }, { status: 400, headers: CORS })
-      const fromPrefix = `user:${from}:`
-      const toPrefix = `user:${to}:`
-      const listed = await env.CHAT_KV.list({ prefix: fromPrefix })
-      console.log('[WORKER-MIGRATE] from=', from, 'to=', to, 'keys found=', listed.keys.length)
-      const results = []
-      for (const k of listed.keys) {
-        const suffix = k.name.slice(fromPrefix.length)
-        const targetKey = `${toPrefix}${suffix}`
-        const existing = await env.CHAT_KV.get(targetKey)
-        if (existing !== null) {
-          console.log('[WORKER-MIGRATE] SKIP (target exists):', targetKey)
-          results.push({ from: k.name, to: targetKey, action: 'skipped' })
-          continue
-        }
-        const raw = await env.CHAT_KV.get(k.name)
-        if (raw !== null) {
-          await env.CHAT_KV.put(targetKey, raw)
-          console.log('[WORKER-MIGRATE] COPIED:', k.name, '->', targetKey, 'bytes=', raw.length)
-          results.push({ from: k.name, to: targetKey, action: 'copied', size: raw.length })
-        }
-      }
-      return Response.json({ ok: true, migrated: results.filter(r => r.action === 'copied').length, skipped: results.filter(r => r.action === 'skipped').length, results }, { headers: CORS })
-    }
-
     return new Response('Not Found', { status: 404, headers: CORS })
   },
 
