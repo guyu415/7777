@@ -172,9 +172,10 @@ export default function ChatWindow({ theme }) {
             width: 44, height: 44, borderRadius: '50%',
             background: `${primaryColor}12`,
             border: '1.5px solid transparent',
+            overflow: 'hidden',
           }}
         >
-          <img src="/assets/whale.png" alt="设置" style={{ width: 40, height: 40, objectFit: 'contain' }} />
+          <img src="/assets/whale.png" alt="设置" style={{ width: 52, height: 52, objectFit: 'contain', flexShrink: 0 }} />
         </button>
       </div>
 
