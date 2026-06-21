@@ -193,8 +193,19 @@ async function handleChatProxy(request) {
   } else {
     upstreamHeaders['Authorization'] = `Bearer ${apiKey}`
   }
-  const body = await request.arrayBuffer()
-  const upstreamRes = await fetch(targetUrl, { method: 'POST', headers: upstreamHeaders, body })
+  // Read body as text so we can log fields while still forwarding the original bytes
+  const bodyText = await request.text()
+  let parsedBody = null
+  try { parsedBody = JSON.parse(bodyText) } catch {}
+  console.log(
+    '[WORKER] 转发给上游的body字段=', parsedBody ? Object.keys(parsedBody) : '(parse error)',
+    '| 含web_search=', !!(parsedBody?.web_search),
+    '| 含tools=', !!(parsedBody?.tools),
+    '| tools内容=', JSON.stringify(parsedBody?.tools ?? null),
+    '| model=', parsedBody?.model ?? '?',
+    '| targetUrl=', targetUrl,
+  )
+  const upstreamRes = await fetch(targetUrl, { method: 'POST', headers: upstreamHeaders, body: bodyText })
   return new Response(upstreamRes.body, {
     status: upstreamRes.status,
     headers: {
