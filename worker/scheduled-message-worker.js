@@ -120,7 +120,12 @@ export default {
     if (pathname === '/sync/set' && request.method === 'POST') {
       const { password, key, value } = await request.json()
       if (!password) return Response.json({ error: 'unauthorized' }, { status: 401, headers: CORS })
-      await env.CHAT_KV.put(`user:${password}:${key}`, JSON.stringify(value))
+      const finalKey = `user:${password}:${key}`
+      const serialized = JSON.stringify(value)
+      console.log('[WORKER-SET] password前4位=', password.slice(0, 4), '| key=', key, '| valueType=', Array.isArray(value) ? 'array' : typeof value, '| valueLen=', Array.isArray(value) ? value.length : '?', '| serializedBytes=', serialized.length)
+      console.log('[WORKER-SET] 写入KV finalKey=', finalKey)
+      await env.CHAT_KV.put(finalKey, serialized)
+      console.log('[WORKER-SET] KV写入完成')
       return Response.json({ ok: true }, { headers: CORS })
     }
 
@@ -148,14 +153,20 @@ export default {
     if (pathname === '/sync/debug' && request.method === 'GET') {
       const { searchParams } = new URL(request.url)
       const password = searchParams.get('password')
-      if (!password) return Response.json({ error: 'unauthorized' }, { status: 401, headers: CORS })
-      const prefix = `user:${password}:`
-      const listed = await env.CHAT_KV.list({ prefix })
-      const keys = await Promise.all(listed.keys.map(async k => {
+      // List ALL keys in the KV (no prefix filter) so we can see exactly what exists
+      const listedAll = await env.CHAT_KV.list()
+      console.log('[WORKER-DEBUG] KV全部keys=', listedAll.keys.map(k => k.name))
+      const allKeys = await Promise.all(listedAll.keys.map(async k => {
         const raw = await env.CHAT_KV.get(k.name)
-        return { key: k.name.slice(prefix.length), size: raw ? raw.length : 0 }
+        return { rawKey: k.name, size: raw ? raw.length : 0 }
       }))
-      return Response.json({ ok: true, count: keys.length, keys }, { headers: CORS })
+      // Also filter to user prefix if password provided
+      const prefix = password ? `user:${password}:` : null
+      console.log('[WORKER-DEBUG] 请求password前4位=', password ? password.slice(0, 4) : 'none', '| 过滤前缀=', prefix)
+      const userKeys = prefix
+        ? allKeys.filter(k => k.rawKey.startsWith(prefix)).map(k => ({ key: k.rawKey.slice(prefix.length), rawKey: k.rawKey, size: k.size }))
+        : []
+      return Response.json({ ok: true, allCount: allKeys.length, allKeys, userCount: userKeys.length, userKeys }, { headers: CORS })
     }
 
     return new Response('Not Found', { status: 404, headers: CORS })

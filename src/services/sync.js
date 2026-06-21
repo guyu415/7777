@@ -52,12 +52,16 @@ export async function getSessionMsgs(password, sessionId) {
 }
 
 export async function saveSessionMsgs(password, sessionId, msgs) {
+  const body = { password, key: `sessions:msgs:${sessionId}`, value: msgs }
+  console.log('[SYNC-UP] fetch请求', 'url=', `${SYNC_BASE}/sync/set`, 'key=', body.key, 'valueLen=', msgs.length, '请求体字节≈', JSON.stringify(body).length)
   const res = await fetch(`${SYNC_BASE}/sync/set`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ password, key: `sessions:msgs:${sessionId}`, value: msgs }),
+    body: JSON.stringify(body),
   })
-  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  const text = await res.text()
+  console.log('[SYNC-UP] 响应', 'status=', res.status, 'body=', text)
+  if (!res.ok) throw new Error(`HTTP ${res.status}: ${text}`)
 }
 
 export async function deleteSessionMsgs(password, sessionId) {
