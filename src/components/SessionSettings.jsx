@@ -41,7 +41,7 @@ export default function SessionSettings({ theme }) {
     setSessionAiName, setSessionAiAvatar, setSessionUserAvatar, setSessionSignature,
     setSessionMemoryEnabled, setSessionSystemPrompt,
     setSessionChatBg,
-    setSessionApiKey, setSessionBaseUrl, setSessionProviderName, setSessionModel, setSessionDisableThinking,
+    setSessionApiKey, setSessionBaseUrl, setSessionProviderName, setSessionModel, setSessionDisableThinking, setSessionWebSearch,
     setSessionTtsApiKey, setSessionTtsGroupId, setSessionTtsVoiceId, setSessionTtsModel, setSessionVoiceFrequency,
     setSessionFollowGlobalTts,
     memoryEnabled: globalMemoryEnabled,
@@ -447,14 +447,17 @@ export default function SessionSettings({ theme }) {
         <GlassCard icon="🔑" title="API 配置">
           <div className="space-y-2">
             <div>
-              <label className="text-xs pl-1 mb-1 block" style={{ color: '#6a90b8' }}>供应商名称</label>
-              <input
+              <label className="text-xs pl-1 mb-1 block" style={{ color: '#6a90b8' }}>模型供应商</label>
+              <select
                 value={localProviderName}
-                onChange={e => setLocalProviderName(e.target.value)}
-                onBlur={() => setSessionProviderName(currentSessionId, localProviderName.trim())}
-                placeholder="如 OpenAI / DeepSeek"
-                style={inputStyle}
-              />
+                onChange={e => { setLocalProviderName(e.target.value); setSessionProviderName(currentSessionId, e.target.value) }}
+                style={{ ...inputStyle, cursor: 'pointer', appearance: 'auto' }}
+              >
+                <option value="">通用 OpenAI 兼容</option>
+                <option value="glm">智谱 GLM</option>
+                <option value="claude">Claude（AiHubMix 等中转）</option>
+                <option value="deepseek">DeepSeek</option>
+              </select>
             </div>
             <div>
               <label className="text-xs pl-1 mb-1 block" style={{ color: '#6a90b8' }}>Base URL</label>
@@ -498,12 +501,12 @@ export default function SessionSettings({ theme }) {
                 style={inputStyle}
               />
             </div>
-            {/* Disable thinking / fast reply toggle */}
+            {/* Disable thinking toggle */}
             <div className="flex items-center justify-between pt-1">
               <div>
                 <label className="text-xs pl-1 block" style={{ color: '#6a90b8' }}>禁用思考过程（快速回复）</label>
                 <p className="text-[10px] pl-1 mt-0.5" style={{ color: '#a0b8d0' }}>
-                  开启后模型不再输出思考链，直接出正文，回复更快
+                  {localProviderName === 'glm' ? '开启后GLM不输出思考链，回复更快' : '仅对智谱GLM推理模型有效'}
                 </p>
               </div>
               <button
@@ -522,6 +525,40 @@ export default function SessionSettings({ theme }) {
                 }} />
               </button>
             </div>
+            {/* Web search toggle */}
+            {(() => {
+              const webSearchOn = currentSession.webSearch ?? false
+              const supported = localProviderName === 'glm' || localProviderName === 'claude'
+              const hint = !localProviderName ? '请先选择模型供应商' :
+                localProviderName === 'deepseek' ? 'DeepSeek 联网暂不支持，敬请期待' :
+                '开启后回复可联网检索实时信息'
+              return (
+                <div className="flex items-center justify-between pt-1">
+                  <div>
+                    <label className="text-xs pl-1 block" style={{ color: '#6a90b8' }}>🌐 联网搜索</label>
+                    <p className="text-[10px] pl-1 mt-0.5" style={{ color: '#a0b8d0' }}>{hint}</p>
+                  </div>
+                  <button
+                    onClick={() => supported && setSessionWebSearch(currentSessionId, !webSearchOn)}
+                    style={{
+                      flexShrink: 0,
+                      width: 44, height: 24, borderRadius: 12, border: 'none',
+                      cursor: supported ? 'pointer' : 'not-allowed',
+                      background: (webSearchOn && supported) ? '#4aacf0' : 'rgba(160,180,200,0.4)',
+                      position: 'relative', transition: 'background 0.2s',
+                      opacity: supported ? 1 : 0.45,
+                    }}
+                  >
+                    <span style={{
+                      position: 'absolute', top: 2,
+                      left: (webSearchOn && supported) ? 22 : 2,
+                      width: 20, height: 20, borderRadius: '50%', background: '#fff',
+                      transition: 'left 0.2s', boxShadow: '0 1px 3px rgba(0,0,0,0.2)',
+                    }} />
+                  </button>
+                </div>
+              )
+            })()}
           </div>
         </GlassCard>
 

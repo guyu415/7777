@@ -85,9 +85,22 @@ export async function fetchModels({ baseUrl, apiKey }) {
   return (data.data || data.models || []).map(m => m.id || m).filter(Boolean)
 }
 
-export async function* streamChat({ apiKey, apiBaseUrl = 'https://api.anthropic.com', model, systemPrompt, messages, workerUrl, useWorkerProxy, signal, disableThinking = false }) {
+export async function* streamChat({ apiKey, apiBaseUrl = 'https://api.anthropic.com', model, systemPrompt, messages, workerUrl, useWorkerProxy, signal, disableThinking = false, webSearch = false, providerName = '' }) {
   const base = apiBaseUrl.replace(/\/$/, '')
   const proxyBase = (useWorkerProxy && workerUrl) ? workerUrl.replace(/\/$/, '') : null
+
+  // Build web search tools based on provider
+  let webSearchTools = null
+  if (webSearch) {
+    if (providerName === 'glm') {
+      webSearchTools = [{ type: 'web_search', web_search: { enable: true, search_result: true } }]
+    } else if (providerName === 'claude') {
+      webSearchTools = [{ type: 'web_search_20250305', name: 'web_search' }]
+    }
+    console.log('[WEB] 联网开关=on | 供应商=', providerName || '(未设置)', '| 注入参数=', JSON.stringify(webSearchTools))
+  } else {
+    console.log('[WEB] 联网开关=off')
+  }
 
   let response
   let actualUrl
@@ -99,6 +112,8 @@ export async function* streamChat({ apiKey, apiBaseUrl = 'https://api.anthropic.
       system: systemPrompt,
       stream: true,
       messages: buildAnthropicMessages(messages),
+      // Direct Anthropic: web search via built-in tool
+      ...(webSearch ? { tools: [{ type: 'web_search_20250305', name: 'web_search' }] } : {}),
     })
     if (proxyBase) {
       actualUrl = `${proxyBase}/chat`
@@ -129,7 +144,10 @@ export async function* streamChat({ apiKey, apiBaseUrl = 'https://api.anthropic.
       max_tokens: 4096,
       stream: true,
       messages: buildOpenAIMessages(systemPrompt, messages),
-      ...(disableThinking ? { thinking: { type: 'disabled' } } : {}),
+      // disableThinking only applies to GLM reasoning models
+      ...(disableThinking && providerName === 'glm' ? { thinking: { type: 'disabled' } } : {}),
+      // web search tools if enabled and provider supported
+      ...(webSearchTools ? { tools: webSearchTools } : {}),
     })
     if (proxyBase) {
       actualUrl = `${proxyBase}/chat`
@@ -176,20 +194,30 @@ export async function* streamChat({ apiKey, apiBaseUrl = 'https://api.anthropic.
 
       try {
         const event = JSON.parse(data)
-        // Temporary debug: log first SSE event to console
-        if (!window.__sseDumped) { window.__sseDumped = true; console.log('[SSE-RAW-FIRST]', JSON.stringify(event)) }
-        // Anthropic format
+        // Anthropic format — thinking block
+        if (event.type === 'content_block_delta' && event.delta?.type === 'thinking_delta') {
+          yield { reasoning: event.delta.thinking }
+        }
+        // Anthropic format — text block
         if (event.type === 'content_block_delta' && event.delta?.type === 'text_delta') {
           yield { text: event.delta.text }
         }
-        // OpenAI format — reasoning chunk (GLM/DeepSeek style)
+        // OpenAI format
         const delta = event.choices?.[0]?.delta
+        // Reasoning chunk (GLM / DeepSeek style)
         if (delta?.reasoning_content) {
           yield { reasoning: delta.reasoning_content }
         }
-        // OpenAI format — content chunk
+        // Content chunk
         if (delta?.content) {
           yield { text: delta.content }
+        }
+        // Web search tool_calls — log for debugging, no round-trip needed (server-side tools)
+        if (delta?.tool_calls) {
+          console.log('[WEB] tool_calls事件:', JSON.stringify(delta.tool_calls))
+        }
+        if (event.choices?.[0]?.finish_reason === 'tool_calls') {
+          console.log('[WEB] finish_reason=tool_calls — 等待服务端执行搜索并继续生成')
         }
       } catch {
         // ignore parse errors

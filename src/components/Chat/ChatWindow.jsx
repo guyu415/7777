@@ -51,6 +51,7 @@ export default function ChatWindow({ theme }) {
   const effectiveAiAvatar = currentSession?.aiAvatar ?? globalAiAvatar
   const effectiveUserAvatar = currentSession?.userAvatar ?? globalUserAvatar
   const effectiveSignature = currentSession?.signature ?? '在线'
+  const effectiveWebSearch = currentSession?.webSearch ?? false
 
   const bottomRef = useRef(null)
   const inputRef = useRef(null)
@@ -167,7 +168,16 @@ export default function ChatWindow({ theme }) {
             }}>
               {effectiveAiName || '小漫'}
             </div>
-            <Signature text={effectiveSignature || '在线'} color={primaryColor} shadow={`0 0 6px ${primaryColor}aa, 0 0 14px ${primaryColor}60`} />
+            <div className="flex items-center gap-1.5">
+              <Signature text={effectiveSignature || '在线'} color={primaryColor} shadow={`0 0 6px ${primaryColor}aa, 0 0 14px ${primaryColor}60`} />
+              {effectiveWebSearch && (
+                <span style={{
+                  fontSize: 10, color: '#4aacf0', background: 'rgba(74,172,240,0.12)',
+                  border: '1px solid rgba(74,172,240,0.3)', borderRadius: 8,
+                  padding: '1px 6px', lineHeight: 1.5, flexShrink: 0,
+                }}>🌐 已联网</span>
+              )}
+            </div>
           </div>
         </div>
         <button
