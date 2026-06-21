@@ -42,7 +42,7 @@ export default function SessionSettings({ theme }) {
     setSessionMemoryEnabled, setSessionSystemPrompt,
     setSessionChatBg,
     setSessionApiKey, setSessionBaseUrl, setSessionProviderName, setSessionModel,
-    setSessionTtsApiKey, setSessionTtsGroupId, setSessionTtsVoiceId, setSessionVoiceFrequency,
+    setSessionTtsApiKey, setSessionTtsGroupId, setSessionTtsVoiceId, setSessionTtsModel, setSessionVoiceFrequency,
     setSessionFollowGlobalTts,
     memoryEnabled: globalMemoryEnabled,
     systemPrompt: globalSystemPrompt,
@@ -70,6 +70,7 @@ export default function SessionSettings({ theme }) {
   const [localTtsApiKey, setLocalTtsApiKey] = useState('')
   const [localTtsGroupId, setLocalTtsGroupId] = useState('')
   const [localTtsVoiceId, setLocalTtsVoiceId] = useState('')
+  const [localTtsModel, setLocalTtsModel] = useState('')
   const [showApiKey, setShowApiKey] = useState(false)
   const [showTtsKey, setShowTtsKey] = useState(false)
 
@@ -224,6 +225,7 @@ export default function SessionSettings({ theme }) {
     setLocalTtsApiKey(currentSession.ttsApiKey || '')
     setLocalTtsGroupId(currentSession.ttsGroupId || '')
     setLocalTtsVoiceId(currentSession.ttsVoiceId || '')
+    setLocalTtsModel(currentSession.ttsModel || '')
   }, [currentSessionId])
 
   if (!currentSession) {
@@ -558,6 +560,16 @@ export default function SessionSettings({ theme }) {
                   onChange={e => setLocalTtsVoiceId(e.target.value)}
                   onBlur={() => setSessionTtsVoiceId(currentSessionId, localTtsVoiceId.trim())}
                   placeholder="English_Trustworthy_Man"
+                  style={inputStyle}
+                />
+              </div>
+              <div>
+                <label className="text-xs pl-1 mb-1 block" style={{ color: '#6a90b8' }}>模型</label>
+                <input
+                  value={localTtsModel}
+                  onChange={e => setLocalTtsModel(e.target.value)}
+                  onBlur={() => setSessionTtsModel(currentSessionId, localTtsModel.trim())}
+                  placeholder="speech-2.6-hd"
                   style={inputStyle}
                 />
               </div>
