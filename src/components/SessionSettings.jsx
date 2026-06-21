@@ -115,77 +115,98 @@ export default function SessionSettings({ theme }) {
       return
     }
 
-    try {
-      console.log(`[BG] 开始处理背景图：${file.name} (${(file.size / 1024 / 1024).toFixed(2)} MB) type=${file.type}`)
-      console.log('[BG] File 对象：', file)
-      // Compress to <2MB so base64 stays under ~2.7MB (KV 25MB limit has headroom)
-      const TARGET = 2 * 1024 * 1024
-      let blob = await new Promise((resolve, reject) => {
-        console.log('[BG] 创建 Image 对象')
-        const img = new window.Image()
-        const url = URL.createObjectURL(file)
-        console.log('[BG] createObjectURL 完成, url 前缀=', url.slice(0, 40))
-        img.onload = () => {
-          console.log('[BG] img.onload 触发, 尺寸=', img.width, 'x', img.height)
-          URL.revokeObjectURL(url)
-          let { width, height } = img
-          const MAX_DIM = 1920
-          if (width > MAX_DIM || height > MAX_DIM) {
-            const scale = MAX_DIM / Math.max(width, height)
-            width = Math.round(width * scale)
-            height = Math.round(height * scale)
-            console.log('[BG] 缩放后尺寸=', width, 'x', height)
-          }
-          console.log('[BG] 创建 canvas, 尺寸=', width, 'x', height)
-          const canvas = document.createElement('canvas')
-          canvas.width = width
-          canvas.height = height
-          const ctx = canvas.getContext('2d')
-          console.log('[BG] getContext 结果=', ctx)
-          ctx.drawImage(img, 0, 0, width, height)
-          console.log('[BG] drawImage 完成')
-          // Iteratively lower quality until under TARGET
-          let quality = 0.85
-          const tryCompress = () => {
-            console.log('[BG] 调用 canvas.toBlob, quality=', quality.toFixed(2))
-            canvas.toBlob(b => {
-              console.log('[BG] canvas.toBlob 回调, b=', b, 'size=', b?.size)
-              if (!b) { reject(new Error('canvas.toBlob 失败')); return }
-              if (b.size <= TARGET || quality <= 0.1) {
-                console.log(`[BG] 压缩完成：${(b.size / 1024 / 1024).toFixed(2)} MB q=${quality.toFixed(2)}`)
-                resolve(b)
-              } else {
-                quality = Math.max(0.1, quality - 0.1)
-                tryCompress()
-              }
-            }, 'image/jpeg', quality)
-          }
-          tryCompress()
-        }
-        img.onerror = (event) => {
-          console.error('[BG] img.onerror 触发', 'event=', event, 'type=', event?.type, 'target=', event?.target)
-          URL.revokeObjectURL(url)
-          reject(new Error('图片加载失败'))
-        }
-        console.log('[BG] 设置 img.src')
-        img.src = url
-        console.log('[BG] img.src 设置完成, img.complete=', img.complete)
-      })
+    const logMagicBytes = async () => {
+      try {
+        const buf = await file.slice(0, 12).arrayBuffer()
+        console.log('[BG] 文件头bytes=', [...new Uint8Array(buf)].map(b => b.toString(16).padStart(2, '0')).join(' '))
+      } catch {}
+    }
 
-      console.log('[BG] Promise 已 resolve, blob=', blob, 'size=', blob?.size)
+    // Compress any ImageBitmap/HTMLImageElement source onto a canvas, returns Blob
+    const compressToBlob = (source, srcW, srcH) => {
+      const TARGET = 2 * 1024 * 1024
+      const MAX_DIM = 1920
+      let w = srcW, h = srcH
+      if (w > MAX_DIM || h > MAX_DIM) {
+        const scale = MAX_DIM / Math.max(w, h)
+        w = Math.round(w * scale)
+        h = Math.round(h * scale)
+      }
+      const canvas = document.createElement('canvas')
+      canvas.width = w
+      canvas.height = h
+      canvas.getContext('2d').drawImage(source, 0, 0, w, h)
+      return new Promise((resolve, reject) => {
+        let quality = 0.85
+        const tryCompress = () => {
+          canvas.toBlob(b => {
+            if (!b) { reject(new Error('canvas.toBlob 失败')); return }
+            if (b.size <= TARGET || quality <= 0.1) {
+              console.log(`[BG] 压缩完成：${(b.size / 1024 / 1024).toFixed(2)} MB q=${quality.toFixed(2)}`)
+              resolve(b)
+            } else {
+              quality = Math.max(0.1, quality - 0.1)
+              tryCompress()
+            }
+          }, 'image/jpeg', quality)
+        }
+        tryCompress()
+      })
+    }
+
+    try {
+      console.log(`[BG] 开始处理：${file.name} (${(file.size / 1024 / 1024).toFixed(2)} MB) type=${file.type}`)
+
+      let blob
+
+      // Primary: createImageBitmap — handles progressive JPEG, CMYK, etc.
+      try {
+        console.log('[BG] 尝试 createImageBitmap...')
+        const bitmap = await createImageBitmap(file)
+        console.log('[BG] createImageBitmap 成功, 尺寸=', bitmap.width, 'x', bitmap.height)
+        blob = await compressToBlob(bitmap, bitmap.width, bitmap.height)
+        bitmap.close()
+      } catch (bitmapErr) {
+        console.warn('[BG] createImageBitmap 失败:', bitmapErr?.message)
+        await logMagicBytes()
+
+        // Fallback: <img> + blob URL
+        console.log('[BG] 回退到 img+blob URL...')
+        blob = await new Promise((resolve, reject) => {
+          const img = new window.Image()
+          const url = URL.createObjectURL(file)
+          img.onload = async () => {
+            console.log('[BG] img.onload 触发, 尺寸=', img.width, 'x', img.height)
+            URL.revokeObjectURL(url)
+            try { resolve(await compressToBlob(img, img.width, img.height)) }
+            catch (ce) { reject(ce) }
+          }
+          img.onerror = async (ev) => {
+            console.error('[BG] img.onerror 触发', ev)
+            URL.revokeObjectURL(url)
+            await logMagicBytes()
+            const err = new Error('FORMAT_UNSUPPORTED')
+            err.name = 'FormatError'
+            reject(err)
+          }
+          img.src = url
+        })
+      }
+
       const password = localStorage.getItem('auth.password')
-      console.log('[BG] password 存在=', !!password)
       const randomId = Date.now().toString(36) + Math.random().toString(36).slice(2)
       const assetKey = `asset:bg:${randomId}`
-      console.log('[BG] 准备调用 putAsset, assetKey=', assetKey)
-      await putAsset(password, assetKey, blob) // uploads to KV as base64 data URL
+      await putAsset(password, assetKey, blob)
       console.log('[BG] 已上传KV, key:', assetKey)
       setSessionChatBg(currentSessionId, { type: 'image', assetKey, opacity: currentSession?.chatBg?.opacity ?? 0.9 })
       console.log('[BG] 背景已更新')
     } catch (err) {
-      console.error('[BG] 背景图处理失败', 'name=', err?.name, 'message=', err?.message, 'stack=', err?.stack, 'toString=', String(err))
-      console.error('[BG] err 对象本身：', err)
-      alert('背景图处理失败：' + (err?.message || String(err) || '未知错误'))
+      console.error('[BG] 背景图处理失败', 'name=', err?.name, 'message=', err?.message, 'stack=', err?.stack)
+      if (err?.name === 'FormatError' || err?.message === 'FORMAT_UNSUPPORTED') {
+        alert('这张图格式不支持（可能是HEIC或特殊编码），请换一张，或先用手机截图功能转存后再上传。')
+      } else {
+        alert('背景图处理失败：' + (err?.message || String(err) || '未知错误'))
+      }
     }
   }
 
@@ -606,7 +627,7 @@ export default function SessionSettings({ theme }) {
                   清除背景
                 </button>
               )}
-              <input ref={bgFileRef} type="file" accept="image/*" className="hidden" onChange={handleBgFile} />
+              <input ref={bgFileRef} type="file" accept="image/jpeg,image/png,image/webp" className="hidden" onChange={handleBgFile} />
             </div>
             {currentSession.chatBg?.type === 'image' && (
               <div>
