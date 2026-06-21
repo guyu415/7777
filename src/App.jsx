@@ -1,5 +1,5 @@
 import { useEffect, useState, useRef } from 'react'
-import { useStore, getCustomFont, getBlob } from './store'
+import { useStore, getCustomFont, getBlob, getMessages } from './store'
 import { THEMES } from './themes'
 import ChatWindow from './components/Chat/ChatWindow'
 import GlobalSettings from './components/GlobalSettings'
@@ -7,7 +7,7 @@ import SessionSettings from './components/SessionSettings'
 import SessionList from './components/SessionList'
 import BottomNav from './components/BottomNav'
 import LoginPage from './components/LoginPage'
-import { getSettings, saveSettings, extractSettings } from './services/sync'
+import { getSettings, saveSettings, extractSettings, saveSessionMsgs } from './services/sync'
 
 const PETALS = ['🌸', '🌺', '✿', '🌸', '✾']
 
@@ -31,10 +31,35 @@ export default function App() {
   // ── Auth ───────────────────────────────────────────────────────
   const [loggedIn, setLoggedIn] = useState(() => !!localStorage.getItem('auth.password'))
   const [syncError, setSyncError] = useState(null)
+  const [migrationStatus, setMigrationStatus] = useState(null)
   const syncReady = useRef(false)
   const syncTimer = useRef(null)
 
-  // Pull latest cloud settings after login (startup sync)
+  // One-time migration: upload all local IDB messages to cloud
+  const runMsgMigration = async (password) => {
+    const { sessions: allSessions } = useStore.getState()
+    if (!allSessions?.length) { localStorage.setItem('msgSyncV1', '1'); return }
+    const total = allSessions.length
+    let done = 0
+    setMigrationStatus(`正在上传会话 0/${total}`)
+    for (const session of allSessions) {
+      done++
+      setMigrationStatus(`正在上传会话 ${done}/${total}`)
+      try {
+        const msgs = await getMessages(session.id)
+        if (msgs.length > 0) {
+          msgs.sort((a, b) => a.timestamp - b.timestamp)
+          await saveSessionMsgs(password, session.id, msgs)
+        }
+      } catch (e) {
+        console.warn('[MIGRATION] session', session.id, '失败:', e.message)
+      }
+    }
+    localStorage.setItem('msgSyncV1', '1')
+    setMigrationStatus(null)
+  }
+
+  // Pull latest cloud settings after login (startup sync), then run migration if first time
   useEffect(() => {
     if (!loggedIn) return
     const password = localStorage.getItem('auth.password')
@@ -42,7 +67,12 @@ export default function App() {
     getSettings(password)
       .then(cloud => { if (cloud) useStore.getState().restoreFromCloud(cloud) })
       .catch(() => {})
-      .finally(() => { syncReady.current = true })
+      .finally(async () => {
+        syncReady.current = true
+        if (!localStorage.getItem('msgSyncV1')) {
+          await runMsgMigration(password)
+        }
+      })
   }, [loggedIn])
 
   // Debounced auto-sync: fires 2s after any store change, once startup pull is done
@@ -214,6 +244,25 @@ export default function App() {
           }}
         >
           {syncError}
+        </div>
+      )}
+
+      {/* Migration progress toast (bottom-right, blue) */}
+      {migrationStatus && (
+        <div
+          className="fixed z-50"
+          style={{
+            bottom: syncError ? 136 : 100, right: 16,
+            background: 'rgba(60,120,220,0.92)',
+            backdropFilter: 'blur(8px)',
+            WebkitBackdropFilter: 'blur(8px)',
+            color: 'white', fontSize: 12, fontWeight: 500,
+            padding: '8px 14px', borderRadius: 16,
+            boxShadow: '0 4px 16px rgba(0,0,0,0.2)',
+            maxWidth: 220,
+          }}
+        >
+          {migrationStatus}
         </div>
       )}
     </div>

@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { Plus, Trash2, Edit3, Check } from 'lucide-react'
 import { useStore, deleteMessagesForSession } from '../store'
+import { deleteSessionMsgs } from '../services/sync'
 
 function relativeTime(ts) {
   if (!ts) return ''
@@ -62,6 +63,10 @@ export default function SessionList({ theme, onSelectSession }) {
   const handleDelete = async (e, id) => {
     e.stopPropagation()
     if (!confirm('删除此对话及其所有消息？')) return
+    const password = localStorage.getItem('auth.password')
+    if (password) {
+      try { await deleteSessionMsgs(password, id) } catch {}
+    }
     await deleteMessagesForSession(id)
     deleteSession(id)
     if (id === currentSessionId) setMessages([])

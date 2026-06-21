@@ -40,3 +40,31 @@ const SYNC_KEYS = [
 export function extractSettings(state) {
   return Object.fromEntries(SYNC_KEYS.map(k => [k, state[k]]))
 }
+
+// ── Message cloud sync ────────────────────────────────────────────
+
+export async function getSessionMsgs(password, sessionId) {
+  const key = `sessions:msgs:${sessionId}`
+  const res = await fetch(`${SYNC_BASE}/sync/get?password=${encodeURIComponent(password)}&key=${encodeURIComponent(key)}`)
+  if (!res.ok) return null
+  const { value } = await res.json()
+  return value // array or null
+}
+
+export async function saveSessionMsgs(password, sessionId, msgs) {
+  const res = await fetch(`${SYNC_BASE}/sync/set`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ password, key: `sessions:msgs:${sessionId}`, value: msgs }),
+  })
+  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+}
+
+export async function deleteSessionMsgs(password, sessionId) {
+  const res = await fetch(`${SYNC_BASE}/sync/del`, {
+    method: 'DELETE',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ password, key: `sessions:msgs:${sessionId}` }),
+  })
+  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+}

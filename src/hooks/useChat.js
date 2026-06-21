@@ -4,6 +4,7 @@ import { streamChat } from '../services/claude'
 import { listMemories, formatMemories } from '../services/memory'
 import { executeAcCommand } from '../services/ac'
 import { fetchTTSAudio } from '../services/tts'
+import { getSessionMsgs, saveSessionMsgs } from '../services/sync'
 
 const AC_TAG_RE = /\[AC:([^\]]+)\]/
 const VOICE_TAG_RE = /\[VOICE\]([\s\S]*?)\[\/VOICE\]/
@@ -52,14 +53,50 @@ export function useChat() {
   const effectiveMemoryEnabled = currentSession?.memoryEnabled ?? memoryEnabled
 
   const abortRef = useRef(null)
+  const msgSyncTimerRef = useRef(null)
+
+  // Debounced cloud sync for current session's messages (300ms)
+  const scheduleMsgSync = useCallback((sessionId) => {
+    clearTimeout(msgSyncTimerRef.current)
+    msgSyncTimerRef.current = setTimeout(async () => {
+      const password = localStorage.getItem('auth.password')
+      if (!password) return
+      const state = useStore.getState()
+      if (state.currentSessionId !== sessionId) return
+      const toSync = state.messages.filter(m => !m.streaming && m.conversationId === sessionId)
+      if (!toSync.length) return
+      try {
+        await saveSessionMsgs(password, sessionId, toSync)
+      } catch (e) {
+        console.warn('[MSG-SYNC] 云端同步失败:', e.message)
+      }
+    }, 300)
+  }, [])
 
   const stopStreaming = useCallback(() => {
     abortRef.current?.()
   }, [])
 
   const loadHistory = useCallback(async () => {
-    const history = await getMessages(CONVERSATION_ID)
+    let history = await getMessages(CONVERSATION_ID)
     history.sort((a, b) => a.timestamp - b.timestamp)
+
+    // No local messages — try cloud
+    if (history.length === 0) {
+      const password = localStorage.getItem('auth.password')
+      if (password) {
+        try {
+          const cloudMsgs = await getSessionMsgs(password, CONVERSATION_ID)
+          if (cloudMsgs?.length) {
+            for (const msg of cloudMsgs) await saveMessage(msg)
+            history = cloudMsgs
+          }
+        } catch (e) {
+          console.warn('[MSG-SYNC] 云端拉取失败:', e.message)
+        }
+      }
+    }
+
     setMessages(history)
     if (history.length > 0) {
       const last = history[history.length - 1]
@@ -280,8 +317,9 @@ export function useChat() {
       abortRef.current = null
       setIsLoading(false)
       setStreamingMessageId(null)
+      scheduleMsgSync(CONVERSATION_ID)
     }
-  }, [CONVERSATION_ID, effectiveApiKey, effectiveBaseUrl, effectiveModel, effectiveSystemPrompt, effectiveMemoryEnabled, workerUrl, useWorkerProxy, acWorkerUrl, effectiveTtsApiKey, effectiveTtsGroupId, effectiveTtsVoiceId, aiVoiceEnabled, effectiveVoiceFrequency, addMessage, updateMessage, deleteMessage, setIsLoading, setStreamingMessageId, updateSession])
+  }, [CONVERSATION_ID, effectiveApiKey, effectiveBaseUrl, effectiveModel, effectiveSystemPrompt, effectiveMemoryEnabled, workerUrl, useWorkerProxy, acWorkerUrl, effectiveTtsApiKey, effectiveTtsGroupId, effectiveTtsVoiceId, aiVoiceEnabled, effectiveVoiceFrequency, addMessage, updateMessage, deleteMessage, setIsLoading, setStreamingMessageId, updateSession, scheduleMsgSync])
 
   const sendMessage = useCallback(async (content, type = 'text', extra = {}) => {
     console.log('[SEND] sendMessage called | keyLen=', effectiveApiKey?.length ?? 0, '| baseUrl=', effectiveBaseUrl, '| isLoading=', isLoading)
@@ -355,7 +393,8 @@ export function useChat() {
   const deleteMsg = useCallback(async (id) => {
     await deleteMessageFromDB(id)
     deleteMessage(id)
-  }, [deleteMessage])
+    scheduleMsgSync(CONVERSATION_ID)
+  }, [deleteMessage, scheduleMsgSync, CONVERSATION_ID])
 
   return { messages, sendMessage, loadHistory, isLoading, regenerate, regenerateRound, deleteMsg, stopStreaming }
 }
