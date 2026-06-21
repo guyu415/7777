@@ -210,13 +210,13 @@ export default function App() {
     const password = localStorage.getItem('auth.password')
 
     const run = async () => {
-      // Pre-load all unregistered custom fonts from KV/IDB
+      // Pre-load all custom fonts from KV/IDB
       for (const font of (customFonts || [])) {
-        if (document.fonts.check(`12px "${font.family}"`)) {
-          console.log('[FONT INIT] 已加载跳过:', font.family)
-          continue
-        }
-        console.log('[FONT INIT] 开始, family=', font.family, 'assetKey=', font.assetKey ?? 'null')
+        // Log check result for diagnostics, but never skip based on it:
+        // document.fonts.check() can return true for unregistered fonts on some
+        // browsers (falls back to sans-serif), so it's unreliable as a skip guard.
+        const checked = document.fonts.check(`12px "${font.family}"`)
+        console.log('[FONT INIT] 开始, family=', font.family, 'assetKey=', font.assetKey ?? 'null', 'document.fonts.check=', checked)
         try {
           let fontUrl = null
           if (font.assetKey && password) {
