@@ -118,11 +118,14 @@ body {
   animation: meteor-fall linear infinite;
   will-change: transform, opacity;
 }
-.petal:nth-child(1) { left: 8%;  animation-duration: 12s;   animation-delay: 0s;    height: 55px; }
-.petal:nth-child(2) { left: 26%; animation-duration: 16s;   animation-delay: 4.5s;  height: 38px; width: 1.5px; }
-.petal:nth-child(3) { left: 53%; animation-duration: 11s;   animation-delay: 7s;    height: 65px; }
-.petal:nth-child(4) { left: 71%; animation-duration: 14.5s; animation-delay: 2s;    height: 42px; width: 1.5px; }
-.petal:nth-child(5) { left: 88%; animation-duration: 13s;   animation-delay: 9.5s;  height: 50px; }
+.petal:nth-child(1) { left: 5%;  animation-duration: 12s;   animation-delay: 0s;    height: 58px; }
+.petal:nth-child(2) { left: 18%; animation-duration: 15s;   animation-delay: 3s;    height: 38px; width: 1.5px; }
+.petal:nth-child(3) { left: 32%; animation-duration: 10.5s; animation-delay: 7s;    height: 65px; }
+.petal:nth-child(4) { left: 47%; animation-duration: 14s;   animation-delay: 1.5s;  height: 44px; width: 1.5px; }
+.petal:nth-child(5) { left: 61%; animation-duration: 13s;   animation-delay: 5s;    height: 52px; }
+.petal:nth-child(6) { left: 73%; animation-duration: 16s;   animation-delay: 9s;    height: 40px; width: 1.5px; }
+.petal:nth-child(7) { left: 84%; animation-duration: 11s;   animation-delay: 4s;    height: 62px; }
+.petal:nth-child(8) { left: 93%; animation-duration: 13.5s; animation-delay: 11s;   height: 35px; width: 1px; }
 
 /* Voice wave */
 @keyframes wave {
