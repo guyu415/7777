@@ -299,20 +299,31 @@ async function callModel({ apiKey, baseUrl, model, systemPrompt, turns }) {
   if (isAnthropic) {
     url = `${base}/v1/messages`
     headers = { 'Content-Type': 'application/json', 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' }
-    body = { model, max_tokens: 200, system: systemPrompt, messages: turns }
+    body = { model, max_tokens: 1024, system: systemPrompt, messages: turns }
   } else {
     url = `${base}/chat/completions`
     headers = { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` }
-    body = { model, max_tokens: 200, messages: [{ role: 'system', content: systemPrompt }, ...turns] }
+    body = {
+      model,
+      max_tokens: 1024,
+      thinking: { type: 'disabled' },
+      messages: [{ role: 'system', content: systemPrompt }, ...turns],
+    }
   }
 
   const res = await fetch(url, { method: 'POST', headers, body: JSON.stringify(body) })
   const rawText = await res.text()
   let data = null
   try { data = JSON.parse(rawText) } catch {}
+
+  const choice = data?.choices?.[0]
+  const finishReason = isAnthropic ? data?.stop_reason : choice?.finish_reason
+  const reasoningContent = choice?.message?.reasoning_content
   const text = isAnthropic
     ? data?.content?.find(b => b.type === 'text')?.text
-    : data?.choices?.[0]?.message?.content
+    : choice?.message?.content
+  console.log('[GEN] finish_reason=', finishReason, 'content长度=', text?.length ?? 0, 'reasoning长度=', reasoningContent?.length ?? 0)
+
   return { ok: res.ok, status: res.status, rawText, url, text: text?.trim() ?? null }
 }
 
