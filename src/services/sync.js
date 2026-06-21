@@ -11,6 +11,7 @@ export async function login(password) {
 }
 
 export async function getSettings(password) {
+  console.log('[KEY] getSettings 实际使用的password=', password)
   const res = await fetch(`${SYNC_BASE}/sync/get?password=${encodeURIComponent(password)}&key=settings`)
   if (!res.ok) return null
   const { value } = await res.json()
@@ -18,6 +19,7 @@ export async function getSettings(password) {
 }
 
 export async function saveSettings(password, settings) {
+  console.log('[KEY] saveSettings 实际使用的password=', password)
   const res = await fetch(`${SYNC_BASE}/sync/set`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -44,6 +46,7 @@ export function extractSettings(state) {
 // ── Message cloud sync ────────────────────────────────────────────
 
 export async function getSessionMsgs(password, sessionId) {
+  console.log('[KEY] getSessionMsgs 实际使用的password=', password, 'sessionId=', sessionId)
   const key = `sessions:msgs:${sessionId}`
   const res = await fetch(`${SYNC_BASE}/sync/get?password=${encodeURIComponent(password)}&key=${encodeURIComponent(key)}`)
   if (!res.ok) return null
@@ -52,8 +55,9 @@ export async function getSessionMsgs(password, sessionId) {
 }
 
 export async function saveSessionMsgs(password, sessionId, msgs) {
+  console.log('[KEY] saveSessionMsgs 实际使用的password=', password, 'sessionId=', sessionId)
   const body = { password, key: `sessions:msgs:${sessionId}`, value: msgs }
-  console.log('[SYNC-UP] fetch请求', 'url=', `${SYNC_BASE}/sync/set`, 'key=', body.key, 'valueLen=', msgs.length, '请求体字节≈', JSON.stringify(body).length)
+  console.log('[SYNC-UP] fetch请求', 'key=', body.key, 'valueLen=', msgs.length, '请求体字节≈', JSON.stringify(body).length)
   const res = await fetch(`${SYNC_BASE}/sync/set`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
