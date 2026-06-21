@@ -292,7 +292,11 @@ export default function ChatWindow({ theme }) {
       >
         <MessageInput
           ref={inputRef}
-          onSend={(text) => { updateActiveTime(); sendMessage(text, 'text') }}
+          onSend={(text) => {
+            console.log('[PAW] onSend received, text:', JSON.stringify(text))
+            updateActiveTime()
+            sendMessage(text, 'text').catch(e => console.error('[PAW] sendMessage error:', e.message))
+          }}
           onSendVoice={handleSendVoice}
           onSendImage={handleSendImage}
           disabled={isLoading}

@@ -63,6 +63,7 @@ const MessageInput = forwardRef(function MessageInput({ onSend, onSendVoice, onS
   }), [text])
 
   const handleSend = () => {
+    console.log('[PAW] handleSend: canSend=', canSend, 'textLen=', text.trim().length)
     if (!canSend) return
     onSend(text.trim())
     setText('')
@@ -155,8 +156,7 @@ const MessageInput = forwardRef(function MessageInput({ onSend, onSendVoice, onS
       </button>
 
       <button
-        onClick={handleSend}
-        disabled={!canSend}
+        onClick={() => { console.log('[PAW] paw clicked'); handleSend() }}
         style={{
           width: 56, height: 56,
           borderRadius: '50%',
