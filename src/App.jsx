@@ -38,39 +38,74 @@ export default function App() {
   // One-time migration: upload all local IDB messages to cloud
   const runMsgMigration = async (password) => {
     const { sessions: allSessions } = useStore.getState()
-    if (!allSessions?.length) { localStorage.setItem('msgSyncV1', '1'); return }
+    console.log('[MIGRATE] 开始 | sessions数量=', allSessions?.length ?? 0)
+    if (!allSessions?.length) {
+      console.log('[MIGRATE] 无会话，跳过，设置flag')
+      localStorage.setItem('msgSyncV1', '1')
+      return
+    }
     const total = allSessions.length
     let done = 0
     setMigrationStatus(`正在上传会话 0/${total}`)
     for (const session of allSessions) {
       done++
       setMigrationStatus(`正在上传会话 ${done}/${total}`)
+      console.log(`[MIGRATE] 处理 ${done}/${total}: id=${session.id} name=${session.name}`)
       try {
         const msgs = await getMessages(session.id)
+        console.log(`[MIGRATE] IDB消息数=${msgs.length}`)
         if (msgs.length > 0) {
           msgs.sort((a, b) => a.timestamp - b.timestamp)
+          console.log(`[MIGRATE] 上传中, 请求体约${JSON.stringify(msgs).length}字节...`)
           await saveSessionMsgs(password, session.id, msgs)
+          console.log(`[MIGRATE] 上传成功: ${session.id}`)
+        } else {
+          console.log(`[MIGRATE] IDB无消息，跳过`)
         }
       } catch (e) {
-        console.warn('[MIGRATION] session', session.id, '失败:', e.message)
+        console.warn('[MIGRATE] 上传失败:', session.id, e.message)
       }
     }
     localStorage.setItem('msgSyncV1', '1')
     setMigrationStatus(null)
+    console.log('[MIGRATE] 全部完成，flag已设置')
+  }
+
+  // Force re-sync: clears flag, re-runs migration (called from GlobalSettings button)
+  const handleForceSync = async () => {
+    const password = localStorage.getItem('auth.password')
+    if (!password) return
+    console.log('[FORCE-SYNC] 强制重新同步开始...')
+    await runMsgMigration(password)
+    console.log('[FORCE-SYNC] 完成')
   }
 
   // Pull latest cloud settings after login (startup sync), then run migration if first time
   useEffect(() => {
     if (!loggedIn) return
     const password = localStorage.getItem('auth.password')
-    if (!password) return
+    if (!password) { console.log('[SYNC] 无密码，跳过'); return }
+    const migratedFlag = localStorage.getItem('msgSyncV1')
+    console.log('[SYNC] 登录后流程开始 | msgSyncV1=', migratedFlag)
+    console.log('[SYNC] 开始拉取云端配置...')
     getSettings(password)
-      .then(cloud => { if (cloud) useStore.getState().restoreFromCloud(cloud) })
-      .catch(() => {})
+      .then(cloud => {
+        console.log('[SYNC] 云端配置拉取完成 | hasCloud=', !!cloud)
+        if (cloud) {
+          useStore.getState().restoreFromCloud(cloud)
+          console.log('[SYNC] restoreFromCloud 完成')
+        }
+      })
+      .catch(e => { console.warn('[SYNC] 拉取云端配置失败:', e.message) })
       .finally(async () => {
         syncReady.current = true
-        if (!localStorage.getItem('msgSyncV1')) {
+        const migrated = localStorage.getItem('msgSyncV1')
+        console.log('[SYNC] finally: syncReady=true | msgSyncV1=', migrated)
+        if (!migrated) {
+          console.log('[SYNC] 首次迁移开始...')
           await runMsgMigration(password)
+        } else {
+          console.log('[SYNC] 跳过迁移（已迁移）')
         }
       })
   }, [loggedIn])
@@ -219,7 +254,7 @@ export default function App() {
           {currentView === 'sessions' && (
             <SessionList theme={theme} onSelectSession={() => setCurrentView('chat')} />
           )}
-          {currentView === 'globalSettings' && <GlobalSettings theme={theme} onLogout={handleLogout} />}
+          {currentView === 'globalSettings' && <GlobalSettings theme={theme} onLogout={handleLogout} onForceSync={handleForceSync} />}
           {currentView === 'sessionSettings' && <SessionSettings theme={theme} />}
         </div>
 

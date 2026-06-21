@@ -145,6 +145,19 @@ export default {
       return Response.json({ ok: true }, { headers: CORS })
     }
 
+    if (pathname === '/sync/debug' && request.method === 'GET') {
+      const { searchParams } = new URL(request.url)
+      const password = searchParams.get('password')
+      if (!password) return Response.json({ error: 'unauthorized' }, { status: 401, headers: CORS })
+      const prefix = `user:${password}:`
+      const listed = await env.CHAT_KV.list({ prefix })
+      const keys = await Promise.all(listed.keys.map(async k => {
+        const raw = await env.CHAT_KV.get(k.name)
+        return { key: k.name.slice(prefix.length), size: raw ? raw.length : 0 }
+      }))
+      return Response.json({ ok: true, count: keys.length, keys }, { headers: CORS })
+    }
+
     return new Response('Not Found', { status: 404, headers: CORS })
   },
 
