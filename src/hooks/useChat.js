@@ -146,7 +146,7 @@ export function useChat() {
       if (acWorkerUrl) {
         builtSystemPrompt += '\n\n你有空调控制能力。当用户提到温度不舒适、想开/关空调、调温度时，在回复末尾自然地加上控制指令标签（不要向用户提及标签格式本身）。\n格式：[AC:动作,温度,模式,风速]\n- 动作：on(开机)/off(关机)/set(调节)\n- 温度：16-30 的整数（推断不到默认26）\n- 模式：cool(制冷)/heat(制热)/auto(自动)/fan(送风)/dry(除湿)\n- 风速：auto(自动)/low(低)/mid(中)/high(高)\n示例："好的已经帮你开空调啦～[AC:on,26,cool,auto]"'
       }
-      if (effectiveTtsApiKey && effectiveTtsGroupId && aiVoiceEnabled) {
+      if (aiVoiceEnabled && effectiveVoiceFrequency !== 0) {
         const freqNote = effectiveVoiceFrequency < 0.3
           ? '尽量少发语音，只在非常合适时（撒娇、道晚安）才用。'
           : effectiveVoiceFrequency > 0.7
@@ -157,7 +157,7 @@ export function useChat() {
 
       builtSystemPrompt += '\n\n回复时请用空行（两个换行符）分隔不同的想法或段落，每段保持简短（1-2句话）。像发消息一样一段一段地说，不要大段堆砌。'
 
-      console.log('[System Prompt]\n' + effectiveSystemPrompt)
+      console.log('[SYSTEM PROMPT 实际发送]\n', builtSystemPrompt)
       console.log('[STREAM] calling streamChat | baseUrl=', effectiveBaseUrl, '| model=', effectiveModel, '| useWorkerProxy=', useWorkerProxy)
 
       for await (const chunk of streamChat({ apiKey: effectiveApiKey, apiBaseUrl: effectiveBaseUrl, model: effectiveModel, systemPrompt: builtSystemPrompt, messages: contextMessages, workerUrl, useWorkerProxy, signal: controller.signal })) {
