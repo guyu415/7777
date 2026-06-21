@@ -68,6 +68,41 @@ export async function saveSessionMsgs(password, sessionId, msgs) {
   if (!res.ok) throw new Error(`HTTP ${res.status}: ${text}`)
 }
 
+// ── Asset (R2) ────────────────────────────────────────────────────
+
+const _assetBlobCache = new Map()
+
+export async function putAsset(password, key, blob, filename) {
+  const form = new FormData()
+  form.append('password', password)
+  form.append('key', key)
+  form.append('file', blob, filename)
+  const res = await fetch(`${SYNC_BASE}/asset/put`, { method: 'POST', body: form })
+  if (!res.ok) {
+    const t = await res.text()
+    throw new Error(`HTTP ${res.status}: ${t}`)
+  }
+  return res.json()
+}
+
+export async function getAssetBlob(password, key) {
+  if (_assetBlobCache.has(key)) return _assetBlobCache.get(key)
+  const res = await fetch(`${SYNC_BASE}/asset/get?password=${encodeURIComponent(password)}&key=${encodeURIComponent(key)}`)
+  if (!res.ok) return null
+  const blob = await res.blob()
+  _assetBlobCache.set(key, blob)
+  return blob
+}
+
+export async function deleteAsset(password, key) {
+  const res = await fetch(`${SYNC_BASE}/asset/del`, {
+    method: 'DELETE',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ password, key }),
+  })
+  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+}
+
 export async function deleteSessionMsgs(password, sessionId) {
   const res = await fetch(`${SYNC_BASE}/sync/del`, {
     method: 'DELETE',

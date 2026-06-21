@@ -1,5 +1,5 @@
 import { useEffect, useState, useRef } from 'react'
-import { useStore, getCustomFont, getBlob, getMessages } from './store'
+import { useStore, getCustomFont, getBlob, saveBlob, getMessages } from './store'
 import { THEMES } from './themes'
 import ChatWindow from './components/Chat/ChatWindow'
 import GlobalSettings from './components/GlobalSettings'
@@ -7,7 +7,7 @@ import SessionSettings from './components/SessionSettings'
 import SessionList from './components/SessionList'
 import BottomNav from './components/BottomNav'
 import LoginPage from './components/LoginPage'
-import { getSettings, saveSettings, extractSettings, saveSessionMsgs } from './services/sync'
+import { getSettings, saveSettings, extractSettings, saveSessionMsgs, putAsset, getAssetBlob } from './services/sync'
 
 const PETALS = ['🌸', '🌺', '✿', '🌸', '✾']
 
@@ -80,6 +80,59 @@ export default function App() {
     console.log('[FORCE-SYNC] 完成')
   }
 
+  // One-time migration: upload existing IDB fonts/backgrounds to R2
+  const runAssetMigration = async (password) => {
+    const { customFonts, sessions } = useStore.getState()
+    const fontsToMigrate = (customFonts || []).filter(f => !f.assetKey)
+    const bgsToMigrate = (sessions || []).filter(s => s.chatBg?.blobKey && !s.chatBg?.assetKey)
+    const total = fontsToMigrate.length + bgsToMigrate.length
+    console.log('[ASSET-MIGRATE] 开始 | fonts=', fontsToMigrate.length, 'bgs=', bgsToMigrate.length)
+    if (total === 0) { localStorage.setItem('assetSyncV1', '1'); return }
+
+    let done = 0
+    setMigrationStatus(`正在迁移资源 0/${total}`)
+
+    for (const font of fontsToMigrate) {
+      done++
+      setMigrationStatus(`正在迁移字体 ${done}/${total}`)
+      try {
+        const blob = await getCustomFont(font.id)
+        if (blob) {
+          const ext = 'ttf'
+          const key = `user:${password}:asset:font:global:${font.id}.${ext}`
+          await putAsset(password, key, blob, `${font.id}.${ext}`)
+          await saveBlob(key, blob)
+          useStore.getState().updateCustomFont(font.id, { assetKey: key })
+          console.log('[ASSET-MIGRATE] 字体完成:', font.id)
+        }
+      } catch (e) {
+        console.warn('[ASSET-MIGRATE] 字体失败:', font.id, e.message)
+      }
+    }
+
+    for (const session of bgsToMigrate) {
+      done++
+      setMigrationStatus(`正在迁移背景 ${done}/${total}`)
+      try {
+        const blob = await getBlob(session.chatBg.blobKey)
+        if (blob) {
+          const randomId = Date.now().toString(36) + Math.random().toString(36).slice(2)
+          const key = `user:${password}:asset:bg:${session.id}:${randomId}.jpg`
+          await putAsset(password, key, blob, 'bg.jpg')
+          await saveBlob(key, blob)
+          useStore.getState().setSessionChatBg(session.id, { ...session.chatBg, assetKey: key, blobKey: undefined })
+          console.log('[ASSET-MIGRATE] 背景完成:', session.id)
+        }
+      } catch (e) {
+        console.warn('[ASSET-MIGRATE] 背景失败:', session.id, e.message)
+      }
+    }
+
+    localStorage.setItem('assetSyncV1', '1')
+    setMigrationStatus(null)
+    console.log('[ASSET-MIGRATE] 全部完成')
+  }
+
   // Pull latest cloud settings after login (startup sync), then run migration if first time
   useEffect(() => {
     if (!loggedIn) return
@@ -106,6 +159,12 @@ export default function App() {
           await runMsgMigration(password)
         } else {
           console.log('[SYNC] 跳过迁移（已迁移）')
+        }
+        if (!localStorage.getItem('assetSyncV1')) {
+          console.log('[SYNC] 资源迁移开始...')
+          await runAssetMigration(password)
+        } else {
+          console.log('[SYNC] 跳过资源迁移（已迁移）')
         }
       })
   }, [loggedIn])
@@ -165,11 +224,21 @@ export default function App() {
 
   useEffect(() => {
     if (!customFonts?.length) return
+    const password = localStorage.getItem('auth.password')
     const loadAll = async () => {
       for (const font of customFonts) {
         if (document.fonts.check(`12px "${font.family}"`)) continue
         try {
-          const blob = await getCustomFont(font.id)
+          let blob
+          if (font.assetKey) {
+            blob = await getBlob(font.assetKey)
+            if (!blob && password) {
+              blob = await getAssetBlob(password, font.assetKey)
+              if (blob) await saveBlob(font.assetKey, blob)
+            }
+          } else {
+            blob = await getCustomFont(font.id)
+          }
           if (!blob) continue
           const url = URL.createObjectURL(blob)
           const face = new FontFace(font.family, `url(${url})`)
@@ -190,14 +259,29 @@ export default function App() {
 
   useEffect(() => {
     if (effectiveChatBg?.type !== 'image') { setBgUrl(null); return }
-    if (effectiveChatBg.blobKey) {
+    if (effectiveChatBg.assetKey) {
+      const password = localStorage.getItem('auth.password')
+      getBlob(effectiveChatBg.assetKey).then(async (cached) => {
+        if (cached) { setBgUrl(URL.createObjectURL(cached)); return }
+        if (!password) { setBgUrl(null); return }
+        try {
+          const blob = await getAssetBlob(password, effectiveChatBg.assetKey)
+          if (blob) {
+            await saveBlob(effectiveChatBg.assetKey, blob)
+            setBgUrl(URL.createObjectURL(blob))
+          } else {
+            setBgUrl(null)
+          }
+        } catch { setBgUrl(null) }
+      })
+    } else if (effectiveChatBg.blobKey) {
       getBlob(effectiveChatBg.blobKey).then(blob => setBgUrl(blob ? URL.createObjectURL(blob) : null))
     } else if (effectiveChatBg.value) {
       setBgUrl(effectiveChatBg.value)
     } else {
       setBgUrl(null)
     }
-  }, [effectiveChatBg?.blobKey, effectiveChatBg?.type, effectiveChatBg?.value])
+  }, [effectiveChatBg?.assetKey, effectiveChatBg?.blobKey, effectiveChatBg?.type, effectiveChatBg?.value])
 
   // ── Login gate ─────────────────────────────────────────────────
   if (!loggedIn) {

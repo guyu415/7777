@@ -1,6 +1,7 @@
 import { useState, useRef } from 'react'
 import { Trash2 } from 'lucide-react'
 import { useStore, clearAllData, getAllMessages, getMessages, saveCustomFont, deleteCustomFont } from '../store'
+import { putAsset, deleteAsset } from '../services/sync'
 
 import { THEMES } from '../themes'
 import MemoryPanel from './MemoryPanel'
@@ -117,12 +118,21 @@ export default function GlobalSettings({ theme, onLogout, onForceSync }) {
       const ab = await file.arrayBuffer()
       const blob = new Blob([ab], { type: file.type || 'font/ttf' })
       const id = genId()
+      const ext = file.name.split('.').pop().toLowerCase() || 'ttf'
+      const password = localStorage.getItem('auth.password')
+
+      let assetKey = null
+      if (password) {
+        assetKey = `user:${password}:asset:font:global:${id}.${ext}`
+        await putAsset(password, assetKey, blob, file.name)
+      }
       await saveCustomFont(id, blob)
+
       const url = URL.createObjectURL(blob)
       const fontFace = new FontFace(family, `url(${url})`)
       await fontFace.load()
       document.fonts.add(fontFace)
-      addCustomFont({ id, name, family })
+      addCustomFont({ id, name, family, assetKey })
       setFontFamily(id)
     } catch (err) {
       alert('字体加载失败：' + err.message)
@@ -130,6 +140,10 @@ export default function GlobalSettings({ theme, onLogout, onForceSync }) {
   }
 
   const handleRemoveFont = async (font) => {
+    const password = localStorage.getItem('auth.password')
+    if (font.assetKey && password) {
+      try { await deleteAsset(password, font.assetKey) } catch {}
+    }
     await deleteCustomFont(font.id)
     removeCustomFont(font.id)
   }

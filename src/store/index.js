@@ -274,6 +274,9 @@ export const useStore = create(
 
       addCustomFont: (font) => set((state) => ({ customFonts: [...state.customFonts, font] })),
       removeCustomFont: (id) => set((state) => ({ customFonts: state.customFonts.filter(f => f.id !== id) })),
+      updateCustomFont: (id, updates) => set((state) => ({
+        customFonts: state.customFonts.map(f => f.id === id ? { ...f, ...updates } : f),
+      })),
 
       setSelectedProviderId: (id) => set({ selectedProviderId: id }),
       setSelectedModelId: (id) => set({ selectedModelId: id }),

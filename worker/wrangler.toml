@@ -7,6 +7,10 @@ account_id = "e364fa0eb012df759b774bfcada11422"
 binding = "CHAT_KV"
 id = "ee2f737d334c4af7b56a89f83b61092c"
 
+[[r2_buckets]]
+binding = "ASSETS_R2"
+bucket_name = "pink-chat-assets"
+
 [triggers]
 crons = ["*/30 * * * *"]
 
