@@ -206,15 +206,15 @@ async function handleChatProxy(request) {
 }
 
 async function callClaude(env, systemPrompt) {
-  const baseUrl = (env.CLAUDE_API_BASE_URL || 'https://api.openai.com').replace(/\/$/, '')
-  const res = await fetch(`${baseUrl}/v1/chat/completions`, {
+  const baseUrl = (env.CLAUDE_API_BASE_URL || 'https://open.bigmodel.cn/api/paas/v4').replace(/\/$/, '')
+  const res = await fetch(`${baseUrl}/chat/completions`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
       'Authorization': `Bearer ${env.CLAUDE_API_KEY}`,
     },
     body: JSON.stringify({
-      model: 'claude-haiku-4-5-20251001',
+      model: 'glm-4-flash',
       max_tokens: 100,
       messages: [
         { role: 'system', content: systemPrompt },
@@ -275,9 +275,9 @@ async function maybeGenerateMessage(env) {
 
 async function debugGenerateMessage(env) {
   const now = Date.now()
-  const model = 'claude-haiku-4-5-20251001'
-  const baseUrl = (env.CLAUDE_API_BASE_URL || 'https://api.openai.com').replace(/\/$/, '')
-  const apiUrl = `${baseUrl}/v1/chat/completions`
+  const model = 'glm-4-flash'
+  const baseUrl = (env.CLAUDE_API_BASE_URL || 'https://open.bigmodel.cn/api/paas/v4').replace(/\/$/, '')
+  const apiUrl = `${baseUrl}/chat/completions`
   const apiKeyLength = env.CLAUDE_API_KEY?.length ?? 0
 
   const lastActiveStr = await env.CHAT_KV.get('last_user_active_time')
