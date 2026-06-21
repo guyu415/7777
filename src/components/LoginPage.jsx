@@ -61,7 +61,7 @@ export default function LoginPage({ onLogin }) {
         }}>
           <div className="text-center mb-6">
             <div className="text-4xl mb-3">🌸</div>
-            <h1 className="font-semibold text-lg" style={{ color: '#8b5060' }}>小漫聊天</h1>
+            <h1 className="font-semibold text-lg" style={{ color: '#8b5060' }}>Eunoia</h1>
             <p className="text-xs mt-1" style={{ color: '#c47a8a' }}>输入密码继续</p>
           </div>
 
