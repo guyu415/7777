@@ -182,10 +182,11 @@ export function useChat() {
       }
 
       const voiceMatch = fullContent.match(VOICE_TAG_RE)
+      console.log('[VOICE] voiceMatch=', !!voiceMatch, '| effectiveTtsApiKey长度=', effectiveTtsApiKey?.length ?? 0, '| effectiveTtsGroupId=', effectiveTtsGroupId || '(空)', '| aiVoiceEnabled=', aiVoiceEnabled)
 
       if (voiceMatch && effectiveTtsApiKey && effectiveTtsGroupId && aiVoiceEnabled) {
-        // Voice mode: emit surrounding text bubbles first, then an independent voice bubble
         const voiceText = voiceMatch[1].trim()
+        console.log('[VOICE] 检测到VOICE标记，准备合成，文本=', voiceText.slice(0, 80))
         const surroundText = fullContent.replace(VOICE_TAG_RE, '').replace(AC_TAG_RE, '').trim()
         const textParts = surroundText.split(/\n\n+/).map(p => p.trim()).filter(Boolean)
 
@@ -228,8 +229,9 @@ export function useChat() {
             } catch {}
             voiceBlobId = genId()
             await saveBlob(voiceBlobId, blob)
+            console.log('[VOICE] 音频生成成功，准备渲染气泡 voiceBlobId=', voiceBlobId, 'duration=', duration)
           } catch (e) {
-            console.error('[TTS]', e.message)
+            console.error('[TTS] 合成失败 name=', e?.name, 'message=', e?.message)
           }
 
           const voiceUpdates = voiceBlobId
@@ -255,8 +257,9 @@ export function useChat() {
             } catch {}
             voiceBlobId = genId()
             await saveBlob(voiceBlobId, blob)
+            console.log('[VOICE] 音频生成成功（无文字模式），准备渲染气泡 voiceBlobId=', voiceBlobId, 'duration=', duration)
           } catch (e) {
-            console.error('[TTS]', e.message)
+            console.error('[TTS] 合成失败 name=', e?.name, 'message=', e?.message)
           }
 
           const updates = voiceBlobId
