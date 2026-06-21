@@ -92,7 +92,7 @@ export default {
     }
 
     if (pathname === '/trigger' && (request.method === 'GET' || request.method === 'POST')) {
-      const result = await debugGenerateMessage(env)
+      const result = await generateProactive(env, { force: true })
       return Response.json(result, { headers: CORS })
     }
 
@@ -173,7 +173,7 @@ export default {
   },
 
   async scheduled(event, env, ctx) {
-    ctx.waitUntil(maybeGenerateMessage(env))
+    ctx.waitUntil(generateProactive(env, { force: false }))
   },
 }
 
@@ -205,151 +205,237 @@ async function handleChatProxy(request) {
   })
 }
 
-async function callClaude(env, systemPrompt) {
-  const baseUrl = (env.CLAUDE_API_BASE_URL || 'https://open.bigmodel.cn/api/paas/v4').replace(/\/$/, '')
-  const res = await fetch(`${baseUrl}/chat/completions`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${env.CLAUDE_API_KEY}`,
-    },
-    body: JSON.stringify({
-      model: 'glm-4-flash',
-      max_tokens: 100,
-      messages: [
-        { role: 'system', content: systemPrompt },
-        { role: 'user', content: '发一条消息给主人' },
-      ],
-    }),
-  })
-  const data = await res.json()
-  if (!res.ok) throw new Error(`API ${res.status}: ${JSON.stringify(data)}`)
-  return data.choices?.[0]?.message?.content?.trim()
+// ── Proactive message generation (session-aware) ─────────────────
+
+function getUserPassword(env) {
+  return env.USER_PASSWORD || 'xiaoman2.26'
 }
 
-async function maybeGenerateMessage(env) {
-  const now = Date.now()
+async function kvGetJson(env, key) {
+  const raw = await env.CHAT_KV.get(key)
+  if (!raw) return null
+  try { return JSON.parse(raw) } catch { return null }
+}
 
+// Accurate Beijing time pieces + a human-readable string
+function beijingTime(now = new Date()) {
+  const parts = new Intl.DateTimeFormat('zh-CN', {
+    timeZone: 'Asia/Shanghai',
+    year: 'numeric', month: 'long', day: 'numeric',
+    weekday: 'long', hour: '2-digit', minute: '2-digit', hour12: false,
+  }).formatToParts(now)
+  const get = t => parts.find(p => p.type === t)?.value || ''
+  let hour = parseInt(get('hour'), 10)
+  if (Number.isNaN(hour)) hour = 0
+  hour = hour % 24
+  const minute = get('minute')
+  const display = `${get('year')}年${get('month')}${get('day')}日 ${get('weekday')} ${String(hour).padStart(2, '0')}:${minute}`
+  return { hour, display }
+}
+
+function timeSegmentGuidance(hour) {
+  if (hour >= 0 && hour < 5) return '现在是深夜/凌晨，主人多半还没睡或刚醒。要关心他怎么还没睡、提醒早点休息别熬夜。绝对不能说晒太阳、出门、吃早饭这类不符合凌晨的话。'
+  if (hour >= 5 && hour < 8) return '现在是清晨，可以轻声道早安、问睡得好不好，但别太吵。'
+  if (hour >= 8 && hour < 11) return '现在是上午，可以聊聊今天的安排、分享心情。'
+  if (hour >= 11 && hour < 13) return '现在是中午饭点，可以问吃午饭了没、提醒好好吃饭。'
+  if (hour >= 13 && hour < 17) return '现在是下午，可以关心累不累、要不要休息一下。'
+  if (hour >= 17 && hour < 19) return '现在是傍晚饭点，可以问晚饭吃什么、今天过得怎么样。'
+  if (hour >= 19 && hour < 23) return '现在是晚上，适合放松地闲聊、说想他了、聊聊今天的事。'
+  return '现在是深夜，主人该睡了，温柔地催他早点睡、道晚安。'
+}
+
+// Pick the most recently active session from synced settings
+function resolveTargetSession(settings) {
+  const sessions = Array.isArray(settings?.sessions) ? settings.sessions : []
+  if (sessions.length === 0) return null
+  const byCurrent = sessions.find(s => s.id === settings.currentSessionId)
+  if (byCurrent) return byCurrent
+  // fallback: latest lastMsgTime
+  return [...sessions].sort((a, b) => (b.lastMsgTime || 0) - (a.lastMsgTime || 0))[0]
+}
+
+// Mirror useChat.js effective config resolution
+function resolveSessionConfig(settings, session) {
+  const providers = Array.isArray(settings?.providers) ? settings.providers : []
+  const provider = providers.find(p => p.id === settings.selectedProviderId)
+  const apiKey = session.apiKey || provider?.apiKey || settings.apiKey || ''
+  const baseUrl = session.baseUrl || provider?.baseUrl || settings.apiBaseUrl || 'https://api.anthropic.com'
+  const model = session.model || settings.model || ''
+  const persona = session.systemPrompt !== undefined
+    ? (session.systemPrompt || settings.systemPrompt)
+    : settings.systemPrompt
+  return { apiKey, baseUrl, model, persona: persona || '' }
+}
+
+// Convert stored session messages into chat turns, normalized to alternate roles
+function buildContextTurns(msgs) {
+  const recent = (Array.isArray(msgs) ? msgs : []).slice(-8)
+  const raw = recent.map(m => {
+    let content = ''
+    if (m.type === 'image') content = m.content || '[图片]'
+    else if (m.type === 'voice') content = m.voiceText || m.transcript || '[语音消息]'
+    else content = m.content || ''
+    return { role: m.role === 'assistant' ? 'assistant' : 'user', content: (content || '').trim() }
+  }).filter(t => t.content)
+
+  // merge consecutive same-role turns
+  const merged = []
+  for (const t of raw) {
+    const last = merged[merged.length - 1]
+    if (last && last.role === t.role) last.content += '\n' + t.content
+    else merged.push({ ...t })
+  }
+  // Anthropic requires the first turn to be 'user'
+  while (merged.length && merged[0].role !== 'user') merged.shift()
+  return merged
+}
+
+// Non-streaming model call, dual format (Anthropic vs OpenAI-compatible)
+async function callModel({ apiKey, baseUrl, model, systemPrompt, turns }) {
+  const base = (baseUrl || 'https://api.anthropic.com').replace(/\/$/, '')
+  const isAnthropic = base.includes('anthropic.com')
+
+  let url, headers, body
+  if (isAnthropic) {
+    url = `${base}/v1/messages`
+    headers = { 'Content-Type': 'application/json', 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' }
+    body = { model, max_tokens: 200, system: systemPrompt, messages: turns }
+  } else {
+    url = `${base}/chat/completions`
+    headers = { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` }
+    body = { model, max_tokens: 200, messages: [{ role: 'system', content: systemPrompt }, ...turns] }
+  }
+
+  const res = await fetch(url, { method: 'POST', headers, body: JSON.stringify(body) })
+  const rawText = await res.text()
+  let data = null
+  try { data = JSON.parse(rawText) } catch {}
+  const text = isAnthropic
+    ? data?.content?.find(b => b.type === 'text')?.text
+    : data?.choices?.[0]?.message?.content
+  return { ok: res.ok, status: res.status, rawText, url, text: text?.trim() ?? null }
+}
+
+// Core: build the full prompt and generate one proactive message for the target session
+async function generateProactive(env, { force }) {
+  const now = Date.now()
+  const password = getUserPassword(env)
+  const debug = {
+    shouldSend: !!force,
+    passwordPrefix: password.slice(0, 4),
+  }
+
+  // 1. Load synced settings
+  const settings = await kvGetJson(env, `user:${password}:settings`)
+  if (!settings) {
+    return { ...debug, error: 'no settings in KV for this user', savedToKV: false }
+  }
+
+  // 2. Target session
+  const session = resolveTargetSession(settings)
+  if (!session) {
+    return { ...debug, error: 'no sessions found in settings', savedToKV: false }
+  }
+  const { apiKey, baseUrl, model, persona } = resolveSessionConfig(settings, session)
+  debug.targetSessionId = session.id
+  debug.targetSessionName = session.name || ''
+  debug.model = model
+  debug.apiBaseUrl = baseUrl
+  debug.apiKeyLength = apiKey?.length ?? 0
+
+  // 3. Probability gate (cron only; /trigger forces send)
   const [lastActiveStr, lastSentStr] = await Promise.all([
     env.CHAT_KV.get('last_user_active_time'),
     env.CHAT_KV.get('last_sent_time'),
   ])
-
   const lastActive = lastActiveStr ? parseInt(lastActiveStr) : 0
   const lastSent = lastSentStr ? parseInt(lastSentStr) : 0
-
   const minSinceActive = (now - lastActive) / 60_000
   const minSinceSent = (now - lastSent) / 60_000
+  debug.hoursSinceLastChat = parseFloat((minSinceActive / 60).toFixed(2))
 
-  if (minSinceSent < 30) return
-
-  let probability
-  if (minSinceActive < 30) probability = 0.20
-  else if (minSinceActive < 60) probability = 0.30
-  else if (minSinceActive < 180) probability = 0.60
-  else if (minSinceActive < 360) probability = 0.40
-  else if (minSinceActive < 720) probability = 0.20
-  else probability = 0.10
-
-  if (Math.random() > probability) return
-
-  const bjDate = new Date(now + 8 * 3600_000)
-  const hour = bjDate.getUTCHours()
-  const hoursSinceActive = (minSinceActive / 60).toFixed(1)
-  const systemPrompt = `你是小满。现在是北京时间${hour}点。你上次和主人聊天是${hoursSinceActive}小时前。根据时间和情境自然地发一条消息。早上可以说早安，饭点问吃了吗，晚上说想你了或催睡觉。不要每次都问候，偶尔分享一个想法、发颜文字、或接着上次话题。像真人朋友一样。只发一条短消息，不超过30字。`
-
-  try {
-    const content = await callClaude(env, systemPrompt)
-    if (!content) return
-    const raw = await env.CHAT_KV.get('pending-messages')
-    const pending = raw ? JSON.parse(raw) : []
-    pending.push({ content, timestamp: now, read: false })
-    await Promise.all([
-      env.CHAT_KV.put('pending-messages', JSON.stringify(pending)),
-      env.CHAT_KV.put('last_sent_time', now.toString()),
-    ])
-  } catch {
-    // cron 环境下静默失败
+  if (!force) {
+    if (minSinceSent < 30) return { ...debug, skipped: 'cooldown <30min since last sent', savedToKV: false }
+    let probability
+    if (minSinceActive < 30) probability = 0.20
+    else if (minSinceActive < 60) probability = 0.30
+    else if (minSinceActive < 180) probability = 0.60
+    else if (minSinceActive < 360) probability = 0.40
+    else if (minSinceActive < 720) probability = 0.20
+    else probability = 0.10
+    if (Math.random() > probability) return { ...debug, skipped: `probability ${probability} not hit`, savedToKV: false }
+    debug.shouldSend = true
   }
-}
 
-async function debugGenerateMessage(env) {
-  const now = Date.now()
-  const model = 'glm-4-flash'
-  const baseUrl = (env.CLAUDE_API_BASE_URL || 'https://open.bigmodel.cn/api/paas/v4').replace(/\/$/, '')
-  const apiUrl = `${baseUrl}/chat/completions`
-  const apiKeyLength = env.CLAUDE_API_KEY?.length ?? 0
+  // 4. Time
+  const { hour, display: timeStr } = beijingTime(new Date(now))
+  const timeGuide = timeSegmentGuidance(hour)
 
-  const lastActiveStr = await env.CHAT_KV.get('last_user_active_time')
-  const lastActive = lastActiveStr ? parseInt(lastActiveStr) : 0
-  const minSinceActive = (now - lastActive) / 60_000
-  const hoursSinceLastChat = parseFloat((minSinceActive / 60).toFixed(2))
+  // 5. Memory
+  const memListed = await env.CHAT_KV.list({ prefix: 'memory:' })
+  const memVals = await Promise.all(memListed.keys.map(k => env.CHAT_KV.get(k.name)))
+  const memoryLines = memListed.keys.map((k, i) => {
+    const without = k.name.slice('memory:'.length)
+    const idx = without.indexOf(':')
+    const subj = idx === -1 ? without : without.slice(0, idx)
+    const pred = idx === -1 ? '' : without.slice(idx + 1)
+    return `- ${subj}${pred ? ' ' + pred : ''}：${memVals[i] || ''}`
+  })
+  const memoryBlock = memoryLines.length ? `\n\n【你记得关于主人的事】\n${memoryLines.join('\n')}` : ''
 
-  const bjDate = new Date(now + 8 * 3600_000)
-  const hour = bjDate.getUTCHours()
-  const systemPrompt = `你是小满。现在是北京时间${hour}点。你上次和主人聊天是${hoursSinceLastChat.toFixed(1)}小时前。根据时间和情境自然地发一条消息。早上可以说早安，饭点问吃了吗，晚上说想你了或催睡觉。不要每次都问候，偶尔分享一个想法、发颜文字、或接着上次话题。像真人朋友一样。只发一条短消息，不超过30字。`
+  // 6. Recent conversation context
+  const msgs = await kvGetJson(env, `user:${password}:sessions:msgs:${session.id}`)
+  const turns = buildContextTurns(msgs)
+  debug.contextTurnCount = turns.length
 
-  let apiCalled = false
-  let apiStatus = null
-  let apiResponseSnippet = null
-  let generatedMessage = null
-  let savedToKV = false
-  let error = null
+  // 7. Build system prompt = persona + time + guidance + memory + behavioral rules
+  const systemPrompt =
+    `${persona}\n\n` +
+    `【当前时间】北京时间：${timeStr}。${timeGuide}\n` +
+    memoryBlock +
+    `\n\n【现在要做的事】你现在要主动给主人发一条消息（不是回答提问，是你自己想起他、想和他说说话）。要求：\n` +
+    `1. 结合上面的最近对话，能接住之前的话题、语气连贯，别像第一次说话。\n` +
+    `2. 符合当前时间段，说应景的话。\n` +
+    `3. 像真人朋友一样自然——可以接上次的话题、分享一个小想法、随口关心一句，或者撒个娇。\n` +
+    `4. 绝对不要用"今天天气真好""在干嘛呢"这种机械模板开场。\n` +
+    `5. 只发一条，简短口语化，符合你的人设和说话风格。`
 
+  // Trigger turn (append as user, merging if last context turn is also user)
+  const triggerText = '（现在请你主动发一条消息给主人。）'
+  if (turns.length && turns[turns.length - 1].role === 'user') {
+    turns[turns.length - 1].content += '\n' + triggerText
+  } else {
+    turns.push({ role: 'user', content: triggerText })
+  }
+
+  // 8. Call the model
+  let result
   try {
-    apiCalled = true
-    const res = await fetch(apiUrl, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${env.CLAUDE_API_KEY || ''}`,
-      },
-      body: JSON.stringify({
-        model,
-        max_tokens: 100,
-        messages: [
-          { role: 'system', content: systemPrompt },
-          { role: 'user', content: '发一条消息给主人' },
-        ],
-      }),
-    })
-    apiStatus = res.status
-    const rawText = await res.text()
-    apiResponseSnippet = rawText.slice(0, 300)
-
-    if (res.ok) {
-      let data
-      try { data = JSON.parse(rawText) } catch {}
-      generatedMessage = data?.choices?.[0]?.message?.content?.trim() ?? null
-
-      if (generatedMessage) {
-        const kvRaw = await env.CHAT_KV.get('pending-messages')
-        const pending = kvRaw ? JSON.parse(kvRaw) : []
-        pending.push({ content: generatedMessage, timestamp: now, read: false })
-        await Promise.all([
-          env.CHAT_KV.put('pending-messages', JSON.stringify(pending)),
-          env.CHAT_KV.put('last_sent_time', now.toString()),
-        ])
-        savedToKV = true
-      }
-    }
+    result = await callModel({ apiKey, baseUrl, model, systemPrompt, turns })
   } catch (e) {
-    error = `${e.name}: ${e.message}`
+    return { ...debug, apiCalled: true, error: `${e.name}: ${e.message}`, savedToKV: false }
   }
+  debug.apiCalled = true
+  debug.apiUrl = result.url
+  debug.apiStatus = result.status
+  debug.apiResponseSnippet = result.rawText.slice(0, 300)
+  debug.systemPromptPreview = systemPrompt.slice(0, 200)
 
-  return {
-    shouldSend: true,
-    hoursSinceLastChat,
-    apiBaseUrl: baseUrl,
-    apiUrl,
-    apiKeyLength,
-    model,
-    apiCalled,
-    apiStatus,
-    apiResponseSnippet,
-    generatedMessage,
-    savedToKV,
-    kvKey: 'pending-messages',
-    error,
+  if (!result.ok || !result.text) {
+    return { ...debug, generatedMessage: null, savedToKV: false }
   }
+  debug.generatedMessage = result.text
+
+  // 9. Store into this session's pending queue: user:{password}:pending:{sessionId}
+  const pendingKey = `user:${password}:pending:${session.id}`
+  const existing = await kvGetJson(env, pendingKey)
+  const pending = Array.isArray(existing) ? existing : []
+  pending.push({ content: result.text, timestamp: now, read: false })
+  await Promise.all([
+    env.CHAT_KV.put(pendingKey, JSON.stringify(pending)),
+    env.CHAT_KV.put('last_sent_time', now.toString()),
+  ])
+  debug.savedToKV = true
+  debug.kvKey = pendingKey
+  return debug
 }

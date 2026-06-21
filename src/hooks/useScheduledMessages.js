@@ -11,15 +11,19 @@ export function useScheduledMessages() {
   const fetchPendingMessages = useCallback(async () => {
     if (!workerUrl) return false
     const base = workerUrl.replace(/\/$/, '')
+    const password = localStorage.getItem('auth.password')
+    if (!password) return false
     const convId = currentSessionId || 'main'
-    console.log('[PENDING] 拉取待发消息, key=pending-messages, endpoint=', `${base}/pending-messages`)
+    const key = `pending:${convId}`
+    console.log('[PENDING] 拉取待发消息, key=', key, 'session=', convId)
     try {
-      const res = await fetch(`${base}/pending-messages`)
+      const res = await fetch(`${base}/sync/get?password=${encodeURIComponent(password)}&key=${encodeURIComponent(key)}`)
       if (!res.ok) {
         console.log('[PENDING] 拉取失败, status=', res.status)
         return false
       }
-      const list = await res.json()
+      const { value } = await res.json()
+      const list = Array.isArray(value) ? value : []
       console.log('[PENDING] 拿到=', list)
       const unread = list.filter(m => !m.read)
       if (unread.length === 0) {
@@ -27,7 +31,12 @@ export function useScheduledMessages() {
         return false
       }
 
-      fetch(`${base}/mark-read`, { method: 'POST' }).catch(() => {})
+      // clear this session's pending queue (fire-and-forget)
+      fetch(`${base}/sync/del`, {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ password, key }),
+      }).catch(() => {})
 
       console.log('[PENDING] 插入', unread.length, '条主动消息到会话', convId)
       for (const m of unread) {
