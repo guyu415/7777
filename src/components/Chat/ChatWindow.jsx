@@ -81,7 +81,11 @@ export default function ChatWindow({ theme }) {
     return () => document.removeEventListener('visibilitychange', onVisible)
   }, [fetchPendingMessages, loadHistory])
 
+  const lastScrollTimeRef = useRef(0)
   useEffect(() => {
+    const now = Date.now()
+    if (now - lastScrollTimeRef.current < 150) return
+    lastScrollTimeRef.current = now
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages.length, messages[messages.length - 1]?.content?.length])
 

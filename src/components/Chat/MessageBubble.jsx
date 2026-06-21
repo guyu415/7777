@@ -1,4 +1,4 @@
-import { useState, useRef } from 'react'
+import { useState, useRef, memo } from 'react'
 import { CheckCheck } from 'lucide-react'
 import VoicePlayer from '../Voice/VoicePlayer'
 import ImageViewer from '../ImageViewer'
@@ -20,7 +20,7 @@ function formatTime(ts) {
   return new Date(ts).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
 }
 
-export default function MessageBubble({ message, onLongPress, onRegenerate, onRegenerateRound, isLoading, userAvatar, aiAvatar, theme }) {
+function MessageBubble({ message, onLongPress, onRegenerate, onRegenerateRound, isLoading, userAvatar, aiAvatar, theme }) {
   const [viewerSrc, setViewerSrc] = useState(null)
   const [pressed, setPressed] = useState(false)
   const [showVoiceText, setShowVoiceText] = useState(false)
@@ -149,7 +149,9 @@ export default function MessageBubble({ message, onLongPress, onRegenerate, onRe
                   padding: '8px 11px',
                 }}
               >
-                {message.reasoning}
+                {message.reasoningStreaming
+                  ? message.reasoning.split('\n').slice(-4).join('\n')
+                  : message.reasoning}
               </div>
             )}
           </div>
@@ -347,3 +349,5 @@ export default function MessageBubble({ message, onLongPress, onRegenerate, onRe
     </div>
   )
 }
+
+export default memo(MessageBubble)

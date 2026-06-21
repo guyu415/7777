@@ -163,19 +163,49 @@ export function useChat() {
       console.log('[SYSTEM PROMPT 实际发送]\n', builtSystemPrompt)
       console.log('[STREAM] calling streamChat | baseUrl=', effectiveBaseUrl, '| model=', effectiveModel, '| useWorkerProxy=', useWorkerProxy)
 
-      for await (const chunk of streamChat({ apiKey: effectiveApiKey, apiBaseUrl: effectiveBaseUrl, model: effectiveModel, systemPrompt: builtSystemPrompt, messages: contextMessages, workerUrl, useWorkerProxy, signal: controller.signal, disableThinking: effectiveDisableThinking })) {
-        if (chunk.reasoning) {
-          fullReasoning += chunk.reasoning
-          if (!contentStarted) updateMessage(assistantId, { reasoning: fullReasoning, reasoningStreaming: true })
+      // Throttled store updates: accumulate chunks and flush every 80ms
+      let storedContent = ''
+      let storedReasoning = ''
+      let dirty = false
+
+      const flushUpdate = () => {
+        if (!dirty) return
+        dirty = false
+        const updates = {}
+        if (!contentStarted && fullReasoning !== storedReasoning) {
+          updates.reasoning = fullReasoning
+          updates.reasoningStreaming = true
+          storedReasoning = fullReasoning
         }
-        if (chunk.text) {
-          if (!contentStarted) {
-            contentStarted = true
-            updateMessage(assistantId, { reasoningStreaming: false })
+        if (contentStarted && fullContent !== storedContent) {
+          updates.content = stripDisplayTags(fullContent)
+          storedContent = fullContent
+        }
+        if (Object.keys(updates).length) updateMessage(assistantId, updates)
+      }
+
+      const flushTimer = setInterval(flushUpdate, 80)
+
+      try {
+        for await (const chunk of streamChat({ apiKey: effectiveApiKey, apiBaseUrl: effectiveBaseUrl, model: effectiveModel, systemPrompt: builtSystemPrompt, messages: contextMessages, workerUrl, useWorkerProxy, signal: controller.signal, disableThinking: effectiveDisableThinking })) {
+          if (chunk.reasoning) {
+            fullReasoning += chunk.reasoning
+            dirty = true
           }
-          fullContent += chunk.text
-          updateMessage(assistantId, { content: stripDisplayTags(fullContent) })
+          if (chunk.text) {
+            if (!contentStarted) {
+              contentStarted = true
+              storedReasoning = fullReasoning
+              // Immediate update for phase transition only
+              updateMessage(assistantId, { reasoningStreaming: false })
+            }
+            fullContent += chunk.text
+            dirty = true
+          }
         }
+      } finally {
+        clearInterval(flushTimer)
+        flushUpdate()  // flush any remaining buffered content
       }
 
       // Reasoning finished — attach to base msg so every save of the first bubble persists it
