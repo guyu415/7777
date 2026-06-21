@@ -53,11 +53,11 @@ export default function MessageBubble({ message, onLongPress, onRegenerate, onRe
   } : {}
 
   const avatarEl = (
-    <div className="flex-shrink-0 mb-1" style={{ position: 'relative', display: 'inline-block', width: 40, height: 40 }}>
-      {/* Avatar — absolutely centered so it shares the same center as the frame */}
+    <div className="flex-shrink-0 mb-1" style={{ position: 'relative', width: 80, height: 80 }}>
+      {/* Avatar — explicit 40px, centered; frame is sibling at 100% of 80px so nothing overflows */}
       <div style={{
         position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%, -50%)',
-        width: '100%', height: '100%',
+        width: 40, height: 40,
         borderRadius: '50%', overflow: 'hidden',
         display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '1.125rem',
         background: isUser ? `${theme?.primary}4d` : 'rgba(255,255,255,0.55)',
@@ -69,14 +69,14 @@ export default function MessageBubble({ message, onLongPress, onRegenerate, onRe
           ? (userAvatar ? <img src={userAvatar} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : '🐣')
           : (aiAvatar  ? <img src={aiAvatar}  alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : '🌸')}
       </div>
-      {/* Frame — same centering, 130% so ring surrounds avatar */}
+      {/* Frame — 100% of 80px container, no overflow, no clipping */}
       <img
         src="/assets/avatar-frame.png"
         alt=""
         style={{
           position: 'absolute', top: '50%', left: '50%',
           transform: 'translate(-50%, -50%)',
-          width: '180%', height: '180%',
+          width: '100%', height: '100%',
           objectFit: 'contain', pointerEvents: 'none', zIndex: 2,
         }}
       />
