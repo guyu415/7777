@@ -5,29 +5,35 @@ function genId() {
   return Date.now().toString(36) + Math.random().toString(36).slice(2)
 }
 
-const CONV_ID = 'main'
-
 export function useScheduledMessages() {
-  const { workerUrl } = useStore()
+  const { workerUrl, currentSessionId } = useStore()
 
-  // Fetches unread proactive messages, saves them to IndexedDB, returns true if any found
   const fetchPendingMessages = useCallback(async () => {
     if (!workerUrl) return false
     const base = workerUrl.replace(/\/$/, '')
+    const convId = currentSessionId || 'main'
+    console.log('[PENDING] 拉取待发消息, key=pending-messages, endpoint=', `${base}/pending-messages`)
     try {
       const res = await fetch(`${base}/pending-messages`)
-      if (!res.ok) return false
+      if (!res.ok) {
+        console.log('[PENDING] 拉取失败, status=', res.status)
+        return false
+      }
       const list = await res.json()
+      console.log('[PENDING] 拿到=', list)
       const unread = list.filter(m => !m.read)
-      if (unread.length === 0) return false
+      if (unread.length === 0) {
+        console.log('[PENDING] 无未读消息')
+        return false
+      }
 
-      // fire-and-forget
       fetch(`${base}/mark-read`, { method: 'POST' }).catch(() => {})
 
+      console.log('[PENDING] 插入', unread.length, '条主动消息到会话', convId)
       for (const m of unread) {
         await saveMessage({
           id: genId(),
-          conversationId: CONV_ID,
+          conversationId: convId,
           role: 'assistant',
           type: 'text',
           content: m.content,
@@ -35,10 +41,11 @@ export function useScheduledMessages() {
         })
       }
       return true
-    } catch {
+    } catch (e) {
+      console.log('[PENDING] 异常:', e.name, e.message)
       return false
     }
-  }, [workerUrl])
+  }, [workerUrl, currentSessionId])
 
   const updateActiveTime = useCallback(() => {
     if (!workerUrl) return

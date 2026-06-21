@@ -71,12 +71,15 @@ export default function ChatWindow({ theme }) {
   }, [currentSessionId])
 
   useEffect(() => {
-    const init = async () => {
+    const check = async () => {
       const hasNew = await fetchPendingMessages()
       if (hasNew) await loadHistory()
     }
-    init()
-  }, [])
+    check()
+    const onVisible = () => { if (document.visibilityState === 'visible') check() }
+    document.addEventListener('visibilitychange', onVisible)
+    return () => document.removeEventListener('visibilitychange', onVisible)
+  }, [fetchPendingMessages, loadHistory])
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
