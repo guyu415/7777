@@ -76,7 +76,7 @@ export default function MessageBubble({ message, onLongPress, onRegenerate, onRe
         style={{
           position: 'absolute', top: '50%', left: '50%',
           transform: 'translate(-50%, -50%)',
-          width: '130%', height: '130%',
+          width: '160%', height: '160%',
           objectFit: 'contain', pointerEvents: 'none', zIndex: 2,
         }}
       />

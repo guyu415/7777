@@ -143,29 +143,15 @@ export default function ChatWindow({ theme }) {
           flexShrink: 0,
         }}>
         <div className="flex items-center gap-3 min-w-0">
-          <div style={{ position: 'relative', flexShrink: 0, display: 'inline-block', width: 44, height: 44 }}>
-            <div style={{
-              position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%, -50%)',
-              width: '100%', height: '100%',
-              borderRadius: '50%', overflow: 'hidden',
-              display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '1.25rem',
+          <div className="w-11 h-11 rounded-full overflow-hidden flex items-center justify-center text-xl flex-shrink-0"
+            style={{
               background: `${primaryColor}33`,
+              border: '2px solid rgba(180,130,255,0.65)',
               boxShadow: '0 0 10px rgba(180,130,255,0.6), 0 2px 10px rgba(180,130,255,0.35)',
             }}>
-              {effectiveAiAvatar
-                ? <img src={effectiveAiAvatar} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-                : '🌸'}
-            </div>
-            <img
-              src="/assets/avatar-frame.png"
-              alt=""
-              style={{
-                position: 'absolute', top: '50%', left: '50%',
-                transform: 'translate(-50%, -50%)',
-                width: '130%', height: '130%',
-                objectFit: 'contain', pointerEvents: 'none', zIndex: 2,
-              }}
-            />
+            {effectiveAiAvatar
+              ? <img src={effectiveAiAvatar} alt="" className="w-full h-full object-cover" />
+              : '🌸'}
           </div>
           <div className="min-w-0">
             <div className="font-semibold text-sm" style={{
