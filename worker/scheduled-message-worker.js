@@ -366,7 +366,7 @@ async function generateProactive(env, { force }) {
   debug.hoursSinceLastChat = parseFloat((minSinceActive / 60).toFixed(2))
 
   if (!force) {
-    if (minSinceSent < 30) return { ...debug, skipped: 'cooldown <30min since last sent', savedToKV: false }
+    if (minSinceSent < 120) return { ...debug, skipped: `cooldown <120min since last sent (minSinceSent=${minSinceSent.toFixed(1)})`, savedToKV: false }
     let probability
     if (minSinceActive < 30) probability = 0.20
     else if (minSinceActive < 60) probability = 0.30
@@ -374,7 +374,10 @@ async function generateProactive(env, { force }) {
     else if (minSinceActive < 360) probability = 0.40
     else if (minSinceActive < 720) probability = 0.20
     else probability = 0.10
-    if (Math.random() > probability) return { ...debug, skipped: `probability ${probability} not hit`, savedToKV: false }
+    const rand = Math.random()
+    const willSend = rand <= probability
+    console.log('[CRON] hoursSinceLastChat=', debug.hoursSinceLastChat, '对应概率=', probability, 'random=', rand.toFixed(4), '结果发不发=', willSend)
+    if (!willSend) return { ...debug, skipped: `probability ${probability} not hit (rand=${rand.toFixed(4)})`, savedToKV: false }
     debug.shouldSend = true
   }
 
