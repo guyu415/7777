@@ -189,8 +189,13 @@ export default function ChatWindow({ theme }) {
         </svg>
       </div>
 
-      {/* Messages */}
-      <div className="flex-1 overflow-y-auto px-3 py-4">
+      {/* Messages + meteor layer */}
+      <div className="flex-1 relative overflow-hidden">
+        {/* Meteor shower — clipped to this area, floats above bubbles */}
+        <div className="absolute inset-0 pointer-events-none overflow-hidden" style={{ zIndex: 5 }}>
+          {[0,1,2,3,4,5,6,7].map(i => <span key={i} className="petal" />)}
+        </div>
+      <div className="absolute inset-0 overflow-y-auto px-3 py-4" style={{ zIndex: 1 }}>
         {messages.length === 0 && (
           <div className="flex flex-col items-center justify-center h-full text-center gap-3">
             <div className="text-5xl">🌸</div>
@@ -223,6 +228,7 @@ export default function ChatWindow({ theme }) {
           />
         ))}
         <div ref={bottomRef} />
+      </div>
       </div>
 
       {/* Long-press message menu */}

@@ -509,7 +509,7 @@ export default function SessionSettings({ theme }) {
                 <button
                   onClick={() => setSessionFollowGlobalTts(currentSessionId, null)}
                   style={chipStyle(currentSession.followGlobalTts !== false)}
-                >跟随全局</button>
+                >默认设置</button>
                 <button
                   onClick={() => setSessionFollowGlobalTts(currentSessionId, false)}
                   style={chipStyle(currentSession.followGlobalTts === false)}
@@ -517,53 +517,51 @@ export default function SessionSettings({ theme }) {
               </div>
             </div>
 
-            {/* Session-specific TTS fields — only shown when not following global */}
-            {currentSession.followGlobalTts === false && (
-              <div className="space-y-2">
-                <div>
-                  <label className="text-xs pl-1 mb-1 block" style={{ color: '#6a90b8' }}>TTS API Key</label>
-                  <div style={{ position: 'relative' }}>
-                    <input
-                      type={showTtsKey ? 'text' : 'password'}
-                      value={localTtsApiKey}
-                      onChange={e => setLocalTtsApiKey(e.target.value)}
-                      onBlur={() => setSessionTtsApiKey(currentSessionId, localTtsApiKey.trim())}
-                      placeholder="MiniMax API Key"
-                      style={{ ...inputStyle, paddingRight: 44 }}
-                    />
-                    <button
-                      onClick={() => setShowTtsKey(v => !v)}
-                      style={{
-                        position: 'absolute', right: 12, top: '50%', transform: 'translateY(-50%)',
-                        background: 'none', border: 'none', cursor: 'pointer', color: '#7a9cc0', padding: 0,
-                      }}
-                    >
-                      {showTtsKey ? <EyeOff size={16} /> : <Eye size={16} />}
-                    </button>
-                  </div>
-                </div>
-                <div>
-                  <label className="text-xs pl-1 mb-1 block" style={{ color: '#6a90b8' }}>Group ID</label>
+            {/* TTS API fields — always visible */}
+            <div className="space-y-2">
+              <div>
+                <label className="text-xs pl-1 mb-1 block" style={{ color: '#6a90b8' }}>TTS API Key</label>
+                <div style={{ position: 'relative' }}>
                   <input
-                    value={localTtsGroupId}
-                    onChange={e => setLocalTtsGroupId(e.target.value)}
-                    onBlur={() => setSessionTtsGroupId(currentSessionId, localTtsGroupId.trim())}
-                    placeholder="MiniMax Group ID"
-                    style={inputStyle}
+                    type={showTtsKey ? 'text' : 'password'}
+                    value={localTtsApiKey}
+                    onChange={e => setLocalTtsApiKey(e.target.value)}
+                    onBlur={() => setSessionTtsApiKey(currentSessionId, localTtsApiKey.trim())}
+                    placeholder="MiniMax API Key"
+                    style={{ ...inputStyle, paddingRight: 44 }}
                   />
-                </div>
-                <div>
-                  <label className="text-xs pl-1 mb-1 block" style={{ color: '#6a90b8' }}>音色 ID</label>
-                  <input
-                    value={localTtsVoiceId}
-                    onChange={e => setLocalTtsVoiceId(e.target.value)}
-                    onBlur={() => setSessionTtsVoiceId(currentSessionId, localTtsVoiceId.trim())}
-                    placeholder="English_Trustworthy_Man"
-                    style={inputStyle}
-                  />
+                  <button
+                    onClick={() => setShowTtsKey(v => !v)}
+                    style={{
+                      position: 'absolute', right: 12, top: '50%', transform: 'translateY(-50%)',
+                      background: 'none', border: 'none', cursor: 'pointer', color: '#7a9cc0', padding: 0,
+                    }}
+                  >
+                    {showTtsKey ? <EyeOff size={16} /> : <Eye size={16} />}
+                  </button>
                 </div>
               </div>
-            )}
+              <div>
+                <label className="text-xs pl-1 mb-1 block" style={{ color: '#6a90b8' }}>Group ID</label>
+                <input
+                  value={localTtsGroupId}
+                  onChange={e => setLocalTtsGroupId(e.target.value)}
+                  onBlur={() => setSessionTtsGroupId(currentSessionId, localTtsGroupId.trim())}
+                  placeholder="MiniMax Group ID"
+                  style={inputStyle}
+                />
+              </div>
+              <div>
+                <label className="text-xs pl-1 mb-1 block" style={{ color: '#6a90b8' }}>音色 ID</label>
+                <input
+                  value={localTtsVoiceId}
+                  onChange={e => setLocalTtsVoiceId(e.target.value)}
+                  onBlur={() => setSessionTtsVoiceId(currentSessionId, localTtsVoiceId.trim())}
+                  placeholder="English_Trustworthy_Man"
+                  style={inputStyle}
+                />
+              </div>
+            </div>
 
             {/* Voice frequency */}
             <div>

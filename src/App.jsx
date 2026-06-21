@@ -9,8 +9,6 @@ import BottomNav from './components/BottomNav'
 import LoginPage from './components/LoginPage'
 import { getSettings, saveSettings, extractSettings, saveSessionMsgs, putAsset, getAssetDataUrl } from './services/sync'
 
-const PETALS = ['', '', '', '', '', '', '', '']
-
 const FONT_MAP = {
   noto: "'Noto Sans SC', 'PingFang SC', -apple-system, sans-serif",
   zcool: "'ZCOOL XiaoWei', serif",
@@ -328,12 +326,6 @@ export default function App() {
         <div style={{ position: 'absolute', top: '40%', left: '30%', width: '200px', height: '200px', borderRadius: '50%', background: theme.orbColor3, filter: 'blur(50px)' }} />
       </div>
 
-      {/* Meteor shower — above app content */}
-      <div className="fixed inset-0 pointer-events-none overflow-hidden" style={{ zIndex: 10 }}>
-        {PETALS.map((p, i) => (
-          <span key={i} className="petal">{p}</span>
-        ))}
-      </div>
 
       {/* App shell */}
       <div
