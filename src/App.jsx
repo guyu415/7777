@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useRef } from 'react'
 import { useStore, getCustomFont, getBlob } from './store'
 import { THEMES } from './themes'
 import ChatWindow from './components/Chat/ChatWindow'
@@ -6,6 +6,8 @@ import GlobalSettings from './components/GlobalSettings'
 import SessionSettings from './components/SessionSettings'
 import SessionList from './components/SessionList'
 import BottomNav from './components/BottomNav'
+import LoginPage from './components/LoginPage'
+import { getSettings, saveSettings, extractSettings } from './services/sync'
 
 const PETALS = ['🌸', '🌺', '✿', '🌸', '✾']
 
@@ -26,9 +28,47 @@ export default function App() {
     sessions, currentSessionId,
   } = useStore()
 
+  // ── Auth ───────────────────────────────────────────────────────
+  const [loggedIn, setLoggedIn] = useState(() => !!localStorage.getItem('auth.password'))
+  const [syncError, setSyncError] = useState(null)
+  const syncReady = useRef(false)
+  const syncTimer = useRef(null)
+
+  // Pull latest cloud settings after login (startup sync)
+  useEffect(() => {
+    if (!loggedIn) return
+    const password = localStorage.getItem('auth.password')
+    if (!password) return
+    getSettings(password)
+      .then(cloud => { if (cloud) useStore.getState().restoreFromCloud(cloud) })
+      .catch(() => {})
+      .finally(() => { syncReady.current = true })
+  }, [loggedIn])
+
+  // Debounced auto-sync: fires 2s after any store change, once startup pull is done
+  useEffect(() => {
+    if (!loggedIn) return
+    const unsub = useStore.subscribe(() => {
+      if (!syncReady.current) return
+      const password = localStorage.getItem('auth.password')
+      if (!password) return
+      clearTimeout(syncTimer.current)
+      syncTimer.current = setTimeout(async () => {
+        const settings = extractSettings(useStore.getState())
+        try {
+          await saveSettings(password, settings)
+        } catch {
+          setSyncError('云端同步失败，将在下次自动重试')
+          setTimeout(() => setSyncError(null), 3000)
+        }
+      }, 2000)
+    })
+    return () => { unsub(); clearTimeout(syncTimer.current) }
+  }, [loggedIn])
+
+  // ── Theme / font / bg ──────────────────────────────────────────
   const currentSession = sessions?.find(s => s.id === currentSessionId)
 
-  // Per-session overrides falling back to globals
   const effectiveThemeId = currentSession?.themeId ?? globalThemeId
   const effectiveChatBg = currentSession?.chatBg ?? globalChatBg
   const effectiveFontFamily = currentSession?.fontFamily ?? globalFontFamily
@@ -38,7 +78,6 @@ export default function App() {
 
   const [bgUrl, setBgUrl] = useState(null)
 
-  // Set CSS vars for bubble tails and font
   useEffect(() => {
     document.documentElement.style.setProperty('--tail-user', theme.tailUser)
     document.documentElement.style.setProperty('--tail-ai', theme.tailAi)
@@ -50,18 +89,15 @@ export default function App() {
     if (builtIn) {
       document.documentElement.style.setProperty('--app-font', builtIn)
     } else {
-      // Custom font by id — family name is stored in customFonts
       const cf = customFonts?.find(f => f.id === fontId)
       if (cf) document.documentElement.style.setProperty('--app-font', `'${cf.family}', sans-serif`)
     }
   }, [effectiveFontFamily, customFonts])
 
   useEffect(() => {
-    // Scale all rem-based Tailwind utilities globally
     document.documentElement.style.fontSize = `${effectiveFontSize}px`
   }, [effectiveFontSize])
 
-  // Load custom fonts from IndexedDB whenever the list changes
   useEffect(() => {
     if (!customFonts?.length) return
     const loadAll = async () => {
@@ -74,13 +110,10 @@ export default function App() {
           const face = new FontFace(font.family, `url(${url})`)
           await face.load()
           document.fonts.add(face)
-          console.log(`[Font] 已加载: ${font.family}`)
         } catch (e) {
           console.warn(`[Font] 加载失败: ${font.family}`, e)
         }
       }
-      // Re-apply --app-font after all fonts are loaded so the browser picks up
-      // any custom FontFace that was registered after the CSS var was first set
       const current = document.documentElement.style.getPropertyValue('--app-font')
       if (current) {
         document.documentElement.style.removeProperty('--app-font')
@@ -90,7 +123,6 @@ export default function App() {
     loadAll()
   }, [customFonts])
 
-  // Load background image from IndexedDB
   useEffect(() => {
     if (effectiveChatBg?.type !== 'image') { setBgUrl(null); return }
     if (effectiveChatBg.blobKey) {
@@ -102,13 +134,25 @@ export default function App() {
     }
   }, [effectiveChatBg?.blobKey, effectiveChatBg?.type, effectiveChatBg?.value])
 
-  // Background from effective settings
+  // ── Login gate ─────────────────────────────────────────────────
+  if (!loggedIn) {
+    return <LoginPage onLogin={() => setLoggedIn(true)} />
+  }
+
+  // ── Main app ───────────────────────────────────────────────────
   const bgIsColor = effectiveChatBg?.type === 'color'
   const bgIsImage = effectiveChatBg?.type === 'image'
 
   const wrapperBgStyle = bgIsColor
     ? { background: effectiveChatBg.value || theme.appBg }
     : { background: theme.appBg }
+
+  const handleLogout = () => {
+    syncReady.current = false
+    clearTimeout(syncTimer.current)
+    localStorage.removeItem('auth.password')
+    setLoggedIn(false)
+  }
 
   return (
     <div className="h-full w-full" style={wrapperBgStyle}>
@@ -145,15 +189,33 @@ export default function App() {
           {currentView === 'sessions' && (
             <SessionList theme={theme} onSelectSession={() => setCurrentView('chat')} />
           )}
-          {currentView === 'globalSettings' && <GlobalSettings theme={theme} />}
+          {currentView === 'globalSettings' && <GlobalSettings theme={theme} onLogout={handleLogout} />}
           {currentView === 'sessionSettings' && <SessionSettings theme={theme} />}
         </div>
 
-        {/* BottomNav for sessions/globalSettings; chat view embeds it inside ChatWindow */}
         {currentView !== 'sessionSettings' && currentView !== 'chat' && (
           <BottomNav currentView={currentView} onChange={setCurrentView} theme={theme} />
         )}
       </div>
+
+      {/* Sync error toast (bottom-right) */}
+      {syncError && (
+        <div
+          className="fixed z-50"
+          style={{
+            bottom: 100, right: 16,
+            background: 'rgba(220,60,60,0.92)',
+            backdropFilter: 'blur(8px)',
+            WebkitBackdropFilter: 'blur(8px)',
+            color: 'white', fontSize: 12, fontWeight: 500,
+            padding: '8px 14px', borderRadius: 16,
+            boxShadow: '0 4px 16px rgba(0,0,0,0.2)',
+            maxWidth: 220,
+          }}
+        >
+          {syncError}
+        </div>
+      )}
     </div>
   )
 }

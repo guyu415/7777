@@ -1,6 +1,6 @@
 const CORS = {
   'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+  'Access-Control-Allow-Methods': 'GET, POST, DELETE, OPTIONS',
   'Access-Control-Allow-Headers': 'Content-Type, X-Api-Key, X-Target-Url',
 }
 
@@ -98,6 +98,51 @@ export default {
 
     if (pathname === '/chat' && request.method === 'POST') {
       return handleChatProxy(request)
+    }
+
+    // ── Auth / Cloud Sync ─────────────────────────────────────────
+    if (pathname === '/auth/login' && request.method === 'POST') {
+      const { password } = await request.json()
+      if (!password) return Response.json({ error: 'missing password' }, { status: 400, headers: CORS })
+      const existing = await env.CHAT_KV.get(`user:${password}:settings`)
+      return Response.json({ ok: true, isNew: !existing }, { headers: CORS })
+    }
+
+    if (pathname === '/sync/get' && request.method === 'GET') {
+      const { searchParams } = new URL(request.url)
+      const password = searchParams.get('password')
+      const key = searchParams.get('key')
+      if (!password) return Response.json({ error: 'unauthorized' }, { status: 401, headers: CORS })
+      const raw = await env.CHAT_KV.get(`user:${password}:${key}`)
+      return Response.json({ value: raw ? JSON.parse(raw) : null }, { headers: CORS })
+    }
+
+    if (pathname === '/sync/set' && request.method === 'POST') {
+      const { password, key, value } = await request.json()
+      if (!password) return Response.json({ error: 'unauthorized' }, { status: 401, headers: CORS })
+      await env.CHAT_KV.put(`user:${password}:${key}`, JSON.stringify(value))
+      return Response.json({ ok: true }, { headers: CORS })
+    }
+
+    if (pathname === '/sync/list' && request.method === 'GET') {
+      const { searchParams } = new URL(request.url)
+      const password = searchParams.get('password')
+      const prefix = searchParams.get('prefix') || ''
+      if (!password) return Response.json({ error: 'unauthorized' }, { status: 401, headers: CORS })
+      const kvPrefix = `user:${password}:${prefix}`
+      const listed = await env.CHAT_KV.list({ prefix: kvPrefix })
+      const results = await Promise.all(listed.keys.map(async k => {
+        const raw = await env.CHAT_KV.get(k.name)
+        return { key: k.name.slice(`user:${password}:`.length), value: raw ? JSON.parse(raw) : null }
+      }))
+      return Response.json(results, { headers: CORS })
+    }
+
+    if (pathname === '/sync/del' && request.method === 'DELETE') {
+      const { password, key } = await request.json()
+      if (!password) return Response.json({ error: 'unauthorized' }, { status: 401, headers: CORS })
+      await env.CHAT_KV.delete(`user:${password}:${key}`)
+      return Response.json({ ok: true }, { headers: CORS })
     }
 
     return new Response('Not Found', { status: 404, headers: CORS })

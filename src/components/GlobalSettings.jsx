@@ -79,7 +79,7 @@ const THEME_LIST = [
   { id: 'lavender', label: '薰衣草紫', dot: '#9b7fd4' },
 ]
 
-export default function GlobalSettings({ theme }) {
+export default function GlobalSettings({ theme, onLogout }) {
   const {
     themeId, setChatTheme,
     fontFamily, setFontFamily,
@@ -301,6 +301,20 @@ export default function GlobalSettings({ theme }) {
               导出 TXT
             </button>
           </div>
+        </GlassCard>
+
+        {/* Account */}
+        <GlassCard icon="👤" title="账号">
+          <p className="text-xs mb-3" style={{ color: '#7a9cc0' }}>
+            退出后将清除本地登录状态，云端配置保留。下次重新输入密码即可恢复。
+          </p>
+          <button
+            onClick={() => { if (confirm('确定退出登录？')) onLogout?.() }}
+            className="flex items-center gap-2 px-4 py-2.5 rounded-full text-sm transition-all duration-200"
+            style={{ background: 'rgba(100,100,255,0.08)', color: '#6a90b8', border: '1px solid rgba(100,100,255,0.2)' }}
+          >
+            退出登录
+          </button>
         </GlassCard>
 
         {/* Danger */}

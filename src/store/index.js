@@ -270,6 +270,8 @@ export const useStore = create(
       setSessionVoiceFrequency: (sessionId, v) => set((state) => ({ sessions: state.sessions.map(s => s.id === sessionId ? { ...s, voiceFrequency: v } : s) })),
       setSessionFollowGlobalTts: (sessionId, v) => set((state) => ({ sessions: state.sessions.map(s => s.id === sessionId ? { ...s, followGlobalTts: v } : s) })),
 
+      restoreFromCloud: (settings) => set(() => ({ ...settings })),
+
       addCustomFont: (font) => set((state) => ({ customFonts: [...state.customFonts, font] })),
       removeCustomFont: (id) => set((state) => ({ customFonts: state.customFonts.filter(f => f.id !== id) })),
 
