@@ -1,7 +1,7 @@
 const TABS = [
   { id: 'sessions',       label: '会话', img: '/assets/nav1sessions.png' },
   { id: 'chat',           label: '聊天', img: '/assets/nav2chat.png' },
-  { id: 'globalSettings', label: '设置', img: '/assets/nav3settings.png' },
+  { id: 'globalSettings', label: '设置', img: '/assets/capybara-apple.png', fit: 'contain' },
 ]
 
 export default function BottomNav({ currentView, onChange, theme, bare = false }) {
@@ -50,7 +50,7 @@ export default function BottomNav({ currentView, onChange, theme, bare = false }
                 style={{
                   width: '100%',
                   height: '100%',
-                  objectFit: 'cover',
+                  objectFit: tab.fit || 'cover',
                   filter: active
                     ? `drop-shadow(0 0 7px ${primary}) drop-shadow(0 0 16px ${primary}aa) brightness(1.12)`
                     : 'opacity(0.42) saturate(0.5)',

@@ -167,10 +167,10 @@ export default function ChatWindow({ theme }) {
         </div>
         <button
           onClick={() => setCurrentView('sessionSettings')}
-          className="w-9 h-9 rounded-full flex items-center justify-center transition-all duration-200 text-base flex-shrink-0"
-          style={{ background: `${primaryColor}18`, color: primaryColor }}
+          className="w-9 h-9 rounded-full flex items-center justify-center transition-all duration-200 flex-shrink-0"
+          style={{ background: `${primaryColor}18` }}
         >
-          ⚙️
+          <img src="/assets/capybara-apple.png" alt="设置" style={{ width: 22, height: 22, objectFit: 'contain' }} />
         </button>
       </div>
 
@@ -199,7 +199,7 @@ export default function ChatWindow({ theme }) {
                 className="mt-2 px-6 py-2.5 rounded-full text-sm font-medium text-white transition-all duration-300"
                 style={{ background: `linear-gradient(135deg, ${theme?.primary || '#4aacf0'}, ${theme?.primaryDark || '#2196d3'})`, boxShadow: `0 4px 16px ${theme?.primary || '#4aacf0'}66` }}
               >
-                去配置 ⚙️
+                去配置 <img src="/assets/capybara-apple.png" alt="" style={{ width: 18, height: 18, objectFit: 'contain', verticalAlign: 'middle', display: 'inline-block' }} />
               </button>
             )}
           </div>
