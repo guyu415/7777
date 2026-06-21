@@ -207,48 +207,69 @@ export default function App() {
   useEffect(() => {
     const fontId = effectiveFontFamily
     const builtIn = FONT_MAP[fontId]
-    if (builtIn) {
-      document.documentElement.style.setProperty('--app-font', builtIn)
-    } else {
-      const cf = customFonts?.find(f => f.id === fontId)
-      if (cf) document.documentElement.style.setProperty('--app-font', `'${cf.family}', sans-serif`)
+    const password = localStorage.getItem('auth.password')
+
+    const run = async () => {
+      // Pre-load all unregistered custom fonts from KV/IDB
+      for (const font of (customFonts || [])) {
+        if (document.fonts.check(`12px "${font.family}"`)) {
+          console.log('[FONT INIT] 已加载跳过:', font.family)
+          continue
+        }
+        console.log('[FONT INIT] 开始, family=', font.family, 'assetKey=', font.assetKey ?? 'null')
+        try {
+          let fontUrl = null
+          if (font.assetKey && password) {
+            fontUrl = await getAssetDataUrl(password, font.assetKey)
+            console.log('[FONT INIT] 从云端/缓存拉取字体数据, 长度=', fontUrl?.length ?? 'null')
+          } else if (!font.assetKey) {
+            console.log('[FONT INIT] 无assetKey, 尝试IDB读取')
+            const blob = await getCustomFont(font.id)
+            if (blob) {
+              fontUrl = URL.createObjectURL(blob)
+              console.log('[FONT INIT] IDB读取成功')
+            } else {
+              console.warn('[FONT INIT] IDB也无数据, id=', font.id)
+            }
+          } else {
+            console.warn('[FONT INIT] 有assetKey但无password, 跳过')
+          }
+
+          if (!fontUrl) {
+            console.warn('[FONT INIT] 无fontUrl, 放弃加载:', font.family)
+            continue
+          }
+
+          console.log('[FONT INIT] new FontFace 创建完成, fontFamily=', font.family)
+          const face = new FontFace(font.family, `url(${fontUrl})`)
+          console.log('[FONT INIT] await fontFace.load() 开始')
+          await face.load()
+          console.log('[FONT INIT] fontFace.load() 完成')
+          document.fonts.add(face)
+          console.log('[FONT INIT] document.fonts.add 完成')
+        } catch (err) {
+          console.error('[FONT INIT] 加载失败:', font.family, 'name=', err?.name, 'message=', err?.message, 'stack=', err?.stack)
+        }
+      }
+
+      // Set CSS var AFTER active font is registered — no more race
+      if (builtIn) {
+        document.documentElement.style.setProperty('--app-font', builtIn)
+      } else {
+        const cf = (customFonts || []).find(f => f.id === fontId)
+        if (cf) {
+          document.documentElement.style.setProperty('--app-font', `'${cf.family}', sans-serif`)
+          console.log('[FONT INIT] 设置 CSS 变量 --app-font=', `'${cf.family}', sans-serif`)
+        }
+      }
     }
+
+    run()
   }, [effectiveFontFamily, customFonts])
 
   useEffect(() => {
     document.documentElement.style.fontSize = `${effectiveFontSize}px`
   }, [effectiveFontSize])
-
-  useEffect(() => {
-    if (!customFonts?.length) return
-    const password = localStorage.getItem('auth.password')
-    const loadAll = async () => {
-      for (const font of customFonts) {
-        if (document.fonts.check(`12px "${font.family}"`)) continue
-        try {
-          let fontUrl
-          if (font.assetKey && password) {
-            fontUrl = await getAssetDataUrl(password, font.assetKey)
-          } else if (!font.assetKey) {
-            const blob = await getCustomFont(font.id)
-            if (blob) fontUrl = URL.createObjectURL(blob)
-          }
-          if (!fontUrl) continue
-          const face = new FontFace(font.family, `url(${fontUrl})`)
-          await face.load()
-          document.fonts.add(face)
-        } catch (e) {
-          console.warn(`[Font] 加载失败: ${font.family}`, e)
-        }
-      }
-      const current = document.documentElement.style.getPropertyValue('--app-font')
-      if (current) {
-        document.documentElement.style.removeProperty('--app-font')
-        requestAnimationFrame(() => document.documentElement.style.setProperty('--app-font', current))
-      }
-    }
-    loadAll()
-  }, [customFonts])
 
   useEffect(() => {
     if (effectiveChatBg?.type !== 'image') { setBgUrl(null); return }
