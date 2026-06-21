@@ -196,7 +196,7 @@ export default function GlobalSettings({ theme }) {
             type="url"
             value={workerUrl}
             onChange={e => setWorkerUrl(e.target.value)}
-            placeholder="https://your-worker.workers.dev"
+            placeholder="https://chat.xiaoman.xyz"
             style={inputStyle}
           />
           <div className="flex items-center justify-between mt-3">

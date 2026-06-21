@@ -118,7 +118,7 @@ export const useStore = create(
       model: 'claude-sonnet-4-6',
       systemPrompt: '你是小漫，一个温柔可爱的AI助手。你说话简洁、有趣，偶尔会用一些可爱的语气词。',
       memoryEnabled: false,
-      workerUrl: '',
+      workerUrl: 'https://chat.xiaoman.xyz',
       useWorkerProxy: false,
       userAvatar: '',
       aiAvatar: '',
@@ -283,7 +283,7 @@ export const useStore = create(
     }),
     {
       name: 'pink-chat-settings',
-      version: 11,
+      version: 12,
       migrate: (persisted, version) => {
         if (version < 2) {
           const providers = [
@@ -384,6 +384,12 @@ export const useStore = create(
               ...s,
             })),
           }
+        }
+        if (version < 12) {
+          // Migrate old *.workers.dev worker URL to custom domain
+          const OLD = 'https://scheduled-message-worker.xiaoman-ac.workers.dev'
+          const NEW = 'https://chat.xiaoman.xyz'
+          if (persisted.workerUrl === OLD) persisted = { ...persisted, workerUrl: NEW }
         }
         return persisted
       },
