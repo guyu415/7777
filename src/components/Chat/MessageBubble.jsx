@@ -69,7 +69,7 @@ export default function MessageBubble({ message, onLongPress, onRegenerate, onRe
 
   const userBubbleStyle = {
     padding: '10px 16px',
-    background: theme?.userBubble || 'rgba(255,133,179,0.32)',
+    background: theme?.userBubble || 'rgba(255,133,179,0.88)',
     backdropFilter: 'blur(12px)',
     WebkitBackdropFilter: 'blur(12px)',
     border: `1px solid ${theme?.userBubbleBorder || 'rgba(255,133,179,0.35)'}`,

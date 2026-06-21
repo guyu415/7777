@@ -1,6 +1,7 @@
 import { useState, useRef } from 'react'
 import { Trash2 } from 'lucide-react'
 import { useStore, clearAllData, getAllMessages, getMessages, saveCustomFont, deleteCustomFont } from '../store'
+import { putAsset, deleteAsset } from '../services/sync'
 
 import { THEMES } from '../themes'
 import MemoryPanel from './MemoryPanel'
@@ -79,7 +80,7 @@ const THEME_LIST = [
   { id: 'lavender', label: '薰衣草紫', dot: '#9b7fd4' },
 ]
 
-export default function GlobalSettings({ theme }) {
+export default function GlobalSettings({ theme, onLogout, onForceSync }) {
   const {
     themeId, setChatTheme,
     fontFamily, setFontFamily,
@@ -93,6 +94,7 @@ export default function GlobalSettings({ theme }) {
     acWorkerUrl, setAcWorkerUrl,
     sessions,
   } = useStore()
+  const [syncing, setSyncing] = useState(false)
 
   const primary = theme?.primary || '#4aacf0'
   const primaryDark = theme?.primaryDark || '#2196d3'
@@ -116,12 +118,21 @@ export default function GlobalSettings({ theme }) {
       const ab = await file.arrayBuffer()
       const blob = new Blob([ab], { type: file.type || 'font/ttf' })
       const id = genId()
+      const ext = file.name.split('.').pop().toLowerCase() || 'ttf'
+      const password = localStorage.getItem('auth.password')
+
+      let assetKey = null
+      if (password) {
+        assetKey = `user:${password}:asset:font:global:${id}.${ext}`
+        await putAsset(password, assetKey, blob, file.name)
+      }
       await saveCustomFont(id, blob)
+
       const url = URL.createObjectURL(blob)
       const fontFace = new FontFace(family, `url(${url})`)
       await fontFace.load()
       document.fonts.add(fontFace)
-      addCustomFont({ id, name, family })
+      addCustomFont({ id, name, family, assetKey })
       setFontFamily(id)
     } catch (err) {
       alert('字体加载失败：' + err.message)
@@ -129,6 +140,10 @@ export default function GlobalSettings({ theme }) {
   }
 
   const handleRemoveFont = async (font) => {
+    const password = localStorage.getItem('auth.password')
+    if (font.assetKey && password) {
+      try { await deleteAsset(password, font.assetKey) } catch {}
+    }
     await deleteCustomFont(font.id)
     removeCustomFont(font.id)
   }
@@ -196,7 +211,7 @@ export default function GlobalSettings({ theme }) {
             type="url"
             value={workerUrl}
             onChange={e => setWorkerUrl(e.target.value)}
-            placeholder="https://your-worker.workers.dev"
+            placeholder="https://chat.xiaoman.xyz"
             style={inputStyle}
           />
           <div className="flex items-center justify-between mt-3">
@@ -299,6 +314,40 @@ export default function GlobalSettings({ theme }) {
               className="flex-1 py-2.5 rounded-full text-sm font-medium transition-all duration-200"
               style={{ background: 'rgba(255,255,255,0.6)', color: '#6a90b8', border: '1px solid rgba(200,220,255,0.4)' }}>
               导出 TXT
+            </button>
+          </div>
+        </GlassCard>
+
+        {/* Account */}
+        <GlassCard icon="👤" title="账号">
+          <p className="text-xs mb-3" style={{ color: '#7a9cc0' }}>
+            退出后将清除本地登录状态，云端配置保留。下次重新输入密码即可恢复。
+          </p>
+          <div className="flex gap-2 flex-wrap">
+            <button
+              onClick={() => { if (confirm('确定退出登录？')) onLogout?.() }}
+              className="flex items-center gap-2 px-4 py-2.5 rounded-full text-sm transition-all duration-200"
+              style={{ background: 'rgba(100,100,255,0.08)', color: '#6a90b8', border: '1px solid rgba(100,100,255,0.2)' }}
+            >
+              退出登录
+            </button>
+            <button
+              disabled={syncing}
+              onClick={async () => {
+                if (!confirm('将重新把本地所有会话消息上传到云端，确定？')) return
+                localStorage.removeItem('msgSyncV1')
+                setSyncing(true)
+                try { await onForceSync?.() } finally { setSyncing(false) }
+              }}
+              className="flex items-center gap-2 px-4 py-2.5 rounded-full text-sm transition-all duration-200"
+              style={{
+                background: syncing ? 'rgba(60,120,220,0.05)' : 'rgba(60,120,220,0.10)',
+                color: syncing ? '#a0b8d0' : '#4a80c0',
+                border: '1px solid rgba(60,120,220,0.2)',
+                cursor: syncing ? 'default' : 'pointer',
+              }}
+            >
+              {syncing ? '上传中...' : '强制重新同步到云端'}
             </button>
           </div>
         </GlassCard>

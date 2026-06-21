@@ -1,11 +1,13 @@
-import { useEffect, useState } from 'react'
-import { useStore, getCustomFont, getBlob } from './store'
+import { useEffect, useState, useRef } from 'react'
+import { useStore, getCustomFont, getBlob, saveBlob, getMessages } from './store'
 import { THEMES } from './themes'
 import ChatWindow from './components/Chat/ChatWindow'
 import GlobalSettings from './components/GlobalSettings'
 import SessionSettings from './components/SessionSettings'
 import SessionList from './components/SessionList'
 import BottomNav from './components/BottomNav'
+import LoginPage from './components/LoginPage'
+import { getSettings, saveSettings, extractSettings, saveSessionMsgs, putAsset, getAssetBlob } from './services/sync'
 
 const PETALS = ['🌸', '🌺', '✿', '🌸', '✾']
 
@@ -26,9 +28,171 @@ export default function App() {
     sessions, currentSessionId,
   } = useStore()
 
+  // ── Auth ───────────────────────────────────────────────────────
+  const [loggedIn, setLoggedIn] = useState(() => !!localStorage.getItem('auth.password'))
+  const [syncError, setSyncError] = useState(null)
+  const [migrationStatus, setMigrationStatus] = useState(null)
+  const syncReady = useRef(false)
+  const syncTimer = useRef(null)
+
+  // One-time migration: upload all local IDB messages to cloud
+  const runMsgMigration = async (password) => {
+    const { sessions: allSessions } = useStore.getState()
+    console.log('[MIGRATE] 开始 | sessions数量=', allSessions?.length ?? 0)
+    if (!allSessions?.length) {
+      console.log('[MIGRATE] 无会话，跳过，设置flag')
+      localStorage.setItem('msgSyncV1', '1')
+      return
+    }
+    const total = allSessions.length
+    let done = 0
+    setMigrationStatus(`正在上传会话 0/${total}`)
+    for (const session of allSessions) {
+      done++
+      setMigrationStatus(`正在上传会话 ${done}/${total}`)
+      console.log(`[MIGRATE] 处理 ${done}/${total}: id=${session.id} name=${session.name}`)
+      try {
+        const msgs = await getMessages(session.id)
+        console.log(`[MIGRATE] IDB消息数=${msgs.length}`)
+        if (msgs.length > 0) {
+          msgs.sort((a, b) => a.timestamp - b.timestamp)
+          console.log(`[MIGRATE] 上传中, 请求体约${JSON.stringify(msgs).length}字节...`)
+          await saveSessionMsgs(password, session.id, msgs)
+          console.log(`[MIGRATE] 上传成功: ${session.id}`)
+        } else {
+          console.log(`[MIGRATE] IDB无消息，跳过`)
+        }
+      } catch (e) {
+        console.warn('[MIGRATE] 上传失败:', session.id, e.message)
+      }
+    }
+    localStorage.setItem('msgSyncV1', '1')
+    setMigrationStatus(null)
+    console.log('[MIGRATE] 全部完成，flag已设置')
+  }
+
+  // Force re-sync: clears flag, re-runs migration (called from GlobalSettings button)
+  const handleForceSync = async () => {
+    const password = localStorage.getItem('auth.password')
+    if (!password) return
+    console.log('[FORCE-SYNC] 强制重新同步开始...')
+    await runMsgMigration(password)
+    console.log('[FORCE-SYNC] 完成')
+  }
+
+  // One-time migration: upload existing IDB fonts/backgrounds to R2
+  const runAssetMigration = async (password) => {
+    const { customFonts, sessions } = useStore.getState()
+    const fontsToMigrate = (customFonts || []).filter(f => !f.assetKey)
+    const bgsToMigrate = (sessions || []).filter(s => s.chatBg?.blobKey && !s.chatBg?.assetKey)
+    const total = fontsToMigrate.length + bgsToMigrate.length
+    console.log('[ASSET-MIGRATE] 开始 | fonts=', fontsToMigrate.length, 'bgs=', bgsToMigrate.length)
+    if (total === 0) { localStorage.setItem('assetSyncV1', '1'); return }
+
+    let done = 0
+    setMigrationStatus(`正在迁移资源 0/${total}`)
+
+    for (const font of fontsToMigrate) {
+      done++
+      setMigrationStatus(`正在迁移字体 ${done}/${total}`)
+      try {
+        const blob = await getCustomFont(font.id)
+        if (blob) {
+          const ext = 'ttf'
+          const key = `user:${password}:asset:font:global:${font.id}.${ext}`
+          await putAsset(password, key, blob, `${font.id}.${ext}`)
+          await saveBlob(key, blob)
+          useStore.getState().updateCustomFont(font.id, { assetKey: key })
+          console.log('[ASSET-MIGRATE] 字体完成:', font.id)
+        }
+      } catch (e) {
+        console.warn('[ASSET-MIGRATE] 字体失败:', font.id, e.message)
+      }
+    }
+
+    for (const session of bgsToMigrate) {
+      done++
+      setMigrationStatus(`正在迁移背景 ${done}/${total}`)
+      try {
+        const blob = await getBlob(session.chatBg.blobKey)
+        if (blob) {
+          const randomId = Date.now().toString(36) + Math.random().toString(36).slice(2)
+          const key = `user:${password}:asset:bg:${session.id}:${randomId}.jpg`
+          await putAsset(password, key, blob, 'bg.jpg')
+          await saveBlob(key, blob)
+          useStore.getState().setSessionChatBg(session.id, { ...session.chatBg, assetKey: key, blobKey: undefined })
+          console.log('[ASSET-MIGRATE] 背景完成:', session.id)
+        }
+      } catch (e) {
+        console.warn('[ASSET-MIGRATE] 背景失败:', session.id, e.message)
+      }
+    }
+
+    localStorage.setItem('assetSyncV1', '1')
+    setMigrationStatus(null)
+    console.log('[ASSET-MIGRATE] 全部完成')
+  }
+
+  // Pull latest cloud settings after login (startup sync), then run migration if first time
+  useEffect(() => {
+    if (!loggedIn) return
+    const password = localStorage.getItem('auth.password')
+    if (!password) { console.log('[SYNC] 无密码，跳过'); return }
+    const migratedFlag = localStorage.getItem('msgSyncV1')
+    console.log('[SYNC] 登录后流程开始 | msgSyncV1=', migratedFlag)
+    console.log('[SYNC] 开始拉取云端配置...')
+    getSettings(password)
+      .then(cloud => {
+        console.log('[SYNC] 云端配置拉取完成 | hasCloud=', !!cloud)
+        if (cloud) {
+          useStore.getState().restoreFromCloud(cloud)
+          console.log('[SYNC] restoreFromCloud 完成')
+        }
+      })
+      .catch(e => { console.warn('[SYNC] 拉取云端配置失败:', e.message) })
+      .finally(async () => {
+        syncReady.current = true
+        const migrated = localStorage.getItem('msgSyncV1')
+        console.log('[SYNC] finally: syncReady=true | msgSyncV1=', migrated)
+        if (!migrated) {
+          console.log('[SYNC] 首次迁移开始...')
+          await runMsgMigration(password)
+        } else {
+          console.log('[SYNC] 跳过迁移（已迁移）')
+        }
+        if (!localStorage.getItem('assetSyncV1')) {
+          console.log('[SYNC] 资源迁移开始...')
+          await runAssetMigration(password)
+        } else {
+          console.log('[SYNC] 跳过资源迁移（已迁移）')
+        }
+      })
+  }, [loggedIn])
+
+  // Debounced auto-sync: fires 2s after any store change, once startup pull is done
+  useEffect(() => {
+    if (!loggedIn) return
+    const unsub = useStore.subscribe(() => {
+      if (!syncReady.current) return
+      const password = localStorage.getItem('auth.password')
+      if (!password) return
+      clearTimeout(syncTimer.current)
+      syncTimer.current = setTimeout(async () => {
+        const settings = extractSettings(useStore.getState())
+        try {
+          await saveSettings(password, settings)
+        } catch {
+          setSyncError('云端同步失败，将在下次自动重试')
+          setTimeout(() => setSyncError(null), 3000)
+        }
+      }, 2000)
+    })
+    return () => { unsub(); clearTimeout(syncTimer.current) }
+  }, [loggedIn])
+
+  // ── Theme / font / bg ──────────────────────────────────────────
   const currentSession = sessions?.find(s => s.id === currentSessionId)
 
-  // Per-session overrides falling back to globals
   const effectiveThemeId = currentSession?.themeId ?? globalThemeId
   const effectiveChatBg = currentSession?.chatBg ?? globalChatBg
   const effectiveFontFamily = currentSession?.fontFamily ?? globalFontFamily
@@ -38,7 +202,6 @@ export default function App() {
 
   const [bgUrl, setBgUrl] = useState(null)
 
-  // Set CSS vars for bubble tails and font
   useEffect(() => {
     document.documentElement.style.setProperty('--tail-user', theme.tailUser)
     document.documentElement.style.setProperty('--tail-ai', theme.tailAi)
@@ -50,37 +213,41 @@ export default function App() {
     if (builtIn) {
       document.documentElement.style.setProperty('--app-font', builtIn)
     } else {
-      // Custom font by id — family name is stored in customFonts
       const cf = customFonts?.find(f => f.id === fontId)
       if (cf) document.documentElement.style.setProperty('--app-font', `'${cf.family}', sans-serif`)
     }
   }, [effectiveFontFamily, customFonts])
 
   useEffect(() => {
-    // Scale all rem-based Tailwind utilities globally
     document.documentElement.style.fontSize = `${effectiveFontSize}px`
   }, [effectiveFontSize])
 
-  // Load custom fonts from IndexedDB whenever the list changes
   useEffect(() => {
     if (!customFonts?.length) return
+    const password = localStorage.getItem('auth.password')
     const loadAll = async () => {
       for (const font of customFonts) {
         if (document.fonts.check(`12px "${font.family}"`)) continue
         try {
-          const blob = await getCustomFont(font.id)
+          let blob
+          if (font.assetKey) {
+            blob = await getBlob(font.assetKey)
+            if (!blob && password) {
+              blob = await getAssetBlob(password, font.assetKey)
+              if (blob) await saveBlob(font.assetKey, blob)
+            }
+          } else {
+            blob = await getCustomFont(font.id)
+          }
           if (!blob) continue
           const url = URL.createObjectURL(blob)
           const face = new FontFace(font.family, `url(${url})`)
           await face.load()
           document.fonts.add(face)
-          console.log(`[Font] 已加载: ${font.family}`)
         } catch (e) {
           console.warn(`[Font] 加载失败: ${font.family}`, e)
         }
       }
-      // Re-apply --app-font after all fonts are loaded so the browser picks up
-      // any custom FontFace that was registered after the CSS var was first set
       const current = document.documentElement.style.getPropertyValue('--app-font')
       if (current) {
         document.documentElement.style.removeProperty('--app-font')
@@ -90,25 +257,51 @@ export default function App() {
     loadAll()
   }, [customFonts])
 
-  // Load background image from IndexedDB
   useEffect(() => {
     if (effectiveChatBg?.type !== 'image') { setBgUrl(null); return }
-    if (effectiveChatBg.blobKey) {
+    if (effectiveChatBg.assetKey) {
+      const password = localStorage.getItem('auth.password')
+      getBlob(effectiveChatBg.assetKey).then(async (cached) => {
+        if (cached) { setBgUrl(URL.createObjectURL(cached)); return }
+        if (!password) { setBgUrl(null); return }
+        try {
+          const blob = await getAssetBlob(password, effectiveChatBg.assetKey)
+          if (blob) {
+            await saveBlob(effectiveChatBg.assetKey, blob)
+            setBgUrl(URL.createObjectURL(blob))
+          } else {
+            setBgUrl(null)
+          }
+        } catch { setBgUrl(null) }
+      })
+    } else if (effectiveChatBg.blobKey) {
       getBlob(effectiveChatBg.blobKey).then(blob => setBgUrl(blob ? URL.createObjectURL(blob) : null))
     } else if (effectiveChatBg.value) {
       setBgUrl(effectiveChatBg.value)
     } else {
       setBgUrl(null)
     }
-  }, [effectiveChatBg?.blobKey, effectiveChatBg?.type, effectiveChatBg?.value])
+  }, [effectiveChatBg?.assetKey, effectiveChatBg?.blobKey, effectiveChatBg?.type, effectiveChatBg?.value])
 
-  // Background from effective settings
+  // ── Login gate ─────────────────────────────────────────────────
+  if (!loggedIn) {
+    return <LoginPage onLogin={() => setLoggedIn(true)} />
+  }
+
+  // ── Main app ───────────────────────────────────────────────────
   const bgIsColor = effectiveChatBg?.type === 'color'
   const bgIsImage = effectiveChatBg?.type === 'image'
 
   const wrapperBgStyle = bgIsColor
     ? { background: effectiveChatBg.value || theme.appBg }
     : { background: theme.appBg }
+
+  const handleLogout = () => {
+    syncReady.current = false
+    clearTimeout(syncTimer.current)
+    localStorage.removeItem('auth.password')
+    setLoggedIn(false)
+  }
 
   return (
     <div className="h-full w-full" style={wrapperBgStyle}>
@@ -145,15 +338,52 @@ export default function App() {
           {currentView === 'sessions' && (
             <SessionList theme={theme} onSelectSession={() => setCurrentView('chat')} />
           )}
-          {currentView === 'globalSettings' && <GlobalSettings theme={theme} />}
+          {currentView === 'globalSettings' && <GlobalSettings theme={theme} onLogout={handleLogout} onForceSync={handleForceSync} />}
           {currentView === 'sessionSettings' && <SessionSettings theme={theme} />}
         </div>
 
-        {/* BottomNav for sessions/globalSettings; chat view embeds it inside ChatWindow */}
         {currentView !== 'sessionSettings' && currentView !== 'chat' && (
           <BottomNav currentView={currentView} onChange={setCurrentView} theme={theme} />
         )}
       </div>
+
+      {/* Sync error toast (bottom-right) */}
+      {syncError && (
+        <div
+          className="fixed z-50"
+          style={{
+            bottom: 100, right: 16,
+            background: 'rgba(220,60,60,0.92)',
+            backdropFilter: 'blur(8px)',
+            WebkitBackdropFilter: 'blur(8px)',
+            color: 'white', fontSize: 12, fontWeight: 500,
+            padding: '8px 14px', borderRadius: 16,
+            boxShadow: '0 4px 16px rgba(0,0,0,0.2)',
+            maxWidth: 220,
+          }}
+        >
+          {syncError}
+        </div>
+      )}
+
+      {/* Migration progress toast (bottom-right, blue) */}
+      {migrationStatus && (
+        <div
+          className="fixed z-50"
+          style={{
+            bottom: syncError ? 136 : 100, right: 16,
+            background: 'rgba(60,120,220,0.92)',
+            backdropFilter: 'blur(8px)',
+            WebkitBackdropFilter: 'blur(8px)',
+            color: 'white', fontSize: 12, fontWeight: 500,
+            padding: '8px 14px', borderRadius: 16,
+            boxShadow: '0 4px 16px rgba(0,0,0,0.2)',
+            maxWidth: 220,
+          }}
+        >
+          {migrationStatus}
+        </div>
+      )}
     </div>
   )
 }

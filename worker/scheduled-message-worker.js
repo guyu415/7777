@@ -1,6 +1,6 @@
 const CORS = {
   'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+  'Access-Control-Allow-Methods': 'GET, POST, DELETE, OPTIONS',
   'Access-Control-Allow-Headers': 'Content-Type, X-Api-Key, X-Target-Url',
 }
 
@@ -98,6 +98,111 @@ export default {
 
     if (pathname === '/chat' && request.method === 'POST') {
       return handleChatProxy(request)
+    }
+
+    // ── Auth / Cloud Sync ─────────────────────────────────────────
+    if (pathname === '/auth/login' && request.method === 'POST') {
+      const { password } = await request.json()
+      if (!password) return Response.json({ error: 'missing password' }, { status: 400, headers: CORS })
+      const existing = await env.CHAT_KV.get(`user:${password}:settings`)
+      return Response.json({ ok: true, isNew: !existing }, { headers: CORS })
+    }
+
+    if (pathname === '/sync/get' && request.method === 'GET') {
+      const { searchParams } = new URL(request.url)
+      const password = searchParams.get('password')
+      const key = searchParams.get('key')
+      if (!password) return Response.json({ error: 'unauthorized' }, { status: 401, headers: CORS })
+      const raw = await env.CHAT_KV.get(`user:${password}:${key}`)
+      return Response.json({ value: raw ? JSON.parse(raw) : null }, { headers: CORS })
+    }
+
+    if (pathname === '/sync/set' && request.method === 'POST') {
+      const { password, key, value } = await request.json()
+      if (!password) return Response.json({ error: 'unauthorized' }, { status: 401, headers: CORS })
+      const finalKey = `user:${password}:${key}`
+      const serialized = JSON.stringify(value)
+      console.log('[WORKER-SET] password前4位=', password.slice(0, 4), '| key=', key, '| valueType=', Array.isArray(value) ? 'array' : typeof value, '| valueLen=', Array.isArray(value) ? value.length : '?', '| serializedBytes=', serialized.length)
+      console.log('[WORKER-SET] 写入KV finalKey=', finalKey)
+      await env.CHAT_KV.put(finalKey, serialized)
+      console.log('[WORKER-SET] KV写入完成')
+      return Response.json({ ok: true }, { headers: CORS })
+    }
+
+    if (pathname === '/sync/list' && request.method === 'GET') {
+      const { searchParams } = new URL(request.url)
+      const password = searchParams.get('password')
+      const prefix = searchParams.get('prefix') || ''
+      if (!password) return Response.json({ error: 'unauthorized' }, { status: 401, headers: CORS })
+      const kvPrefix = `user:${password}:${prefix}`
+      const listed = await env.CHAT_KV.list({ prefix: kvPrefix })
+      const results = await Promise.all(listed.keys.map(async k => {
+        const raw = await env.CHAT_KV.get(k.name)
+        return { key: k.name.slice(`user:${password}:`.length), value: raw ? JSON.parse(raw) : null }
+      }))
+      return Response.json(results, { headers: CORS })
+    }
+
+    if (pathname === '/sync/del' && request.method === 'DELETE') {
+      const { password, key } = await request.json()
+      if (!password) return Response.json({ error: 'unauthorized' }, { status: 401, headers: CORS })
+      await env.CHAT_KV.delete(`user:${password}:${key}`)
+      return Response.json({ ok: true }, { headers: CORS })
+    }
+
+    // ── Asset (R2) ────────────────────────────────────────────────
+    if (pathname === '/asset/put' && request.method === 'POST') {
+      const form = await request.formData()
+      const password = form.get('password')
+      const key = form.get('key')
+      const file = form.get('file')
+      if (!password || !key || !file) return Response.json({ error: 'missing fields' }, { status: 400, headers: CORS })
+      if (!key.startsWith(`user:${password}:asset:`)) return Response.json({ error: 'forbidden' }, { status: 403, headers: CORS })
+      await env.ASSETS_R2.put(key, await file.arrayBuffer(), {
+        httpMetadata: { contentType: file.type || 'application/octet-stream' },
+      })
+      return Response.json({ ok: true, key }, { headers: CORS })
+    }
+
+    if (pathname === '/asset/get' && request.method === 'GET') {
+      const { searchParams } = new URL(request.url)
+      const password = searchParams.get('password')
+      const key = searchParams.get('key')
+      if (!password || !key) return Response.json({ error: 'missing params' }, { status: 400, headers: CORS })
+      if (!key.startsWith(`user:${password}:asset:`)) return Response.json({ error: 'forbidden' }, { status: 403, headers: CORS })
+      const obj = await env.ASSETS_R2.get(key)
+      if (!obj) return new Response('Not Found', { status: 404, headers: CORS })
+      const ct = obj.httpMetadata?.contentType || 'application/octet-stream'
+      return new Response(obj.body, {
+        headers: { 'Content-Type': ct, 'Cache-Control': 'max-age=3600', ...CORS },
+      })
+    }
+
+    if (pathname === '/asset/del' && request.method === 'DELETE') {
+      const { password, key } = await request.json()
+      if (!password || !key) return Response.json({ error: 'missing fields' }, { status: 400, headers: CORS })
+      if (!key.startsWith(`user:${password}:asset:`)) return Response.json({ error: 'forbidden' }, { status: 403, headers: CORS })
+      await env.ASSETS_R2.delete(key)
+      return Response.json({ ok: true }, { headers: CORS })
+    }
+
+    if (pathname === '/sync/debug' && request.method === 'GET') {
+      const { searchParams } = new URL(request.url)
+      const password = searchParams.get('password')
+      // List ALL keys in the KV (no prefix filter) so we can see exactly what exists
+      const listedAll = await env.CHAT_KV.list()
+      console.log('[WORKER-DEBUG] KV全部keys=', listedAll.keys.map(k => k.name))
+      const allKeys = await Promise.all(listedAll.keys.map(async k => {
+        const raw = await env.CHAT_KV.get(k.name)
+        return { rawKey: k.name, size: raw ? raw.length : 0 }
+      }))
+      // Also filter to user prefix if password provided
+      const prefix = password ? `user:${password}:` : null
+      console.log('[WORKER-DEBUG] 请求password前4位=', password ? password.slice(0, 4) : 'none', '| 过滤前缀=', prefix)
+      const userKeys = prefix
+        ? allKeys.filter(k => k.rawKey.startsWith(prefix)).map(k => ({ key: k.rawKey.slice(prefix.length), rawKey: k.rawKey, size: k.size }))
+        : []
+      return Response.json({ ok: true, allCount: allKeys.length, allKeys, userCount: userKeys.length, userKeys }, { headers: CORS })
     }
 
     return new Response('Not Found', { status: 404, headers: CORS })

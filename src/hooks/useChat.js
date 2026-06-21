@@ -4,6 +4,7 @@ import { streamChat } from '../services/claude'
 import { listMemories, formatMemories } from '../services/memory'
 import { executeAcCommand } from '../services/ac'
 import { fetchTTSAudio } from '../services/tts'
+import { getSessionMsgs, saveSessionMsgs } from '../services/sync'
 
 const AC_TAG_RE = /\[AC:([^\]]+)\]/
 const VOICE_TAG_RE = /\[VOICE\]([\s\S]*?)\[\/VOICE\]/
@@ -29,14 +30,17 @@ export function useChat() {
     isLoading, setIsLoading, setStreamingMessageId,
     deleteMessage, deleteMessagesFrom,
     currentSessionId, sessions, updateSession,
+    providers, selectedProviderId,
   } = useStore()
 
   const CONVERSATION_ID = currentSessionId || 'main'
 
   const currentSession = sessions?.find(s => s.id === CONVERSATION_ID)
+  const selectedProvider = providers?.find(p => p.id === selectedProviderId)
 
-  const effectiveApiKey = currentSession?.apiKey || apiKey
-  const effectiveBaseUrl = currentSession?.baseUrl || apiBaseUrl
+  // Session key > Provider key > Global key (fixes "key lost after refresh" when user sets key via provider panel)
+  const effectiveApiKey = currentSession?.apiKey || selectedProvider?.apiKey || apiKey
+  const effectiveBaseUrl = currentSession?.baseUrl || selectedProvider?.baseUrl || apiBaseUrl
   const effectiveModel = currentSession?.model || model
   const followGlobalTts = currentSession?.followGlobalTts !== false
   const effectiveTtsApiKey = followGlobalTts ? ttsApiKey : (currentSession?.ttsApiKey || ttsApiKey)
@@ -49,14 +53,50 @@ export function useChat() {
   const effectiveMemoryEnabled = currentSession?.memoryEnabled ?? memoryEnabled
 
   const abortRef = useRef(null)
+  const msgSyncTimerRef = useRef(null)
+
+  // Debounced cloud sync for current session's messages (300ms)
+  const scheduleMsgSync = useCallback((sessionId) => {
+    clearTimeout(msgSyncTimerRef.current)
+    msgSyncTimerRef.current = setTimeout(async () => {
+      const password = localStorage.getItem('auth.password')
+      if (!password) return
+      const state = useStore.getState()
+      if (state.currentSessionId !== sessionId) return
+      const toSync = state.messages.filter(m => !m.streaming && m.conversationId === sessionId)
+      if (!toSync.length) return
+      try {
+        await saveSessionMsgs(password, sessionId, toSync)
+      } catch (e) {
+        console.warn('[MSG-SYNC] 云端同步失败:', e.message)
+      }
+    }, 300)
+  }, [])
 
   const stopStreaming = useCallback(() => {
     abortRef.current?.()
   }, [])
 
   const loadHistory = useCallback(async () => {
-    const history = await getMessages(CONVERSATION_ID)
+    let history = await getMessages(CONVERSATION_ID)
     history.sort((a, b) => a.timestamp - b.timestamp)
+
+    // No local messages — try cloud
+    if (history.length === 0) {
+      const password = localStorage.getItem('auth.password')
+      if (password) {
+        try {
+          const cloudMsgs = await getSessionMsgs(password, CONVERSATION_ID)
+          if (cloudMsgs?.length) {
+            for (const msg of cloudMsgs) await saveMessage(msg)
+            history = cloudMsgs
+          }
+        } catch (e) {
+          console.warn('[MSG-SYNC] 云端拉取失败:', e.message)
+        }
+      }
+    }
+
     setMessages(history)
     if (history.length > 0) {
       const last = history[history.length - 1]
@@ -89,12 +129,16 @@ export function useChat() {
     let fullContent = ''
 
     try {
+      console.log('[STREAM] streamResponse entered | model=', effectiveModel, '| useWorkerProxy=', useWorkerProxy, '| workerUrl=', workerUrl || '(empty)')
       const _now = new Date()
       const _dateStr = _now.toLocaleDateString('zh-CN', { timeZone: 'Asia/Shanghai', year: 'numeric', month: 'long', day: 'numeric', weekday: 'long' })
       const _timeStr = _now.toLocaleTimeString('zh-CN', { timeZone: 'Asia/Shanghai', hour: '2-digit', minute: '2-digit', hour12: false })
       let builtSystemPrompt = `当前时间：${_dateStr} ${_timeStr}（北京时间）\n\n${effectiveSystemPrompt}`
+      console.log('[STREAM] memoryEnabled=', effectiveMemoryEnabled, '| workerUrl=', workerUrl ? 'set' : 'empty')
       if (effectiveMemoryEnabled && workerUrl) {
+        console.log('[STREAM] fetching memories from', workerUrl, '...')
         const triplets = await listMemories(workerUrl)
+        console.log('[STREAM] memories fetched, count=', triplets.length)
         const memStr = formatMemories(triplets)
         if (memStr) builtSystemPrompt = builtSystemPrompt + '\n\n' + memStr
       }
@@ -113,6 +157,7 @@ export function useChat() {
       builtSystemPrompt += '\n\n回复时请用空行（两个换行符）分隔不同的想法或段落，每段保持简短（1-2句话）。像发消息一样一段一段地说，不要大段堆砌。'
 
       console.log('[System Prompt]\n' + effectiveSystemPrompt)
+      console.log('[STREAM] calling streamChat | baseUrl=', effectiveBaseUrl, '| model=', effectiveModel, '| useWorkerProxy=', useWorkerProxy)
 
       for await (const chunk of streamChat({ apiKey: effectiveApiKey, apiBaseUrl: effectiveBaseUrl, model: effectiveModel, systemPrompt: builtSystemPrompt, messages: contextMessages, workerUrl, useWorkerProxy, signal: controller.signal })) {
         fullContent += chunk
@@ -272,11 +317,16 @@ export function useChat() {
       abortRef.current = null
       setIsLoading(false)
       setStreamingMessageId(null)
+      scheduleMsgSync(CONVERSATION_ID)
     }
-  }, [CONVERSATION_ID, effectiveApiKey, effectiveBaseUrl, effectiveModel, effectiveSystemPrompt, effectiveMemoryEnabled, workerUrl, useWorkerProxy, acWorkerUrl, effectiveTtsApiKey, effectiveTtsGroupId, effectiveTtsVoiceId, aiVoiceEnabled, effectiveVoiceFrequency, addMessage, updateMessage, deleteMessage, setIsLoading, setStreamingMessageId, updateSession])
+  }, [CONVERSATION_ID, effectiveApiKey, effectiveBaseUrl, effectiveModel, effectiveSystemPrompt, effectiveMemoryEnabled, workerUrl, useWorkerProxy, acWorkerUrl, effectiveTtsApiKey, effectiveTtsGroupId, effectiveTtsVoiceId, aiVoiceEnabled, effectiveVoiceFrequency, addMessage, updateMessage, deleteMessage, setIsLoading, setStreamingMessageId, updateSession, scheduleMsgSync])
 
   const sendMessage = useCallback(async (content, type = 'text', extra = {}) => {
-    if (!effectiveApiKey) throw new Error('请先在设置中配置 API Key')
+    console.log('[SEND] sendMessage called | keyLen=', effectiveApiKey?.length ?? 0, '| baseUrl=', effectiveBaseUrl, '| isLoading=', isLoading)
+    if (!effectiveApiKey) {
+      console.log('[API-EXIT] reason=no-api-key | sessionKey=', currentSession?.apiKey?.length ?? 0, '| providerKey=', selectedProvider?.apiKey?.length ?? 0, '| globalKey=', apiKey?.length ?? 0)
+      throw new Error('请先在设置中配置 API Key')
+    }
 
     const userMsg = {
       id: genId(),
@@ -299,15 +349,20 @@ export function useChat() {
       lastMsgPreview: type === 'text' ? (content || '').slice(0, 40) : '[图片]',
       lastMsgTime: Date.now(),
     })
+    console.log('[SEND] saving to IDB...')
     try {
       await saveMessage(userMsg)
+      console.log('[SEND] IDB save OK')
     } catch (e) {
       console.error('[DB] saveMessage failed:', e)
     }
-    // If AI is mid-stream, show the user message but don't start a new stream yet
-    if (isLoading) return
+    if (isLoading) {
+      console.log('[API-EXIT] reason=is-loading | 用户消息已入库，等待当前流结束')
+      return
+    }
+    console.log('[SEND] calling streamResponse, history len=', messages.length)
     await streamResponse([...messages, userMsg])
-  }, [CONVERSATION_ID, effectiveApiKey, isLoading, messages, addMessage, streamResponse, updateSession])
+  }, [CONVERSATION_ID, effectiveApiKey, effectiveBaseUrl, isLoading, messages, addMessage, streamResponse, updateSession, currentSession, selectedProvider, apiKey])
 
   const regenerateRound = useCallback(async () => {
     if (isLoading) return
@@ -338,7 +393,8 @@ export function useChat() {
   const deleteMsg = useCallback(async (id) => {
     await deleteMessageFromDB(id)
     deleteMessage(id)
-  }, [deleteMessage])
+    scheduleMsgSync(CONVERSATION_ID)
+  }, [deleteMessage, scheduleMsgSync, CONVERSATION_ID])
 
   return { messages, sendMessage, loadHistory, isLoading, regenerate, regenerateRound, deleteMsg, stopStreaming }
 }

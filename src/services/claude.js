@@ -102,6 +102,7 @@ export async function* streamChat({ apiKey, apiBaseUrl = 'https://api.anthropic.
     })
     if (proxyBase) {
       actualUrl = `${proxyBase}/chat`
+      console.log('[API] 发起fetch (Anthropic via Worker):', actualUrl)
       response = await fetch(actualUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'X-Api-Key': apiKey, 'X-Target-Url': targetUrl },
@@ -109,6 +110,7 @@ export async function* streamChat({ apiKey, apiBaseUrl = 'https://api.anthropic.
       })
     } else {
       actualUrl = targetUrl
+      console.log('[API] 发起fetch (Anthropic 直连):', actualUrl)
       response = await fetch(actualUrl, {
         method: 'POST',
         headers: {
@@ -130,6 +132,7 @@ export async function* streamChat({ apiKey, apiBaseUrl = 'https://api.anthropic.
     })
     if (proxyBase) {
       actualUrl = `${proxyBase}/chat`
+      console.log('[API] 发起fetch (OpenAI-compat via Worker):', actualUrl)
       response = await fetch(actualUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'X-Api-Key': apiKey, 'X-Target-Url': chatUrl },
@@ -137,6 +140,7 @@ export async function* streamChat({ apiKey, apiBaseUrl = 'https://api.anthropic.
       })
     } else {
       actualUrl = chatUrl
+      console.log('[API] 发起fetch (OpenAI-compat 直连):', actualUrl)
       response = await fetch(actualUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },

@@ -405,7 +405,7 @@ export default function SettingsPage({ theme }) {
             type="url"
             value={workerUrl}
             onChange={e => setWorkerUrl(e.target.value)}
-            placeholder="https://scheduled-message-worker.your-subdomain.workers.dev"
+            placeholder="https://chat.xiaoman.xyz"
             style={inputStyle}
           />
           <div className="flex items-center justify-between mt-3">

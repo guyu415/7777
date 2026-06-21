@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { ChevronLeft, Eye, EyeOff } from 'lucide-react'
 import { useStore, getMessages, saveBlob } from '../store'
+import { putAsset } from '../services/sync'
 
 const inputStyle = {
   width: '100%',
@@ -146,10 +147,15 @@ export default function SessionSettings({ theme }) {
         })
       }
 
-      const blobKey = `bg:${currentSessionId}`
-      await saveBlob(blobKey, blob)
-      console.log('[BG] 已存入 IndexedDB，key:', blobKey)
-      setSessionChatBg(currentSessionId, { type: 'image', blobKey, opacity: currentSession?.chatBg?.opacity ?? 0.9 })
+      const password = localStorage.getItem('auth.password')
+      const randomId = Date.now().toString(36) + Math.random().toString(36).slice(2)
+      const mimeToExt = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp', 'image/gif': 'gif' }
+      const ext = mimeToExt[blob.type] || 'jpg'
+      const assetKey = `user:${password}:asset:bg:${currentSessionId}:${randomId}.${ext}`
+      await putAsset(password, assetKey, blob, `bg.${ext}`)
+      await saveBlob(assetKey, blob)
+      console.log('[BG] 已上传R2并缓存IDB, key:', assetKey)
+      setSessionChatBg(currentSessionId, { type: 'image', assetKey, opacity: currentSession?.chatBg?.opacity ?? 0.9 })
       console.log('[BG] 背景已更新')
     } catch (err) {
       console.error('[BG] 背景图处理失败', err)
