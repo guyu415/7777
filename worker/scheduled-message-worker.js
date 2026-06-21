@@ -91,8 +91,8 @@ export default {
       return Response.json(result, { headers: CORS })
     }
 
-    if (pathname === '/trigger' && request.method === 'POST') {
-      const result = await forceGenerateMessage(env)
+    if (pathname === '/trigger' && (request.method === 'GET' || request.method === 'POST')) {
+      const result = await debugGenerateMessage(env)
       return Response.json(result, { headers: CORS })
     }
 
@@ -272,35 +272,82 @@ async function maybeGenerateMessage(env) {
   }
 }
 
-async function forceGenerateMessage(env) {
+async function debugGenerateMessage(env) {
   const now = Date.now()
+  const model = 'claude-haiku-4-5-20251001'
+  const baseUrl = (env.CLAUDE_API_BASE_URL || 'https://api.anthropic.com').replace(/\/$/, '')
+  const apiUrl = `${baseUrl}/v1/messages`
+  const apiKeyLength = env.CLAUDE_API_KEY?.length ?? 0
+
   const lastActiveStr = await env.CHAT_KV.get('last_user_active_time')
   const lastActive = lastActiveStr ? parseInt(lastActiveStr) : 0
   const minSinceActive = (now - lastActive) / 60_000
+  const hoursSinceLastChat = parseFloat((minSinceActive / 60).toFixed(2))
 
   const bjDate = new Date(now + 8 * 3600_000)
   const hour = bjDate.getUTCHours()
-  const hoursSinceActive = (minSinceActive / 60).toFixed(1)
-  const systemPrompt = `你是小满。现在是北京时间${hour}点。你上次和主人聊天是${hoursSinceActive}小时前。根据时间和情境自然地发一条消息。早上可以说早安，饭点问吃了吗，晚上说想你了或催睡觉。不要每次都问候，偶尔分享一个想法、发颜文字、或接着上次话题。像真人朋友一样。只发一条短消息，不超过30字。`
+  const systemPrompt = `你是小满。现在是北京时间${hour}点。你上次和主人聊天是${hoursSinceLastChat.toFixed(1)}小时前。根据时间和情境自然地发一条消息。早上可以说早安，饭点问吃了吗，晚上说想你了或催睡觉。不要每次都问候，偶尔分享一个想法、发颜文字、或接着上次话题。像真人朋友一样。只发一条短消息，不超过30字。`
 
-  const baseUrl = (env.CLAUDE_API_BASE_URL || 'https://api.anthropic.com').replace(/\/$/, '')
+  let apiCalled = false
+  let apiStatus = null
+  let apiResponseSnippet = null
+  let generatedMessage = null
+  let savedToKV = false
+  let error = null
 
-  let content
   try {
-    content = await callClaude(env, systemPrompt)
+    apiCalled = true
+    const res = await fetch(apiUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': env.CLAUDE_API_KEY || '',
+        'anthropic-version': '2023-06-01',
+      },
+      body: JSON.stringify({
+        model,
+        max_tokens: 100,
+        system: systemPrompt,
+        messages: [{ role: 'user', content: '发一条消息给主人' }],
+      }),
+    })
+    apiStatus = res.status
+    const rawText = await res.text()
+    apiResponseSnippet = rawText.slice(0, 300)
+
+    if (res.ok) {
+      let data
+      try { data = JSON.parse(rawText) } catch {}
+      generatedMessage = data?.content?.[0]?.text?.trim() ?? null
+
+      if (generatedMessage) {
+        const kvRaw = await env.CHAT_KV.get('pending-messages')
+        const pending = kvRaw ? JSON.parse(kvRaw) : []
+        pending.push({ content: generatedMessage, timestamp: now, read: false })
+        await Promise.all([
+          env.CHAT_KV.put('pending-messages', JSON.stringify(pending)),
+          env.CHAT_KV.put('last_sent_time', now.toString()),
+        ])
+        savedToKV = true
+      }
+    }
   } catch (e) {
-    return { ok: false, error: e.message, baseUrl, hasApiKey: !!env.CLAUDE_API_KEY }
+    error = `${e.name}: ${e.message}`
   }
 
-  if (!content) return { ok: false, error: 'empty response from Claude', baseUrl }
-
-  const raw = await env.CHAT_KV.get('pending-messages')
-  const pending = raw ? JSON.parse(raw) : []
-  pending.push({ content, timestamp: now, read: false })
-  await Promise.all([
-    env.CHAT_KV.put('pending-messages', JSON.stringify(pending)),
-    env.CHAT_KV.put('last_sent_time', now.toString()),
-  ])
-
-  return { ok: true, content, baseUrl, hasApiKey: !!env.CLAUDE_API_KEY }
+  return {
+    shouldSend: true,
+    hoursSinceLastChat,
+    apiBaseUrl: baseUrl,
+    apiUrl,
+    apiKeyLength,
+    model,
+    apiCalled,
+    apiStatus,
+    apiResponseSnippet,
+    generatedMessage,
+    savedToKV,
+    kvKey: 'pending-messages',
+    error,
+  }
 }
