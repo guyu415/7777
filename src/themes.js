@@ -2,7 +2,7 @@ export const THEMES = {
   pink: {
     primary: '#ff85b3',
     primaryDark: '#ff6b9d',
-    userBubble: 'rgba(255,133,179,0.32)',
+    userBubble: 'rgba(255,133,179,0.88)',
     userBubbleBorder: 'rgba(255,133,179,0.35)',
     userBubbleShadow: 'rgba(255,133,179,0.18)',
     userBubbleText: '#F0C040',
@@ -20,7 +20,7 @@ export const THEMES = {
   mint: {
     primary: '#5cc8a0',
     primaryDark: '#3db88a',
-    userBubble: 'rgba(92,200,160,0.35)',
+    userBubble: 'rgba(92,200,160,0.88)',
     userBubbleBorder: 'rgba(92,200,160,0.4)',
     userBubbleShadow: 'rgba(92,200,160,0.2)',
     userBubbleText: '#F0C040',
@@ -38,7 +38,7 @@ export const THEMES = {
   skyblue: {
     primary: '#4aacf0',
     primaryDark: '#2196d3',
-    userBubble: 'rgba(74,172,240,0.35)',
+    userBubble: 'rgba(74,172,240,0.88)',
     userBubbleBorder: 'rgba(74,172,240,0.4)',
     userBubbleShadow: 'rgba(74,172,240,0.2)',
     userBubbleText: '#F0C040',
@@ -56,7 +56,7 @@ export const THEMES = {
   lavender: {
     primary: '#9b7fd4',
     primaryDark: '#7d5cb8',
-    userBubble: 'rgba(155,127,212,0.35)',
+    userBubble: 'rgba(155,127,212,0.88)',
     userBubbleBorder: 'rgba(155,127,212,0.4)',
     userBubbleShadow: 'rgba(155,127,212,0.2)',
     userBubbleText: '#F0C040',
