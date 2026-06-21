@@ -29,14 +29,17 @@ export function useChat() {
     isLoading, setIsLoading, setStreamingMessageId,
     deleteMessage, deleteMessagesFrom,
     currentSessionId, sessions, updateSession,
+    providers, selectedProviderId,
   } = useStore()
 
   const CONVERSATION_ID = currentSessionId || 'main'
 
   const currentSession = sessions?.find(s => s.id === CONVERSATION_ID)
+  const selectedProvider = providers?.find(p => p.id === selectedProviderId)
 
-  const effectiveApiKey = currentSession?.apiKey || apiKey
-  const effectiveBaseUrl = currentSession?.baseUrl || apiBaseUrl
+  // Session key > Provider key > Global key (fixes "key lost after refresh" when user sets key via provider panel)
+  const effectiveApiKey = currentSession?.apiKey || selectedProvider?.apiKey || apiKey
+  const effectiveBaseUrl = currentSession?.baseUrl || selectedProvider?.baseUrl || apiBaseUrl
   const effectiveModel = currentSession?.model || model
   const followGlobalTts = currentSession?.followGlobalTts !== false
   const effectiveTtsApiKey = followGlobalTts ? ttsApiKey : (currentSession?.ttsApiKey || ttsApiKey)
@@ -89,12 +92,16 @@ export function useChat() {
     let fullContent = ''
 
     try {
+      console.log('[STREAM] streamResponse entered | model=', effectiveModel, '| useWorkerProxy=', useWorkerProxy, '| workerUrl=', workerUrl || '(empty)')
       const _now = new Date()
       const _dateStr = _now.toLocaleDateString('zh-CN', { timeZone: 'Asia/Shanghai', year: 'numeric', month: 'long', day: 'numeric', weekday: 'long' })
       const _timeStr = _now.toLocaleTimeString('zh-CN', { timeZone: 'Asia/Shanghai', hour: '2-digit', minute: '2-digit', hour12: false })
       let builtSystemPrompt = `当前时间：${_dateStr} ${_timeStr}（北京时间）\n\n${effectiveSystemPrompt}`
+      console.log('[STREAM] memoryEnabled=', effectiveMemoryEnabled, '| workerUrl=', workerUrl ? 'set' : 'empty')
       if (effectiveMemoryEnabled && workerUrl) {
+        console.log('[STREAM] fetching memories from', workerUrl, '...')
         const triplets = await listMemories(workerUrl)
+        console.log('[STREAM] memories fetched, count=', triplets.length)
         const memStr = formatMemories(triplets)
         if (memStr) builtSystemPrompt = builtSystemPrompt + '\n\n' + memStr
       }
@@ -113,6 +120,7 @@ export function useChat() {
       builtSystemPrompt += '\n\n回复时请用空行（两个换行符）分隔不同的想法或段落，每段保持简短（1-2句话）。像发消息一样一段一段地说，不要大段堆砌。'
 
       console.log('[System Prompt]\n' + effectiveSystemPrompt)
+      console.log('[STREAM] calling streamChat | baseUrl=', effectiveBaseUrl, '| model=', effectiveModel, '| useWorkerProxy=', useWorkerProxy)
 
       for await (const chunk of streamChat({ apiKey: effectiveApiKey, apiBaseUrl: effectiveBaseUrl, model: effectiveModel, systemPrompt: builtSystemPrompt, messages: contextMessages, workerUrl, useWorkerProxy, signal: controller.signal })) {
         fullContent += chunk
@@ -276,7 +284,11 @@ export function useChat() {
   }, [CONVERSATION_ID, effectiveApiKey, effectiveBaseUrl, effectiveModel, effectiveSystemPrompt, effectiveMemoryEnabled, workerUrl, useWorkerProxy, acWorkerUrl, effectiveTtsApiKey, effectiveTtsGroupId, effectiveTtsVoiceId, aiVoiceEnabled, effectiveVoiceFrequency, addMessage, updateMessage, deleteMessage, setIsLoading, setStreamingMessageId, updateSession])
 
   const sendMessage = useCallback(async (content, type = 'text', extra = {}) => {
-    if (!effectiveApiKey) throw new Error('请先在设置中配置 API Key')
+    console.log('[SEND] sendMessage called | keyLen=', effectiveApiKey?.length ?? 0, '| baseUrl=', effectiveBaseUrl, '| isLoading=', isLoading)
+    if (!effectiveApiKey) {
+      console.log('[API-EXIT] reason=no-api-key | sessionKey=', currentSession?.apiKey?.length ?? 0, '| providerKey=', selectedProvider?.apiKey?.length ?? 0, '| globalKey=', apiKey?.length ?? 0)
+      throw new Error('请先在设置中配置 API Key')
+    }
 
     const userMsg = {
       id: genId(),
@@ -299,15 +311,20 @@ export function useChat() {
       lastMsgPreview: type === 'text' ? (content || '').slice(0, 40) : '[图片]',
       lastMsgTime: Date.now(),
     })
+    console.log('[SEND] saving to IDB...')
     try {
       await saveMessage(userMsg)
+      console.log('[SEND] IDB save OK')
     } catch (e) {
       console.error('[DB] saveMessage failed:', e)
     }
-    // If AI is mid-stream, show the user message but don't start a new stream yet
-    if (isLoading) return
+    if (isLoading) {
+      console.log('[API-EXIT] reason=is-loading | 用户消息已入库，等待当前流结束')
+      return
+    }
+    console.log('[SEND] calling streamResponse, history len=', messages.length)
     await streamResponse([...messages, userMsg])
-  }, [CONVERSATION_ID, effectiveApiKey, isLoading, messages, addMessage, streamResponse, updateSession])
+  }, [CONVERSATION_ID, effectiveApiKey, effectiveBaseUrl, isLoading, messages, addMessage, streamResponse, updateSession, currentSession, selectedProvider, apiKey])
 
   const regenerateRound = useCallback(async () => {
     if (isLoading) return
