@@ -66,15 +66,15 @@ export default function MessageBubble({ message, onLongPress, onRegenerate, onRe
           : (aiAvatar  ? <img src={aiAvatar}  alt="" className="w-full h-full object-cover" /> : '🌸')}
       </div>
       <img
-        src="/assets/wreath-rose.png"
+        src="/assets/avatar-frame.png"
         alt=""
         style={{
           position: 'absolute',
           top: '50%',
           left: '50%',
           transform: 'translate(-50%, -50%)',
-          width: 50,
-          height: 50,
+          width: 54,
+          height: 54,
           objectFit: 'contain',
           pointerEvents: 'none',
           zIndex: 2,

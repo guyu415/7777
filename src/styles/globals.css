@@ -81,6 +81,16 @@ body {
   border-bottom: 6px solid transparent;
 }
 
+/* Whale settings button — glow on :active / touch */
+.btn-whale {
+  transition: box-shadow 0.15s ease, border-color 0.15s ease, background 0.15s ease;
+}
+.btn-whale:active {
+  box-shadow: 0 0 14px rgba(60, 150, 240, 0.75), 0 0 28px rgba(60, 150, 240, 0.38) !important;
+  border-color: rgba(60, 150, 240, 0.55) !important;
+  background: rgba(60, 150, 240, 0.18) !important;
+}
+
 /* Meteor shower — replaces floating sakura */
 @keyframes meteor-fall {
   0%   { transform: translateY(-80px) rotate(-28deg); opacity: 0; }

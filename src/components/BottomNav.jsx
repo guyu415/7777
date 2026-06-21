@@ -1,6 +1,6 @@
 const TABS = [
-  { id: 'sessions',       label: '会话', img: '/assets/nav1sessions.png' },
-  { id: 'chat',           label: '聊天', img: '/assets/nav2chat.png' },
+  { id: 'sessions',       label: '会话', img: '/assets/bunny.png',          fit: 'contain' },
+  { id: 'chat',           label: '聊天', img: '/assets/capybara-acorn.png', fit: 'contain' },
   { id: 'globalSettings', label: '设置', img: '/assets/capybara-apple.png', fit: 'contain' },
 ]
 

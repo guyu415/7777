@@ -197,7 +197,7 @@ export default function GlobalSettings({ theme, onLogout, onForceSync }) {
           boxShadow: '0 2px 12px rgba(74,172,240,0.08)',
         }}>
         <span className="font-semibold text-sm" style={{ color: '#2c5282' }}>全局设置</span>
-        <img src="/assets/capybara-apple.png" alt="" style={{ width: 28, height: 28, objectFit: 'contain' }} />
+        <img src="/assets/whale.png" alt="" style={{ width: 36, height: 36, objectFit: 'contain' }} />
       </div>
 
       <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4">

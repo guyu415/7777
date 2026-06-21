@@ -167,10 +167,14 @@ export default function ChatWindow({ theme }) {
         </div>
         <button
           onClick={() => setCurrentView('sessionSettings')}
-          className="w-9 h-9 rounded-full flex items-center justify-center transition-all duration-200 flex-shrink-0"
-          style={{ background: `${primaryColor}18` }}
+          className="btn-whale flex items-center justify-center flex-shrink-0"
+          style={{
+            width: 44, height: 44, borderRadius: '50%',
+            background: `${primaryColor}12`,
+            border: '1.5px solid transparent',
+          }}
         >
-          <img src="/assets/capybara-apple.png" alt="设置" style={{ width: 22, height: 22, objectFit: 'contain' }} />
+          <img src="/assets/whale.png" alt="设置" style={{ width: 40, height: 40, objectFit: 'contain' }} />
         </button>
       </div>
 
@@ -199,7 +203,7 @@ export default function ChatWindow({ theme }) {
                 className="mt-2 px-6 py-2.5 rounded-full text-sm font-medium text-white transition-all duration-300"
                 style={{ background: `linear-gradient(135deg, ${theme?.primary || '#4aacf0'}, ${theme?.primaryDark || '#2196d3'})`, boxShadow: `0 4px 16px ${theme?.primary || '#4aacf0'}66` }}
               >
-                去配置 <img src="/assets/capybara-apple.png" alt="" style={{ width: 18, height: 18, objectFit: 'contain', verticalAlign: 'middle', display: 'inline-block' }} />
+                去配置 <img src="/assets/whale.png" alt="" style={{ width: 20, height: 20, objectFit: 'contain', verticalAlign: 'middle', display: 'inline-block' }} />
               </button>
             )}
           </div>
