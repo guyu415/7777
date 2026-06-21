@@ -53,7 +53,7 @@ export default function MessageBubble({ message, onLongPress, onRegenerate, onRe
   } : {}
 
   const avatarEl = (
-    <div className="flex-shrink-0 mb-1" style={{ position: 'relative', width: 36, height: 36 }}>
+    <div className="flex-shrink-0 mb-1" style={{ position: 'relative', width: 50, height: 50, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
       <div className="w-9 h-9 rounded-full overflow-hidden flex items-center justify-center text-lg"
         style={{
           background: isUser ? `${theme?.primary}4d` : 'rgba(255,255,255,0.55)',
@@ -73,8 +73,8 @@ export default function MessageBubble({ message, onLongPress, onRegenerate, onRe
           top: '50%',
           left: '50%',
           transform: 'translate(-50%, -50%)',
-          width: 60,
-          height: 60,
+          width: 82,
+          height: 82,
           objectFit: 'contain',
           pointerEvents: 'none',
           zIndex: 2,
