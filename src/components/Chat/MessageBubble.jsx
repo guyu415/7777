@@ -24,6 +24,7 @@ export default function MessageBubble({ message, onLongPress, onRegenerate, onRe
   const [viewerSrc, setViewerSrc] = useState(null)
   const [pressed, setPressed] = useState(false)
   const [showVoiceText, setShowVoiceText] = useState(false)
+  const [showReasoning, setShowReasoning] = useState(false)
   const isUser = message.role === 'user'
   const pressTimer = useRef(null)
   const pressAnimTimer = useRef(null)
@@ -108,6 +109,51 @@ export default function MessageBubble({ message, onLongPress, onRegenerate, onRe
       {avatarEl}
 
       <div className={clsx('relative max-w-[72vw] flex flex-col', isUser ? 'items-end' : 'items-start')}>
+        {/* Collapsible reasoning / thinking chain (AI only) */}
+        {!isUser && (message.reasoning || message.reasoningStreaming) && (
+          <div className="mb-1.5 w-full">
+            <button
+              onClick={() => setShowReasoning(v => !v)}
+              disabled={!message.reasoning}
+              className="flex items-center gap-1"
+              style={{
+                fontSize: 11,
+                color: 'rgba(120,140,160,0.85)',
+                background: 'rgba(255,255,255,0.35)',
+                border: '1px solid rgba(160,180,200,0.3)',
+                borderRadius: 10,
+                padding: '3px 9px',
+                cursor: message.reasoning ? 'pointer' : 'default',
+                fontFamily: 'inherit',
+              }}
+            >
+              {message.reasoningStreaming && !message.content ? (
+                <span>💭 思考中…</span>
+              ) : (
+                <>
+                  <span>💭 思考过程</span>
+                  <span style={{ fontSize: 9, opacity: 0.7 }}>{showReasoning ? '▲' : '▼'}</span>
+                </>
+              )}
+            </button>
+            {showReasoning && message.reasoning && (
+              <div
+                className="mt-1 whitespace-pre-wrap break-words"
+                style={{
+                  fontSize: 12,
+                  lineHeight: 1.6,
+                  color: 'rgba(110,130,150,0.9)',
+                  background: 'rgba(245,248,251,0.7)',
+                  border: '1px solid rgba(160,180,200,0.25)',
+                  borderRadius: 12,
+                  padding: '8px 11px',
+                }}
+              >
+                {message.reasoning}
+              </div>
+            )}
+          </div>
+        )}
         {message.type === 'text' && !message.voiceLoading && (
           <div
             className={clsx('relative rounded-[20px] leading-relaxed select-none cursor-default', pressed ? 'bubble-press' : '')}

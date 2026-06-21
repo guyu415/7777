@@ -48,6 +48,7 @@ export function useChat() {
   const effectiveTtsVoiceId = currentSession?.ttsVoiceId || ttsVoiceId
   const effectiveTtsModel = currentSession?.ttsModel || 'speech-2.6-hd'
   const effectiveVoiceFrequency = currentSession?.voiceFrequency ?? aiVoiceFrequency
+  const effectiveDisableThinking = currentSession?.disableThinking ?? false
   const effectiveSystemPrompt = currentSession?.systemPrompt !== undefined
     ? (currentSession.systemPrompt || systemPrompt)
     : systemPrompt
@@ -128,6 +129,8 @@ export function useChat() {
     setStreamingMessageId(assistantId)
 
     let fullContent = ''
+    let fullReasoning = ''
+    let contentStarted = false
 
     try {
       console.log('[STREAM] streamResponse entered | model=', effectiveModel, '| useWorkerProxy=', useWorkerProxy, '| workerUrl=', workerUrl || '(empty)')
@@ -160,9 +163,25 @@ export function useChat() {
       console.log('[SYSTEM PROMPT 实际发送]\n', builtSystemPrompt)
       console.log('[STREAM] calling streamChat | baseUrl=', effectiveBaseUrl, '| model=', effectiveModel, '| useWorkerProxy=', useWorkerProxy)
 
-      for await (const chunk of streamChat({ apiKey: effectiveApiKey, apiBaseUrl: effectiveBaseUrl, model: effectiveModel, systemPrompt: builtSystemPrompt, messages: contextMessages, workerUrl, useWorkerProxy, signal: controller.signal })) {
-        fullContent += chunk
-        updateMessage(assistantId, { content: stripDisplayTags(fullContent) })
+      for await (const chunk of streamChat({ apiKey: effectiveApiKey, apiBaseUrl: effectiveBaseUrl, model: effectiveModel, systemPrompt: builtSystemPrompt, messages: contextMessages, workerUrl, useWorkerProxy, signal: controller.signal, disableThinking: effectiveDisableThinking })) {
+        if (chunk.reasoning) {
+          fullReasoning += chunk.reasoning
+          if (!contentStarted) updateMessage(assistantId, { reasoning: fullReasoning, reasoningStreaming: true })
+        }
+        if (chunk.text) {
+          if (!contentStarted) {
+            contentStarted = true
+            updateMessage(assistantId, { reasoningStreaming: false })
+          }
+          fullContent += chunk.text
+          updateMessage(assistantId, { content: stripDisplayTags(fullContent) })
+        }
+      }
+
+      // Reasoning finished — attach to base msg so every save of the first bubble persists it
+      if (fullReasoning) {
+        assistantMsg.reasoning = fullReasoning
+        updateMessage(assistantId, { reasoning: fullReasoning, reasoningStreaming: false })
       }
 
       // --- Post-stream processing ---
@@ -330,7 +349,7 @@ export function useChat() {
       setStreamingMessageId(null)
       scheduleMsgSync(CONVERSATION_ID)
     }
-  }, [CONVERSATION_ID, effectiveApiKey, effectiveBaseUrl, effectiveModel, effectiveSystemPrompt, effectiveMemoryEnabled, workerUrl, useWorkerProxy, acWorkerUrl, effectiveTtsApiKey, effectiveTtsGroupId, effectiveTtsVoiceId, aiVoiceEnabled, effectiveVoiceFrequency, addMessage, updateMessage, deleteMessage, setIsLoading, setStreamingMessageId, updateSession, scheduleMsgSync])
+  }, [CONVERSATION_ID, effectiveApiKey, effectiveBaseUrl, effectiveModel, effectiveSystemPrompt, effectiveMemoryEnabled, workerUrl, useWorkerProxy, acWorkerUrl, effectiveTtsApiKey, effectiveTtsGroupId, effectiveTtsVoiceId, aiVoiceEnabled, effectiveVoiceFrequency, effectiveDisableThinking, addMessage, updateMessage, deleteMessage, setIsLoading, setStreamingMessageId, updateSession, scheduleMsgSync])
 
   const sendMessage = useCallback(async (content, type = 'text', extra = {}) => {
     console.log('[SEND] sendMessage called | keyLen=', effectiveApiKey?.length ?? 0, '| baseUrl=', effectiveBaseUrl, '| isLoading=', isLoading)

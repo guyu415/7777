@@ -85,7 +85,7 @@ export async function fetchModels({ baseUrl, apiKey }) {
   return (data.data || data.models || []).map(m => m.id || m).filter(Boolean)
 }
 
-export async function* streamChat({ apiKey, apiBaseUrl = 'https://api.anthropic.com', model, systemPrompt, messages, workerUrl, useWorkerProxy, signal }) {
+export async function* streamChat({ apiKey, apiBaseUrl = 'https://api.anthropic.com', model, systemPrompt, messages, workerUrl, useWorkerProxy, signal, disableThinking = false }) {
   const base = apiBaseUrl.replace(/\/$/, '')
   const proxyBase = (useWorkerProxy && workerUrl) ? workerUrl.replace(/\/$/, '') : null
 
@@ -129,6 +129,7 @@ export async function* streamChat({ apiKey, apiBaseUrl = 'https://api.anthropic.
       max_tokens: 4096,
       stream: true,
       messages: buildOpenAIMessages(systemPrompt, messages),
+      ...(disableThinking ? { thinking: { type: 'disabled' } } : {}),
     })
     if (proxyBase) {
       actualUrl = `${proxyBase}/chat`
@@ -177,11 +178,16 @@ export async function* streamChat({ apiKey, apiBaseUrl = 'https://api.anthropic.
         const event = JSON.parse(data)
         // Anthropic format
         if (event.type === 'content_block_delta' && event.delta?.type === 'text_delta') {
-          yield event.delta.text
+          yield { text: event.delta.text }
         }
-        // OpenAI format
-        if (event.choices?.[0]?.delta?.content) {
-          yield event.choices[0].delta.content
+        // OpenAI format — reasoning chunk (GLM/DeepSeek style)
+        const delta = event.choices?.[0]?.delta
+        if (delta?.reasoning_content) {
+          yield { reasoning: delta.reasoning_content }
+        }
+        // OpenAI format — content chunk
+        if (delta?.content) {
+          yield { text: delta.content }
         }
       } catch {
         // ignore parse errors

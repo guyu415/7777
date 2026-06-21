@@ -41,7 +41,7 @@ export default function SessionSettings({ theme }) {
     setSessionAiName, setSessionAiAvatar, setSessionUserAvatar, setSessionSignature,
     setSessionMemoryEnabled, setSessionSystemPrompt,
     setSessionChatBg,
-    setSessionApiKey, setSessionBaseUrl, setSessionProviderName, setSessionModel,
+    setSessionApiKey, setSessionBaseUrl, setSessionProviderName, setSessionModel, setSessionDisableThinking,
     setSessionTtsApiKey, setSessionTtsGroupId, setSessionTtsVoiceId, setSessionTtsModel, setSessionVoiceFrequency,
     setSessionFollowGlobalTts,
     memoryEnabled: globalMemoryEnabled,
@@ -497,6 +497,30 @@ export default function SessionSettings({ theme }) {
                 placeholder="claude-sonnet-4-6"
                 style={inputStyle}
               />
+            </div>
+            {/* Disable thinking / fast reply toggle */}
+            <div className="flex items-center justify-between pt-1">
+              <div>
+                <label className="text-xs pl-1 block" style={{ color: '#6a90b8' }}>禁用思考过程（快速回复）</label>
+                <p className="text-[10px] pl-1 mt-0.5" style={{ color: '#a0b8d0' }}>
+                  开启后模型不再输出思考链，直接出正文，回复更快
+                </p>
+              </div>
+              <button
+                onClick={() => setSessionDisableThinking(currentSessionId, !currentSession.disableThinking)}
+                style={{
+                  flexShrink: 0,
+                  width: 44, height: 24, borderRadius: 12, border: 'none', cursor: 'pointer',
+                  background: currentSession.disableThinking ? '#7aa8e0' : 'rgba(160,180,200,0.4)',
+                  position: 'relative', transition: 'background 0.2s',
+                }}
+              >
+                <span style={{
+                  position: 'absolute', top: 2, left: currentSession.disableThinking ? 22 : 2,
+                  width: 20, height: 20, borderRadius: '50%', background: '#fff',
+                  transition: 'left 0.2s', boxShadow: '0 1px 3px rgba(0,0,0,0.2)',
+                }} />
+              </button>
             </div>
           </div>
         </GlassCard>
