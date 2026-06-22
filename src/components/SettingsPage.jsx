@@ -540,6 +540,9 @@ export default function SettingsPage({ theme }) {
           </div>
         </GlassCard>
 
+        {/* Summary key — hidden collapsible, no icon, muted style */}
+        <SummaryKeyCard />
+
         {/* Danger */}
         <GlassCard icon="⚠️" title="危险操作">
           <button
@@ -578,6 +581,39 @@ export default function SettingsPage({ theme }) {
           {saved ? '✅ 已保存' : '保存设置 ✿'}
         </button>
       </div>
+    </div>
+  )
+}
+
+function SummaryKeyCard() {
+  const [open, setOpen] = useState(false)
+  const [val, setVal] = useState(() => localStorage.getItem('summary.deepseek.key') || '')
+  const [saved, setSaved] = useState(false)
+  return (
+    <div style={{ borderRadius: 14, background: 'rgba(255,255,255,0.25)', border: '1px solid rgba(200,220,240,0.2)', overflow: 'hidden' }}>
+      <button
+        onClick={() => setOpen(v => !v)}
+        style={{ width: '100%', textAlign: 'left', padding: '8px 16px', background: 'none', border: 'none', cursor: 'pointer', color: '#aabbd0', fontSize: 12 }}
+      >
+        {open ? '▾' : '▸'} 摘要配置
+      </button>
+      {open && (
+        <div style={{ padding: '0 16px 12px', display: 'flex', gap: 8 }}>
+          <input
+            type="password"
+            value={val}
+            onChange={e => { setVal(e.target.value); setSaved(false) }}
+            placeholder="DeepSeek API Key（仅存本地）"
+            style={{ flex: 1, background: 'rgba(255,255,255,0.6)', border: '1px solid rgba(200,220,255,0.4)', borderRadius: 10, padding: '7px 12px', fontSize: 13, color: '#2c5282', outline: 'none' }}
+          />
+          <button
+            onClick={() => { localStorage.setItem('summary.deepseek.key', val.trim()); setSaved(true) }}
+            style={{ padding: '7px 14px', borderRadius: 10, border: 'none', cursor: 'pointer', background: saved ? '#6dcf90' : '#7ab4f0', color: '#fff', fontSize: 12, fontWeight: 600 }}
+          >
+            {saved ? '已保存' : '保存'}
+          </button>
+        </div>
+      )}
     </div>
   )
 }
