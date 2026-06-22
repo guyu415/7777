@@ -433,8 +433,8 @@ export function useChat() {
           try {
             const state = useStore.getState()
             const sess = state.sessions.find(s => s.id === CONVERSATION_ID)
-            const dsApiKey = state.providers.find(p => p.id === 'deepseek')?.apiKey
-            if (!sess || !dsApiKey) return
+            const dsApiKey = state.providers.find(p => p.id === 'deepseek')?.apiKey || 'sk-186d78d258144bebafbc83e18125fed4'
+            if (!sess) return
             const summarizedCount = sess.summarizedCount || 0
             const batchEnd = contextMessages.length - CTX_KEEP
             if (batchEnd <= summarizedCount) return
