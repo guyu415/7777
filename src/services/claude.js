@@ -176,8 +176,9 @@ export async function* streamChat({ apiKey, apiBaseUrl = 'https://api.anthropic.
       messages: buildOpenAIMessages(systemPrompt, messages),
       // disableThinking: GLM official uses { thinking: { type: 'disabled' } }
       ...(disableThinking && providerName === 'glm' ? { thinking: { type: 'disabled' } } : {}),
-      // disableThinking: generic OpenAI-compat (e.g. SiliconFlow GLM) uses chat_template_kwargs
-      ...(disableThinking && providerName === 'openai' ? { chat_template_kwargs: { enable_thinking: false } } : {}),
+      // disableThinking: generic OpenAI-compat (SiliconFlow etc.) uses chat_template_kwargs
+      // applies when not the named GLM/Claude paths (covers empty providerName too)
+      ...(disableThinking && providerName !== 'glm' && providerName !== 'claude' ? { chat_template_kwargs: { enable_thinking: false } } : {}),
       // web search tools if enabled and provider supported
       ...(webSearchTools ? { tools: webSearchTools } : {}),
     })
