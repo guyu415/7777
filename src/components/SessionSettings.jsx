@@ -44,7 +44,7 @@ export default function SessionSettings({ theme }) {
     setSessionChatBg,
     setSessionApiKey, setSessionBaseUrl, setSessionProviderName, setSessionModel, setSessionDisableThinking, setSessionWebSearch,
     setSessionTtsApiKey, setSessionTtsGroupId, setSessionTtsVoiceId, setSessionTtsModel, setSessionVoiceFrequency,
-    setSessionFollowGlobalTts,
+    setSessionFollowGlobalTts, setSessionSummary, setSessionSummarizedCount,
     memoryEnabled: globalMemoryEnabled,
     systemPrompt: globalSystemPrompt,
     aiVoiceFrequency: globalVoiceFrequency,
@@ -615,6 +615,31 @@ export default function SessionSettings({ theme }) {
                 </div>
               )
             })()}
+          </div>
+        </GlassCard>
+
+        {/* Summary */}
+        <GlassCard icon="🧠" title="记忆摘要">
+          <div className="space-y-2">
+            <p className="text-[11px] px-1" style={{ color: '#a0b8d0' }}>
+              对话超过 75 条后自动生成摘要，摘要会注入到每轮上下文供模型参考。可手动编辑或清空。
+            </p>
+            <textarea
+              value={currentSession?.summary || ''}
+              onChange={e => setSessionSummary(currentSessionId, e.target.value || null)}
+              rows={5}
+              placeholder="暂无摘要，对话满75条后自动生成…"
+              style={{ ...inputStyle, resize: 'none', lineHeight: '1.6', fontSize: 13 }}
+            />
+            <button
+              onClick={() => { setSessionSummary(currentSessionId, null); setSessionSummarizedCount(currentSessionId, 0) }}
+              style={{
+                background: 'none', border: '1px solid rgba(160,180,200,0.4)', borderRadius: 10,
+                padding: '4px 14px', fontSize: 12, color: '#7a9cc0', cursor: 'pointer',
+              }}
+            >
+              清空摘要（下次触发重新生成）
+            </button>
           </div>
         </GlassCard>
 

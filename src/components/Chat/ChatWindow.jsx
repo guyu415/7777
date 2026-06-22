@@ -44,6 +44,7 @@ export default function ChatWindow({ theme }) {
     currentView, setCurrentView, apiKey, aiAvatar: globalAiAvatar, aiName: globalAiName,
     userAvatar: globalUserAvatar,
     deleteMessagesFrom, workerUrl, currentSessionId, sessions, providers, selectedProviderId,
+    summaryToast, setSummaryToast,
   } = useStore()
 
   const currentSession = sessions?.find(s => s.id === currentSessionId)
@@ -70,6 +71,12 @@ export default function ChatWindow({ theme }) {
   useEffect(() => {
     loadHistory()
   }, [currentSessionId])
+
+  useEffect(() => {
+    if (!summaryToast) return
+    showToast(summaryToast)
+    setSummaryToast(null)
+  }, [summaryToast])
 
   useEffect(() => {
     const check = async () => {

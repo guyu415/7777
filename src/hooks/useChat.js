@@ -1,6 +1,6 @@
 import { useCallback, useRef } from 'react'
 import { useStore, saveMessage, saveBlob, getMessages, deleteMessageFromDB } from '../store'
-import { streamChat } from '../services/claude'
+import { streamChat, generateSummary } from '../services/claude'
 import { listMemories, formatMemories } from '../services/memory'
 import { executeAcCommand } from '../services/ac'
 
@@ -15,6 +15,10 @@ const BEHAVIOR_RULES = `【关于你的存在】
 - 空调指令执行一次后，默认它已生效，不要在同一话题里反复操作或反复追问效果，自然往下聊即可。`
 import { fetchTTSAudio } from '../services/tts'
 import { getSessionMsgs, saveSessionMsgs } from '../services/sync'
+
+const CTX_KEEP    = 40  // 保留最近 N 条原文
+const CTX_TRIGGER = 75  // 超过 M 条时触发总结
+const CTX_BATCH   = 35  // 每次压缩最旧的 B 条（触发后原文回落到 CTX_KEEP）
 
 const AC_TAG_RE = /\[AC:([^\]]+)\]/
 const VOICE_TAG_RE = /\[VOICE\]([\s\S]*?)\[\/VOICE\]/
@@ -41,6 +45,7 @@ export function useChat() {
     deleteMessage, deleteMessagesFrom,
     currentSessionId, sessions, updateSession,
     providers, selectedProviderId,
+    setSummaryToast,
   } = useStore()
 
   const CONVERSATION_ID = currentSessionId || 'main'
@@ -70,6 +75,7 @@ export function useChat() {
   const pendingMessagesRef = useRef([])
   const pendingNoteRef = useRef(null)
   const msgSyncTimerRef = useRef(null)
+  const isSummarizingRef = useRef(false)
 
   // Debounced cloud sync for current session's messages (300ms)
   const scheduleMsgSync = useCallback((sessionId) => {
@@ -179,6 +185,21 @@ export function useChat() {
 
       builtSystemPrompt += '\n\n回复时请用空行（两个换行符）分隔不同的想法或段落，每段保持简短（1-2句话）。像发消息一样一段一段地说，不要大段堆砌。'
 
+      // Inject summary into system prompt (placed after all other context, before raw messages)
+      if (currentSession?.summary) {
+        builtSystemPrompt += `\n\n【早期对话摘要】\n${currentSession.summary}`
+      }
+
+      // Trim context to last CTX_KEEP messages, then drop any leading assistant messages
+      // so the first message sent is always from user (required by Anthropic; safe for OpenAI)
+      let trimmedMsgs = contextMessages.length > CTX_KEEP
+        ? contextMessages.slice(-CTX_KEEP)
+        : contextMessages
+      while (trimmedMsgs.length > 0 && trimmedMsgs[0].role === 'assistant') {
+        trimmedMsgs = trimmedMsgs.slice(1)
+      }
+
+      console.log('[STREAM] context: total=', contextMessages.length, '→ trimmed=', trimmedMsgs.length, '| summary=', !!currentSession?.summary)
       console.log('[SYSTEM PROMPT 实际发送]\n', builtSystemPrompt)
       console.log('[STREAM] calling streamChat | baseUrl=', effectiveBaseUrl, '| model=', effectiveModel, '| useWorkerProxy=', useWorkerProxy)
 
@@ -206,7 +227,7 @@ export function useChat() {
       const flushTimer = setInterval(flushUpdate, 80)
 
       try {
-        for await (const chunk of streamChat({ apiKey: effectiveApiKey, apiBaseUrl: effectiveBaseUrl, model: effectiveModel, systemPrompt: builtSystemPrompt, messages: contextMessages, workerUrl, useWorkerProxy, signal: controller.signal, disableThinking: effectiveDisableThinking, webSearch: effectiveWebSearch, providerName: effectiveProviderName })) {
+        for await (const chunk of streamChat({ apiKey: effectiveApiKey, apiBaseUrl: effectiveBaseUrl, model: effectiveModel, systemPrompt: builtSystemPrompt, messages: trimmedMsgs, workerUrl, useWorkerProxy, signal: controller.signal, disableThinking: effectiveDisableThinking, webSearch: effectiveWebSearch, providerName: effectiveProviderName })) {
           if (chunk.reasoning) {
             fullReasoning += chunk.reasoning
             dirty = true
@@ -404,6 +425,33 @@ export function useChat() {
       setIsLoading(false)
       setStreamingMessageId(null)
       scheduleMsgSync(CONVERSATION_ID)
+
+      // Background summarization: fire-and-forget, does not block chat
+      if (contextMessages.length > CTX_TRIGGER && !isSummarizingRef.current) {
+        isSummarizingRef.current = true
+        ;(async () => {
+          try {
+            const state = useStore.getState()
+            const sess = state.sessions.find(s => s.id === CONVERSATION_ID)
+            const dsApiKey = state.providers.find(p => p.id === 'deepseek')?.apiKey
+            if (!sess || !dsApiKey) return
+            const summarizedCount = sess.summarizedCount || 0
+            const batchEnd = contextMessages.length - CTX_KEEP
+            if (batchEnd <= summarizedCount) return
+            const batchMsgs = contextMessages.slice(summarizedCount, batchEnd)
+            if (!batchMsgs.length) return
+            setSummaryToast('正在整理早期对话记忆…')
+            setTimeout(() => useStore.getState().setSummaryToast(null), 3000)
+            const newSummary = await generateSummary({ existingSummary: sess.summary || null, newMessages: batchMsgs, apiKey: dsApiKey })
+            updateSession(CONVERSATION_ID, { summary: newSummary, summarizedCount: batchEnd })
+          } catch (e) {
+            console.warn('[SUMMARY] 生成失败:', e.message)
+          } finally {
+            isSummarizingRef.current = false
+          }
+        })()
+      }
+
       // After natural stream end: if messages were queued during generation, respond to them now
       if (pendingMessagesRef.current.length > 0) {
         const pendingIds = new Set(pendingMessagesRef.current.map(m => m.id))
@@ -438,7 +486,7 @@ export function useChat() {
         streamResponse(merged)
       }
     }
-  }, [CONVERSATION_ID, effectiveApiKey, effectiveBaseUrl, effectiveModel, effectiveSystemPrompt, effectiveMemoryEnabled, workerUrl, useWorkerProxy, acWorkerUrl, effectiveTtsApiKey, effectiveTtsGroupId, effectiveTtsVoiceId, aiVoiceEnabled, effectiveVoiceFrequency, effectiveDisableThinking, effectiveWebSearch, effectiveProviderName, addMessage, updateMessage, deleteMessage, setIsLoading, setStreamingMessageId, updateSession, scheduleMsgSync])
+  }, [CONVERSATION_ID, effectiveApiKey, effectiveBaseUrl, effectiveModel, effectiveSystemPrompt, effectiveMemoryEnabled, workerUrl, useWorkerProxy, acWorkerUrl, effectiveTtsApiKey, effectiveTtsGroupId, effectiveTtsVoiceId, aiVoiceEnabled, effectiveVoiceFrequency, effectiveDisableThinking, effectiveWebSearch, effectiveProviderName, addMessage, updateMessage, deleteMessage, setIsLoading, setStreamingMessageId, updateSession, scheduleMsgSync, setSummaryToast])
 
   const sendMessage = useCallback(async (content, type = 'text', extra = {}) => {
     console.log('[SEND] sendMessage called | keyLen=', effectiveApiKey?.length ?? 0, '| baseUrl=', effectiveBaseUrl, '| isLoading=', isLoading)

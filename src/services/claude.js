@@ -83,6 +83,34 @@ export async function fetchModels({ baseUrl, apiKey }) {
   return (data.data || data.models || []).map(m => m.id || m).filter(Boolean)
 }
 
+export async function generateSummary({ existingSummary, newMessages, apiKey }) {
+  const msgText = newMessages.map(m => {
+    const role = m.role === 'user' ? '用户' : 'AI'
+    const text = Array.isArray(m.content)
+      ? m.content.filter(p => p.type === 'text').map(p => p.text).join('')
+      : (m.content || '')
+    return `${role}：${text}`
+  }).join('\n')
+
+  const parts = ['请将以下对话压缩成简洁的事实/情节摘要，保留对后续对话连贯性重要的信息（关系、约定、正在进行的话题等）。输出纯摘要文本，无需多余说明。']
+  if (existingSummary) parts.push(`【上一版摘要（请在此基础上更新并重新输出完整摘要）】\n${existingSummary}`)
+  parts.push(`【需要压缩的新对话】\n${msgText}`)
+
+  const resp = await fetch('https://api.deepseek.com/v1/chat/completions', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
+    body: JSON.stringify({
+      model: 'deepseek-v4-flash',
+      max_tokens: 1024,
+      stream: false,
+      messages: [{ role: 'user', content: parts.join('\n\n') }],
+    }),
+  })
+  if (!resp.ok) throw new Error(`DeepSeek summary error ${resp.status}`)
+  const data = await resp.json()
+  return data.choices?.[0]?.message?.content?.trim() || ''
+}
+
 export async function* streamChat({ apiKey, apiBaseUrl = 'https://api.anthropic.com', model, systemPrompt, messages, workerUrl, useWorkerProxy, signal, disableThinking = false, webSearch = false, providerName = '' }) {
   const base = apiBaseUrl.replace(/\/$/, '')
   const proxyBase = (useWorkerProxy && workerUrl) ? workerUrl.replace(/\/$/, '') : null

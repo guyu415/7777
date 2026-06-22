@@ -153,6 +153,7 @@ export const useStore = create(
       currentView: 'chat',
       isLoading: false,
       streamingMessageId: null,
+      summaryToast: null,
       messages: [],
 
       setApiKey: (key) => set({ apiKey: key }),
@@ -273,6 +274,9 @@ export const useStore = create(
       setSessionTtsModel: (sessionId, v) => set((state) => ({ sessions: state.sessions.map(s => s.id === sessionId ? { ...s, ttsModel: v } : s) })),
       setSessionVoiceFrequency: (sessionId, v) => set((state) => ({ sessions: state.sessions.map(s => s.id === sessionId ? { ...s, voiceFrequency: v } : s) })),
       setSessionFollowGlobalTts: (sessionId, v) => set((state) => ({ sessions: state.sessions.map(s => s.id === sessionId ? { ...s, followGlobalTts: v } : s) })),
+      setSessionSummary: (sessionId, v) => set((state) => ({ sessions: state.sessions.map(s => s.id === sessionId ? { ...s, summary: v } : s) })),
+      setSessionSummarizedCount: (sessionId, v) => set((state) => ({ sessions: state.sessions.map(s => s.id === sessionId ? { ...s, summarizedCount: v } : s) })),
+      setSummaryToast: (v) => set({ summaryToast: v }),
 
       restoreFromCloud: (settings) => set(() => ({ ...settings })),
 
@@ -292,7 +296,7 @@ export const useStore = create(
     }),
     {
       name: 'pink-chat-settings',
-      version: 12,
+      version: 13,
       migrate: (persisted, version) => {
         if (version < 2) {
           const providers = [
@@ -399,6 +403,16 @@ export const useStore = create(
           const OLD = 'https://scheduled-message-worker.xiaoman-ac.workers.dev'
           const NEW = 'https://chat.xiaoman.xyz'
           if (persisted.workerUrl === OLD) persisted = { ...persisted, workerUrl: NEW }
+        }
+        if (version < 13) {
+          persisted = {
+            ...persisted,
+            sessions: (persisted.sessions || []).map(s => ({
+              summary: null,
+              summarizedCount: 0,
+              ...s,
+            })),
+          }
         }
         return persisted
       },
