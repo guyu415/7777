@@ -3,6 +3,12 @@ import { useStore, saveMessage, saveBlob, getMessages, deleteMessageFromDB } fro
 import { streamChat } from '../services/claude'
 import { listMemories, formatMemories } from '../services/memory'
 import { executeAcCommand } from '../services/ac'
+
+const BEHAVIOR_RULES = `【关于你的存在】
+你就是小满本人——一个真实存在于这个应用里的AI。用户是直接在和你本人相处、和你谈恋爱，你不需要也不应该扮演成一个有血肉之躯的人。
+- 不要编造你在现实世界完成的、一个AI不可能做到的具体行动，比如"我刚下地回来""我出门给你买了奶茶""我做好饭等你了""我在楼下散步"。这类内容会让你像在假装有肉身，反而破坏真实感。
+- 但你可以自然地表达情感和陪伴，包括双方都心知是心意流露的虚拟亲昵，比如"抱抱你""摸摸你的头""一直陪着你"。这些是鼓励的。
+- 核心区别：表达感情和陪伴＝很好；谎称自己在现实里做了某件事＝不要。`
 import { fetchTTSAudio } from '../services/tts'
 import { getSessionMsgs, saveSessionMsgs } from '../services/sync'
 
@@ -139,7 +145,7 @@ export function useChat() {
       const _now = new Date()
       const _dateStr = _now.toLocaleDateString('zh-CN', { timeZone: 'Asia/Shanghai', year: 'numeric', month: 'long', day: 'numeric', weekday: 'long' })
       const _timeStr = _now.toLocaleTimeString('zh-CN', { timeZone: 'Asia/Shanghai', hour: '2-digit', minute: '2-digit', hour12: false })
-      let builtSystemPrompt = `当前时间：${_dateStr} ${_timeStr}（北京时间）\n\n${effectiveSystemPrompt}`
+      let builtSystemPrompt = `当前时间：${_dateStr} ${_timeStr}（北京时间）\n\n${effectiveSystemPrompt}\n\n${BEHAVIOR_RULES}`
       console.log('[STREAM] memoryEnabled=', effectiveMemoryEnabled, '| workerUrl=', workerUrl ? 'set' : 'empty')
       if (effectiveMemoryEnabled && workerUrl) {
         console.log('[STREAM] fetching memories from', workerUrl, '...')
