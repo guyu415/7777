@@ -92,6 +92,8 @@ function MessageBubble({ message, onLongPress, onRegenerate, onRegenerateRound, 
     border: `1px solid ${theme?.userBubbleBorder || 'rgba(255,133,179,0.35)'}`,
     boxShadow: `0 4px 16px ${theme?.userBubbleShadow || 'rgba(255,133,179,0.18)'}, inset 0 1px 0 rgba(255,255,255,0.4)`,
     color: theme?.userBubbleText || '#F0C040',
+    wordBreak: 'break-word',
+    overflowWrap: 'anywhere',
   }
 
   const aiBubbleStyle = {
@@ -102,6 +104,8 @@ function MessageBubble({ message, onLongPress, onRegenerate, onRegenerateRound, 
     border: `1px solid ${theme?.aiBubbleBorder || 'rgba(160,220,180,0.4)'}`,
     boxShadow: `0 4px 16px ${theme?.aiBubbleShadow || 'rgba(160,220,180,0.2)'}, inset 0 1px 0 rgba(255,255,255,0.4)`,
     color: theme?.aiBubbleText || '#3d6b52',
+    wordBreak: 'break-word',
+    overflowWrap: 'anywhere',
   }
 
   return (
