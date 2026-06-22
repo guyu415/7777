@@ -92,9 +92,28 @@ export async function generateSummary({ existingSummary, newMessages, apiKey }) 
     return `${role}：${text}`
   }).join('\n')
 
-  const parts = ['请将以下对话压缩成简洁的事实/情节摘要，保留对后续对话连贯性重要的信息（关系、约定、正在进行的话题等）。输出纯摘要文本，无需多余说明。']
-  if (existingSummary) parts.push(`【上一版摘要（请在此基础上更新并重新输出完整摘要）】\n${existingSummary}`)
-  parts.push(`【需要压缩的新对话】\n${msgText}`)
+  let prompt
+  if (existingSummary) {
+    prompt = `下面有【已有的历史摘要】和【最近新增的对话】。请在完整保留已有摘要信息的基础上，把新增对话中值得记住的内容补充进去，输出更新后的完整摘要。
+
+要求：
+- 已有摘要里的信息要尽量完整保留，不要删减或重新压缩（除非与新内容明显重复或矛盾，才做合并/更正）。
+- 新增内容自然追加融入，不要另起一段单独列出。
+- 只在整体明显冗长时才做适度精简，默认倾向保留而非压缩。
+- 保留对后续对话连贯性重要的信息：人物关系、约定、正在进行的话题、情感基调等。
+- 输出纯摘要文本，无需说明"已更新"或其他元描述。
+
+【已有摘要】
+${existingSummary}
+
+【最近新增对话】
+${msgText}`
+  } else {
+    prompt = `请阅读以下对话，提取对后续聊天连贯性重要的信息（人物关系、约定、正在进行的话题、情感基调等），整理成一段事实性摘要。输出纯摘要文本，无需多余说明。
+
+【对话内容】
+${msgText}`
+  }
 
   const resp = await fetch('https://api.deepseek.com/v1/chat/completions', {
     method: 'POST',
@@ -103,7 +122,7 @@ export async function generateSummary({ existingSummary, newMessages, apiKey }) 
       model: 'deepseek-v4-flash',
       max_tokens: 1024,
       stream: false,
-      messages: [{ role: 'user', content: parts.join('\n\n') }],
+      messages: [{ role: 'user', content: prompt }],
     }),
   })
   if (!resp.ok) throw new Error(`DeepSeek summary error ${resp.status}`)
