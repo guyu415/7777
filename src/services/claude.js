@@ -57,10 +57,8 @@ function buildOpenAIMessages(systemPrompt, messages) {
     if (m.type === 'text') {
       result.push({ role: m.role, content: m.content || '' })
     } else if (m.type === 'image') {
-      const media_type = VALID_MEDIA_TYPES.has(m.imageType) ? m.imageType : detectMediaType(m.imageData)
-      const parts = [{ type: 'image_url', image_url: { url: `data:${media_type};base64,${m.imageData}` } }]
-      if (m.content) parts.push({ type: 'text', text: m.content })
-      result.push({ role: m.role, content: parts })
+      // 纯文本模型（硅基流动/GLM 等）不接受数组 content；只保留文字说明，丢弃图片数据
+      result.push({ role: m.role, content: m.content || '[图片]' })
     } else if (m.type === 'voice') {
       result.push({ role: m.role, content: m.transcript ? `[语音消息] ${m.transcript}` : '[语音消息]' })
     }
