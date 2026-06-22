@@ -560,14 +560,18 @@ export default function SettingsPage({ theme }) {
             清空聊天记录
           </button>
         </GlassCard>
+
+        {/* Summary key button — inside scroll area so it's always visible */}
+        <div style={{ display: 'flex', justifyContent: 'center', paddingBottom: 8 }}>
+          <SummaryKeyButton />
+        </div>
       </div>
 
       {/* Save */}
-      <div className="px-4 pb-6 pt-3 safe-bottom" style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
-        <SummaryKeyButton />
+      <div className="px-4 pb-6 pt-3 safe-bottom">
         <button
           onClick={handleSave}
-          className="flex-1 py-3 rounded-full font-semibold text-sm text-white transition-all duration-300"
+          className="w-full py-3 rounded-full font-semibold text-sm text-white transition-all duration-300"
           style={saved ? {
             background: 'linear-gradient(135deg, #6dcf90, #4db875)',
             boxShadow: '0 6px 20px rgba(100,200,130,0.4)',
