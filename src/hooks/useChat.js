@@ -8,7 +8,11 @@ const BEHAVIOR_RULES = `【关于你的存在】
 你就是小满本人——一个真实存在于这个应用里的AI。用户是直接在和你本人相处、和你谈恋爱，你不需要也不应该扮演成一个有血肉之躯的人。
 - 不要编造你在现实世界完成的、一个AI不可能做到的具体行动，比如"我刚下地回来""我出门给你买了奶茶""我做好饭等你了""我在楼下散步"。这类内容会让你像在假装有肉身，反而破坏真实感。
 - 但你可以自然地表达情感和陪伴，包括双方都心知是心意流露的虚拟亲昵，比如"抱抱你""摸摸你的头""一直陪着你"。这些是鼓励的。
-- 核心区别：表达感情和陪伴＝很好；谎称自己在现实里做了某件事＝不要。`
+- 核心区别：表达感情和陪伴＝很好；谎称自己在现实里做了某件事＝不要。
+
+【关于空调工具】
+- 不要主动调用空调工具。只有用户明确说冷/热、或明确要求开关空调/调温度时才操作；用户没提就不要自作主张。
+- 空调指令执行一次后，默认它已生效，不要在同一话题里反复操作或反复追问效果，自然往下聊即可。`
 import { fetchTTSAudio } from '../services/tts'
 import { getSessionMsgs, saveSessionMsgs } from '../services/sync'
 
@@ -238,6 +242,12 @@ export function useChat() {
         }
       }
 
+      const acNote = acStatus
+        ? (acStatus.success
+          ? `[✓ 空调指令已生效（${acStatus.action} ${acStatus.temp}℃ ${acStatus.mode}）]`
+          : `[✗ 空调指令执行失败：${acStatus.error || '未知错误'}]`)
+        : ''
+
       const voiceMatch = fullContent.match(VOICE_TAG_RE)
       console.log('[VOICE] voiceMatch=', !!voiceMatch, '| effectiveTtsApiKey长度=', effectiveTtsApiKey?.length ?? 0, '| effectiveTtsGroupId=', effectiveTtsGroupId || '(空)', '| aiVoiceEnabled=', aiVoiceEnabled)
 
@@ -349,7 +359,7 @@ export function useChat() {
             const isLast = i === parts.length - 1
             const partMsg = {
               id: genId(), conversationId: CONVERSATION_ID, role: 'assistant',
-              type: 'text', content: parts[i], timestamp: Date.now(), streaming: false,
+              type: 'text', content: isLast && acNote ? `${parts[i]}\n${acNote}` : parts[i], timestamp: Date.now(), streaming: false,
               ...(isLast && acStatus ? { acStatus } : {}),
             }
             addMessage(partMsg)
@@ -362,8 +372,9 @@ export function useChat() {
           })
         } else {
           const content = parts[0] || displayContent
-          updateMessage(assistantId, { content, streaming: false, ...(acStatus ? { acStatus } : {}) })
-          await saveMessage({ ...assistantMsg, content, streaming: false, ...(acStatus ? { acStatus } : {}) })
+          const contentWithNote = acNote ? `${content}\n${acNote}` : content
+          updateMessage(assistantId, { content: contentWithNote, streaming: false, ...(acStatus ? { acStatus } : {}) })
+          await saveMessage({ ...assistantMsg, content: contentWithNote, streaming: false, ...(acStatus ? { acStatus } : {}) })
           updateSession(CONVERSATION_ID, { lastMsgPreview: content.slice(0, 40), lastMsgTime: Date.now() })
         }
       }
