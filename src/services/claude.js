@@ -174,8 +174,10 @@ export async function* streamChat({ apiKey, apiBaseUrl = 'https://api.anthropic.
       max_tokens: 4096,
       stream: true,
       messages: buildOpenAIMessages(systemPrompt, messages),
-      // disableThinking only applies to GLM reasoning models
+      // disableThinking: GLM official uses { thinking: { type: 'disabled' } }
       ...(disableThinking && providerName === 'glm' ? { thinking: { type: 'disabled' } } : {}),
+      // disableThinking: generic OpenAI-compat (e.g. SiliconFlow GLM) uses chat_template_kwargs
+      ...(disableThinking && providerName === 'openai' ? { chat_template_kwargs: { enable_thinking: false } } : {}),
       // web search tools if enabled and provider supported
       ...(webSearchTools ? { tools: webSearchTools } : {}),
     })
