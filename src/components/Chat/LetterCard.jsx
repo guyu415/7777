@@ -1,15 +1,26 @@
 import { getLetterById } from '../../services/letters'
+import { useStore } from '../../store'
 
-export default function LetterCard({ letterId }) {
-  const letter = getLetterById(letterId)
+export default function LetterCard({ letterId, letter: inlineLetter }) {
+  const setCurrentView = useStore(s => s.setCurrentView)
+  const setDiaryTarget = useStore(s => s.setDiaryTarget)
+  const letter = inlineLetter || getLetterById(letterId)
   if (!letter) return null
+
+  const isUser = letter.role === 'user'
+
+  const openDiary = (e) => {
+    e.stopPropagation()
+    if (letterId) setDiaryTarget(letterId)
+    setCurrentView('diary')
+  }
 
   const text = letter.content || ''
   const preview = text.length > 20 ? text.slice(0, 20) + '…' : text
 
   return (
     <div
-      onClick={(e) => { e.stopPropagation(); console.log('跳转日记本', letterId) }}
+      onClick={openDiary}
       style={{
         cursor: 'pointer',
         background: 'linear-gradient(135deg, rgba(250,244,230,0.95), rgba(244,238,252,0.95))',
@@ -21,7 +32,7 @@ export default function LetterCard({ letterId }) {
         color: '#6b5840',
       }}
     >
-      <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 6 }}>📔 写给你一封信</div>
+      <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 6 }}>{isUser ? '✉️ 你写的一封信' : '📔 写给你一封信'}</div>
       <div style={{ fontSize: 13, display: 'flex', gap: 10, alignItems: 'center', marginBottom: 8 }}>
         <span>{letter.mood}</span>
         <span>{letter.weather}</span>

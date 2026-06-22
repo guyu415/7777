@@ -6,14 +6,22 @@ import AcCard from './AcCard'
 import LetterCard from './LetterCard'
 import clsx from 'clsx'
 
-// Split content on {{LETTER_CARD:id}} placeholders, rendering cards in order
-const LETTER_CARD_SPLIT = /(\{\{LETTER_CARD:[^}]+\}\})/g
+// Split content on letter markers — either {{LETTER_CARD:id}} (AI letters, phase 1)
+// or raw [LETTER mood=.. weather=.. date=..]..[/LETTER] (user letters written from diary)
+const LETTER_SPLIT = /(\{\{LETTER_CARD:[^}]+\}\}|\[LETTER\s+\S+?\s+\S+?\s+\S+?\][\s\S]*?\[\/LETTER\])/g
 const LETTER_CARD_ONE = /^\{\{LETTER_CARD:([^}]+)\}\}$/
+const RAW_LETTER_ONE = /^\[LETTER\s+mood=(\S+?)\s+weather=(\S+?)\s+date=(\S+?)\]([\s\S]*?)\[\/LETTER\]$/
+
+function hasLetter(content) {
+  return content.includes('{{LETTER_CARD:') || content.includes('[LETTER')
+}
 
 function renderContentNodes(content) {
-  return content.split(LETTER_CARD_SPLIT).map((seg, i) => {
-    const m = seg.match(LETTER_CARD_ONE)
-    if (m) return <LetterCard key={i} letterId={m[1]} />
+  return content.split(LETTER_SPLIT).map((seg, i) => {
+    const ph = seg.match(LETTER_CARD_ONE)
+    if (ph) return <LetterCard key={i} letterId={ph[1]} />
+    const raw = seg.match(RAW_LETTER_ONE)
+    if (raw) return <LetterCard key={i} letter={{ mood: raw[1], weather: raw[2], date: raw[3], content: raw[4].trim(), role: 'user' }} />
     return seg ? <span key={i}>{seg}</span> : null
   })
 }
@@ -217,7 +225,7 @@ function MessageBubble({ message, onLongPress, onRegenerate, onRegenerateRound, 
             {message.streaming && !message.content ? (
               <TypingIndicator />
             ) : (
-              <span className="whitespace-pre-wrap break-words">{message.content.includes('{{LETTER_CARD:') ? renderContentNodes(message.content) : message.content}
+              <span className="whitespace-pre-wrap break-words">{hasLetter(message.content) ? renderContentNodes(message.content) : message.content}
                 {onRegenerate && !message.streaming && (
                   <span className="inline-flex gap-1 ml-2" style={{ verticalAlign: 'middle' }}>
                     <button

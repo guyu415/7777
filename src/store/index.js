@@ -154,6 +154,7 @@ export const useStore = create(
       isLoading: false,
       streamingMessageId: null,
       summaryToast: null,
+      diaryTarget: null,
       messages: [],
 
       setApiKey: (key) => set({ apiKey: key }),
@@ -177,6 +178,7 @@ export const useStore = create(
       setAiVoiceFrequency: (v) => set({ aiVoiceFrequency: v }),
       setAcWorkerUrl: (v) => set({ acWorkerUrl: v }),
       setCurrentView: (view) => set({ currentView: view }),
+      setDiaryTarget: (id) => set({ diaryTarget: id }),
       setIsLoading: (v) => set({ isLoading: v }),
       setStreamingMessageId: (id) => set({ streamingMessageId: id }),
       setMessages: (messages) => set({ messages }),
