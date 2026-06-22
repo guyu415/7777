@@ -254,7 +254,7 @@ export default function SettingsPage({ theme }) {
             <input
               value={effectiveAiName}
               onChange={e => handleAiNameChange(e.target.value)}
-              placeholder="小漫"
+              placeholder="小满"
               style={inputStyle}
             />
           </div>
@@ -263,7 +263,7 @@ export default function SettingsPage({ theme }) {
             <input
               value={currentSession?.signature ?? ''}
               onChange={e => currentSessionId && setSessionSignature(currentSessionId, e.target.value)}
-              placeholder="小漫一直在这里等你～"
+              placeholder="小满一直在这里等你～"
               style={inputStyle}
             />
           </div>

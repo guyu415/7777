@@ -317,8 +317,8 @@ export default function SessionSettings({ theme }) {
               <input
                 value={localName}
                 onChange={e => setLocalName(e.target.value)}
-                onBlur={() => setSessionAiName(currentSessionId, localName.trim() || '小漫')}
-                placeholder="小漫"
+                onBlur={() => setSessionAiName(currentSessionId, localName.trim() || '小满')}
+                placeholder="小满"
                 style={inputStyle}
               />
             </div>
@@ -414,7 +414,7 @@ export default function SessionSettings({ theme }) {
                 value={localSignature}
                 onChange={e => setLocalSignature(e.target.value)}
                 onBlur={() => setSessionSignature(currentSessionId, localSignature)}
-                placeholder="小漫一直在这里等你～"
+                placeholder="小满一直在这里等你～"
                 style={inputStyle}
               />
             </div>

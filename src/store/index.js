@@ -85,9 +85,9 @@ export async function getAllMessages() {
 const DEFAULT_SESSIONS = [{
   id: 'main',
   name: '默认对话',
-  systemPrompt: '你是小漫，一个温柔可爱的AI助手。你说话简洁、有趣，偶尔会用一些可爱的语气词。',
+  systemPrompt: '你是小满，一个温柔可爱的AI助手。你说话简洁、有趣，偶尔会用一些可爱的语气词。',
   createdAt: Date.now(),
-  signature: '小漫一直在这里等你～',
+  signature: '小满一直在这里等你～',
   // per-session overrides (null = use global default)
   themeId: null,
   chatBg: null,
@@ -117,13 +117,13 @@ export const useStore = create(
       apiKey: '',
       apiBaseUrl: 'https://api.anthropic.com',
       model: 'claude-sonnet-4-6',
-      systemPrompt: '你是小漫，一个温柔可爱的AI助手。你说话简洁、有趣，偶尔会用一些可爱的语气词。',
+      systemPrompt: '你是小满，一个温柔可爱的AI助手。你说话简洁、有趣，偶尔会用一些可爱的语气词。',
       memoryEnabled: false,
       workerUrl: 'https://chat.xiaoman.xyz',
       useWorkerProxy: false,
       userAvatar: '',
       aiAvatar: '',
-      aiName: '小漫',
+      aiName: '小满',
 
       // Theme, background, font (global defaults)
       themeId: 'pink',
@@ -199,7 +199,7 @@ export const useStore = create(
             aiName,
             aiAvatar,
             userAvatar,
-            signature: '小漫一直在这里等你～',
+            signature: '小满一直在这里等你～',
             themeId: null,
             chatBg: null,
             fontFamily: null,
@@ -305,7 +305,7 @@ export const useStore = create(
             providers,
             selectedProviderId: 'anthropic',
             selectedModelId: persisted.model || 'claude-sonnet-4-6',
-            sessions: [{ id: 'main', name: '默认对话', systemPrompt: persisted.systemPrompt || '', createdAt: Date.now(), signature: '小漫一直在这里等你～' }],
+            sessions: [{ id: 'main', name: '默认对话', systemPrompt: persisted.systemPrompt || '', createdAt: Date.now(), signature: '小满一直在这里等你～' }],
             currentSessionId: 'main',
           }
         }
@@ -322,7 +322,7 @@ export const useStore = create(
             chatBg: { type: 'gradient', value: '', opacity: 1.0 },
             fontFamily: 'noto',
             ...persisted,
-            sessions: (persisted.sessions || []).map(s => ({ signature: '小漫一直在这里等你～', ...s })),
+            sessions: (persisted.sessions || []).map(s => ({ signature: '小满一直在这里等你～', ...s })),
           }
         }
         if (version < 5) {

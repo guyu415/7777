@@ -166,7 +166,7 @@ export default function ChatWindow({ theme }) {
               color: primaryColor,
               textShadow: `0 0 8px ${primaryColor}cc, 0 0 18px ${primaryColor}80`,
             }}>
-              {effectiveAiName || '小漫'}
+              {effectiveAiName || '小满'}
             </div>
             <div className="flex items-center gap-1.5">
               <Signature text={effectiveSignature || '在线'} color={primaryColor} shadow={`0 0 6px ${primaryColor}aa, 0 0 14px ${primaryColor}60`} />
@@ -214,7 +214,7 @@ export default function ChatWindow({ theme }) {
         {messages.length === 0 && (
           <div className="flex flex-col items-center justify-center h-full text-center gap-3">
             <div className="text-5xl">🌸</div>
-            <div className="font-medium" style={{ color: '#c47a8a' }}>你好，我是{effectiveAiName || '小漫'}！</div>
+            <div className="font-medium" style={{ color: '#c47a8a' }}>你好，我是{effectiveAiName || '小满'}！</div>
             <div className="text-sm max-w-[200px]" style={{ color: '#d4a0b0' }}>
               {effectiveApiKey ? '说点什么开始聊天吧～' : '请先在设置中配置 API Key'}
             </div>
