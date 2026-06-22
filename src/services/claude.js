@@ -181,6 +181,13 @@ export async function* streamChat({ apiKey, apiBaseUrl = 'https://api.anthropic.
       // web search tools if enabled and provider supported
       ...(webSearchTools ? { tools: webSearchTools } : {}),
     })
+    const _bodyObj = JSON.parse(body)
+    console.log(
+      '[THINK] 禁用思考开关=', disableThinking ? 'on' : 'off',
+      '| 供应商=', providerName || '(未设置)',
+      '| chat_template_kwargs=', _bodyObj.chat_template_kwargs ? '有' : '无',
+      '| 值=', JSON.stringify(_bodyObj.chat_template_kwargs ?? null),
+    )
     if (proxyBase) {
       actualUrl = `${proxyBase}/chat`
       console.log('[API] 发起fetch (OpenAI-compat via Worker):', actualUrl)
