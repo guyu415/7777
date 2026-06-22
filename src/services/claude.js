@@ -170,18 +170,29 @@ export async function* streamChat({ apiKey, apiBaseUrl = 'https://api.anthropic.
         body, signal,
       })
     }
+    if (webSearch && providerName === 'claude') {
+      console.log('[WEB-RESP] Claude请求端点=', proxyBase ? `${actualUrl} → ${chatUrl}` : chatUrl, '| 最终model字符串=', effectiveModel)
+    }
   }
 
   const proxyNote = proxyBase ? `Worker代理: ${proxyBase}` : '直连'
   console.log(`[API] 请求地址: POST ${actualUrl} (${proxyNote})`)
   if (!response.ok) {
     const err = await response.json().catch(() => ({}))
+    console.log('[WEB-RESP] 上游错误 HTTP', response.status, '| error=', JSON.stringify(err))
     throw new Error(`请求失败: POST ${actualUrl}\n${err?.error?.message || `HTTP ${response.status}`}`)
   }
 
   const reader = response.body.getReader()
   const decoder = new TextDecoder()
   let buffer = ''
+  const _wr = { finishReasons: new Set(), toolCallsSeen: false, searchFields: [] }
+  const _logWR = () => console.log(
+    '[WEB-RESP] 供应商=', providerName || '(未设置)',
+    '| finish_reason=', [..._wr.finishReasons].join(',') || '(未见)',
+    '| 联网相关字段=', _wr.searchFields.join(',') || '无',
+    '| tool_calls=', _wr.toolCallsSeen ? '有' : '无',
+  )
 
   while (true) {
     const { done, value } = await reader.read()
@@ -194,7 +205,7 @@ export async function* streamChat({ apiKey, apiBaseUrl = 'https://api.anthropic.
     for (const line of lines) {
       if (!line.startsWith('data: ')) continue
       const data = line.slice(6).trim()
-      if (data === '[DONE]') return
+      if (data === '[DONE]') { _logWR(); return }
 
       try {
         const event = JSON.parse(data)
@@ -219,13 +230,22 @@ export async function* streamChat({ apiKey, apiBaseUrl = 'https://api.anthropic.
         // Web search tool_calls — log for debugging, no round-trip needed (server-side tools)
         if (delta?.tool_calls) {
           console.log('[WEB] tool_calls事件:', JSON.stringify(delta.tool_calls))
+          _wr.toolCallsSeen = true
         }
         if (event.choices?.[0]?.finish_reason === 'tool_calls') {
           console.log('[WEB] finish_reason=tool_calls — 等待服务端执行搜索并继续生成')
+        }
+        // Accumulate for post-stream [WEB-RESP] summary
+        const _fr = event.choices?.[0]?.finish_reason || event.delta?.stop_reason
+        if (_fr) _wr.finishReasons.add(_fr)
+        const _evStr = JSON.stringify(event)
+        for (const _f of ['web_search', 'search_result', 'citations', 'tool_use', 'retrieval']) {
+          if (!_wr.searchFields.includes(_f) && _evStr.includes(`"${_f}"`)) _wr.searchFields.push(_f)
         }
       } catch {
         // ignore parse errors
       }
     }
   }
+  _logWR()
 }
