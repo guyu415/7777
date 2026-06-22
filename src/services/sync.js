@@ -68,6 +68,25 @@ export async function saveSessionMsgs(password, sessionId, msgs) {
   if (!res.ok) throw new Error(`HTTP ${res.status}: ${text}`)
 }
 
+// ── Letters (交换日记) cloud sync ─────────────────────────────────
+
+export async function getLetters(password) {
+  const res = await fetch(`${SYNC_BASE}/sync/get?password=${encodeURIComponent(password)}&key=letters`)
+  if (!res.ok) return null
+  const { value } = await res.json()
+  return value // array or null
+}
+
+export async function saveLetters(password, letters) {
+  const res = await fetch(`${SYNC_BASE}/sync/set`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ password, key: 'letters', value: letters }),
+  })
+  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  return res.json()
+}
+
 // ── Asset (KV-backed base64 data URL) ────────────────────────────
 
 const _assetCache = new Map() // assetKey → data URL string

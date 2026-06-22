@@ -7,7 +7,8 @@ import SessionSettings from './components/SessionSettings'
 import SessionList from './components/SessionList'
 import BottomNav from './components/BottomNav'
 import LoginPage from './components/LoginPage'
-import { getSettings, saveSettings, extractSettings, saveSessionMsgs, putAsset, getAssetDataUrl } from './services/sync'
+import { getSettings, saveSettings, extractSettings, saveSessionMsgs, putAsset, getAssetDataUrl, getLetters } from './services/sync'
+import { mergeLetters } from './services/letters'
 
 const FONT_MAP = {
   noto: "'Noto Sans SC', 'PingFang SC', -apple-system, sans-serif",
@@ -162,6 +163,16 @@ export default function App() {
           console.log('[SYNC] 跳过资源迁移（已迁移）')
         }
       })
+  }, [loggedIn])
+
+  // Pull letters (交换日记) from cloud once on login, merge into local
+  useEffect(() => {
+    if (!loggedIn) return
+    const password = localStorage.getItem('auth.password')
+    if (!password) return
+    getLetters(password)
+      .then(cloud => { if (cloud) mergeLetters(cloud) })
+      .catch(e => console.warn('[LETTERS] 云端拉取失败:', e.message))
   }, [loggedIn])
 
   // Debounced auto-sync: fires 2s after any store change, once startup pull is done

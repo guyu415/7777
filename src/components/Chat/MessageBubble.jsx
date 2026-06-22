@@ -3,7 +3,20 @@ import { CheckCheck } from 'lucide-react'
 import VoicePlayer from '../Voice/VoicePlayer'
 import ImageViewer from '../ImageViewer'
 import AcCard from './AcCard'
+import LetterCard from './LetterCard'
 import clsx from 'clsx'
+
+// Split content on {{LETTER_CARD:id}} placeholders, rendering cards in order
+const LETTER_CARD_SPLIT = /(\{\{LETTER_CARD:[^}]+\}\})/g
+const LETTER_CARD_ONE = /^\{\{LETTER_CARD:([^}]+)\}\}$/
+
+function renderContentNodes(content) {
+  return content.split(LETTER_CARD_SPLIT).map((seg, i) => {
+    const m = seg.match(LETTER_CARD_ONE)
+    if (m) return <LetterCard key={i} letterId={m[1]} />
+    return seg ? <span key={i}>{seg}</span> : null
+  })
+}
 
 function TypingIndicator() {
   return (
@@ -204,7 +217,7 @@ function MessageBubble({ message, onLongPress, onRegenerate, onRegenerateRound, 
             {message.streaming && !message.content ? (
               <TypingIndicator />
             ) : (
-              <span className="whitespace-pre-wrap break-words">{message.content}
+              <span className="whitespace-pre-wrap break-words">{message.content.includes('{{LETTER_CARD:') ? renderContentNodes(message.content) : message.content}
                 {onRegenerate && !message.streaming && (
                   <span className="inline-flex gap-1 ml-2" style={{ verticalAlign: 'middle' }}>
                     <button
