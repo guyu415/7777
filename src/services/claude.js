@@ -186,12 +186,8 @@ export async function* streamChat({ apiKey, apiBaseUrl = 'https://api.anthropic.
       ...(webSearchTools ? { tools: webSearchTools } : {}),
     })
     const _bodyObj = JSON.parse(body)
-    console.log(
-      '[THINK] 禁用思考开关=', disableThinking ? 'on' : 'off',
-      '| 供应商=', providerName || '(未设置)',
-      '| chat_template_kwargs=', _bodyObj.chat_template_kwargs ? '有' : '无',
-      '| 值=', JSON.stringify(_bodyObj.chat_template_kwargs ?? null),
-    )
+    const _bodySummary = { ...(_bodyObj), messages: `[${_bodyObj.messages?.length}条]` }
+    console.log('[BODY] 发给上游的完整请求体（messages折叠）:', JSON.stringify(_bodySummary))
     if (proxyBase) {
       actualUrl = `${proxyBase}/chat`
       console.log('[API] 发起fetch (OpenAI-compat via Worker):', actualUrl)
