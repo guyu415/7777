@@ -67,7 +67,7 @@ export function useChat() {
   const effectiveMemoryEnabled = currentSession?.memoryEnabled ?? memoryEnabled
 
   const abortRef = useRef(null)
-  const pendingContextRef = useRef(null)
+  const pendingMessagesRef = useRef([])
   const msgSyncTimerRef = useRef(null)
 
   // Debounced cloud sync for current session's messages (300ms)
@@ -398,11 +398,13 @@ export function useChat() {
       setIsLoading(false)
       setStreamingMessageId(null)
       scheduleMsgSync(CONVERSATION_ID)
-      // If a message was sent while this stream was running, start the new round now
-      const pending = pendingContextRef.current
-      if (pending) {
-        pendingContextRef.current = null
-        streamResponse(pending)
+      // After natural stream end: if messages were queued during generation, respond to them now
+      if (pendingMessagesRef.current.length > 0) {
+        pendingMessagesRef.current = []
+        const freshMsgs = useStore.getState().messages
+          .filter(m => m.conversationId === CONVERSATION_ID && !m.streaming)
+          .sort((a, b) => a.timestamp - b.timestamp)
+        streamResponse(freshMsgs)
       }
     }
   }, [CONVERSATION_ID, effectiveApiKey, effectiveBaseUrl, effectiveModel, effectiveSystemPrompt, effectiveMemoryEnabled, workerUrl, useWorkerProxy, acWorkerUrl, effectiveTtsApiKey, effectiveTtsGroupId, effectiveTtsVoiceId, aiVoiceEnabled, effectiveVoiceFrequency, effectiveDisableThinking, effectiveWebSearch, effectiveProviderName, addMessage, updateMessage, deleteMessage, setIsLoading, setStreamingMessageId, updateSession, scheduleMsgSync])
@@ -443,9 +445,8 @@ export function useChat() {
       console.error('[DB] saveMessage failed:', e)
     }
     if (isLoading) {
-      console.log('[SEND] 插话：中止当前流，新上下文待流结束后触发')
-      pendingContextRef.current = [...messages, userMsg]
-      abortRef.current?.()
+      console.log('[SEND] 插话：AI生成中，消息入队，等当前轮自然结束后一并回应')
+      pendingMessagesRef.current.push(userMsg)
       return
     }
     console.log('[SEND] calling streamResponse, history len=', messages.length)
