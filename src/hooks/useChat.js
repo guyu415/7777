@@ -68,6 +68,7 @@ export function useChat() {
 
   const abortRef = useRef(null)
   const pendingMessagesRef = useRef([])
+  const pendingNoteRef = useRef(null)
   const msgSyncTimerRef = useRef(null)
 
   // Debounced cloud sync for current session's messages (300ms)
@@ -151,6 +152,11 @@ export function useChat() {
       const _dateStr = _now.toLocaleDateString('zh-CN', { timeZone: 'Asia/Shanghai', year: 'numeric', month: 'long', day: 'numeric', weekday: 'long' })
       const _timeStr = _now.toLocaleTimeString('zh-CN', { timeZone: 'Asia/Shanghai', hour: '2-digit', minute: '2-digit', hour12: false })
       let builtSystemPrompt = `当前时间：${_dateStr} ${_timeStr}（北京时间）\n\n${effectiveSystemPrompt}\n\n${BEHAVIOR_RULES}`
+      const _pendingNote = pendingNoteRef.current
+      if (_pendingNote) {
+        pendingNoteRef.current = null
+        builtSystemPrompt += '\n\n' + _pendingNote
+      }
       console.log('[STREAM] memoryEnabled=', effectiveMemoryEnabled, '| workerUrl=', workerUrl ? 'set' : 'empty')
       if (effectiveMemoryEnabled && workerUrl) {
         console.log('[STREAM] fetching memories from', workerUrl, '...')
@@ -400,10 +406,14 @@ export function useChat() {
       scheduleMsgSync(CONVERSATION_ID)
       // After natural stream end: if messages were queued during generation, respond to them now
       if (pendingMessagesRef.current.length > 0) {
+        const pendingIds = new Set(pendingMessagesRef.current.map(m => m.id))
         pendingMessagesRef.current = []
         const freshMsgs = useStore.getState().messages
           .filter(m => m.conversationId === CONVERSATION_ID && !m.streaming)
           .sort((a, b) => a.timestamp - b.timestamp)
+          // Prefix pending messages so the model knows they were mid-stream interruptions
+          .map(m => pendingIds.has(m.id) ? { ...m, content: `[插话] ${m.content}` } : m)
+        pendingNoteRef.current = '注意：上下文中内容前带有"[插话]"标记的用户消息，是在你上一轮还在分条输出时插进来的，属于插话而非对你已说完内容的事后回应。如果它们只是催促或附和、或已被你刚才的内容覆盖，不必专门再说一遍，简短自然带过或直接继续即可；如果是新问题或新话题，正常回应。'
         streamResponse(freshMsgs)
       }
     }
