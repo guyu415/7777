@@ -67,6 +67,7 @@ export function useChat() {
   const effectiveMemoryEnabled = currentSession?.memoryEnabled ?? memoryEnabled
 
   const abortRef = useRef(null)
+  const pendingContextRef = useRef(null)
   const msgSyncTimerRef = useRef(null)
 
   // Debounced cloud sync for current session's messages (300ms)
@@ -397,6 +398,12 @@ export function useChat() {
       setIsLoading(false)
       setStreamingMessageId(null)
       scheduleMsgSync(CONVERSATION_ID)
+      // If a message was sent while this stream was running, start the new round now
+      const pending = pendingContextRef.current
+      if (pending) {
+        pendingContextRef.current = null
+        streamResponse(pending)
+      }
     }
   }, [CONVERSATION_ID, effectiveApiKey, effectiveBaseUrl, effectiveModel, effectiveSystemPrompt, effectiveMemoryEnabled, workerUrl, useWorkerProxy, acWorkerUrl, effectiveTtsApiKey, effectiveTtsGroupId, effectiveTtsVoiceId, aiVoiceEnabled, effectiveVoiceFrequency, effectiveDisableThinking, effectiveWebSearch, effectiveProviderName, addMessage, updateMessage, deleteMessage, setIsLoading, setStreamingMessageId, updateSession, scheduleMsgSync])
 
@@ -436,7 +443,9 @@ export function useChat() {
       console.error('[DB] saveMessage failed:', e)
     }
     if (isLoading) {
-      console.log('[API-EXIT] reason=is-loading | 用户消息已入库，等待当前流结束')
+      console.log('[SEND] 插话：中止当前流，新上下文待流结束后触发')
+      pendingContextRef.current = [...messages, userMsg]
+      abortRef.current?.()
       return
     }
     console.log('[SEND] calling streamResponse, history len=', messages.length)
