@@ -408,13 +408,34 @@ export function useChat() {
       if (pendingMessagesRef.current.length > 0) {
         const pendingIds = new Set(pendingMessagesRef.current.map(m => m.id))
         pendingMessagesRef.current = []
-        const freshMsgs = useStore.getState().messages
+
+        const allMsgs = useStore.getState().messages
           .filter(m => m.conversationId === CONVERSATION_ID && !m.streaming)
+
+        // Non-pending: sorted by timestamp (correct conversation order)
+        const nonPending = allMsgs
+          .filter(m => !pendingIds.has(m.id))
           .sort((a, b) => a.timestamp - b.timestamp)
-          // Prefix pending messages so the model knows they were mid-stream interruptions
-          .map(m => pendingIds.has(m.id) ? { ...m, content: `[插话] ${m.content}` } : m)
+
+        // Pending: appended after non-pending, prefixed with [插话]
+        const pending = allMsgs
+          .filter(m => pendingIds.has(m.id))
+          .sort((a, b) => a.timestamp - b.timestamp)
+          .map(m => ({ ...m, content: `[插话] ${m.content}` }))
+
+        // Merge consecutive same-role messages (required by Anthropic API strict alternation)
+        const merged = [...nonPending, ...pending].reduce((acc, m) => {
+          const last = acc[acc.length - 1]
+          if (last && last.role === m.role) {
+            acc[acc.length - 1] = { ...last, content: `${last.content}\n${m.content}` }
+          } else {
+            acc.push(m)
+          }
+          return acc
+        }, [])
+
         pendingNoteRef.current = '注意：上下文中内容前带有"[插话]"标记的用户消息，是在你上一轮还在分条输出时插进来的，属于插话而非对你已说完内容的事后回应。如果它们只是催促或附和、或已被你刚才的内容覆盖，不必专门再说一遍，简短自然带过或直接继续即可；如果是新问题或新话题，正常回应。'
-        streamResponse(freshMsgs)
+        streamResponse(merged)
       }
     }
   }, [CONVERSATION_ID, effectiveApiKey, effectiveBaseUrl, effectiveModel, effectiveSystemPrompt, effectiveMemoryEnabled, workerUrl, useWorkerProxy, acWorkerUrl, effectiveTtsApiKey, effectiveTtsGroupId, effectiveTtsVoiceId, aiVoiceEnabled, effectiveVoiceFrequency, effectiveDisableThinking, effectiveWebSearch, effectiveProviderName, addMessage, updateMessage, deleteMessage, setIsLoading, setStreamingMessageId, updateSession, scheduleMsgSync])
