@@ -42,6 +42,9 @@ export function getLetterById(id) {
 }
 
 // letter: Omit<Letter, 'id'|'createdAt'>
+// NOTE: 历史信件的 characterName/characterAvatar 可能不准（早期错用了 session.aiName，
+// 全部存成了全局默认"小满"）。新写入由调用方传入正确的 session.name / session.aiAvatar；
+// 展示侧也建议按 sessionId 实时查 session，不依赖存量字段。
 export function addLetter(letter) {
   const full = { ...letter, id: genId(), createdAt: Date.now() }
   const all = readAll()

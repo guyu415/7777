@@ -12,7 +12,7 @@ export default function LetterCard({ letterId, letter: inlineLetter }) {
   const openDiary = (e) => {
     e.stopPropagation()
     if (letterId) setDiaryTarget(letterId)
-    setCurrentView('diary')
+    setCurrentView('sessions')
   }
 
   const text = letter.content || ''

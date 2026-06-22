@@ -5,7 +5,6 @@ import ChatWindow from './components/Chat/ChatWindow'
 import GlobalSettings from './components/GlobalSettings'
 import SessionSettings from './components/SessionSettings'
 import SessionList from './components/SessionList'
-import DiaryPage from './components/DiaryPage'
 import BottomNav from './components/BottomNav'
 import LoginPage from './components/LoginPage'
 import { getSettings, saveSettings, extractSettings, saveSessionMsgs, putAsset, getAssetDataUrl, getLetters } from './services/sync'
@@ -351,7 +350,6 @@ export default function App() {
           )}
           {currentView === 'globalSettings' && <GlobalSettings theme={theme} onLogout={handleLogout} onForceSync={handleForceSync} />}
           {currentView === 'sessionSettings' && <SessionSettings theme={theme} />}
-          {currentView === 'diary' && <DiaryPage theme={theme} />}
         </div>
 
         {currentView !== 'sessionSettings' && currentView !== 'chat' && (

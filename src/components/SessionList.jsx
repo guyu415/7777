@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { Plus, Trash2, Edit3, Check } from 'lucide-react'
 import { useStore, deleteMessagesForSession } from '../store'
 import { deleteSessionMsgs } from '../services/sync'
+import DiarySection from './DiarySection'
 
 function relativeTime(ts) {
   if (!ts) return ''
@@ -113,8 +114,9 @@ export default function SessionList({ theme, onSelectSession }) {
         </button>
       </div>
 
-      {/* List */}
-      <div className="flex-1 overflow-y-auto px-3 py-3 space-y-2">
+      {/* List + diary (whole area scrolls; diary has its own inner scroll) */}
+      <div className="flex-1 overflow-y-auto px-3 py-3">
+        <div className="space-y-2">
         {(sessions || []).map(session => {
           const active = session.id === currentSessionId
           return (
@@ -220,6 +222,19 @@ export default function SessionList({ theme, onSelectSession }) {
             </div>
           )
         })}
+        </div>
+
+        {/* Divider */}
+        <div className="flex items-center gap-2 my-3">
+          <div style={{ flex: 1, height: 1, background: 'rgba(180,150,220,0.3)' }} />
+          <span style={{ fontSize: 12, fontWeight: 600, color: '#9a8ab0' }}>📔 日记</span>
+          <div style={{ flex: 1, height: 1, background: 'rgba(180,150,220,0.3)' }} />
+        </div>
+
+        {/* Diary section — fixed height, internal scroll */}
+        <div style={{ height: '42vh' }}>
+          <DiarySection theme={theme} />
+        </div>
       </div>
     </div>
   )

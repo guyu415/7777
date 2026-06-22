@@ -2,7 +2,6 @@ const TABS = [
   { id: 'sessions',       label: '会话', img: '/assets/bunny.png',          fit: 'contain' },
   { id: 'chat',           label: '聊天', img: '/assets/capybara-acorn.png', fit: 'contain' },
   { id: 'globalSettings', label: '设置', img: '/assets/capybara-apple.png', fit: 'contain' },
-  { id: 'diary',          label: '日记', emoji: '📔' }, // 临时占位图标，待替换为胶囊兽
 ]
 
 export default function BottomNav({ currentView, onChange, theme, bare = false }) {
@@ -45,44 +44,20 @@ export default function BottomNav({ currentView, onChange, theme, bare = false }
           >
             {/* Flower wreath IS the tab frame — fills the tab area */}
             <div style={{ position: 'relative', width: 84, height: 84 }}>
-              {tab.emoji ? (
-                <div
-                  style={{
-                    width: '100%', height: '100%',
-                    display: 'flex', alignItems: 'center', justifyContent: 'center',
-                    fontSize: 30,
-                    filter: active
-                      ? `drop-shadow(0 0 7px ${primary}) brightness(1.05)`
-                      : 'opacity(0.42) saturate(0.5)',
-                    transform: active ? 'scale(1.06)' : 'scale(1)',
-                    transition: 'all 0.3s ease',
-                  }}
-                >
-                  <div style={{
-                    width: 58, height: 58, borderRadius: '46% 54% 52% 48% / 50% 48% 52% 50%',
-                    display: 'flex', alignItems: 'center', justifyContent: 'center',
-                    background: active ? `${primary}22` : 'rgba(180,200,220,0.18)',
-                    border: active ? `1.5px solid ${primary}66` : '1.5px solid rgba(200,220,255,0.3)',
-                  }}>
-                    <span style={{ marginTop: -6 }}>{tab.emoji}</span>
-                  </div>
-                </div>
-              ) : (
-                <img
-                  src={tab.img}
-                  alt={tab.label}
-                  style={{
-                    width: '100%',
-                    height: '100%',
-                    objectFit: tab.fit || 'cover',
-                    filter: active
-                      ? `drop-shadow(0 0 7px ${primary}) drop-shadow(0 0 16px ${primary}aa) brightness(1.12)`
-                      : 'opacity(0.42) saturate(0.5)',
-                    transform: active ? 'scale(1.06)' : 'scale(1)',
-                    transition: 'all 0.3s ease',
-                  }}
-                />
-              )}
+              <img
+                src={tab.img}
+                alt={tab.label}
+                style={{
+                  width: '100%',
+                  height: '100%',
+                  objectFit: tab.fit || 'cover',
+                  filter: active
+                    ? `drop-shadow(0 0 7px ${primary}) drop-shadow(0 0 16px ${primary}aa) brightness(1.12)`
+                    : 'opacity(0.42) saturate(0.5)',
+                  transform: active ? 'scale(1.06)' : 'scale(1)',
+                  transition: 'all 0.3s ease',
+                }}
+              />
               <span
                 style={{
                   position: 'absolute',
