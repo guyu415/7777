@@ -16,9 +16,9 @@ const BEHAVIOR_RULES = `【关于你的存在】
 import { fetchTTSAudio } from '../services/tts'
 import { getSessionMsgs, saveSessionMsgs } from '../services/sync'
 
-const CTX_KEEP    = 40  // 保留最近 N 条原文
-const CTX_TRIGGER = 75  // 超过 M 条时触发总结
-const CTX_BATCH   = 35  // 每次压缩最旧的 B 条（触发后原文回落到 CTX_KEEP）
+const CTX_KEEP    = 80  // 保留最近 N 条原文
+const CTX_TRIGGER = 150  // 超过 M 条时触发总结
+const CTX_BATCH   = 70  // 每次压缩最旧的 B 条（触发后原文回落到 CTX_KEEP）
 
 const AC_TAG_RE = /\[AC:([^\]]+)\]/
 const VOICE_TAG_RE = /\[VOICE\]([\s\S]*?)\[\/VOICE\]/
