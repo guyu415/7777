@@ -437,7 +437,8 @@ export function useChat() {
             if (!sess || !dsApiKey) return
             const summarizedCount = sess.summarizedCount || 0
             const batchEnd = contextMessages.length - CTX_KEEP
-            if (batchEnd <= summarizedCount) return
+            const newSinceLastSummary = batchEnd - summarizedCount
+            if (newSinceLastSummary < CTX_BATCH) return
             const batchMsgs = contextMessages.slice(summarizedCount, batchEnd)
             if (!batchMsgs.length) return
             setSummaryToast('正在整理早期对话记忆…')

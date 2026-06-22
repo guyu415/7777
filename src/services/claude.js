@@ -92,28 +92,24 @@ export async function generateSummary({ existingSummary, newMessages, apiKey }) 
     return `${role}：${text}`
   }).join('\n')
 
-  let prompt
-  if (existingSummary) {
-    prompt = `下面有【已有的历史摘要】和【最近新增的对话】。请在完整保留已有摘要信息的基础上，把新增对话中值得记住的内容补充进去，输出更新后的完整摘要。
+  const wrappedMsgText = `<待摘要对话>\n${msgText}\n</待摘要对话>`
 
-要求：
-- 已有摘要里的信息要尽量完整保留，不要删减或重新压缩（除非与新内容明显重复或矛盾，才做合并/更正）。
-- 新增内容自然追加融入，不要另起一段单独列出。
-- 只在整体明显冗长时才做适度精简，默认倾向保留而非压缩。
-- 保留对后续对话连贯性重要的信息：人物关系、约定、正在进行的话题、情感基调等。
-- 输出纯摘要文本，无需说明"已更新"或其他元描述。
+  const systemPrompt = `你是一个对话摘要器。你将收到 <待摘要对话> 标签包裹的一段用户与 AI 角色"小满"的历史对话。
 
-【已有摘要】
-${existingSummary}
+你的任务是产出一段**第三人称叙述体的概括**，让后续读到这段摘要的人能快速了解这批对话发生了什么。
 
-【最近新增对话】
-${msgText}`
-  } else {
-    prompt = `请阅读以下对话，提取对后续聊天连贯性重要的信息（人物关系、约定、正在进行的话题、情感基调等），整理成一段事实性摘要。输出纯摘要文本，无需多余说明。
+严格要求：
+1. 禁止逐条复述。禁止出现"小雁说xxx"、"AI说xxx"这种对话格式。摘要里不应该出现冒号开头的发言记录。
+2. 用连贯段落写，按话题归并，而不是按时间线流水账。如果这批对话涉及多个话题，每个话题用 1-2 句概括即可。
+3. 重点保留：用户透露的关键事实（身份、偏好、近况、计划、人际关系等）、双方达成的共识或约定、未解决的事情、悬而未决的话题、情绪走向上的重要节点（如果有）。
+4. 可以省略：寒暄、重复确认、纯情绪互动里的具体措辞、小满的人设台词风格本身。
+5. 长度：原文每 35 条对话压缩成 150-300 字的概括段落。宁可短而精，不要逐句翻译。
 
-【对话内容】
-${msgText}`
-  }
+输出：直接给出摘要段落本身，不要加"以下是摘要"之类的开场白，不要用 markdown 标题，不要分点列表，就是一段或几段连续的中文叙述。`
+
+  const userContent = existingSummary
+    ? `【已有摘要（请在保留此摘要全部信息的基础上，将下方新对话内容补充进去，整体输出更新后的完整摘要）】\n${existingSummary}\n\n${wrappedMsgText}`
+    : wrappedMsgText
 
   const resp = await fetch('https://api.deepseek.com/v1/chat/completions', {
     method: 'POST',
@@ -122,7 +118,7 @@ ${msgText}`
       model: 'deepseek-v4-flash',
       max_tokens: 1024,
       stream: false,
-      messages: [{ role: 'user', content: prompt }],
+      messages: [{ role: 'system', content: systemPrompt }, { role: 'user', content: userContent }],
     }),
   })
   if (!resp.ok) throw new Error(`DeepSeek summary error ${resp.status}`)
