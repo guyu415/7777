@@ -186,12 +186,10 @@ export async function* streamChat({ apiKey, apiBaseUrl = 'https://api.anthropic.
   const reader = response.body.getReader()
   const decoder = new TextDecoder()
   let buffer = ''
-  const _wr = { finishReasons: new Set(), toolCallsSeen: false, searchFields: [] }
+  const _wr = { finishReasons: new Set() }
   const _logWR = () => console.log(
-    '[WEB-RESP] 供应商=', providerName || '(未设置)',
+    '[WEB-RESP] 响应已返回 | 供应商=', providerName || '(未设置)',
     '| finish_reason=', [..._wr.finishReasons].join(',') || '(未见)',
-    '| 联网相关字段=', _wr.searchFields.join(',') || '无',
-    '| tool_calls=', _wr.toolCallsSeen ? '有' : '无',
   )
 
   while (true) {
@@ -230,18 +228,13 @@ export async function* streamChat({ apiKey, apiBaseUrl = 'https://api.anthropic.
         // Web search tool_calls — log for debugging, no round-trip needed (server-side tools)
         if (delta?.tool_calls) {
           console.log('[WEB] tool_calls事件:', JSON.stringify(delta.tool_calls))
-          _wr.toolCallsSeen = true
         }
         if (event.choices?.[0]?.finish_reason === 'tool_calls') {
           console.log('[WEB] finish_reason=tool_calls — 等待服务端执行搜索并继续生成')
         }
-        // Accumulate for post-stream [WEB-RESP] summary
+        // Accumulate finish_reason for post-stream [WEB-RESP] summary
         const _fr = event.choices?.[0]?.finish_reason || event.delta?.stop_reason
         if (_fr) _wr.finishReasons.add(_fr)
-        const _evStr = JSON.stringify(event)
-        for (const _f of ['web_search', 'search_result', 'citations', 'tool_use', 'retrieval']) {
-          if (!_wr.searchFields.includes(_f) && _evStr.includes(`"${_f}"`)) _wr.searchFields.push(_f)
-        }
       } catch {
         // ignore parse errors
       }
