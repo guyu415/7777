@@ -220,7 +220,9 @@ export default function DiarySection({ theme }) {
 
       {/* Write panel */}
       <div className="flex-shrink-0 pt-2 mt-1" style={{ borderTop: '1px solid rgba(200,220,255,0.3)' }}>
-        {!canWrite ? null : (
+        {!canWrite ? (
+          <div className="text-center text-xs py-2" style={{ color: '#a0b8d0' }}>选个角色头像，给 ta 写封信 ✿</div>
+        ) : (
           <>
             <div className="flex items-center gap-1 mb-1 overflow-x-auto">
               <span style={{ fontSize: 11, color: '#7a9cc0', flexShrink: 0 }}>心情</span>
