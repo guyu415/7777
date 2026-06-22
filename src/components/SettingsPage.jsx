@@ -540,9 +540,6 @@ export default function SettingsPage({ theme }) {
           </div>
         </GlassCard>
 
-        {/* Summary key — hidden collapsible, no icon, muted style */}
-        <SummaryKeyCard />
-
         {/* Danger */}
         <GlassCard icon="⚠️" title="危险操作">
           <button
@@ -566,10 +563,11 @@ export default function SettingsPage({ theme }) {
       </div>
 
       {/* Save */}
-      <div className="px-4 pb-6 pt-3 safe-bottom">
+      <div className="px-4 pb-6 pt-3 safe-bottom" style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+        <SummaryKeyButton />
         <button
           onClick={handleSave}
-          className="w-full py-3 rounded-full font-semibold text-sm text-white transition-all duration-300"
+          className="flex-1 py-3 rounded-full font-semibold text-sm text-white transition-all duration-300"
           style={saved ? {
             background: 'linear-gradient(135deg, #6dcf90, #4db875)',
             boxShadow: '0 6px 20px rgba(100,200,130,0.4)',
@@ -585,36 +583,63 @@ export default function SettingsPage({ theme }) {
   )
 }
 
-function SummaryKeyCard() {
+function SummaryKeyButton() {
   const [open, setOpen] = useState(false)
   const [val, setVal] = useState(() => localStorage.getItem('summary.deepseek.key') || '')
   const [saved, setSaved] = useState(false)
+  const hasKey = !!localStorage.getItem('summary.deepseek.key')
   return (
-    <div style={{ borderRadius: 14, background: 'rgba(255,255,255,0.25)', border: '1px solid rgba(200,220,240,0.2)', overflow: 'hidden' }}>
+    <>
       <button
-        onClick={() => setOpen(v => !v)}
-        style={{ width: '100%', textAlign: 'left', padding: '8px 16px', background: 'none', border: 'none', cursor: 'pointer', color: '#aabbd0', fontSize: 12 }}
+        onClick={() => { setOpen(true); setSaved(false) }}
+        title="摘要配置"
+        style={{
+          flexShrink: 0,
+          width: 46, height: 46, borderRadius: '50%', border: 'none', cursor: 'pointer',
+          background: hasKey ? 'linear-gradient(135deg, #7ab4f0, #4a90d0)' : 'rgba(180,200,220,0.35)',
+          boxShadow: hasKey ? '0 4px 12px rgba(74,144,208,0.35)' : 'none',
+          fontSize: 18, display: 'flex', alignItems: 'center', justifyContent: 'center',
+        }}
       >
-        {open ? '▾' : '▸'} 摘要配置
+        🔑
       </button>
       {open && (
-        <div style={{ padding: '0 16px 12px', display: 'flex', gap: 8 }}>
-          <input
-            type="password"
-            value={val}
-            onChange={e => { setVal(e.target.value); setSaved(false) }}
-            placeholder="DeepSeek API Key（仅存本地）"
-            style={{ flex: 1, background: 'rgba(255,255,255,0.6)', border: '1px solid rgba(200,220,255,0.4)', borderRadius: 10, padding: '7px 12px', fontSize: 13, color: '#2c5282', outline: 'none' }}
-          />
-          <button
-            onClick={() => { localStorage.setItem('summary.deepseek.key', val.trim()); setSaved(true) }}
-            style={{ padding: '7px 14px', borderRadius: 10, border: 'none', cursor: 'pointer', background: saved ? '#6dcf90' : '#7ab4f0', color: '#fff', fontSize: 12, fontWeight: 600 }}
+        <div
+          onClick={() => setOpen(false)}
+          style={{ position: 'fixed', inset: 0, zIndex: 100, background: 'rgba(0,0,0,0.35)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+        >
+          <div
+            onClick={e => e.stopPropagation()}
+            style={{ background: 'rgba(240,246,255,0.97)', backdropFilter: 'blur(20px)', borderRadius: 20, padding: '24px 20px', width: 300, boxShadow: '0 8px 32px rgba(80,120,180,0.25)' }}
           >
-            {saved ? '已保存' : '保存'}
-          </button>
+            <p style={{ fontSize: 15, fontWeight: 600, color: '#2c5282', marginBottom: 6 }}>摘要 API 配置</p>
+            <p style={{ fontSize: 12, color: '#7a9cc0', marginBottom: 14 }}>仅存本地，不同步云端，用于长对话自动摘要。</p>
+            <input
+              type="password"
+              value={val}
+              autoFocus
+              onChange={e => { setVal(e.target.value); setSaved(false) }}
+              placeholder="DeepSeek API Key"
+              style={{ width: '100%', background: 'rgba(255,255,255,0.8)', border: '1px solid rgba(120,160,220,0.4)', borderRadius: 12, padding: '10px 14px', fontSize: 14, color: '#2c5282', outline: 'none', boxSizing: 'border-box' }}
+            />
+            <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
+              <button
+                onClick={() => setOpen(false)}
+                style={{ flex: 1, padding: '9px 0', borderRadius: 12, border: '1px solid rgba(120,160,220,0.3)', background: 'none', color: '#7a9cc0', fontSize: 13, cursor: 'pointer' }}
+              >
+                取消
+              </button>
+              <button
+                onClick={() => { localStorage.setItem('summary.deepseek.key', val.trim()); setSaved(true); setTimeout(() => setOpen(false), 600) }}
+                style={{ flex: 2, padding: '9px 0', borderRadius: 12, border: 'none', cursor: 'pointer', background: saved ? 'linear-gradient(135deg, #6dcf90, #4db875)' : 'linear-gradient(135deg, #7ab4f0, #4a90d0)', color: '#fff', fontSize: 13, fontWeight: 600 }}
+              >
+                {saved ? '已保存 ✓' : '保存'}
+              </button>
+            </div>
+          </div>
         </div>
       )}
-    </div>
+    </>
   )
 }
 
