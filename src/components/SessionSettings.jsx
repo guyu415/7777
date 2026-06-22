@@ -1,7 +1,8 @@
 import { useState, useEffect, useRef } from 'react'
-import { ChevronLeft, Eye, EyeOff } from 'lucide-react'
+import { ChevronLeft, Eye, EyeOff, RefreshCw } from 'lucide-react'
 import { useStore, getMessages } from '../store'
 import { putAsset } from '../services/sync'
+import { fetchModels } from '../services/claude'
 
 const inputStyle = {
   width: '100%',
@@ -67,6 +68,9 @@ export default function SessionSettings({ theme }) {
   const [localBaseUrl, setLocalBaseUrl] = useState('')
   const [localProviderName, setLocalProviderName] = useState('')
   const [localModel, setLocalModel] = useState('')
+  const [fetchingModels, setFetchingModels] = useState(false)
+  const [fetchedModels, setFetchedModels] = useState([])
+  const [fetchModelError, setFetchModelError] = useState(null)
   const [localTtsApiKey, setLocalTtsApiKey] = useState('')
   const [localTtsGroupId, setLocalTtsGroupId] = useState('')
   const [localTtsVoiceId, setLocalTtsVoiceId] = useState('')
@@ -492,7 +496,34 @@ export default function SessionSettings({ theme }) {
               </div>
             </div>
             <div>
-              <label className="text-xs pl-1 mb-1 block" style={{ color: '#6a90b8' }}>模型</label>
+              <div className="flex items-center justify-between pl-1 mb-1">
+                <label className="text-xs" style={{ color: '#6a90b8' }}>模型</label>
+                <button
+                  onClick={async () => {
+                    setFetchingModels(true)
+                    setFetchModelError(null)
+                    setFetchedModels([])
+                    try {
+                      const models = await fetchModels({ baseUrl: localBaseUrl, apiKey: localApiKey })
+                      setFetchedModels(models)
+                    } catch (e) {
+                      setFetchModelError(e.message)
+                    } finally {
+                      setFetchingModels(false)
+                    }
+                  }}
+                  disabled={fetchingModels}
+                  className="flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-medium text-white"
+                  style={{
+                    background: fetchingModels ? 'rgba(120,160,220,0.4)' : 'linear-gradient(135deg, #7ab4f0, #4a90d0)',
+                    boxShadow: fetchingModels ? 'none' : '0 2px 6px rgba(74,144,208,0.35)',
+                    border: 'none', cursor: fetchingModels ? 'default' : 'pointer',
+                  }}
+                >
+                  <RefreshCw size={10} className={fetchingModels ? 'animate-spin' : ''} />
+                  获取
+                </button>
+              </div>
               <input
                 value={localModel}
                 onChange={e => setLocalModel(e.target.value)}
@@ -500,6 +531,31 @@ export default function SessionSettings({ theme }) {
                 placeholder="claude-sonnet-4-6"
                 style={inputStyle}
               />
+              {fetchModelError && (
+                <p className="text-[11px] pl-1 mt-1" style={{ color: '#e07070' }}>{fetchModelError}</p>
+              )}
+              {fetchedModels.length > 0 && (
+                <div className="flex flex-wrap gap-1.5 mt-2">
+                  {fetchedModels.map(m => (
+                    <button
+                      key={m}
+                      onClick={() => { setLocalModel(m); setSessionModel(currentSessionId, m) }}
+                      className="px-2.5 py-1 rounded-full text-xs font-medium transition-all"
+                      style={localModel === m ? {
+                        background: 'linear-gradient(135deg, #7ab4f0, #4a90d0)',
+                        color: '#fff', border: 'none',
+                        boxShadow: '0 2px 6px rgba(74,144,208,0.35)',
+                      } : {
+                        background: 'rgba(255,255,255,0.5)',
+                        color: '#4a7aaa',
+                        border: '1px solid rgba(120,160,220,0.35)',
+                      }}
+                    >
+                      {m}
+                    </button>
+                  ))}
+                </div>
+              )}
             </div>
             {/* Disable thinking toggle */}
             <div className="flex items-center justify-between pt-1">
