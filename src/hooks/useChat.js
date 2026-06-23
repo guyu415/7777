@@ -470,6 +470,17 @@ export function useChat() {
             if (!batchMsgs.length) return
             setSummaryToast('正在整理早期对话记忆…')
             setTimeout(() => useStore.getState().setSummaryToast(null), 3000)
+            console.log('[summary debug]', {
+              trigger_reason: 'finally after streamResponse',
+              session_id: CONVERSATION_ID,
+              contextMessages_total: contextMessages.length,
+              summarizedCount,
+              batchEnd,
+              newSinceLastSummary,
+              batchMsgs_count: batchMsgs.length,
+              input_chars: batchMsgs.reduce((acc, m) => acc + (typeof m.content === 'string' ? m.content.length : 0), 0),
+              existingSummary_len: (sess.summary || '').length,
+            })
             const newSummary = await generateSummary({ existingSummary: sess.summary || null, newMessages: batchMsgs, apiKey: dsApiKey })
             updateSession(CONVERSATION_ID, { summary: newSummary, summarizedCount: batchEnd })
           } catch (e) {

@@ -111,6 +111,12 @@ export async function generateSummary({ existingSummary, newMessages, apiKey }) 
     ? `【已有摘要（请在保留此摘要全部信息的基础上，将下方新对话内容补充进去，整体输出更新后的完整摘要）】\n${existingSummary}\n\n${wrappedMsgText}`
     : wrappedMsgText
 
+  const apiMessages = [{ role: 'system', content: systemPrompt }, { role: 'user', content: userContent }]
+  console.log('[summary api]', {
+    model: 'deepseek-v4-flash',
+    msg_count: apiMessages.length,
+    total_input_chars: JSON.stringify(apiMessages).length,
+  })
   const resp = await fetch('https://api.deepseek.com/v1/chat/completions', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
@@ -118,7 +124,7 @@ export async function generateSummary({ existingSummary, newMessages, apiKey }) 
       model: 'deepseek-v4-flash',
       max_tokens: 1024,
       stream: false,
-      messages: [{ role: 'system', content: systemPrompt }, { role: 'user', content: userContent }],
+      messages: apiMessages,
     }),
   })
   if (!resp.ok) throw new Error(`DeepSeek summary error ${resp.status}`)
