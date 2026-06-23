@@ -36,7 +36,10 @@ const CTX_TRIGGER = 150  // 超过 M 条时触发总结
 const CTX_BATCH   = 70  // 每次压缩最旧的 B 条（触发后原文回落到 CTX_KEEP）
 
 const AC_TAG_RE = /\[AC:([^\]]+)\]/
-const VOICE_TAG_RE = /\[VOICE\]([\s\S]*?)\[\/VOICE\]/
+// Tokenization: split content on [VOICE]…[/VOICE] boundaries (capturing + global),
+// then test/extract each segment. VOICE_ONE_RE matches a single voice token.
+const VOICE_SPLIT_RE = /(\[VOICE\][\s\S]*?\[\/VOICE\])/g
+const VOICE_ONE_RE = /^\[VOICE\]([\s\S]*?)\[\/VOICE\]$/
 const SPLIT_RE = /\[SPLIT\]/g
 const LETTER_RE = /\[LETTER\s+mood=(\S+?)\s+weather=(\S+?)\s+date=(\S+?)\]([\s\S]*?)\[\/LETTER\]/g
 
@@ -49,6 +52,26 @@ function stripDisplayTags(content) {
 
 function genId() {
   return Date.now().toString(36) + Math.random().toString(36).slice(2)
+}
+
+// Split content into an ordered token list, preserving original order of voice
+// and text. Voice tokens carry their inner text; text tokens are further split
+// into paragraph parts ([SPLIT] and \n\n+ both act as paragraph breaks).
+// LETTER placeholders ({{LETTER_CARD:id}}) ride inside text parts untouched.
+function tokenizeContent(content) {
+  const tokens = []
+  for (const seg of content.split(VOICE_SPLIT_RE)) {
+    if (!seg) continue
+    const v = seg.match(VOICE_ONE_RE)
+    if (v) {
+      const text = v[1].trim()
+      if (text) tokens.push({ type: 'voice', text })
+    } else {
+      const parts = seg.replace(SPLIT_RE, '\n\n').split(/\n\n+/).map(p => p.trim()).filter(Boolean)
+      for (const p of parts) tokens.push({ type: 'text', content: p })
+    }
+  }
+  return tokens
 }
 
 export function useChat() {
@@ -320,135 +343,95 @@ export function useChat() {
           : `[✗ 空调指令执行失败：${acStatus.error || '未知错误'}]`)
         : ''
 
-      const voiceMatch = fullContent.match(VOICE_TAG_RE)
-      console.log('[VOICE] voiceMatch=', !!voiceMatch, '| effectiveTtsApiKey长度=', effectiveTtsApiKey?.length ?? 0, '| effectiveTtsGroupId=', effectiveTtsGroupId || '(空)', '| aiVoiceEnabled=', aiVoiceEnabled)
+      // AC tag already executed above — strip it from displayed content.
+      const cleanContent = fullContent.replace(AC_TAG_RE, '').trim()
 
       const prob = effectiveVoiceFrequency  // 0=从不 0.3=偶尔 0.7=经常 1.0=总是
       const rand = Math.random()
       const shouldVoice = rand < prob
-      if (voiceMatch) {
-        console.log('[VOICE FREQ] 频率档=', effectiveVoiceFrequency, '对应概率=', prob, '本次随机=', rand.toFixed(3), '是否发语音=', shouldVoice)
+      const hasVoice = cleanContent.includes('[VOICE]')
+      const doVoice = hasVoice && effectiveTtsApiKey && effectiveTtsGroupId && aiVoiceEnabled && shouldVoice
+      if (hasVoice) {
+        console.log('[VOICE FREQ] 频率档=', effectiveVoiceFrequency, '对应概率=', prob, '本次随机=', rand.toFixed(3), '是否发语音=', shouldVoice, '| 实际合成=', doVoice)
       }
 
-      if (voiceMatch && effectiveTtsApiKey && effectiveTtsGroupId && aiVoiceEnabled && shouldVoice) {
-        const voiceText = voiceMatch[1].trim()
-        console.log('[VOICE] 检测到VOICE标记，准备合成，文本=', voiceText.slice(0, 80))
-        const surroundText = fullContent.replace(VOICE_TAG_RE, '').replace(AC_TAG_RE, '').trim()
-        const textParts = surroundText.split(/\n\n+/).map(p => p.trim()).filter(Boolean)
+      // Tokenize into ordered segments (text + voice), preserving original order.
+      // When voice is disabled this turn, voice tokens degrade to plain text so the
+      // words still show (preserves "frequency=off / 无TTS密钥 → 显示文字").
+      let tokens = tokenizeContent(cleanContent)
+      if (!doVoice) tokens = tokens.map(t => t.type === 'voice' ? { type: 'text', content: t.text } : t)
+      if (tokens.length === 0) tokens = [{ type: 'text', content: cleanContent }]
 
-        if (textParts.length > 0) {
-          // First text part → reuse the streaming bubble
-          updateMessage(assistantId, { content: textParts[0], streaming: false })
-          await saveMessage({ ...assistantMsg, content: textParts[0], streaming: false })
+      let lastTextIdx = -1
+      tokens.forEach((t, i) => { if (t.type === 'text') lastTextIdx = i })
+      const lastIdx = tokens.length - 1
 
-          // Additional text parts with delay
-          for (let i = 1; i < textParts.length; i++) {
-            await new Promise(r => setTimeout(r, 300))
-            const partMsg = {
-              id: genId(), conversationId: CONVERSATION_ID, role: 'assistant',
-              type: 'text', content: textParts[i], timestamp: Date.now(), streaming: false,
-            }
+      const voicePlaceholders = []  // { id, text } in render order
+      let placed = 0
+      let lastPreview = ''
+
+      // Pass 1 — place all bubbles in order (text immediately; voice as loading placeholder)
+      for (let i = 0; i < tokens.length; i++) {
+        const tk = tokens[i]
+        const isLastToken = i === lastIdx
+        const attachAc = isLastToken && acStatus ? { acStatus } : {}
+        if (i > 0) await new Promise(r => setTimeout(r, 300))
+
+        if (tk.type === 'voice') {
+          const id = placed === 0 ? assistantId : genId()
+          if (placed === 0) {
+            updateMessage(assistantId, { content: '', voiceLoading: true, streaming: false, ...attachAc })
+          } else {
+            addMessage({ id, conversationId: CONVERSATION_ID, role: 'assistant', type: 'text', content: '', timestamp: Date.now(), streaming: false, voiceLoading: true, ...attachAc })
+          }
+          voicePlaceholders.push({ id, text: tk.text })
+          lastPreview = tk.text
+        } else {
+          let content = tk.content
+          if (i === lastTextIdx && acNote) content = `${content}\n${acNote}`
+          if (placed === 0) {
+            updateMessage(assistantId, { content, streaming: false, ...attachAc })
+            await saveMessage({ ...assistantMsg, content, streaming: false, ...attachAc })
+          } else {
+            const partMsg = { id: genId(), conversationId: CONVERSATION_ID, role: 'assistant', type: 'text', content, timestamp: Date.now(), streaming: false, ...attachAc }
             addMessage(partMsg)
             await saveMessage(partMsg)
           }
+          lastPreview = tk.content
+        }
+        placed++
+      }
 
-          // Delay before voice bubble
-          await new Promise(r => setTimeout(r, 300))
+      updateSession(CONVERSATION_ID, { lastMsgPreview: (lastPreview || '').slice(0, 40), lastMsgTime: Date.now() })
 
-          // Voice as a separate new bubble
-          const voiceMsgId = genId()
-          const voiceMsgBase = {
-            id: voiceMsgId, conversationId: CONVERSATION_ID, role: 'assistant',
-            type: 'text', content: '', timestamp: Date.now(), streaming: false, voiceLoading: true,
-          }
-          addMessage(voiceMsgBase)
-
-          let voiceBlobId = null, duration = 0
+      // Pass 2 — serial TTS: one voice finishes before the next fires. A single
+      // failure degrades that placeholder to a text bubble (🔇 marker) and does
+      // not block the rest.
+      for (const vp of voicePlaceholders) {
+        console.log('[VOICE] 合成开始，文本=', vp.text.slice(0, 80))
+        let voiceBlobId = null, duration = 0
+        try {
+          const blob = await fetchTTSAudio(vp.text, { apiKey: effectiveTtsApiKey, groupId: effectiveTtsGroupId, voiceId: effectiveTtsVoiceId || 'English_Trustworthy_Man', model: effectiveTtsModel })
           try {
-            const blob = await fetchTTSAudio(voiceText, { apiKey: effectiveTtsApiKey, groupId: effectiveTtsGroupId, voiceId: effectiveTtsVoiceId || 'English_Trustworthy_Man', model: effectiveTtsModel })
-            try {
-              const ab = await blob.arrayBuffer()
-              const ac = new AudioContext()
-              const decoded = await ac.decodeAudioData(ab)
-              duration = Math.round(decoded.duration)
-              ac.close()
-            } catch {}
-            voiceBlobId = genId()
-            await saveBlob(voiceBlobId, blob)
-            console.log('[VOICE] 音频生成成功，准备渲染气泡 voiceBlobId=', voiceBlobId, 'duration=', duration)
-          } catch (e) {
-            console.error('[TTS] 合成失败 name=', e?.name, 'message=', e?.message)
-          }
-
-          const voiceUpdates = voiceBlobId
-            ? { type: 'voice', voiceBlobId, duration, content: '', voiceText, voiceLoading: false, streaming: false, ...(acStatus ? { acStatus } : {}) }
-            : { content: voiceText, voiceLoading: false, streaming: false, type: 'text', ...(acStatus ? { acStatus } : {}) }
-          updateMessage(voiceMsgId, voiceUpdates)
-          await saveMessage({ ...voiceMsgBase, ...voiceUpdates })
-          updateSession(CONVERSATION_ID, { lastMsgPreview: voiceText.slice(0, 40), lastMsgTime: Date.now() })
-
-        } else {
-          // No surrounding text — voice replaces the streaming bubble
-          updateMessage(assistantId, { streaming: false, voiceLoading: true, content: '' })
-
-          let voiceBlobId = null, duration = 0
-          try {
-            const blob = await fetchTTSAudio(voiceText, { apiKey: effectiveTtsApiKey, groupId: effectiveTtsGroupId, voiceId: effectiveTtsVoiceId || 'English_Trustworthy_Man', model: effectiveTtsModel })
-            try {
-              const ab = await blob.arrayBuffer()
-              const ac = new AudioContext()
-              const decoded = await ac.decodeAudioData(ab)
-              duration = Math.round(decoded.duration)
-              ac.close()
-            } catch {}
-            voiceBlobId = genId()
-            await saveBlob(voiceBlobId, blob)
-            console.log('[VOICE] 音频生成成功（无文字模式），准备渲染气泡 voiceBlobId=', voiceBlobId, 'duration=', duration)
-          } catch (e) {
-            console.error('[TTS] 合成失败 name=', e?.name, 'message=', e?.message)
-          }
-
-          const updates = voiceBlobId
-            ? { type: 'voice', voiceBlobId, duration, content: '', voiceText, voiceLoading: false, streaming: false, ...(acStatus ? { acStatus } : {}) }
-            : { content: voiceText, voiceLoading: false, streaming: false, type: 'text', ...(acStatus ? { acStatus } : {}) }
-          updateMessage(assistantId, updates)
-          await saveMessage({ ...assistantMsg, ...updates })
-          updateSession(CONVERSATION_ID, { lastMsgPreview: voiceText.slice(0, 40), lastMsgTime: Date.now() })
+            const ab = await blob.arrayBuffer()
+            const ac = new AudioContext()
+            const decoded = await ac.decodeAudioData(ab)
+            duration = Math.round(decoded.duration)
+            ac.close()
+          } catch {}
+          voiceBlobId = genId()
+          await saveBlob(voiceBlobId, blob)
+          console.log('[VOICE] 音频生成成功 voiceBlobId=', voiceBlobId, 'duration=', duration)
+        } catch (e) {
+          console.error('[TTS] 合成失败 name=', e?.name, 'message=', e?.message)
         }
 
-      } else {
-        // Text-only: auto-split by paragraph breaks (also treat [SPLIT] as paragraph break)
-        const displayContent = fullContent.replace(AC_TAG_RE, '').replace(VOICE_TAG_RE, '$1').trim()
-        const splitContent = displayContent.replace(SPLIT_RE, '\n\n')
-        const parts = splitContent.split(/\n\n+/).map(p => p.trim()).filter(Boolean)
-
-        if (parts.length > 1) {
-          updateMessage(assistantId, { content: parts[0], streaming: false })
-          await saveMessage({ ...assistantMsg, content: parts[0], streaming: false })
-
-          for (let i = 1; i < parts.length; i++) {
-            await new Promise(r => setTimeout(r, 300))
-            const isLast = i === parts.length - 1
-            const partMsg = {
-              id: genId(), conversationId: CONVERSATION_ID, role: 'assistant',
-              type: 'text', content: isLast && acNote ? `${parts[i]}\n${acNote}` : parts[i], timestamp: Date.now(), streaming: false,
-              ...(isLast && acStatus ? { acStatus } : {}),
-            }
-            addMessage(partMsg)
-            await saveMessage(partMsg)
-          }
-
-          updateSession(CONVERSATION_ID, {
-            lastMsgPreview: parts[parts.length - 1].slice(0, 40),
-            lastMsgTime: Date.now(),
-          })
-        } else {
-          const content = parts[0] || displayContent
-          const contentWithNote = acNote ? `${content}\n${acNote}` : content
-          updateMessage(assistantId, { content: contentWithNote, streaming: false, ...(acStatus ? { acStatus } : {}) })
-          await saveMessage({ ...assistantMsg, content: contentWithNote, streaming: false, ...(acStatus ? { acStatus } : {}) })
-          updateSession(CONVERSATION_ID, { lastMsgPreview: content.slice(0, 40), lastMsgTime: Date.now() })
-        }
+        const base = useStore.getState().messages.find(m => m.id === vp.id)
+        const updates = voiceBlobId
+          ? { type: 'voice', voiceBlobId, duration, content: '', voiceText: vp.text, voiceLoading: false }
+          : { type: 'text', content: vp.text, voiceText: vp.text, voiceFailed: true, voiceLoading: false }
+        updateMessage(vp.id, updates)
+        if (base) await saveMessage({ ...base, ...updates })
       }
 
     } catch (err) {

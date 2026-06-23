@@ -263,6 +263,9 @@ function MessageBubble({ message, onLongPress, onRegenerate, onRegenerateRound, 
             {message.edited && !message.streaming && (
               <span style={{ display: 'block', marginTop: 2, fontSize: 10, opacity: 0.5, textAlign: isUser ? 'right' : 'left' }}>已编辑</span>
             )}
+            {message.voiceFailed && (
+              <span style={{ display: 'block', marginTop: 4, fontSize: 11, opacity: 0.6 }}>🔇 语音生成失败</span>
+            )}
           </div>
         )}
 
