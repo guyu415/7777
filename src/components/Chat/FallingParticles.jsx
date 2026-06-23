@@ -50,6 +50,7 @@ export default function FallingParticles() {
   const [falling, setFalling] = useState(() => Array.from({ length: COUNT }, () => makeFalling(true)))
   const [landed, setLanded] = useState([]) // { id, src, left, size, rotate, row, fading }
   const shiftingRef = useRef(false)
+  const shiftTimerRef = useRef(null)
   const widthRef = useRef(360)
 
   // Measure the layer so falls land exactly above the input and rows sit at the bottom.
@@ -71,16 +72,25 @@ export default function FallingParticles() {
   // so the airborne count stays constant (DOM-stable over time).
   const onLand = useCallback((p) => {
     setLanded(prev => {
-      const topRow = prev.reduce((m, x) => Math.max(m, x.row), 0)
-      const rowParts = prev.filter(x => x.row === topRow && !x.fading)
-      const full = coverage(rowParts, widthRef.current) >= COVER_FULL
-      const targetRow = prev.length && full ? topRow + 1 : topRow
+      // Only two logical layers (0 = on the input, 1 = above it).
+      const shifting = prev.some(p => p.fading)
+      let targetRow
+      if (shifting) {
+        // row 0 is fading out; land on the surviving layer (becomes row 0 after the shift)
+        targetRow = 1
+      } else {
+        const row0 = prev.filter(p => p.row === 0)
+        targetRow = coverage(row0, widthRef.current) >= COVER_FULL ? 1 : 0
+      }
       return [...prev, { id: p.id, src: p.src, left: p.left, size: p.size, rotate: p.rotate, row: targetRow, fading: false }]
     })
     setFalling(prev => [...prev.filter(x => x.id !== p.id), makeFalling(false)])
   }, [])
 
   // When a second row begins, fade row-0 out (800ms) then drop everyone down a row.
+  // The timer lives in a ref — NOT in this effect's cleanup — because `landed`
+  // changes on every landing, and an effect-cleanup clearTimeout would cancel the
+  // pending shift before it fires (rows would never decrement → endless climbing).
   useEffect(() => {
     if (shiftingRef.current) return
     const hasUpper = landed.some(p => p.row >= 1)
@@ -88,15 +98,18 @@ export default function FallingParticles() {
     if (hasUpper && row0Active) {
       shiftingRef.current = true
       setLanded(prev => prev.map(p => p.row === 0 ? { ...p, fading: true } : p))
-      const t = setTimeout(() => {
+      shiftTimerRef.current = setTimeout(() => {
+        // row 0 fully faded → remove it, then everyone drops one row (1 → 0).
         setLanded(prev => prev
           .filter(p => !(p.row === 0 && p.fading))
           .map(p => ({ ...p, row: p.row - 1 })))
         shiftingRef.current = false
       }, FADE_MS)
-      return () => clearTimeout(t)
     }
   }, [landed])
+
+  // Clear the shift timer only on unmount.
+  useEffect(() => () => clearTimeout(shiftTimerRef.current), [])
 
   const fallH = Math.max(120, size.h - ROW_H) // translateY end ≈ just above the stacking rows
 
