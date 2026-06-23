@@ -294,10 +294,6 @@ async function handleMusicProxy(request, env) {
       const qrKey = url.searchParams.get('key') || params.qrKey || ''
       const anonymousToken = env.NCM_ANONYMOUS_TOKEN
         || await env.CHAT_KV.get('ncm:anonymous_token')
-      return Response.json({
-        debug_anonymous_token: anonymousToken ? anonymousToken.substring(0, 10) + '...' : 'NULL',
-        debug_source: env.NCM_ANONYMOUS_TOKEN ? 'env' : 'kv'
-      }, { headers: CORS })
       if (!anonymousToken) {
         return Response.json(
           { error: 'anonymous_token missing — call /music/anonymous-login first' },
