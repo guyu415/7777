@@ -226,16 +226,15 @@ async function handleChatProxy(request) {
 const NCM_BASE = 'https://openapi.music.163.com'
 
 const NCM_DEVICE = {
-  channel: 'xiaoman',
-  deviceId: 'eunoia-web-001',
-  deviceType: 'web',
-  appVer: '1.0.0',
-  os: 'web',
+  deviceType: 'openapi',
+  os: 'ncmcli',
+  appVer: '0.1.6',
+  channel: 'ncmcli',
+  model: 'Linux_x64_cli',
+  brand: 'ncmcli',
   osVer: '1.0',
-  brand: 'eunoia',
-  model: 'browser',
-  clientIp: '127.0.0.1',
-  netStatus: 'wifi',
+  clientIp: '192.0.2.2',
+  deviceId: 'eunoia_web_001',
 }
 
 const NCM_ROUTES = {
