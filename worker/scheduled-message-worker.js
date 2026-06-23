@@ -396,8 +396,9 @@ async function ncmMusicRequest(env, pathname, upstreamPath, params, accessToken)
   } else {
     bizContent = { songId: String(params.songId || '') }
   }
-  const { data } = await ncmRequest(env, upstreamPath, bizContent, { accessToken })
-  return Response.json(data, { headers: CORS })
+  const result = await ncmRequest(env, upstreamPath, bizContent, { accessToken })
+  if (result.__debug) return Response.json(result.__debug, { headers: CORS })
+  return Response.json(result.data, { headers: CORS })
 }
 
 // Assemble common params, sign with RSA_SHA256, forward to NCM open API
@@ -422,6 +423,14 @@ async function ncmRequest(env, path, bizContentObj, { accessToken } = {}) {
     .join('&')
 
   const sign = await rsaSign(env.NCM_PRIVATE_KEY, signBase)
+
+  // DEBUG: expose signBase for /music/search
+  if (path.includes('search')) {
+    const dbgForm = new URLSearchParams()
+    const dbgAll = { ...params, sign }
+    Object.keys(dbgAll).sort().forEach(k => dbgForm.append(k, dbgAll[k]))
+    return { status: 0, data: null, rawText: '', __debug: { signBase, postBody: dbgForm.toString() } }
+  }
 
   // POST with URLSearchParams body (avoids GET URL length limits)
   const formParams = new URLSearchParams()
