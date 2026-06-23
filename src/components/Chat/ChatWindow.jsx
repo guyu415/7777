@@ -38,7 +38,7 @@ function Signature({ text, color, shadow }) {
 }
 
 export default function ChatWindow({ theme }) {
-  const { messages, sendMessage, loadHistory, isLoading, regenerate, regenerateRound, deleteMsg, stopStreaming } = useChat()
+  const { messages, sendMessage, loadHistory, isLoading, regenerate, regenerateRound, deleteMsg, editMessage, stopStreaming } = useChat()
   const { fetchPendingMessages, updateActiveTime } = useScheduledMessages()
   const {
     currentView, setCurrentView, apiKey, aiAvatar: globalAiAvatar, aiName: globalAiName,
@@ -58,6 +58,8 @@ export default function ChatWindow({ theme }) {
   const inputRef = useRef(null)
   const [menuMsg, setMenuMsg] = useState(null)
   const [memoryMsg, setMemoryMsg] = useState(null)
+  const [editMsg, setEditMsg] = useState(null)
+  const [editText, setEditText] = useState('')
   const [toast, setToast] = useState(null)
 
   const selectedProvider = providers?.find(p => p.id === selectedProviderId)
@@ -131,6 +133,20 @@ export default function ChatWindow({ theme }) {
     }
     deleteMessagesFrom(msg.id)
     inputRef.current?.fill(msg.type === 'text' ? msg.content : '')
+  }
+
+  // AI text message: in-place content edit (not the user "撤回重发" flow above)
+  const handleEditAI = (msg) => {
+    setMenuMsg(null)
+    setEditText(msg.content || '')
+    setEditMsg(msg)
+  }
+
+  const handleSaveEditAI = async () => {
+    if (!editMsg) return
+    await editMessage(editMsg.id, editText)
+    setEditMsg(null)
+    showToast('已修改~')
   }
 
   const handleDelete = async (msg) => {
@@ -280,6 +296,15 @@ export default function ChatWindow({ theme }) {
                 ✏️ 编辑
               </button>
             )}
+            {menuMsg.role === 'assistant' && menuMsg.type === 'text' && (
+              <button
+                onClick={() => handleEditAI(menuMsg)}
+                className="w-full flex items-center gap-3 px-5 py-3.5 text-sm hover:bg-pink-50 transition-colors"
+                style={{ color: '#8b5060', borderBottom: '1px solid rgba(255,182,209,0.25)' }}
+              >
+                📝 修改文字
+              </button>
+            )}
             {menuMsg.type === 'text' && menuMsg.content && (
               <button
                 onClick={() => {
@@ -309,6 +334,59 @@ export default function ChatWindow({ theme }) {
             >
               🗑️ 删除
             </button>
+          </div>
+        </div>
+      )}
+
+      {/* AI message in-place edit modal */}
+      {editMsg && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center px-6"
+          style={{ background: 'rgba(0,0,0,0.18)', backdropFilter: 'blur(2px)' }}
+          onClick={() => setEditMsg(null)}
+        >
+          <div
+            className="rounded-2xl overflow-hidden w-full"
+            style={{
+              maxWidth: 420,
+              background: 'rgba(255,255,255,0.97)',
+              backdropFilter: 'blur(20px)',
+              WebkitBackdropFilter: 'blur(20px)',
+              boxShadow: '0 8px 40px rgba(0,0,0,0.18)',
+            }}
+            onClick={e => e.stopPropagation()}
+          >
+            <div className="px-5 pt-4 pb-2 text-sm font-semibold" style={{ color: '#8b5060' }}>📝 修改文字</div>
+            <div className="px-5">
+              <textarea
+                value={editText}
+                onChange={e => setEditText(e.target.value)}
+                rows={5}
+                autoFocus
+                className="w-full rounded-xl px-3 py-2 text-sm outline-none"
+                style={{
+                  background: 'rgba(255,255,255,0.9)',
+                  border: '1px solid rgba(255,182,209,0.5)',
+                  color: '#3a2a30', resize: 'vertical', fontFamily: 'inherit', boxSizing: 'border-box',
+                }}
+              />
+            </div>
+            <div className="flex items-center justify-end gap-2 px-5 py-3">
+              <button
+                onClick={() => setEditMsg(null)}
+                className="px-4 py-2 rounded-full text-sm"
+                style={{ color: '#8b8b8b', background: 'rgba(0,0,0,0.05)' }}
+              >
+                取消
+              </button>
+              <button
+                onClick={handleSaveEditAI}
+                className="px-4 py-2 rounded-full text-sm font-medium text-white"
+                style={{ background: `linear-gradient(135deg, ${primaryColor}, ${primaryDarkColor})` }}
+              >
+                保存
+              </button>
+            </div>
           </div>
         </div>
       )}

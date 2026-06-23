@@ -609,5 +609,20 @@ export function useChat() {
     scheduleMsgSync(CONVERSATION_ID)
   }, [deleteMessage, scheduleMsgSync, CONVERSATION_ID])
 
-  return { messages, sendMessage, loadHistory, isLoading, regenerate, regenerateRound, deleteMsg, stopStreaming }
+  // In-place content edit (text messages). Overwrites content in store + IDB + KV.
+  // Next-turn context reads from store messages, so it auto-reflects the edit.
+  const editMessage = useCallback(async (id, newContent) => {
+    const msg = useStore.getState().messages.find(m => m.id === id)
+    if (!msg) return
+    const updates = { content: newContent, edited: true, editedAt: Date.now() }
+    updateMessage(id, updates)
+    try {
+      await saveMessage({ ...msg, ...updates })
+    } catch (e) {
+      console.error('[EDIT] IDB写入失败:', e)
+    }
+    scheduleMsgSync(CONVERSATION_ID)
+  }, [updateMessage, scheduleMsgSync, CONVERSATION_ID])
+
+  return { messages, sendMessage, loadHistory, isLoading, regenerate, regenerateRound, deleteMsg, editMessage, stopStreaming }
 }

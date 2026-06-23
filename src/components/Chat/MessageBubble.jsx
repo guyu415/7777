@@ -260,6 +260,9 @@ function MessageBubble({ message, onLongPress, onRegenerate, onRegenerateRound, 
               <span className="inline-block w-0.5 h-4 animate-pulse-soft ml-0.5 align-middle"
                 style={{ background: 'rgba(255,255,255,0.7)' }} />
             )}
+            {message.edited && !message.streaming && (
+              <span style={{ display: 'block', marginTop: 2, fontSize: 10, opacity: 0.5, textAlign: isUser ? 'right' : 'left' }}>已编辑</span>
+            )}
           </div>
         )}
 
