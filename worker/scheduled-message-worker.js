@@ -327,6 +327,13 @@ async function handleMusicProxy(request, env) {
     }
 
     // ── Authenticated music routes ──────────────────────────────
+    if (pathname === '/music/search') {
+      return Response.json({
+        has_env_token: !!env.NCM_ACCESS_TOKEN,
+        has_kv_token: !!(await env.CHAT_KV.get('ncm:access_token').catch(() => null)),
+        env_token_preview: env.NCM_ACCESS_TOKEN ? env.NCM_ACCESS_TOKEN.substring(0, 10) + '...' : 'NULL'
+      }, { headers: CORS })
+    }
     const upstreamPath = NCM_MUSIC_ROUTES[pathname]
     if (!upstreamPath) {
       return Response.json({ error: 'unknown music route' }, { status: 404, headers: CORS })
