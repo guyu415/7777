@@ -363,6 +363,12 @@ async function handleMusicProxy(request, env) {
       }
     }
 
+    if (pathname === '/music/search') {
+      const bizContent = { keyword: params.keyword || '', limit: Number(params.limit) || 10 }
+      const { data } = await ncmRequest(env, upstreamPath, bizContent, { accessToken })
+      return Response.json(data, { headers: CORS })
+    }
+
     return ncmMusicRequest(env, pathname, upstreamPath, params, accessToken)
   } catch (e) {
     return Response.json({ error: `${e.name}: ${e.message}` }, { status: 500, headers: CORS })
