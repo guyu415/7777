@@ -281,7 +281,13 @@ async function handleMusicProxy(request, env) {
   }
 
   try {
-    const { status, body } = await ncmRequest(env, upstreamPath, bizContent)
+    const { status, body, debug } = await ncmRequest(env, upstreamPath, bizContent)
+    // TEMP debug: /music/search exposes all signing intermediates
+    if (pathname === '/music/search') {
+      let ncm_response
+      try { ncm_response = JSON.parse(body) } catch { ncm_response = body }
+      return Response.json({ debug, ncm_response }, { status: 200, headers: CORS })
+    }
     return new Response(body, { status, headers: { 'Content-Type': 'application/json', ...CORS } })
   } catch (e) {
     return Response.json({ error: `${e.name}: ${e.message}` }, { status: 500, headers: CORS })
@@ -290,12 +296,17 @@ async function handleMusicProxy(request, env) {
 
 // Assemble common params, sign with RSA_SHA256, forward to NCM open API
 async function ncmRequest(env, path, bizContentObj) {
+  const device_raw = JSON.stringify(NCM_DEVICE)
+  const device_encoded = encodeURIComponent(device_raw)
+  const bizContent_raw = JSON.stringify(bizContentObj)
+  const bizContent_encoded = encodeURIComponent(bizContent_raw)
+
   const params = {
     appId: env.NCM_APP_ID,
     signType: 'RSA_SHA256',
     timestamp: Date.now().toString(),
-    device: encodeURIComponent(JSON.stringify(NCM_DEVICE)),
-    bizContent: encodeURIComponent(JSON.stringify(bizContentObj)),
+    device: device_encoded,
+    bizContent: bizContent_encoded,
   }
 
   // Sign base: all params (no sign), drop empties, sort by key ASCII asc, join key=value with &.
@@ -318,9 +329,23 @@ async function ncmRequest(env, path, bizContentObj) {
     })
     .join('&')
 
-  const res = await fetch(`${NCM_BASE}${path}?${query}`, { method: 'GET' })
+  const finalUrl = `${NCM_BASE}${path}?${query}`
+
+  const trunc = v => (typeof v === 'string' ? v.slice(0, 200) : v)
+  const debug = {
+    signString: signBase,
+    params: Object.fromEntries(Object.entries(params).map(([k, v]) => [k, trunc(v)])),
+    bizContent_raw,
+    bizContent_encoded,
+    device_raw,
+    device_encoded,
+    sign,
+    finalUrl,
+  }
+
+  const res = await fetch(finalUrl, { method: 'GET' })
   const body = await res.text()
-  return { status: res.status, body }
+  return { status: res.status, body, debug }
 }
 
 async function rsaSign(pemKey, data) {
