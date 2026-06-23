@@ -169,6 +169,11 @@ export default {
       return Response.json({ ok: true, allCount: allKeys.length, allKeys, userCount: userKeys.length, userKeys }, { headers: CORS })
     }
 
+    // ── NetEase Cloud Music API proxy ─────────────────────────────
+    if (pathname.startsWith('/music/') && (request.method === 'GET' || request.method === 'POST')) {
+      return handleMusicProxy(request, env)
+    }
+
     return new Response('Not Found', { status: 404, headers: CORS })
   },
 
@@ -214,6 +219,141 @@ async function handleChatProxy(request) {
       ...CORS,
     },
   })
+}
+
+// ── NetEase Cloud Music API proxy ────────────────────────────────
+
+const NCM_BASE = 'https://openapi.music.163.com'
+
+const NCM_DEVICE = {
+  channel: 'xiaoman',
+  deviceId: 'eunoia-web-001',
+  deviceType: 'web',
+  appVer: '1.0.0',
+  os: 'web',
+  osVer: '1.0',
+  brand: 'eunoia',
+  model: 'browser',
+  clientIp: '127.0.0.1',
+  netStatus: 'wifi',
+}
+
+const NCM_ROUTES = {
+  '/music/search':  '/openapi/music/basic/search/song/get/v3',
+  '/music/song':    '/openapi/music/basic/song/detail/get/v2',
+  '/music/playurl': '/openapi/music/basic/song/playurl/get/v2',
+  '/music/lyric':   '/openapi/music/basic/song/lyric/get/v2',
+}
+
+async function handleMusicProxy(request, env) {
+  const url = new URL(request.url)
+  const { pathname } = url
+
+  // Collect front-end params (query for GET, JSON body for POST)
+  let params = {}
+  if (request.method === 'POST') {
+    try { params = await request.json() } catch { params = {} }
+  } else {
+    params = Object.fromEntries(url.searchParams.entries())
+  }
+
+  // Simple auth: key param OR referer from xiaoman.xyz
+  const key = params.key || url.searchParams.get('key') || ''
+  const referer = request.headers.get('Referer') || ''
+  if (key !== 'xiaoman2026' && !referer.includes('xiaoman.xyz')) {
+    return Response.json({ error: 'unauthorized' }, { status: 401, headers: CORS })
+  }
+
+  const upstreamPath = NCM_ROUTES[pathname]
+  if (!upstreamPath) {
+    return Response.json({ error: 'unknown music route' }, { status: 404, headers: CORS })
+  }
+
+  // Build per-route bizContent
+  let bizContent
+  if (pathname === '/music/search') {
+    bizContent = { keyword: params.keyword || '', limit: Number(params.limit) || 10 }
+  } else if (pathname === '/music/song') {
+    bizContent = { songId: String(params.songId || ''), withUrl: true }
+  } else if (pathname === '/music/playurl') {
+    bizContent = { songId: String(params.songId || ''), bitrate: Number(params.bitrate) || 320 }
+  } else { // /music/lyric
+    bizContent = { songId: String(params.songId || '') }
+  }
+
+  try {
+    const { status, body } = await ncmRequest(env, upstreamPath, bizContent)
+    return new Response(body, { status, headers: { 'Content-Type': 'application/json', ...CORS } })
+  } catch (e) {
+    return Response.json({ error: `${e.name}: ${e.message}` }, { status: 500, headers: CORS })
+  }
+}
+
+// Assemble common params, sign with RSA_SHA256, forward to NCM open API
+async function ncmRequest(env, path, bizContentObj) {
+  const params = {
+    appId: env.NCM_APP_ID,
+    signType: 'RSA_SHA256',
+    timestamp: Date.now().toString(),
+    device: encodeURIComponent(JSON.stringify(NCM_DEVICE)),
+    bizContent: encodeURIComponent(JSON.stringify(bizContentObj)),
+  }
+
+  // Sign base: all params (no sign), drop empties, sort by key ASCII asc, join key=value with &.
+  // device/bizContent values are the encodeURIComponent'd strings.
+  const signBase = Object.keys(params)
+    .filter(k => params[k] !== '' && params[k] != null)
+    .sort()
+    .map(k => `${k}=${params[k]}`)
+    .join('&')
+
+  const sign = await rsaSign(env.NCM_PRIVATE_KEY, signBase)
+
+  // Final query: device/bizContent already encoded (use as-is); encode the rest
+  // (sign is base64 with +,/,= → must be percent-encoded for transport).
+  const finalParams = { ...params, sign }
+  const query = Object.keys(finalParams)
+    .map(k => {
+      const v = (k === 'device' || k === 'bizContent') ? finalParams[k] : encodeURIComponent(finalParams[k])
+      return `${k}=${v}`
+    })
+    .join('&')
+
+  const res = await fetch(`${NCM_BASE}${path}?${query}`, { method: 'GET' })
+  const body = await res.text()
+  return { status: res.status, body }
+}
+
+async function rsaSign(pemKey, data) {
+  const keyData = pemToArrayBuffer(pemKey)
+  const cryptoKey = await crypto.subtle.importKey(
+    'pkcs8',
+    keyData,
+    { name: 'RSASSA-PKCS1-v1_5', hash: 'SHA-256' },
+    false,
+    ['sign'],
+  )
+  const signature = await crypto.subtle.sign('RSASSA-PKCS1-v1_5', cryptoKey, new TextEncoder().encode(data))
+  return arrayBufferToBase64(signature)
+}
+
+function pemToArrayBuffer(pem) {
+  const b64 = (pem || '')
+    .replace(/\\n/g, '\n')
+    .replace(/-----BEGIN [^-]+-----/, '')
+    .replace(/-----END [^-]+-----/, '')
+    .replace(/\s+/g, '')
+  const binary = atob(b64)
+  const bytes = new Uint8Array(binary.length)
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i)
+  return bytes.buffer
+}
+
+function arrayBufferToBase64(buf) {
+  const bytes = new Uint8Array(buf)
+  let binary = ''
+  for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i])
+  return btoa(binary)
 }
 
 // ── Proactive message generation (session-aware) ─────────────────
