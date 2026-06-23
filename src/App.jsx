@@ -7,7 +7,7 @@ import SessionSettings from './components/SessionSettings'
 import SessionList from './components/SessionList'
 import BottomNav from './components/BottomNav'
 import LoginPage from './components/LoginPage'
-import { getSettings, saveSettings, extractSettings, saveSessionMsgs, putAsset, getAssetDataUrl, getLetters } from './services/sync'
+import { getSettings, saveSettings, extractSettings, saveSessionMsgs, putAsset, loadAsset, getLetters } from './services/sync'
 import { mergeLetters } from './services/letters'
 
 const FONT_MAP = {
@@ -129,6 +129,39 @@ export default function App() {
     console.log('[ASSET-MIGRATE] 全部完成')
   }
 
+  // One-time cleanup: a legacy image background may have stored its base64 inline
+  // in chatBg.value, which then rides along in the synced `settings` blob. Move any
+  // such inline data URL out to a KV asset key so settings stays lightweight.
+  const separateInlineBgValues = async (password) => {
+    if (localStorage.getItem('bgValueSepV1')) return
+    const state = useStore.getState()
+    const isInline = (bg) => bg?.type === 'image' && typeof bg.value === 'string' && bg.value.startsWith('data:') && !bg.assetKey
+    const newKey = () => `asset:bg:${Date.now().toString(36)}${Math.random().toString(36).slice(2)}`
+    let migrated = 0
+    try {
+      if (isInline(state.chatBg)) {
+        const blob = await (await fetch(state.chatBg.value)).blob()
+        const assetKey = newKey()
+        await putAsset(password, assetKey, blob)
+        useStore.getState().setChatBg({ ...state.chatBg, assetKey, value: '' })
+        migrated++
+      }
+      for (const s of (state.sessions || [])) {
+        if (isInline(s.chatBg)) {
+          const blob = await (await fetch(s.chatBg.value)).blob()
+          const assetKey = newKey()
+          await putAsset(password, assetKey, blob)
+          useStore.getState().setSessionChatBg(s.id, { ...s.chatBg, assetKey, value: '' })
+          migrated++
+        }
+      }
+      localStorage.setItem('bgValueSepV1', '1')
+      if (migrated > 0) console.log(`[BG-SEP] 分离了 ${migrated} 张内联背景图到 KV`)
+    } catch (e) {
+      console.warn('[BG-SEP] 背景分离失败（下次登录重试）:', e.message)
+    }
+  }
+
   // Pull latest cloud settings after login (startup sync), then run migration if first time
   useEffect(() => {
     if (!loggedIn) return
@@ -162,6 +195,7 @@ export default function App() {
         } else {
           console.log('[SYNC] 跳过资源迁移（已迁移）')
         }
+        await separateInlineBgValues(password)
       })
   }, [loggedIn])
 
@@ -219,57 +253,46 @@ export default function App() {
     const password = localStorage.getItem('auth.password')
 
     const run = async () => {
-      // Pre-load all custom fonts from KV/IDB
-      for (const font of (customFonts || [])) {
-        // Log check result for diagnostics, but never skip based on it:
-        // document.fonts.check() can return true for unregistered fonts on some
-        // browsers (falls back to sans-serif), so it's unreliable as a skip guard.
-        const checked = document.fonts.check(`12px "${font.family}"`)
-        console.log('[FONT INIT] 开始, family=', font.family, 'assetKey=', font.assetKey ?? 'null', 'document.fonts.check=', checked)
-        try {
-          let fontUrl = null
-          if (font.assetKey && password) {
-            fontUrl = await getAssetDataUrl(password, font.assetKey)
-            console.log('[FONT INIT] 从云端/缓存拉取字体数据, 长度=', fontUrl?.length ?? 'null')
-          } else if (!font.assetKey) {
-            console.log('[FONT INIT] 无assetKey, 尝试IDB读取')
-            const blob = await getCustomFont(font.id)
-            if (blob) {
-              fontUrl = URL.createObjectURL(blob)
-              console.log('[FONT INIT] IDB读取成功')
-            } else {
-              console.warn('[FONT INIT] IDB也无数据, id=', font.id)
-            }
-          } else {
-            console.warn('[FONT INIT] 有assetKey但无password, 跳过')
-          }
-
-          if (!fontUrl) {
-            console.warn('[FONT INIT] 无fontUrl, 放弃加载:', font.family)
-            continue
-          }
-
-          console.log('[FONT INIT] new FontFace 创建完成, fontFamily=', font.family)
-          const face = new FontFace(font.family, `url(${fontUrl})`)
-          console.log('[FONT INIT] await fontFace.load() 开始')
-          await face.load()
-          console.log('[FONT INIT] fontFace.load() 完成')
-          document.fonts.add(face)
-          console.log('[FONT INIT] document.fonts.add 完成')
-        } catch (err) {
-          console.error('[FONT INIT] 加载失败:', font.family, 'name=', err?.name, 'message=', err?.message, 'stack=', err?.stack)
-        }
-      }
-
-      // Set CSS var AFTER active font is registered — no more race
+      // Built-in font: just set the CSS var, nothing to load.
       if (builtIn) {
         document.documentElement.style.setProperty('--app-font', builtIn)
-      } else {
-        const cf = (customFonts || []).find(f => f.id === fontId)
-        if (cf) {
-          document.documentElement.style.setProperty('--app-font', `'${cf.family}', sans-serif`)
-          console.log('[FONT INIT] 设置 CSS 变量 --app-font=', `'${cf.family}', sans-serif`)
+        return
+      }
+
+      // Custom font: lazily load ONLY the currently-selected one (IDB cache first,
+      // single-key KV fetch on miss). Unselected fonts are never pulled — that loop
+      // used to blow up the Worker (Error 1102) when a big font sat in the list.
+      const font = (customFonts || []).find(f => f.id === fontId)
+      if (!font) return
+
+      try {
+        let fontUrl = null
+        if (font.assetKey) {
+          fontUrl = await loadAsset(password, font.assetKey)
+          console.log('[FONT INIT] loadAsset 完成, family=', font.family, '长度=', fontUrl?.length ?? 'null')
+        } else {
+          const blob = await getCustomFont(font.id) // 旧版未迁移字体的本地兜底
+          if (blob) fontUrl = URL.createObjectURL(blob)
         }
+
+        if (!fontUrl) {
+          console.warn('[FONT INIT] 无fontUrl, 放弃加载:', font.family)
+          return
+        }
+
+        // check() is unreliable as a load guard (can report true for unregistered
+        // fonts), but a registered FontFace makes it reliably true — use it only to
+        // skip a redundant re-register, never to skip the data load above.
+        if (!document.fonts.check(`12px "${font.family}"`)) {
+          const face = new FontFace(font.family, `url(${fontUrl})`)
+          await face.load()
+          document.fonts.add(face)
+          console.log('[FONT INIT] FontFace 注册完成, family=', font.family)
+        }
+
+        document.documentElement.style.setProperty('--app-font', `'${font.family}', sans-serif`)
+      } catch (err) {
+        console.error('[FONT INIT] 加载失败:', font.family, 'name=', err?.name, 'message=', err?.message)
       }
     }
 
@@ -285,7 +308,7 @@ export default function App() {
     const password = localStorage.getItem('auth.password')
     if (effectiveChatBg.assetKey) {
       if (!password) { setBgUrl(null); return }
-      getAssetDataUrl(password, effectiveChatBg.assetKey).then(dataUrl => setBgUrl(dataUrl || null))
+      loadAsset(password, effectiveChatBg.assetKey).then(dataUrl => setBgUrl(dataUrl || null))
     } else if (effectiveChatBg.blobKey) {
       getBlob(effectiveChatBg.blobKey).then(blob => setBgUrl(blob ? URL.createObjectURL(blob) : null))
     } else if (effectiveChatBg.value) {

@@ -1,3 +1,5 @@
+import { getAssetCache, saveAssetCache } from '../store'
+
 const SYNC_BASE = 'https://chat.xiaoman.xyz'
 
 export async function login(password) {
@@ -125,6 +127,27 @@ export async function getAssetDataUrl(password, assetKey) {
   if (!value) return null
   _assetCache.set(assetKey, value)
   return value
+}
+
+// Lazy asset loader: IDB cache first, then a single-key KV fetch on miss.
+// On a KV hit, writes through to IDB so later loads are zero-network. This is the
+// path the app should use for fonts/backgrounds — never bulk-pull big assets.
+export async function loadAsset(password, assetKey) {
+  if (!assetKey) return null
+  try {
+    const cached = await getAssetCache(assetKey)
+    if (cached) {
+      _assetCache.set(assetKey, cached)
+      return cached
+    }
+  } catch (e) {
+    console.warn('[ASSET] IDB缓存读取失败:', e.message)
+  }
+  const dataUrl = await getAssetDataUrl(password, assetKey)
+  if (dataUrl) {
+    try { await saveAssetCache(assetKey, dataUrl) } catch (e) { console.warn('[ASSET] IDB缓存写入失败:', e.message) }
+  }
+  return dataUrl
 }
 
 export async function deleteAsset(password, assetKey) {

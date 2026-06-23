@@ -58,6 +58,20 @@ export async function deleteCustomFont(fontId) {
   await database.delete('blobs', `font:${fontId}`)
 }
 
+// Asset data-URL cache (fonts / backgrounds), keyed by the KV assetKey.
+// Stores the base64 data URL string in the existing `blobs` store so big assets
+// are pulled from the Worker at most once per device, then served from IDB.
+export async function saveAssetCache(assetKey, dataUrl) {
+  const database = await getDB()
+  await database.put('blobs', { id: `assetcache:${assetKey}`, dataUrl })
+}
+
+export async function getAssetCache(assetKey) {
+  const database = await getDB()
+  const record = await database.get('blobs', `assetcache:${assetKey}`)
+  return record?.dataUrl || null
+}
+
 export async function deleteMessageFromDB(id) {
   const database = await getDB()
   await database.delete('messages', id)

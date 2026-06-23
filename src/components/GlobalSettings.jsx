@@ -1,6 +1,6 @@
 import { useState, useRef } from 'react'
 import { Trash2 } from 'lucide-react'
-import { useStore, clearAllData, getAllMessages, getMessages, deleteCustomFont } from '../store'
+import { useStore, clearAllData, getAllMessages, getMessages, deleteCustomFont, saveAssetCache } from '../store'
 import { putAsset, deleteAsset } from '../services/sync'
 
 import { THEMES } from '../themes'
@@ -125,6 +125,7 @@ export default function GlobalSettings({ theme, onLogout, onForceSync }) {
       if (password) {
         assetKey = `asset:font:${id}`
         fontUrl = await putAsset(password, assetKey, blob) // uploads to KV, returns data URL
+        try { await saveAssetCache(assetKey, fontUrl) } catch (e) { console.warn('[FONT] IDB缓存写入失败:', e.message) } // 当场写本地缓存，刷新后零回拉
       } else {
         fontUrl = URL.createObjectURL(blob)
       }
