@@ -237,18 +237,19 @@ const NCM_DEVICE = {
   deviceId: 'eunoia_web_001',
 }
 
-const NCM_ROUTES = {
+const NCM_MUSIC_ROUTES = {
   '/music/search':  '/openapi/music/basic/search/song/get/v3',
   '/music/song':    '/openapi/music/basic/song/detail/get/v2',
   '/music/playurl': '/openapi/music/basic/song/playurl/get/v2',
   '/music/lyric':   '/openapi/music/basic/song/lyric/get/v2',
 }
 
+const DAY_MS = 86_400_000
+
 async function handleMusicProxy(request, env) {
   const url = new URL(request.url)
   const { pathname } = url
 
-  // Collect front-end params (query for GET, JSON body for POST)
   let params = {}
   if (request.method === 'POST') {
     try { params = await request.json() } catch { params = {} }
@@ -256,19 +257,125 @@ async function handleMusicProxy(request, env) {
     params = Object.fromEntries(url.searchParams.entries())
   }
 
-  // Simple auth: key param OR referer from xiaoman.xyz
-  const key = params.key || url.searchParams.get('key') || ''
+  // Auth: key=xiaoman2026 OR Referer from xiaoman.xyz
+  const authKey = params.authKey || url.searchParams.get('authKey') || params.key || url.searchParams.get('key') || ''
   const referer = request.headers.get('Referer') || ''
-  if (key !== 'xiaoman2026' && !referer.includes('xiaoman.xyz')) {
+  if (authKey !== 'xiaoman2026' && !referer.includes('xiaoman.xyz')) {
     return Response.json({ error: 'unauthorized' }, { status: 401, headers: CORS })
   }
 
-  const upstreamPath = NCM_ROUTES[pathname]
-  if (!upstreamPath) {
-    return Response.json({ error: 'unknown music route' }, { status: 404, headers: CORS })
-  }
+  try {
+    // ── Anonymous login (one-time) ──────────────────────────────
+    if (pathname === '/music/anonymous-login') {
+      const { data } = await ncmRequest(env,
+        '/openapi/music/basic/oauth2/login/anonymous',
+        { clientId: env.NCM_APP_ID })
+      if (data?.data?.token) {
+        await env.CHAT_KV.put('ncm:anonymous_token', data.data.token)
+      }
+      return Response.json(data, { headers: CORS })
+    }
 
-  // Build per-route bizContent
+    // ── QR code generation ──────────────────────────────────────
+    if (pathname === '/music/qrcode') {
+      const { data } = await ncmRequest(env,
+        '/openapi/music/basic/user/oauth2/qrcodekey/get/v2',
+        { type: 2, expiredKey: '300' })
+      return Response.json(data, { headers: CORS })
+    }
+
+    // ── QR code poll ────────────────────────────────────────────
+    // ?key=<qrcode_uniKey>   (auth via Referer or authKey param)
+    if (pathname === '/music/qrcode/poll') {
+      const qrKey = url.searchParams.get('key') || params.qrKey || ''
+      const anonymousToken = await env.CHAT_KV.get('ncm:anonymous_token')
+      if (!anonymousToken) {
+        return Response.json(
+          { error: 'anonymous_token missing — call /music/anonymous-login first' },
+          { status: 400, headers: CORS })
+      }
+      const { data } = await ncmRequest(
+        env,
+        '/openapi/music/basic/oauth2/device/login/qrcode/get',
+        { key: qrKey, clientId: env.NCM_APP_ID },
+        { accessToken: anonymousToken })
+      // code 803 = scan success → persist user tokens
+      if (data?.code === 803 && data?.data) {
+        const { accessToken, refreshToken, expireTime } = data.data
+        await Promise.all([
+          env.CHAT_KV.put('ncm:access_token', accessToken || ''),
+          env.CHAT_KV.put('ncm:refresh_token', refreshToken || ''),
+          env.CHAT_KV.put('ncm:token_expire', String(Date.now() + (Number(expireTime) || 0) * 1000)),
+        ])
+      }
+      return Response.json(data, { headers: CORS })
+    }
+
+    // ── Manual token refresh ────────────────────────────────────
+    if (pathname === '/music/token/refresh') {
+      const refreshToken = await env.CHAT_KV.get('ncm:refresh_token')
+      if (!refreshToken) {
+        return Response.json({ error: 'no refresh token — please log in first' }, { status: 400, headers: CORS })
+      }
+      const { data } = await doTokenRefresh(env, refreshToken)
+      return Response.json(data, { headers: CORS })
+    }
+
+    // ── Authenticated music routes ──────────────────────────────
+    const upstreamPath = NCM_MUSIC_ROUTES[pathname]
+    if (!upstreamPath) {
+      return Response.json({ error: 'unknown music route' }, { status: 404, headers: CORS })
+    }
+
+    // Load token state
+    const [accessToken, tokenExpireStr, refreshToken] = await Promise.all([
+      env.CHAT_KV.get('ncm:access_token'),
+      env.CHAT_KV.get('ncm:token_expire'),
+      env.CHAT_KV.get('ncm:refresh_token'),
+    ])
+    const tokenExpire = tokenExpireStr ? parseInt(tokenExpireStr) : 0
+    const now = Date.now()
+
+    if (!accessToken || tokenExpire < now) {
+      // Fully expired — can we still refresh?
+      if (!refreshToken || tokenExpire < now - 20 * DAY_MS) {
+        return Response.json({ error: 'need_login', message: '请先扫码登录' }, { status: 401, headers: CORS })
+      }
+      const { ok, newToken } = await doTokenRefresh(env, refreshToken)
+      if (!ok || !newToken) {
+        return Response.json({ error: 'need_login', message: '请先扫码登录' }, { status: 401, headers: CORS })
+      }
+      return ncmMusicRequest(env, pathname, upstreamPath, params, newToken)
+    }
+
+    // Auto-refresh when less than 1 day remains (synchronous — no ctx available here)
+    if (tokenExpire - now < DAY_MS && refreshToken) {
+      await doTokenRefresh(env, refreshToken)
+    }
+
+    return ncmMusicRequest(env, pathname, upstreamPath, params, accessToken)
+  } catch (e) {
+    return Response.json({ error: `${e.name}: ${e.message}` }, { status: 500, headers: CORS })
+  }
+}
+
+async function doTokenRefresh(env, refreshToken) {
+  const { data } = await ncmRequest(env,
+    '/openapi/music/basic/user/oauth2/token/refresh/v2',
+    { refreshToken })
+  if (data?.data?.accessToken) {
+    const { accessToken, refreshToken: newRefresh, expireTime } = data.data
+    await Promise.all([
+      env.CHAT_KV.put('ncm:access_token', accessToken),
+      env.CHAT_KV.put('ncm:refresh_token', newRefresh || refreshToken),
+      env.CHAT_KV.put('ncm:token_expire', String(Date.now() + (Number(expireTime) || 0) * 1000)),
+    ])
+    return { ok: true, newToken: accessToken, data }
+  }
+  return { ok: false, newToken: null, data }
+}
+
+async function ncmMusicRequest(env, pathname, upstreamPath, params, accessToken) {
   let bizContent
   if (pathname === '/music/search') {
     bizContent = { keyword: params.keyword || '', limit: Number(params.limit) || 10 }
@@ -276,30 +383,17 @@ async function handleMusicProxy(request, env) {
     bizContent = { songId: String(params.songId || ''), withUrl: true }
   } else if (pathname === '/music/playurl') {
     bizContent = { songId: String(params.songId || ''), bitrate: Number(params.bitrate) || 320 }
-  } else { // /music/lyric
+  } else {
     bizContent = { songId: String(params.songId || '') }
   }
-
-  try {
-    const { status, body, debug } = await ncmRequest(env, upstreamPath, bizContent)
-    // TEMP debug: /music/search exposes all signing intermediates
-    if (pathname === '/music/search') {
-      let ncm_response
-      try { ncm_response = JSON.parse(body) } catch { ncm_response = body }
-      return Response.json({ debug, ncm_response }, { status: 200, headers: CORS })
-    }
-    return new Response(body, { status, headers: { 'Content-Type': 'application/json', ...CORS } })
-  } catch (e) {
-    return Response.json({ error: `${e.name}: ${e.message}` }, { status: 500, headers: CORS })
-  }
+  const { data } = await ncmRequest(env, upstreamPath, bizContent, { accessToken })
+  return Response.json(data, { headers: CORS })
 }
 
 // Assemble common params, sign with RSA_SHA256, forward to NCM open API
-async function ncmRequest(env, path, bizContentObj) {
+async function ncmRequest(env, path, bizContentObj, { accessToken } = {}) {
   const device_raw = JSON.stringify(NCM_DEVICE)
-  const device_encoded = encodeURIComponent(device_raw)
   const bizContent_raw = JSON.stringify(bizContentObj)
-  const bizContent_encoded = encodeURIComponent(bizContent_raw)
 
   // Sign base uses RAW (un-encoded) values for ALL params.
   const params = {
@@ -309,8 +403,8 @@ async function ncmRequest(env, path, bizContentObj) {
     device: device_raw,
     bizContent: bizContent_raw,
   }
+  if (accessToken) params.accessToken = accessToken
 
-  // Sign base: all params (no sign), drop empties, sort by key ASCII asc, join key=value with &.
   const signBase = Object.keys(params)
     .filter(k => params[k] !== '' && params[k] != null)
     .sort()
@@ -319,30 +413,17 @@ async function ncmRequest(env, path, bizContentObj) {
 
   const sign = await rsaSign(env.NCM_PRIVATE_KEY, signBase)
 
-  // Final query: encodeURIComponent every value (device/bizContent/sign all need it;
-  // appId/signType/timestamp are encode-safe no-ops).
+  // Final query: encodeURIComponent all values
   const finalParams = { ...params, sign }
   const query = Object.keys(finalParams)
     .map(k => `${k}=${encodeURIComponent(finalParams[k])}`)
     .join('&')
 
-  const finalUrl = `${NCM_BASE}${path}?${query}`
-
-  const trunc = v => (typeof v === 'string' ? v.slice(0, 200) : v)
-  const debug = {
-    signString: signBase,
-    params: Object.fromEntries(Object.entries(params).map(([k, v]) => [k, trunc(v)])),
-    bizContent_raw,
-    bizContent_encoded,
-    device_raw,
-    device_encoded,
-    sign,
-    finalUrl,
-  }
-
-  const res = await fetch(finalUrl, { method: 'GET' })
+  const res = await fetch(`${NCM_BASE}${path}?${query}`)
   const body = await res.text()
-  return { status: res.status, body, debug }
+  let data
+  try { data = JSON.parse(body) } catch { data = body }
+  return { status: res.status, data }
 }
 
 async function rsaSign(pemKey, data) {
