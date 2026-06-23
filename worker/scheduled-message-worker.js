@@ -289,9 +289,9 @@ async function handleMusicProxy(request, env) {
     }
 
     // ── QR code poll ────────────────────────────────────────────
-    // ?key=<qrcode_uniKey>   (auth via Referer or authKey param)
+    // ?authKey=xiaoman2026&uniKey=<qrcode_uniKey>
     if (pathname === '/music/qrcode/poll') {
-      const qrKey = url.searchParams.get('key') || params.qrKey || ''
+      const uniKey = url.searchParams.get('uniKey') || ''
       const anonymousToken = env.NCM_ANONYMOUS_TOKEN
         || await env.CHAT_KV.get('ncm:anonymous_token')
       if (!anonymousToken) {
@@ -299,10 +299,10 @@ async function handleMusicProxy(request, env) {
           { error: 'anonymous_token missing — call /music/anonymous-login first' },
           { status: 400, headers: CORS })
       }
-      const { data, finalUrl } = await ncmRequest(
+      const { data } = await ncmRequest(
         env,
         '/openapi/music/basic/oauth2/device/login/qrcode/get',
-        { key: qrKey, clientId: env.NCM_APP_ID },
+        { key: uniKey, clientId: env.NCM_APP_ID },
         { accessToken: anonymousToken })
       // code 803 = scan success → persist user tokens
       if (data?.code === 803 && data?.data) {
@@ -313,7 +313,7 @@ async function handleMusicProxy(request, env) {
           env.CHAT_KV.put('ncm:token_expire', String(Date.now() + (Number(expireTime) || 0) * 1000)),
         ])
       }
-      return Response.json({ debug_finalUrl: finalUrl, ncm_response: data }, { headers: CORS })
+      return Response.json(data, { headers: CORS })
     }
 
     // ── Manual token refresh ────────────────────────────────────
