@@ -301,16 +301,16 @@ async function ncmRequest(env, path, bizContentObj) {
   const bizContent_raw = JSON.stringify(bizContentObj)
   const bizContent_encoded = encodeURIComponent(bizContent_raw)
 
+  // Sign base uses RAW (un-encoded) values for ALL params.
   const params = {
     appId: env.NCM_APP_ID,
     signType: 'RSA_SHA256',
     timestamp: Date.now().toString(),
-    device: device_encoded,
-    bizContent: bizContent_encoded,
+    device: device_raw,
+    bizContent: bizContent_raw,
   }
 
   // Sign base: all params (no sign), drop empties, sort by key ASCII asc, join key=value with &.
-  // device/bizContent values are the encodeURIComponent'd strings.
   const signBase = Object.keys(params)
     .filter(k => params[k] !== '' && params[k] != null)
     .sort()
@@ -319,14 +319,11 @@ async function ncmRequest(env, path, bizContentObj) {
 
   const sign = await rsaSign(env.NCM_PRIVATE_KEY, signBase)
 
-  // Final query: device/bizContent already encoded (use as-is); encode the rest
-  // (sign is base64 with +,/,= → must be percent-encoded for transport).
+  // Final query: encodeURIComponent every value (device/bizContent/sign all need it;
+  // appId/signType/timestamp are encode-safe no-ops).
   const finalParams = { ...params, sign }
   const query = Object.keys(finalParams)
-    .map(k => {
-      const v = (k === 'device' || k === 'bizContent') ? finalParams[k] : encodeURIComponent(finalParams[k])
-      return `${k}=${v}`
-    })
+    .map(k => `${k}=${encodeURIComponent(finalParams[k])}`)
     .join('&')
 
   const finalUrl = `${NCM_BASE}${path}?${query}`
