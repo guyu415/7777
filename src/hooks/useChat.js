@@ -286,15 +286,12 @@ export function useChat() {
       // Extract [LETTER ...] blocks → store in diary, replace with card placeholders.
       // Done before paragraph splitting so each card lands in its own bubble.
       if (fullContent.includes('[LETTER')) {
-        const state = useStore.getState()
-        const sess = state.sessions.find(s => s.id === CONVERSATION_ID)
-        const charName = sess?.aiName ?? state.aiName
-        const charAvatar = sess?.aiAvatar ?? state.aiAvatar
+        // Do NOT store characterName/characterAvatar — display side resolves them
+        // live from session by sessionId. Embedding base64 avatars here blew up
+        // localStorage quota (QuotaExceededError on letters:all).
         fullContent = fullContent.replace(LETTER_RE, (_m, mood, weather, date, body) => {
           const letter = addLetter({
             sessionId: CONVERSATION_ID,
-            characterName: charName,
-            characterAvatar: charAvatar,
             role: 'ai',
             mood, weather, date,
             content: body.trim(),

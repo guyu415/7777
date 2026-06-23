@@ -86,11 +86,11 @@ export default function DiarySection({ theme }) {
     if (filter === 'all' || !content.trim() || sending) return
     setSending(true)
     try {
-      const { name, avatar } = charOf(filter)
       const date = todayStr()
       const body = content.trim()
 
-      addLetter({ sessionId: filter, characterName: name, characterAvatar: avatar, role: 'user', mood, weather, date, content: body })
+      // No characterName/characterAvatar — resolved live via charOf() on display.
+      addLetter({ sessionId: filter, role: 'user', mood, weather, date, content: body })
 
       const chatMsg = {
         id: genId(),
