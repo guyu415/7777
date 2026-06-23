@@ -270,8 +270,8 @@ async function handleMusicProxy(request, env) {
       const { data } = await ncmRequest(env,
         '/openapi/music/basic/oauth2/login/anonymous',
         { clientId: env.NCM_APP_ID })
-      if (data?.data?.token) {
-        await env.CHAT_KV.put('ncm:anonymous_token', data.data.token)
+      if (data?.data?.accessToken) {
+        await env.CHAT_KV.put('ncm:anonymous_token', data.data.accessToken)
       }
       return Response.json(data, { headers: CORS })
     }
