@@ -364,9 +364,16 @@ async function handleMusicProxy(request, env) {
     }
 
     if (pathname === '/music/search') {
-      const bizContent = { keyword: params.keyword || '', limit: Number(params.limit) || 10 }
-      const { status, rawText } = await ncmRequest(env, upstreamPath, bizContent, { accessToken })
-      return Response.json({ http_status: status, response_text: rawText.substring(0, 1000) }, { headers: CORS })
+      const device_raw = JSON.stringify(NCM_DEVICE)
+      const biz_raw = JSON.stringify({ keyword: params.keyword || '', limit: Number(params.limit) || 10 })
+      const sp = { appId: env.NCM_APP_ID, signType: 'RSA_SHA256', timestamp: Date.now().toString(), device: device_raw, bizContent: biz_raw }
+      if (accessToken) sp.accessToken = accessToken
+      const signBase = Object.keys(sp).filter(k => sp[k] !== '' && sp[k] != null).sort().map(k => `${k}=${sp[k]}`).join('&')
+      const sign = await rsaSign(env.NCM_PRIVATE_KEY, signBase)
+      const qs = new URLSearchParams()
+      Object.keys({ ...sp, sign }).sort().forEach(k => qs.append(k, { ...sp, sign }[k]))
+      const fullUrl = `${NCM_BASE}${upstreamPath}?${qs.toString()}`
+      return Response.json({ url_length: fullUrl.length, full_url: fullUrl }, { headers: CORS })
     }
 
     return ncmMusicRequest(env, pathname, upstreamPath, params, accessToken)
