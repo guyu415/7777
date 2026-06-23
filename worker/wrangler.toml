@@ -14,4 +14,4 @@ crons = ["*/30 * * * *"]
 [vars]
 # GLM (智谱AI) OpenAI 兼容格式，路径已含 /v4，代码只追加 /chat/completions
 # API Key 通过 Worker Secret 配置：Cloudflare 控制台 → Workers → scheduled-message-worker → Settings → Variables → CLAUDE_API_KEY
-CLAUDE_API_BASE_URL = "https://open.bigmodel.cn/api/paas/v4"
+# NCM_APP_ID and NCM_PRIVATE_KEY are set as Worker Secrets via Cloudflare dashboard
