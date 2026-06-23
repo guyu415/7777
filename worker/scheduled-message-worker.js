@@ -299,7 +299,7 @@ async function handleMusicProxy(request, env) {
           { error: 'anonymous_token missing — call /music/anonymous-login first' },
           { status: 400, headers: CORS })
       }
-      const { data } = await ncmRequest(
+      const { data, finalUrl } = await ncmRequest(
         env,
         '/openapi/music/basic/oauth2/device/login/qrcode/get',
         { key: qrKey, clientId: env.NCM_APP_ID },
@@ -313,7 +313,7 @@ async function handleMusicProxy(request, env) {
           env.CHAT_KV.put('ncm:token_expire', String(Date.now() + (Number(expireTime) || 0) * 1000)),
         ])
       }
-      return Response.json(data, { headers: CORS })
+      return Response.json({ debug_finalUrl: finalUrl, ncm_response: data }, { headers: CORS })
     }
 
     // ── Manual token refresh ────────────────────────────────────
@@ -424,11 +424,12 @@ async function ncmRequest(env, path, bizContentObj, { accessToken } = {}) {
     .map(k => `${k}=${encodeURIComponent(finalParams[k])}`)
     .join('&')
 
-  const res = await fetch(`${NCM_BASE}${path}?${query}`)
+  const finalUrl = `${NCM_BASE}${path}?${query}`
+  const res = await fetch(finalUrl)
   const body = await res.text()
   let data
   try { data = JSON.parse(body) } catch { data = body }
-  return { status: res.status, data }
+  return { status: res.status, data, finalUrl }
 }
 
 async function rsaSign(pemKey, data) {
