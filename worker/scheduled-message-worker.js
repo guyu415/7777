@@ -334,7 +334,7 @@ async function handleMusicProxy(request, env) {
 
     // Load token state
     const [accessToken, tokenExpireStr, refreshToken] = await Promise.all([
-      env.CHAT_KV.get('ncm:access_token'),
+      env.NCM_ACCESS_TOKEN || env.CHAT_KV.get('ncm:access_token'),
       env.CHAT_KV.get('ncm:token_expire'),
       env.CHAT_KV.get('ncm:refresh_token'),
     ])
