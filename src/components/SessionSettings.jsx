@@ -48,6 +48,7 @@ export default function SessionSettings({ theme }) {
     memoryEnabled: globalMemoryEnabled,
     systemPrompt: globalSystemPrompt,
     aiVoiceFrequency: globalVoiceFrequency,
+    messages,
   } = useStore()
 
   const currentSession = sessions?.find(s => s.id === currentSessionId)
@@ -622,13 +623,13 @@ export default function SessionSettings({ theme }) {
         <GlassCard icon="🧠" title="记忆摘要">
           <div className="space-y-2">
             <p className="text-[11px] px-1" style={{ color: '#a0b8d0' }}>
-              对话超过 75 条后自动生成摘要，摘要会注入到每轮上下文供模型参考。可手动编辑或清空。
+              对话累积满 150 条后生成首次摘要，之后每新增 70 条更新。摘要会注入到每轮上下文供模型参考。可手动编辑或清空。
             </p>
             <textarea
               value={currentSession?.summary || ''}
               onChange={e => setSessionSummary(currentSessionId, e.target.value || null)}
               rows={5}
-              placeholder="暂无摘要，对话满75条后自动生成…"
+              placeholder="暂无摘要，对话满150条后自动生成…"
               style={{ ...inputStyle, resize: 'none', lineHeight: '1.6', fontSize: 13 }}
             />
             <button
@@ -640,6 +641,33 @@ export default function SessionSettings({ theme }) {
             >
               清空摘要（下次触发重新生成）
             </button>
+            {(() => {
+              const len = messages.length
+              const summarizedCount = currentSession?.summarizedCount ?? 0
+              const pct1 = Math.min(len, 80) / 80 * 100
+              const n = Math.max(0, Math.min(len - summarizedCount - 80, 70))
+              const pct2 = n / 70 * 100
+              const hasDsKey = !!localStorage.getItem('summary.deepseek.key')
+              return (
+                <div className="space-y-2 pt-1">
+                  <div>
+                    <div style={{ height: 4, background: 'rgba(200,220,255,0.3)', borderRadius: 2, overflow: 'hidden' }}>
+                      <div style={{ height: '100%', width: `${pct1}%`, background: 'linear-gradient(90deg, #9b70e0, #c084fc)', borderRadius: 2 }} />
+                    </div>
+                    <p className="text-[10px] mt-0.5 pl-0.5" style={{ color: '#a0b8d0' }}>当前上下文 {len} / 80 条</p>
+                  </div>
+                  <div>
+                    <div style={{ height: 4, background: 'rgba(200,220,255,0.3)', borderRadius: 2, overflow: 'hidden' }}>
+                      <div style={{ height: '100%', width: `${pct2}%`, background: 'linear-gradient(90deg, #9b70e0, #c084fc)', borderRadius: 2 }} />
+                    </div>
+                    <p className="text-[10px] mt-0.5 pl-0.5" style={{ color: '#a0b8d0' }}>自上次摘要后新增 {n} / 70 条</p>
+                  </div>
+                  {!hasDsKey && (
+                    <p className="text-[10px] px-1" style={{ color: '#d4a017' }}>⚠️ 未配置摘要模型 key，进度满后不会自动摘要</p>
+                  )}
+                </div>
+              )
+            })()}
           </div>
         </GlassCard>
 
