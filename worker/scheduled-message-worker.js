@@ -363,17 +363,6 @@ async function handleMusicProxy(request, env) {
       }
     }
 
-    if (pathname === '/music/search') {
-      const bizContent = { keyword: params.keyword || '', limit: Number(params.limit) || 10 }
-      const { status, rawText, finalUrl } = await ncmRequest(env, upstreamPath, bizContent, { accessToken })
-      return Response.json({
-        http_status: status,
-        response_length: rawText.length,
-        response_preview: rawText.substring(0, 500),
-        finalUrl: finalUrl.substring(0, 300)
-      }, { headers: CORS })
-    }
-
     return ncmMusicRequest(env, pathname, upstreamPath, params, accessToken)
   } catch (e) {
     return Response.json({ error: `${e.name}: ${e.message}` }, { status: 500, headers: CORS })
@@ -434,18 +423,20 @@ async function ncmRequest(env, path, bizContentObj, { accessToken } = {}) {
 
   const sign = await rsaSign(env.NCM_PRIVATE_KEY, signBase)
 
-  // Final query: encodeURIComponent all values
-  const finalParams = { ...params, sign }
-  const query = Object.keys(finalParams)
-    .map(k => `${k}=${encodeURIComponent(finalParams[k])}`)
-    .join('&')
+  // POST with URLSearchParams body (avoids GET URL length limits)
+  const formParams = new URLSearchParams()
+  const allParams = { ...params, sign }
+  Object.keys(allParams).sort().forEach(k => formParams.append(k, allParams[k]))
 
-  const finalUrl = `${NCM_BASE}${path}?${query}`
-  const res = await fetch(finalUrl)
+  const res = await fetch(`${NCM_BASE}${path}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: formParams.toString(),
+  })
   const body = await res.text()
   let data
   try { data = JSON.parse(body) } catch { data = body }
-  return { status: res.status, data, finalUrl, rawText: body }
+  return { status: res.status, data }
 }
 
 async function rsaSign(pemKey, data) {
