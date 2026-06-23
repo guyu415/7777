@@ -327,42 +327,40 @@ async function handleMusicProxy(request, env) {
     }
 
     // ── Authenticated music routes ──────────────────────────────
-    if (pathname === '/music/search') {
-      return Response.json({
-        has_env_token: !!env.NCM_ACCESS_TOKEN,
-        has_kv_token: !!(await env.CHAT_KV.get('ncm:access_token').catch(() => null)),
-        env_token_preview: env.NCM_ACCESS_TOKEN ? env.NCM_ACCESS_TOKEN.substring(0, 10) + '...' : 'NULL'
-      }, { headers: CORS })
-    }
     const upstreamPath = NCM_MUSIC_ROUTES[pathname]
     if (!upstreamPath) {
       return Response.json({ error: 'unknown music route' }, { status: 404, headers: CORS })
     }
 
-    // Load token state
-    const [accessToken, tokenExpireStr, refreshToken] = await Promise.all([
-      env.NCM_ACCESS_TOKEN || env.CHAT_KV.get('ncm:access_token'),
-      env.CHAT_KV.get('ncm:token_expire'),
-      env.CHAT_KV.get('ncm:refresh_token'),
-    ])
-    const tokenExpire = tokenExpireStr ? parseInt(tokenExpireStr) : 0
-    const now = Date.now()
-
-    if (!accessToken || tokenExpire < now) {
-      // Fully expired — can we still refresh?
-      if (!refreshToken || tokenExpire < now - 20 * DAY_MS) {
-        return Response.json({ error: 'need_login', message: '请先扫码登录' }, { status: 401, headers: CORS })
-      }
-      const { ok, newToken } = await doTokenRefresh(env, refreshToken)
-      if (!ok || !newToken) {
-        return Response.json({ error: 'need_login', message: '请先扫码登录' }, { status: 401, headers: CORS })
-      }
-      return ncmMusicRequest(env, pathname, upstreamPath, params, newToken)
+    // env var takes priority — skip all expiry/refresh logic
+    const accessToken = env.NCM_ACCESS_TOKEN
+      || await env.CHAT_KV.get('ncm:access_token').catch(() => null)
+    if (!accessToken) {
+      return Response.json({ error: 'need_login', message: '请先扫码登录' }, { status: 401, headers: CORS })
     }
 
-    // Auto-refresh when less than 1 day remains (synchronous — no ctx available here)
-    if (tokenExpire - now < DAY_MS && refreshToken) {
-      await doTokenRefresh(env, refreshToken)
+    if (!env.NCM_ACCESS_TOKEN) {
+      const [tokenExpireStr, refreshToken] = await Promise.all([
+        env.CHAT_KV.get('ncm:token_expire'),
+        env.CHAT_KV.get('ncm:refresh_token'),
+      ])
+      const tokenExpire = tokenExpireStr ? parseInt(tokenExpireStr) : 0
+      const now = Date.now()
+
+      if (tokenExpire < now) {
+        if (!refreshToken || tokenExpire < now - 20 * DAY_MS) {
+          return Response.json({ error: 'need_login', message: '请先扫码登录' }, { status: 401, headers: CORS })
+        }
+        const { ok, newToken } = await doTokenRefresh(env, refreshToken)
+        if (!ok || !newToken) {
+          return Response.json({ error: 'need_login', message: '请先扫码登录' }, { status: 401, headers: CORS })
+        }
+        return ncmMusicRequest(env, pathname, upstreamPath, params, newToken)
+      }
+
+      if (tokenExpire - now < DAY_MS && refreshToken) {
+        await doTokenRefresh(env, refreshToken)
+      }
     }
 
     return ncmMusicRequest(env, pathname, upstreamPath, params, accessToken)
