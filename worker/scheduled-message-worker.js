@@ -365,8 +365,13 @@ async function handleMusicProxy(request, env) {
 
     if (pathname === '/music/search') {
       const bizContent = { keyword: params.keyword || '', limit: Number(params.limit) || 10 }
-      const { data } = await ncmRequest(env, upstreamPath, bizContent, { accessToken })
-      return Response.json(data, { headers: CORS })
+      const { status, rawText, finalUrl } = await ncmRequest(env, upstreamPath, bizContent, { accessToken })
+      return Response.json({
+        http_status: status,
+        response_length: rawText.length,
+        response_preview: rawText.substring(0, 500),
+        finalUrl: finalUrl.substring(0, 300)
+      }, { headers: CORS })
     }
 
     return ncmMusicRequest(env, pathname, upstreamPath, params, accessToken)
@@ -440,7 +445,7 @@ async function ncmRequest(env, path, bizContentObj, { accessToken } = {}) {
   const body = await res.text()
   let data
   try { data = JSON.parse(body) } catch { data = body }
-  return { status: res.status, data, finalUrl }
+  return { status: res.status, data, finalUrl, rawText: body }
 }
 
 async function rsaSign(pemKey, data) {
