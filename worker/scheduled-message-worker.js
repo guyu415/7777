@@ -271,7 +271,11 @@ async function handleMusicProxy(request, env) {
         '/openapi/music/basic/oauth2/login/anonymous',
         { clientId: env.NCM_APP_ID })
       if (data?.data?.accessToken) {
-        await env.CHAT_KV.put('ncm:anonymous_token', data.data.accessToken)
+        try {
+          await env.CHAT_KV.put('ncm:anonymous_token', data.data.accessToken)
+        } catch (e) {
+          console.log('[ncm] KV put ncm:anonymous_token failed:', e.message)
+        }
       }
       return Response.json(data, { headers: CORS })
     }
@@ -288,7 +292,8 @@ async function handleMusicProxy(request, env) {
     // ?key=<qrcode_uniKey>   (auth via Referer or authKey param)
     if (pathname === '/music/qrcode/poll') {
       const qrKey = url.searchParams.get('key') || params.qrKey || ''
-      const anonymousToken = await env.CHAT_KV.get('ncm:anonymous_token')
+      const anonymousToken = env.NCM_ANONYMOUS_TOKEN
+        || await env.CHAT_KV.get('ncm:anonymous_token')
       if (!anonymousToken) {
         return Response.json(
           { error: 'anonymous_token missing — call /music/anonymous-login first' },
