@@ -91,41 +91,37 @@ body {
   background: rgba(60, 150, 240, 0.18) !important;
 }
 
-/* Meteor shower — replaces floating sakura */
-@keyframes meteor-fall {
-  0%   { transform: translateY(-80px) rotate(-28deg); opacity: 0; }
-  8%   { opacity: 1; }
-  60%  { opacity: 0.65; }
-  78%  { opacity: 0; }
-  100% { transform: translateY(82vh) rotate(-28deg); opacity: 0; }
+/* Falling accessory particles — drift down with sway + spin, then stack (see FallingParticles.jsx) */
+@keyframes pfall {
+  0%   { transform: translateY(-90px) translateX(0)     rotate(0deg);                       opacity: 0; }
+  8%   { opacity: 0.85; }
+  25%  { transform: translateY(calc(var(--fall) * 0.25)) translateX(18px)  rotate(calc(var(--spin) * 0.25)); }
+  50%  { transform: translateY(calc(var(--fall) * 0.5))  translateX(-18px) rotate(calc(var(--spin) * 0.5)); opacity: 0.85; }
+  75%  { transform: translateY(calc(var(--fall) * 0.75)) translateX(18px)  rotate(calc(var(--spin) * 0.75)); }
+  92%  { opacity: 0.85; }
+  100% { transform: translateY(var(--fall)) translateX(0) rotate(var(--spin));               opacity: 0; }
 }
 
-.petal {
+.pfall {
   position: absolute;
+  top: 0;
   pointer-events: none;
-  font-size: 0;
-  width: 2px;
-  height: 55px;
-  border-radius: 1px;
-  background: linear-gradient(
-    to bottom,
-    rgba(255, 255, 255, 0.92),
-    rgba(120, 200, 255, 0.75) 35%,
-    rgba(60, 140, 240, 0.45) 65%,
-    transparent
-  );
-  box-shadow: 0 0 4px rgba(120, 200, 255, 0.55), 0 0 8px rgba(60, 140, 240, 0.25);
-  animation: meteor-fall linear infinite;
+  object-fit: contain;
+  opacity: 0;
+  animation: pfall var(--dur) linear var(--delay) 1 both;
   will-change: transform, opacity;
 }
-.petal:nth-child(1) { left: 5%;  animation-duration: 12s;   animation-delay: 0s;    height: 58px; }
-.petal:nth-child(2) { left: 18%; animation-duration: 15s;   animation-delay: 3s;    height: 38px; width: 1.5px; }
-.petal:nth-child(3) { left: 32%; animation-duration: 10.5s; animation-delay: 7s;    height: 65px; }
-.petal:nth-child(4) { left: 47%; animation-duration: 14s;   animation-delay: 1.5s;  height: 44px; width: 1.5px; }
-.petal:nth-child(5) { left: 61%; animation-duration: 13s;   animation-delay: 5s;    height: 52px; }
-.petal:nth-child(6) { left: 73%; animation-duration: 16s;   animation-delay: 9s;    height: 40px; width: 1.5px; }
-.petal:nth-child(7) { left: 84%; animation-duration: 11s;   animation-delay: 4s;    height: 62px; }
-.petal:nth-child(8) { left: 93%; animation-duration: 13.5s; animation-delay: 11s;   height: 35px; width: 1px; }
+
+/* Landed / stacked particles — frozen at landing angle, transition for row-shift + fade */
+.pland {
+  position: absolute;
+  pointer-events: none;
+  object-fit: contain;
+  opacity: 0.9;
+  transition: bottom 0.5s ease, opacity 0.8s ease;
+  will-change: bottom, opacity;
+}
+.pland.pfade { opacity: 0; }
 
 /* Voice wave */
 @keyframes wave {
