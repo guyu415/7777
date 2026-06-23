@@ -16,6 +16,21 @@ function hasLetter(content) {
   return content.includes('{{LETTER_CARD:') || content.includes('[LETTER')
 }
 
+const ACTION_SPLIT_RE = /(<i>[\s\S]*?<\/i>)/g
+
+function renderWithActions(text) {
+  return text.split(ACTION_SPLIT_RE).map((seg, i) => {
+    if (seg.startsWith('<i>') && seg.endsWith('</i>')) {
+      return (
+        <i key={i} style={{ fontSize: '0.92em', opacity: 0.7, fontStyle: 'italic', display: 'inline' }}>
+          {seg.slice(3, -4)}
+        </i>
+      )
+    }
+    return seg || null
+  })
+}
+
 function renderContentNodes(content) {
   return content.split(LETTER_SPLIT).map((seg, i) => {
     const ph = seg.match(LETTER_CARD_ONE)
@@ -225,7 +240,7 @@ function MessageBubble({ message, onLongPress, onRegenerate, onRegenerateRound, 
             {message.streaming && !message.content ? (
               <TypingIndicator />
             ) : (
-              <span className="whitespace-pre-wrap break-words">{hasLetter(message.content) ? renderContentNodes(message.content) : message.content}
+              <span className="whitespace-pre-wrap break-words">{hasLetter(message.content) ? renderContentNodes(message.content) : (isUser ? message.content : renderWithActions(message.content))}
                 {onRegenerate && !message.streaming && (
                   <span className="inline-flex gap-1 ml-2" style={{ verticalAlign: 'middle' }}>
                     <button

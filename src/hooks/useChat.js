@@ -26,7 +26,9 @@ mood 从这些里选：😊 🥰 😌 😔 🥹 😤 🤔 😶‍🌫️
 weather 从这些里选：☀️ ⛅ ☁️ 🌧️ ❄️ 🌙
 date 用当天日期。
 
-信件是私密的、慢节奏的、跟聊天不同的表达。可以写得长一点，但不要刻意做作，保持你平时说话的语气。`
+信件是私密的、慢节奏的、跟聊天不同的表达。可以写得长一点，但不要刻意做作，保持你平时说话的语气。
+
+动作描写用 <i>动作内容</i> 包裹，对话和心理活动正常写，不要包裹。`
 import { fetchTTSAudio } from '../services/tts'
 import { getSessionMsgs, saveSessionMsgs } from '../services/sync'
 import { addLetter, getLettersByCharacter } from '../services/letters'
