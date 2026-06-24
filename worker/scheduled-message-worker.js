@@ -405,26 +405,26 @@ async function ncmRequest(env, path, bizContentObj, { accessToken } = {}) {
   const device_raw = JSON.stringify(NCM_DEVICE)
   const bizContent_raw = JSON.stringify(bizContentObj)
 
-  // Sign base uses RAW (un-encoded) values for ALL params.
-  const params = {
+  // Sign base excludes accessToken — only fixed 5 params
+  const signParams = {
     appId: env.NCM_APP_ID,
     signType: 'RSA_SHA256',
     timestamp: Date.now().toString(),
     device: device_raw,
     bizContent: bizContent_raw,
   }
-  if (accessToken) params.accessToken = accessToken
 
-  const signBase = Object.keys(params)
-    .filter(k => params[k] !== '' && params[k] != null)
+  const signBase = Object.keys(signParams)
+    .filter(k => signParams[k] !== '' && signParams[k] != null)
     .sort()
-    .map(k => `${k}=${params[k]}`)
+    .map(k => `${k}=${signParams[k]}`)
     .join('&')
 
   const sign = await rsaSign(env.NCM_PRIVATE_KEY, signBase)
 
-  // GET with encodeURIComponent on all values
-  const allParams = { ...params, sign }
+  // URL params: signed params + sign + accessToken (not signed)
+  const allParams = { ...signParams, sign }
+  if (accessToken) allParams.accessToken = accessToken
   const query = Object.keys(allParams).sort()
     .map(k => `${k}=${encodeURIComponent(allParams[k])}`)
     .join('&')
