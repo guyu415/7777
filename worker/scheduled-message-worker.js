@@ -408,7 +408,7 @@ async function ncmRequest(env, path, bizContentObj, { accessToken } = {}) {
   const device_raw = JSON.stringify(NCM_DEVICE)
   const bizContent_raw = JSON.stringify(bizContentObj)
 
-  // Sign base excludes accessToken — only fixed 5 params
+  // Sign base includes accessToken if present (raw JSON values, sorted)
   const signParams = {
     appId: env.NCM_APP_ID,
     signType: 'RSA_SHA256',
@@ -416,6 +416,7 @@ async function ncmRequest(env, path, bizContentObj, { accessToken } = {}) {
     device: device_raw,
     bizContent: bizContent_raw,
   }
+  if (accessToken) signParams.accessToken = accessToken
 
   const signBase = Object.keys(signParams)
     .filter(k => signParams[k] !== '' && signParams[k] != null)
@@ -425,10 +426,9 @@ async function ncmRequest(env, path, bizContentObj, { accessToken } = {}) {
 
   const sign = await rsaSign(env.NCM_PRIVATE_KEY, signBase)
 
-  // POST body: all params (URLSearchParams handles encoding)
+  // POST body: raw values passed to URLSearchParams (it handles encoding once)
   const formParams = new URLSearchParams()
   const allParams = { ...signParams, sign }
-  if (accessToken) allParams.accessToken = accessToken
   Object.keys(allParams).sort().forEach(k => formParams.append(k, allParams[k]))
 
   const res = await fetch(`${NCM_BASE}${path}`, {
