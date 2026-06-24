@@ -424,7 +424,7 @@ async function ncmMusicRequest(env, pathname, upstreamPath, params, accessToken)
       body,
     })
     const text = await res.text()
-    return Response.json({ http_status: res.status, response_text: text.substring(0, 1000) }, { headers: CORS })
+    return Response.json({ http_status: res.status, response_text: text.substring(0, 1000), signString: signBase }, { headers: CORS })
   }
   return Response.json({ url: signedUrl.url }, { headers: CORS })
 }
