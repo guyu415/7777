@@ -399,9 +399,9 @@ async function ncmMusicRequest(env, pathname, upstreamPath, params, accessToken)
   const signedUrl = await buildNcmUrl(env, upstreamPath, bizContent, { accessToken })
   if (pathname === '/music/search') {
     const device_raw = JSON.stringify({
-      channel: 'netease', deviceId: 'eunoia_web_001', deviceType: 'androidcar',
-      appVer: '6.0.0', os: 'androidcar', osVer: '14',
-      brand: 'netease', model: 'GDI-W09', clientIp: '2a06:98c0:3600::103',
+      channel: 'ncmcli', deviceId: 'eunoia_web_001', deviceType: 'openapi',
+      appVer: '0.1.6', os: 'ncmcli', osVer: '1.0',
+      brand: 'ncmcli', model: 'Linux_x64_cli', clientIp: '2a06:98c0:3600::103',
     })
     const bizContent_raw = JSON.stringify(bizContent)
     const timestamp = Date.now().toString()
