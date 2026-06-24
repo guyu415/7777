@@ -396,7 +396,7 @@ async function ncmMusicRequest(env, pathname, upstreamPath, params, accessToken)
   } else {
     bizContent = { songId: String(params.songId || '') }
   }
-  const result = await ncmRequest(env, upstreamPath, bizContent, { accessToken })
+  const result = await ncmRequest(env, upstreamPath, bizContent, pathname === '/music/search' ? {} : { accessToken })
   if (pathname === '/music/search') {
     return Response.json({
       http_status: result.status,
