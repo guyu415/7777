@@ -408,7 +408,7 @@ async function ncmMusicRequest(env, pathname, upstreamPath, params, accessToken)
     const signBase = Object.keys(signFields).sort().map(k => `${k}=${signFields[k]}`).join('&')
     const sign = await rsaSign(env.NCM_PRIVATE_KEY, signBase)
     // POST body: all fields including appSecret, via URLSearchParams (encodes once)
-    const body = new URLSearchParams({ ...signFields, appSecret: APP_SECRET, sign }).toString()
+    const body = new URLSearchParams({ ...signFields, sign }).toString()
     const res = await fetch(`${NCM_BASE}${upstreamPath}`, {
       method: 'POST',
       headers: {
