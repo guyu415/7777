@@ -388,7 +388,7 @@ async function doTokenRefresh(env, refreshToken) {
 async function ncmMusicRequest(env, pathname, upstreamPath, params, accessToken) {
   let bizContent
   if (pathname === '/music/search') {
-    bizContent = { keyword: params.keyword || '', limit: Number(params.limit) || 10 }
+    bizContent = { keyword: params.keyword || '', limit: String(Number(params.limit) || 10) }
   } else if (pathname === '/music/song') {
     bizContent = { songId: String(params.songId || ''), withUrl: true }
   } else if (pathname === '/music/playurl') {
