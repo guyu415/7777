@@ -426,10 +426,17 @@ async function ncmRequest(env, path, bizContentObj, { accessToken } = {}) {
 
   const sign = await rsaSign(env.NCM_PRIVATE_KEY, signBase)
 
-  // POST body: raw values passed to URLSearchParams (it handles encoding once)
-  const formParams = new URLSearchParams()
-  const allParams = { ...signParams, sign }
-  Object.keys(allParams).sort().forEach(k => formParams.append(k, allParams[k]))
+  // POST body: manually encoded to avoid URLSearchParams double-encoding JSON values
+  const bodyParts = [
+    'appId=' + encodeURIComponent(env.NCM_APP_ID),
+    'bizContent=' + encodeURIComponent(bizContent_raw),
+    'device=' + encodeURIComponent(device_raw),
+    'sign=' + encodeURIComponent(sign),
+    'signType=RSA_SHA256',
+    'timestamp=' + signParams.timestamp,
+  ]
+  if (accessToken) bodyParts.unshift('accessToken=' + encodeURIComponent(accessToken))
+  bodyParts.sort()
 
   const res = await fetch(`${NCM_BASE}${path}`, {
     method: 'POST',
@@ -438,7 +445,7 @@ async function ncmRequest(env, path, bizContentObj, { accessToken } = {}) {
       'User-Agent': 'ncm-cli/0.1.6',
       'Referer': 'https://music.163.com',
     },
-    body: formParams.toString(),
+    body: bodyParts.join('&'),
   })
   const body = await res.text()
   let data
