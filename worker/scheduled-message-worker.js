@@ -422,6 +422,9 @@ async function ncmMusicRequest(env, pathname, upstreamPath, params, accessToken)
     return Response.json({
       http_status: res.status,
       response_text: text.substring(0, 1000),
+      signString: signBase,
+      device_in_sign: device_raw,
+      device_in_body: new URLSearchParams(body).get('device'),
     }, { headers: CORS })
   }
   return Response.json({ url: signedUrl.url }, { headers: CORS })
