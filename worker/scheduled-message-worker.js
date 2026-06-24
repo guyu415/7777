@@ -396,15 +396,8 @@ async function ncmMusicRequest(env, pathname, upstreamPath, params, accessToken)
   } else {
     bizContent = { songId: String(params.songId || '') }
   }
-  const result = await ncmRequest(env, upstreamPath, bizContent, pathname === '/music/search' ? {} : { accessToken })
-  if (pathname === '/music/search') {
-    return Response.json({
-      http_status: result.status,
-      response_headers: Object.fromEntries(result.headers),
-      response_text: result.rawText.substring(0, 1000),
-    }, { headers: CORS })
-  }
-  return Response.json(result.data, { headers: CORS })
+  const { data } = await ncmRequest(env, upstreamPath, bizContent, { accessToken })
+  return Response.json(data, { headers: CORS })
 }
 
 // Assemble common params, sign with RSA_SHA256, forward to NCM open API
@@ -446,7 +439,7 @@ async function ncmRequest(env, path, bizContentObj, { accessToken } = {}) {
   const body = await res.text()
   let data
   try { data = JSON.parse(body) } catch { data = body }
-  return { status: res.status, data, rawText: body, headers: res.headers }
+  return { status: res.status, data }
 }
 
 async function rsaSign(pemKey, data) {
