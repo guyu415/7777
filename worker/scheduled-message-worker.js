@@ -226,15 +226,15 @@ async function handleChatProxy(request) {
 const NCM_BASE = 'https://openapi.music.163.com'
 
 const NCM_DEVICE = {
-  appVer: '0.1.6',
-  brand: 'ncmcli',
   channel: 'ncmcli',
-  clientIp: '192.0.2.2',
   deviceId: 'eunoia_web_001',
   deviceType: 'openapi',
-  model: 'Linux_x64_cli',
+  appVer: '0.1.6',
   os: 'ncmcli',
   osVer: '1.0',
+  brand: 'ncmcli',
+  model: 'Linux_x64_cli',
+  clientIp: '192.0.2.2',
 }
 
 const NCM_MUSIC_ROUTES = {
@@ -388,7 +388,7 @@ async function doTokenRefresh(env, refreshToken) {
 async function ncmMusicRequest(env, pathname, upstreamPath, params, accessToken) {
   let bizContent
   if (pathname === '/music/search') {
-    bizContent = { keyword: params.keyword || '', limit: String(Number(params.limit) || 10) }
+    bizContent = { keyword: params.keyword || '', limit: Number(params.limit) || 10 }
   } else if (pathname === '/music/song') {
     bizContent = { songId: String(params.songId || ''), withUrl: true }
   } else if (pathname === '/music/playurl') {
@@ -398,18 +398,17 @@ async function ncmMusicRequest(env, pathname, upstreamPath, params, accessToken)
   }
   const signedUrl = await buildNcmUrl(env, upstreamPath, bizContent, { accessToken })
   if (pathname === '/music/search') {
-    const APP_SECRET = 'de3fced280cab0181078ae203d8454df'
     const device_raw = JSON.stringify(NCM_DEVICE)
     const bizContent_raw = JSON.stringify(bizContent)
     const timestamp = Date.now().toString()
-    // Sign base: accessToken(if present), appId, bizContent, device, timestamp — NO signType, NO appSecret
-    const signFields = { appId: env.NCM_APP_ID, bizContent: bizContent_raw, device: device_raw, timestamp }
-    if (accessToken) signFields.accessToken = accessToken
-    const signBase = Object.keys(signFields).sort().map(k => `${k}=${signFields[k]}`).join('&')
+    // Sign base: appId, bizContent, device, signType, timestamp — NO accessToken, NO appSecret
+    const signBase = `appId=${env.NCM_APP_ID}&bizContent=${bizContent_raw}&device=${device_raw}&signType=RSA_SHA256&timestamp=${timestamp}`
     const sign = await rsaSign(env.NCM_PRIVATE_KEY, signBase)
 
-    // POST body: sign fields + signType + appSecret (signType not in sign base)
-    const body = new URLSearchParams({ ...signFields, signType: 'RSA_SHA256', appSecret: APP_SECRET, sign }).toString()
+    // POST body: all fields + accessToken + sign (no appSecret)
+    const bodyFields = { appId: env.NCM_APP_ID, bizContent: bizContent_raw, device: device_raw, signType: 'RSA_SHA256', timestamp, sign }
+    if (accessToken) bodyFields.accessToken = accessToken
+    const body = new URLSearchParams(bodyFields).toString()
     const res = await fetch(`${NCM_BASE}${upstreamPath}`, {
       method: 'POST',
       headers: {
@@ -419,18 +418,10 @@ async function ncmMusicRequest(env, pathname, upstreamPath, params, accessToken)
       },
       body,
     })
-    // extract raw encoded sign value from body string (before any decoding)
-    const signInBodyRaw = body.split('&').find(p => p.startsWith('sign='))?.slice(5) || ''
-    const isBase64 = /^[A-Za-z0-9+/]+=*$/.test(sign)
-    const isHex    = /^[0-9a-f]+$/i.test(sign)
     const text = await res.text()
     return Response.json({
       http_status: res.status,
       response_text: text.substring(0, 1000),
-      sign_value: sign,
-      sign_format: isBase64 ? 'base64' : isHex ? 'hex' : 'unknown',
-      sign_algo: 'RSASSA-PKCS1-v1_5 + SHA-256 → arrayBufferToBase64 (btoa)',
-      sign_in_body_encoded: signInBodyRaw,
     }, { headers: CORS })
   }
   return Response.json({ url: signedUrl.url }, { headers: CORS })
