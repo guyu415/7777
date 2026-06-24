@@ -407,6 +407,24 @@ async function ncmMusicRequest(env, pathname, upstreamPath, params, accessToken)
     if (accessToken) signFields.accessToken = accessToken
     const signBase = Object.keys(signFields).sort().map(k => `${k}=${signFields[k]}`).join('&')
     const sign = await rsaSign(env.NCM_PRIVATE_KEY, signBase)
+
+    // ── Self-sign/verify diagnostic ──────────────────────────────
+    let self_verify = null, self_verify_error = null
+    try {
+      const privKey = await crypto.subtle.importKey(
+        'pkcs8', pemToArrayBuffer(env.NCM_PRIVATE_KEY),
+        { name: 'RSASSA-PKCS1-v1_5', hash: 'SHA-256' }, true, ['sign'])
+      const jwk = await crypto.subtle.exportKey('jwk', privKey)
+      const pubKey = await crypto.subtle.importKey(
+        'jwk', { kty: jwk.kty, n: jwk.n, e: jwk.e, alg: jwk.alg, key_ops: ['verify'] },
+        { name: 'RSASSA-PKCS1-v1_5', hash: 'SHA-256' }, false, ['verify'])
+      const testData = new TextEncoder().encode('test123')
+      const testSign = await crypto.subtle.sign('RSASSA-PKCS1-v1_5', privKey, testData)
+      self_verify = await crypto.subtle.verify('RSASSA-PKCS1-v1_5', pubKey, testSign, testData)
+    } catch (e) { self_verify_error = e.message }
+    return Response.json({ self_verify, self_verify_error }, { headers: CORS })
+    // ── End diagnostic ───────────────────────────────────────────
+
     // POST body: all fields including appSecret, via URLSearchParams (encodes once)
     const body = new URLSearchParams({ ...signFields, appSecret: APP_SECRET, sign }).toString()
     const res = await fetch(`${NCM_BASE}${upstreamPath}`, {
