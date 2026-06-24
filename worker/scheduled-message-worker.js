@@ -398,7 +398,16 @@ async function ncmMusicRequest(env, pathname, upstreamPath, params, accessToken)
   }
   const signedUrl = await buildNcmUrl(env, upstreamPath, bizContent, { accessToken })
   if (pathname === '/music/search') {
-    const device_raw = JSON.stringify(NCM_DEVICE)
+    let clientIp = '8.8.8.8'
+    try {
+      const ipRes = await fetch('https://api.ipify.org?format=json')
+      clientIp = (await ipRes.json()).ip
+    } catch {}
+    const device_raw = JSON.stringify({
+      channel: 'openapi', deviceId: 'eunoia_web_001', deviceType: 'openapi',
+      appVer: '1.0.0', os: 'openapi', osVer: '13',
+      brand: 'openapi', model: 'web', clientIp,
+    })
     const bizContent_raw = JSON.stringify(bizContent)
     const timestamp = Date.now().toString()
     // Sign base: appId, bizContent, device, signType, timestamp — NO accessToken, NO appSecret
