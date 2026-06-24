@@ -408,7 +408,7 @@ async function ncmMusicRequest(env, pathname, upstreamPath, params, accessToken)
     const signBase = Object.keys(signFields).sort().map(k => `${k}=${signFields[k]}`).join('&')
     const sign = await rsaSign(env.NCM_PRIVATE_KEY, signBase)
     // POST body: all fields including appSecret, via URLSearchParams (encodes once)
-    const body = new URLSearchParams({ ...signFields, sign }).toString()
+    const body = new URLSearchParams({ ...signFields, appSecret: APP_SECRET, sign }).toString()
     const res = await fetch(`${NCM_BASE}${upstreamPath}`, {
       method: 'POST',
       headers: {
@@ -419,14 +419,18 @@ async function ncmMusicRequest(env, pathname, upstreamPath, params, accessToken)
       body,
     })
     const bodyParams = new URLSearchParams(body)
+    const body_bizContent = bodyParams.get('bizContent')
+    const body_device     = bodyParams.get('device')
     const text = await res.text()
     return Response.json({
       http_status: res.status,
       response_text: text.substring(0, 1000),
-      signString: signBase,
-      debug_private_key_prefix: (env.NCM_PRIVATE_KEY || '').substring(0, 40),
-      debug_body_keys: [...bodyParams.keys()].sort().join(','),
-      debug_timestamp_match: signFields.timestamp === bodyParams.get('timestamp'),
+      sign_bizContent: bizContent_raw,
+      body_bizContent,
+      bizContent_match: bizContent_raw === body_bizContent,
+      sign_device: device_raw,
+      body_device,
+      device_match: device_raw === body_device,
     }, { headers: CORS })
   }
   return Response.json({ url: signedUrl.url }, { headers: CORS })
