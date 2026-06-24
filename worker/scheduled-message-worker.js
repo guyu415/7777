@@ -265,6 +265,26 @@ async function handleMusicProxy(request, env) {
   }
 
   try {
+    // ── Debug: build signed search URL without fetching ─────────
+    if (pathname === '/music/test') {
+      const accessToken = env.NCM_ACCESS_TOKEN || ''
+      const device_raw = JSON.stringify(NCM_DEVICE)
+      const bizContent_raw = JSON.stringify({ keyword: 'test', limit: 5 })
+      const sp = {
+        accessToken,
+        appId: env.NCM_APP_ID,
+        bizContent: bizContent_raw,
+        device: device_raw,
+        signType: 'RSA_SHA256',
+        timestamp: Date.now().toString(),
+      }
+      const signBase = Object.keys(sp).filter(k => sp[k]).sort().map(k => `${k}=${sp[k]}`).join('&')
+      const sign = await rsaSign(env.NCM_PRIVATE_KEY, signBase)
+      const query = Object.keys({ ...sp, sign }).sort().map(k => `${k}=${encodeURIComponent({ ...sp, sign }[k])}`).join('&')
+      const fullUrl = `${NCM_BASE}/openapi/music/basic/search/song/get/v3?${query}`
+      return Response.json({ url: fullUrl }, { headers: CORS })
+    }
+
     // ── Anonymous login (one-time) ──────────────────────────────
     if (pathname === '/music/anonymous-login') {
       const { data } = await ncmRequest(env,
