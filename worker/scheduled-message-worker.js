@@ -398,7 +398,33 @@ async function ncmMusicRequest(env, pathname, upstreamPath, params, accessToken)
   }
   const signedUrl = await buildNcmUrl(env, upstreamPath, bizContent, { accessToken })
   if (pathname === '/music/search') {
-    return Response.json({ url: signedUrl.url, signString: signedUrl.signBase }, { headers: CORS })
+    const APP_SECRET = 'de3fced280cab0181078ae203d8454df'
+    const device_raw = JSON.stringify(NCM_DEVICE)
+    const bizContent_raw = JSON.stringify(bizContent)
+    const signParams = {
+      appId: env.NCM_APP_ID,
+      appSecret: APP_SECRET,
+      bizContent: bizContent_raw,
+      device: device_raw,
+      signType: 'RSA_SHA256',
+      timestamp: Date.now().toString(),
+    }
+    if (accessToken) signParams.accessToken = accessToken
+    const signBase = Object.keys(signParams).sort().map(k => `${k}=${signParams[k]}`).join('&')
+    const sign = await rsaSign(env.NCM_PRIVATE_KEY, signBase)
+    const allParams = { ...signParams, sign }
+    const body = Object.keys(allParams).sort().map(k => `${k}=${encodeURIComponent(allParams[k])}`).join('&')
+    const res = await fetch(`${NCM_BASE}${upstreamPath}`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+        'User-Agent': 'ncm-cli/0.1.6',
+        'Referer': 'https://music.163.com',
+      },
+      body,
+    })
+    const text = await res.text()
+    return Response.json({ http_status: res.status, response_text: text.substring(0, 1000) }, { headers: CORS })
   }
   return Response.json({ url: signedUrl.url }, { headers: CORS })
 }
