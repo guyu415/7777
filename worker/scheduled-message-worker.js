@@ -397,7 +397,13 @@ async function ncmMusicRequest(env, pathname, upstreamPath, params, accessToken)
     bizContent = { songId: String(params.songId || '') }
   }
   const result = await ncmRequest(env, upstreamPath, bizContent, { accessToken })
-  if (result.__debug) return Response.json(result.__debug, { headers: CORS })
+  if (pathname === '/music/search') {
+    return Response.json({
+      http_status: result.status,
+      response_headers: Object.fromEntries(result.headers),
+      response_text: result.rawText.substring(0, 1000),
+    }, { headers: CORS })
+  }
   return Response.json(result.data, { headers: CORS })
 }
 
@@ -424,28 +430,18 @@ async function ncmRequest(env, path, bizContentObj, { accessToken } = {}) {
 
   const sign = await rsaSign(env.NCM_PRIVATE_KEY, signBase)
 
-  // DEBUG: expose signBase for /music/search
-  if (path.includes('search')) {
-    const dbgForm = new URLSearchParams()
-    const dbgAll = { ...params, sign }
-    Object.keys(dbgAll).sort().forEach(k => dbgForm.append(k, dbgAll[k]))
-    return { status: 0, data: null, rawText: '', __debug: { signBase, postBody: dbgForm.toString() } }
-  }
-
-  // POST with URLSearchParams body (avoids GET URL length limits)
-  const formParams = new URLSearchParams()
+  // GET with encodeURIComponent on all values
   const allParams = { ...params, sign }
-  Object.keys(allParams).sort().forEach(k => formParams.append(k, allParams[k]))
+  const query = Object.keys(allParams).sort()
+    .map(k => `${k}=${encodeURIComponent(allParams[k])}`)
+    .join('&')
+  const fullUrl = `${NCM_BASE}${path}?${query}`
 
-  const res = await fetch(`${NCM_BASE}${path}`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: formParams.toString(),
-  })
+  const res = await fetch(fullUrl)
   const body = await res.text()
   let data
   try { data = JSON.parse(body) } catch { data = body }
-  return { status: res.status, data, rawText: body }
+  return { status: res.status, data, rawText: body, headers: res.headers }
 }
 
 async function rsaSign(pemKey, data) {
