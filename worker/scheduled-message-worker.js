@@ -401,19 +401,14 @@ async function ncmMusicRequest(env, pathname, upstreamPath, params, accessToken)
     const APP_SECRET = 'de3fced280cab0181078ae203d8454df'
     const device_raw = JSON.stringify(NCM_DEVICE)
     const bizContent_raw = JSON.stringify(bizContent)
-    const signParams = {
-      appId: env.NCM_APP_ID,
-      appSecret: APP_SECRET,
-      bizContent: bizContent_raw,
-      device: device_raw,
-      signType: 'RSA_SHA256',
-      timestamp: Date.now().toString(),
-    }
-    if (accessToken) signParams.accessToken = accessToken
-    const signBase = Object.keys(signParams).sort().map(k => `${k}=${signParams[k]}`).join('&')
+    const timestamp = Date.now().toString()
+    // Sign base: NO appSecret — only these 6 fields sorted
+    const signFields = { appId: env.NCM_APP_ID, bizContent: bizContent_raw, device: device_raw, signType: 'RSA_SHA256', timestamp }
+    if (accessToken) signFields.accessToken = accessToken
+    const signBase = Object.keys(signFields).sort().map(k => `${k}=${signFields[k]}`).join('&')
     const sign = await rsaSign(env.NCM_PRIVATE_KEY, signBase)
-    const allParams = { ...signParams, sign }
-    const body = Object.keys(allParams).sort().map(k => `${k}=${encodeURIComponent(allParams[k])}`).join('&')
+    // POST body: all fields including appSecret, via URLSearchParams (encodes once)
+    const body = new URLSearchParams({ ...signFields, appSecret: APP_SECRET, sign }).toString()
     const res = await fetch(`${NCM_BASE}${upstreamPath}`, {
       method: 'POST',
       headers: {
