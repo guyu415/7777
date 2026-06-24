@@ -397,7 +397,10 @@ async function ncmMusicRequest(env, pathname, upstreamPath, params, accessToken)
     bizContent = { songId: String(params.songId || '') }
   }
   const signedUrl = await buildNcmUrl(env, upstreamPath, bizContent, { accessToken })
-  return Response.json({ url: signedUrl }, { headers: CORS })
+  if (pathname === '/music/search') {
+    return Response.json({ url: signedUrl.url, signString: signedUrl.signBase }, { headers: CORS })
+  }
+  return Response.json({ url: signedUrl.url }, { headers: CORS })
 }
 
 // Build a signed NCM GET URL without fetching (frontend will fetch directly)
@@ -422,7 +425,7 @@ async function buildNcmUrl(env, path, bizContentObj, { accessToken } = {}) {
   const query = Object.keys(allParams).sort()
     .map(k => `${k}=${encodeURIComponent(allParams[k])}`)
     .join('&')
-  return `${NCM_BASE}${path}?${query}`
+  return { url: `${NCM_BASE}${path}?${query}`, signBase }
 }
 
 // Assemble common params, sign with RSA_SHA256, forward to NCM open API
