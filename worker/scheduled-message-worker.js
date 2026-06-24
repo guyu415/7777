@@ -402,14 +402,14 @@ async function ncmMusicRequest(env, pathname, upstreamPath, params, accessToken)
     const device_raw = JSON.stringify(NCM_DEVICE)
     const bizContent_raw = JSON.stringify(bizContent)
     const timestamp = Date.now().toString()
-    // Sign base: NO appSecret — only these 6 fields sorted
-    const signFields = { appId: env.NCM_APP_ID, bizContent: bizContent_raw, device: device_raw, signType: 'RSA_SHA256', timestamp }
+    // Sign base: accessToken(if present), appId, bizContent, device, timestamp — NO signType, NO appSecret
+    const signFields = { appId: env.NCM_APP_ID, bizContent: bizContent_raw, device: device_raw, timestamp }
     if (accessToken) signFields.accessToken = accessToken
     const signBase = Object.keys(signFields).sort().map(k => `${k}=${signFields[k]}`).join('&')
     const sign = await rsaSign(env.NCM_PRIVATE_KEY, signBase)
 
-    // POST body: all fields including appSecret, via URLSearchParams (encodes once)
-    const body = new URLSearchParams({ ...signFields, appSecret: APP_SECRET, sign }).toString()
+    // POST body: sign fields + signType + appSecret (signType not in sign base)
+    const body = new URLSearchParams({ ...signFields, signType: 'RSA_SHA256', appSecret: APP_SECRET, sign }).toString()
     const res = await fetch(`${NCM_BASE}${upstreamPath}`, {
       method: 'POST',
       headers: {
