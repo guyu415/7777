@@ -396,8 +396,11 @@ async function ncmMusicRequest(env, pathname, upstreamPath, params, accessToken)
   } else {
     bizContent = { songId: String(params.songId || '') }
   }
-  const { data } = await ncmRequest(env, upstreamPath, bizContent, { accessToken })
-  return Response.json(data, { headers: CORS })
+  const result = await ncmRequest(env, upstreamPath, bizContent, { accessToken })
+  if (pathname === '/music/search') {
+    return Response.json({ http_status: result.status, response_text: result.rawText.substring(0, 1000) }, { headers: CORS })
+  }
+  return Response.json(result.data, { headers: CORS })
 }
 
 // Assemble common params, sign with RSA_SHA256, forward to NCM open API
@@ -422,24 +425,25 @@ async function ncmRequest(env, path, bizContentObj, { accessToken } = {}) {
 
   const sign = await rsaSign(env.NCM_PRIVATE_KEY, signBase)
 
-  // URL params: signed params + sign + accessToken (not signed)
+  // POST body: all params (URLSearchParams handles encoding)
+  const formParams = new URLSearchParams()
   const allParams = { ...signParams, sign }
   if (accessToken) allParams.accessToken = accessToken
-  const query = Object.keys(allParams).sort()
-    .map(k => `${k}=${encodeURIComponent(allParams[k])}`)
-    .join('&')
-  const fullUrl = `${NCM_BASE}${path}?${query}`
+  Object.keys(allParams).sort().forEach(k => formParams.append(k, allParams[k]))
 
-  const res = await fetch(fullUrl, {
+  const res = await fetch(`${NCM_BASE}${path}`, {
+    method: 'POST',
     headers: {
+      'Content-Type': 'application/x-www-form-urlencoded',
       'User-Agent': 'ncm-cli/0.1.6',
       'Referer': 'https://music.163.com',
     },
+    body: formParams.toString(),
   })
   const body = await res.text()
   let data
   try { data = JSON.parse(body) } catch { data = body }
-  return { status: res.status, data }
+  return { status: res.status, data, rawText: body }
 }
 
 async function rsaSign(pemKey, data) {
