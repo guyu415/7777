@@ -418,19 +418,18 @@ async function ncmMusicRequest(env, pathname, upstreamPath, params, accessToken)
       },
       body,
     })
-    const bodyParams = new URLSearchParams(body)
-    const body_bizContent = bodyParams.get('bizContent')
-    const body_device     = bodyParams.get('device')
+    // extract raw encoded sign value from body string (before any decoding)
+    const signInBodyRaw = body.split('&').find(p => p.startsWith('sign='))?.slice(5) || ''
+    const isBase64 = /^[A-Za-z0-9+/]+=*$/.test(sign)
+    const isHex    = /^[0-9a-f]+$/i.test(sign)
     const text = await res.text()
     return Response.json({
       http_status: res.status,
       response_text: text.substring(0, 1000),
-      sign_bizContent: bizContent_raw,
-      body_bizContent,
-      bizContent_match: bizContent_raw === body_bizContent,
-      sign_device: device_raw,
-      body_device,
-      device_match: device_raw === body_device,
+      sign_value: sign,
+      sign_format: isBase64 ? 'base64' : isHex ? 'hex' : 'unknown',
+      sign_algo: 'RSASSA-PKCS1-v1_5 + SHA-256 → arrayBufferToBase64 (btoa)',
+      sign_in_body_encoded: signInBodyRaw,
     }, { headers: CORS })
   }
   return Response.json({ url: signedUrl.url }, { headers: CORS })
