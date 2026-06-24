@@ -437,7 +437,12 @@ async function ncmRequest(env, path, bizContentObj, { accessToken } = {}) {
     .join('&')
   const fullUrl = `${NCM_BASE}${path}?${query}`
 
-  const res = await fetch(fullUrl)
+  const res = await fetch(fullUrl, {
+    headers: {
+      'User-Agent': 'ncm-cli/0.1.6',
+      'Referer': 'https://music.163.com',
+    },
+  })
   const body = await res.text()
   let data
   try { data = JSON.parse(body) } catch { data = body }
