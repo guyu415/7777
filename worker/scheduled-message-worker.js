@@ -423,6 +423,7 @@ async function ncmMusicRequest(env, pathname, upstreamPath, params, accessToken)
       http_status: res.status,
       response_text: text.substring(0, 1000),
       signString: signBase,
+      sign_value: sign,
       device_in_sign: device_raw,
       device_in_body: new URLSearchParams(body).get('device'),
     }, { headers: CORS })
