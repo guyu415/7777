@@ -265,26 +265,6 @@ async function handleMusicProxy(request, env) {
   }
 
   try {
-    // ── Debug: build signed search URL without fetching ─────────
-    if (pathname === '/music/test') {
-      const accessToken = env.NCM_ACCESS_TOKEN || ''
-      const device_raw = JSON.stringify(NCM_DEVICE)
-      const bizContent_raw = JSON.stringify({ keyword: 'test', limit: 5 })
-      const sp = {
-        accessToken,
-        appId: env.NCM_APP_ID,
-        bizContent: bizContent_raw,
-        device: device_raw,
-        signType: 'RSA_SHA256',
-        timestamp: Date.now().toString(),
-      }
-      const signBase = Object.keys(sp).filter(k => sp[k]).sort().map(k => `${k}=${sp[k]}`).join('&')
-      const sign = await rsaSign(env.NCM_PRIVATE_KEY, signBase)
-      const query = Object.keys({ ...sp, sign }).sort().map(k => `${k}=${encodeURIComponent({ ...sp, sign }[k])}`).join('&')
-      const fullUrl = `${NCM_BASE}/openapi/music/basic/search/song/get/v3?${query}`
-      return Response.json({ url: fullUrl }, { headers: CORS })
-    }
-
     // ── Anonymous login (one-time) ──────────────────────────────
     if (pathname === '/music/anonymous-login') {
       const { data } = await ncmRequest(env,
@@ -416,12 +396,33 @@ async function ncmMusicRequest(env, pathname, upstreamPath, params, accessToken)
   } else {
     bizContent = { songId: String(params.songId || '') }
   }
-  const result = await ncmRequest(env, upstreamPath, bizContent,
-    { accessToken: pathname === '/music/search' ? (env.NCM_ACCESS_TOKEN || accessToken) : accessToken })
-  if (pathname === '/music/search') {
-    return Response.json({ http_status: result.status, response_text: result.rawText.substring(0, 1000) }, { headers: CORS })
+  const signedUrl = await buildNcmUrl(env, upstreamPath, bizContent, { accessToken })
+  return Response.json({ url: signedUrl }, { headers: CORS })
+}
+
+// Build a signed NCM GET URL without fetching (frontend will fetch directly)
+async function buildNcmUrl(env, path, bizContentObj, { accessToken } = {}) {
+  const device_raw = JSON.stringify(NCM_DEVICE)
+  const bizContent_raw = JSON.stringify(bizContentObj)
+  const signParams = {
+    appId: env.NCM_APP_ID,
+    signType: 'RSA_SHA256',
+    timestamp: Date.now().toString(),
+    device: device_raw,
+    bizContent: bizContent_raw,
   }
-  return Response.json(result.data, { headers: CORS })
+  if (accessToken) signParams.accessToken = accessToken
+  const signBase = Object.keys(signParams)
+    .filter(k => signParams[k] !== '' && signParams[k] != null)
+    .sort()
+    .map(k => `${k}=${signParams[k]}`)
+    .join('&')
+  const sign = await rsaSign(env.NCM_PRIVATE_KEY, signBase)
+  const allParams = { ...signParams, sign }
+  const query = Object.keys(allParams).sort()
+    .map(k => `${k}=${encodeURIComponent(allParams[k])}`)
+    .join('&')
+  return `${NCM_BASE}${path}?${query}`
 }
 
 // Assemble common params, sign with RSA_SHA256, forward to NCM open API
@@ -462,7 +463,7 @@ async function ncmRequest(env, path, bizContentObj, { accessToken } = {}) {
   const body = await res.text()
   let data
   try { data = JSON.parse(body) } catch { data = body }
-  return { status: res.status, data, rawText: body }
+  return { status: res.status, data }
 }
 
 async function rsaSign(pemKey, data) {
