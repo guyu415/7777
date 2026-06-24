@@ -418,8 +418,16 @@ async function ncmMusicRequest(env, pathname, upstreamPath, params, accessToken)
       },
       body,
     })
+    const bodyParams = new URLSearchParams(body)
     const text = await res.text()
-    return Response.json({ http_status: res.status, response_text: text.substring(0, 1000), signString: signBase }, { headers: CORS })
+    return Response.json({
+      http_status: res.status,
+      response_text: text.substring(0, 1000),
+      signString: signBase,
+      debug_private_key_prefix: (env.NCM_PRIVATE_KEY || '').substring(0, 40),
+      debug_body_keys: [...bodyParams.keys()].sort().join(','),
+      debug_timestamp_match: signFields.timestamp === bodyParams.get('timestamp'),
+    }, { headers: CORS })
   }
   return Response.json({ url: signedUrl.url }, { headers: CORS })
 }
