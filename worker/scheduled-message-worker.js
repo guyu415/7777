@@ -408,21 +408,22 @@ async function ncmMusicRequest(env, pathname, upstreamPath, params, accessToken)
     const signBase = Object.keys(signFields).sort().map(k => `${k}=${signFields[k]}`).join('&')
     const sign = await rsaSign(env.NCM_PRIVATE_KEY, signBase)
 
-    // ── Self-sign/verify diagnostic ──────────────────────────────
-    let self_verify = null, self_verify_error = null
+    // ── Cross-verify diagnostic: sign with Worker privkey, verify with given pubkey ──
+    let cross_verify = null, cross_verify_error = null
     try {
+      const EXPECTED_PUBKEY_B64 = 'MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEArCR8MHtQLYNAXAyDYOEpP/SRONfWGw1ifoj98KZXp/tY0o7ezRy5SoQGzsX+yghNb0Ht4TXUJOX/fCiQJHFB4bbnUiEjnavFOqbWYhLsCin66CkIXSQXpYDGoUgM+ilJSKb4u+zRj5HLyq2q7m1TojD0vXYsKmEsLtPOKpaZxMFbj9/fjwqIv4k3B0FtidMsQGyJkuLI34id8HEt0pg6CE5BZmxcFBrxPto+Ow6yNOvbqaX35fDxSTQcwCrrIvJ3ftAwddRRdnpvv7zGTcaPQ+VMcb0MqKV/s7m7qRU82YUoEz6Zs60ZajN9IEvOMcpLX/IhCRmQNZnfwqfHgETJNwIDAQAB'
+      const pubKeyBytes = Uint8Array.from(atob(EXPECTED_PUBKEY_B64), c => c.charCodeAt(0))
+      const pubKey = await crypto.subtle.importKey(
+        'spki', pubKeyBytes.buffer,
+        { name: 'RSASSA-PKCS1-v1_5', hash: 'SHA-256' }, false, ['verify'])
       const privKey = await crypto.subtle.importKey(
         'pkcs8', pemToArrayBuffer(env.NCM_PRIVATE_KEY),
-        { name: 'RSASSA-PKCS1-v1_5', hash: 'SHA-256' }, true, ['sign'])
-      const jwk = await crypto.subtle.exportKey('jwk', privKey)
-      const pubKey = await crypto.subtle.importKey(
-        'jwk', { kty: jwk.kty, n: jwk.n, e: jwk.e, alg: jwk.alg, key_ops: ['verify'] },
-        { name: 'RSASSA-PKCS1-v1_5', hash: 'SHA-256' }, false, ['verify'])
+        { name: 'RSASSA-PKCS1-v1_5', hash: 'SHA-256' }, false, ['sign'])
       const testData = new TextEncoder().encode('test123')
       const testSign = await crypto.subtle.sign('RSASSA-PKCS1-v1_5', privKey, testData)
-      self_verify = await crypto.subtle.verify('RSASSA-PKCS1-v1_5', pubKey, testSign, testData)
-    } catch (e) { self_verify_error = e.message }
-    return Response.json({ self_verify, self_verify_error }, { headers: CORS })
+      cross_verify = await crypto.subtle.verify('RSASSA-PKCS1-v1_5', pubKey, testSign, testData)
+    } catch (e) { cross_verify_error = e.message }
+    return Response.json({ cross_verify, cross_verify_error }, { headers: CORS })
     // ── End diagnostic ───────────────────────────────────────────
 
     // POST body: all fields including appSecret, via URLSearchParams (encodes once)
