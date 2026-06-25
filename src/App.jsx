@@ -33,6 +33,7 @@ export default function App() {
   const [migrationStatus, setMigrationStatus] = useState(null)
   const syncReady = useRef(false)
   const syncTimer = useRef(null)
+  const registeredFonts = useRef(new Set())
 
   // One-time migration: upload all local IDB messages to cloud
   const runMsgMigration = async (password) => {
@@ -247,6 +248,8 @@ export default function App() {
     document.documentElement.style.setProperty('--tail-ai', theme.tailAi)
   }, [theme.tailUser, theme.tailAi])
 
+  const selectedCustomFont = customFonts?.find(f => f.id === effectiveFontFamily) ?? null
+
   useEffect(() => {
     const fontId = effectiveFontFamily
     const builtIn = FONT_MAP[fontId]
@@ -259,10 +262,7 @@ export default function App() {
         return
       }
 
-      // Custom font: lazily load ONLY the currently-selected one (IDB cache first,
-      // single-key KV fetch on miss). Unselected fonts are never pulled — that loop
-      // used to blow up the Worker (Error 1102) when a big font sat in the list.
-      const font = (customFonts || []).find(f => f.id === fontId)
+      const font = selectedCustomFont
       if (!font) return
 
       try {
@@ -271,7 +271,7 @@ export default function App() {
           fontUrl = await loadAsset(password, font.assetKey)
           console.log('[FONT INIT] loadAsset 完成, family=', font.family, '长度=', fontUrl?.length ?? 'null')
         } else {
-          const blob = await getCustomFont(font.id) // 旧版未迁移字体的本地兜底
+          const blob = await getCustomFont(font.id)
           if (blob) fontUrl = URL.createObjectURL(blob)
         }
 
@@ -280,13 +280,11 @@ export default function App() {
           return
         }
 
-        // check() is unreliable as a load guard (can report true for unregistered
-        // fonts), but a registered FontFace makes it reliably true — use it only to
-        // skip a redundant re-register, never to skip the data load above.
-        if (!document.fonts.check(`12px "${font.family}"`)) {
+        if (!registeredFonts.current.has(font.family)) {
           const face = new FontFace(font.family, `url(${fontUrl})`)
           await face.load()
           document.fonts.add(face)
+          registeredFonts.current.add(font.family)
           console.log('[FONT INIT] FontFace 注册完成, family=', font.family)
         }
 
@@ -297,7 +295,7 @@ export default function App() {
     }
 
     run()
-  }, [effectiveFontFamily, customFonts])
+  }, [effectiveFontFamily, selectedCustomFont?.id, selectedCustomFont?.assetKey])
 
   useEffect(() => {
     document.documentElement.style.fontSize = `${effectiveFontSize}px`
