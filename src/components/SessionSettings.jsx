@@ -307,9 +307,13 @@ export default function SessionSettings({ theme }) {
           <ChevronLeft size={18} />
         </button>
         <span className="font-semibold text-sm flex-1" style={{ color: '#2c5282' }}>当前会话设置</span>
-        <span className="text-xs truncate max-w-[100px]" style={{ color: '#7a9cc0' }}>
-          {currentSession.name}
-        </span>
+        <button
+          onClick={() => setCurrentView('voiceFavorites')}
+          className="w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 transition-all duration-200"
+          style={{ background: `${primary}18`, color: primary, fontSize: 16 }}
+        >
+          ⭐
+        </button>
       </div>
 
       <div className="flex-1 overflow-y-auto px-4 py-3 space-y-3">
