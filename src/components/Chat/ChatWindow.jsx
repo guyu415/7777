@@ -6,7 +6,8 @@ import MemoryModal from './MemoryModal'
 import BottomNav from '../BottomNav'
 import { useChat } from '../../hooks/useChat'
 import { useScheduledMessages } from '../../hooks/useScheduledMessages'
-import { useStore, deleteMessageFromDB } from '../../store'
+import { useStore, deleteMessageFromDB, getBlob } from '../../store'
+import { putAsset, getAssetDataUrl } from '../../services/sync'
 
 const draftsBySession = {}
 
@@ -153,6 +154,29 @@ export default function ChatWindow({ theme }) {
   const handleDelete = async (msg) => {
     setMenuMsg(null)
     await deleteMsg(msg.id)
+  }
+
+  const handleFavoriteVoice = async (msg) => {
+    setMenuMsg(null)
+    const password = localStorage.getItem('auth.password')
+    if (!password) { showToast('请先登录'); return }
+    try {
+      const blob = await getBlob(msg.voiceBlobId)
+      if (!blob) { showToast('音频不存在'); return }
+      const favId = 'fav_' + Date.now()
+      await putAsset(password, `user:xiaoman2.26:voice_fav:${favId}`, blob)
+      const LIST_KEY = 'user:xiaoman2.26:voice_fav_list'
+      const existing = await getAssetDataUrl(password, LIST_KEY)
+      const list = existing ? JSON.parse(existing) : []
+      list.push({ id: favId, text: msg.voiceText || '', duration: msg.duration || 0, ts: Date.now() })
+      await putAsset(password, LIST_KEY, new Blob([JSON.stringify(list)], { type: 'application/json' }))
+      // 回读确认写入成功
+      const confirm = await getAssetDataUrl(password, LIST_KEY)
+      if (confirm) showToast('已收藏 ⭐')
+      else showToast('收藏失败，请重试')
+    } catch (e) {
+      showToast('收藏失败：' + e.message)
+    }
   }
 
   // Find the last assistant message id (the only one that gets a regenerate button)
@@ -324,6 +348,15 @@ export default function ChatWindow({ theme }) {
                 style={{ color: '#8b5060', borderBottom: '1px solid rgba(255,182,209,0.25)' }}
               >
                 🧠 存入记忆
+              </button>
+            )}
+            {menuMsg.role === 'assistant' && menuMsg.type === 'voice' && (
+              <button
+                onClick={() => handleFavoriteVoice(menuMsg)}
+                className="w-full flex items-center gap-3 px-5 py-3.5 text-sm hover:bg-yellow-50 transition-colors"
+                style={{ color: '#8b5060', borderBottom: '1px solid rgba(255,182,209,0.25)' }}
+              >
+                ⭐ 收藏语音
               </button>
             )}
             <button
