@@ -7,7 +7,10 @@ import BottomNav from '../BottomNav'
 import { useChat } from '../../hooks/useChat'
 import { useScheduledMessages } from '../../hooks/useScheduledMessages'
 import { useStore, deleteMessageFromDB, getBlob } from '../../store'
-import { putAsset, getAssetDataUrl } from '../../services/sync'
+import { putAsset } from '../../services/sync'
+
+const SYNC_BASE = 'https://chat.xiaoman.xyz'
+const FAV_LIST_KEY = 'user:xiaoman2.26:voice_fav_list'
 
 const draftsBySession = {}
 
@@ -160,22 +163,35 @@ export default function ChatWindow({ theme }) {
     setMenuMsg(null)
     const password = localStorage.getItem('auth.password')
     if (!password) { showToast('请先登录'); return }
+    // 兼容解析：裸 JSON 直接 parse；旧版 data URL 先 base64 解码再 parse；失败才空数组
+    const parseFavList = (value) => {
+      if (!value) return []
+      const v = value.trim()
+      if (v.startsWith('data:')) {
+        try { return JSON.parse(atob(v.slice(v.indexOf(',') + 1))) } catch { return [] }
+      }
+      try { return JSON.parse(v) } catch { return [] }
+    }
     try {
       const blob = await getBlob(msg.voiceBlobId)
       if (!blob) { showToast('音频不存在'); return }
       const favId = 'fav_' + Date.now()
+      // 音频走 putAsset（二进制→data URL）
       await putAsset(password, `user:xiaoman2.26:voice_fav:${favId}`, blob)
-      const LIST_KEY = 'user:xiaoman2.26:voice_fav_list'
-      const existing = await getAssetDataUrl(password, LIST_KEY)
-      const list = existing ? JSON.parse(existing) : []
+      // list 裸 JSON 直接 POST，绝不走 putAsset
+      const listRes = await fetch(`${SYNC_BASE}/sync/get?password=${encodeURIComponent(password)}&key=${encodeURIComponent(FAV_LIST_KEY)}`)
+      const listJson = listRes.ok ? await listRes.json() : null
+      const list = parseFavList(listJson?.value)
       list.push({ id: favId, text: msg.voiceText || '', duration: msg.duration || 0, ts: Date.now() })
-      await putAsset(password, LIST_KEY, new Blob([JSON.stringify(list)], { type: 'application/json' }))
-      // 绕过内存缓存，直接回源读确认 favId 真正写入 KV
-      const confirmRes = await fetch(
-        `https://chat.xiaoman.xyz/sync/get?password=${encodeURIComponent(password)}&key=${encodeURIComponent(LIST_KEY)}`
-      )
+      await fetch(`${SYNC_BASE}/sync/set`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ password, key: FAV_LIST_KEY, value: JSON.stringify(list) }),
+      })
+      // 回源确认：直接 fetch，不走任何内存缓存
+      const confirmRes = await fetch(`${SYNC_BASE}/sync/get?password=${encodeURIComponent(password)}&key=${encodeURIComponent(FAV_LIST_KEY)}`)
       const confirmJson = confirmRes.ok ? await confirmRes.json() : null
-      const confirmList = confirmJson?.value ? JSON.parse(confirmJson.value) : []
+      const confirmList = parseFavList(confirmJson?.value)
       if (confirmList.some(item => item.id === favId)) showToast('已收藏 ⭐')
       else showToast('收藏失败，请重试')
     } catch (e) {
