@@ -7,6 +7,7 @@ import SessionSettings from './components/SessionSettings'
 import SessionList from './components/SessionList'
 import BottomNav from './components/BottomNav'
 import LoginPage from './components/LoginPage'
+import VoiceFavorites from './components/VoiceFavorites'
 import { getSettings, saveSettings, extractSettings, saveSessionMsgs, putAsset, loadAsset, getLetters } from './services/sync'
 import { mergeLetters } from './services/letters'
 
@@ -33,6 +34,7 @@ export default function App() {
   const [migrationStatus, setMigrationStatus] = useState(null)
   const syncReady = useRef(false)
   const syncTimer = useRef(null)
+  const registeredFonts = useRef(new Set())
 
   // One-time migration: upload all local IDB messages to cloud
   const runMsgMigration = async (password) => {
@@ -247,6 +249,8 @@ export default function App() {
     document.documentElement.style.setProperty('--tail-ai', theme.tailAi)
   }, [theme.tailUser, theme.tailAi])
 
+  const selectedCustomFont = customFonts?.find(f => f.id === effectiveFontFamily) ?? null
+
   useEffect(() => {
     const fontId = effectiveFontFamily
     const builtIn = FONT_MAP[fontId]
@@ -283,10 +287,11 @@ export default function App() {
         // check() is unreliable as a load guard (can report true for unregistered
         // fonts), but a registered FontFace makes it reliably true — use it only to
         // skip a redundant re-register, never to skip the data load above.
-        if (!document.fonts.check(`12px "${font.family}"`)) {
+        if (!registeredFonts.current.has(font.family)) {
           const face = new FontFace(font.family, `url(${fontUrl})`)
           await face.load()
           document.fonts.add(face)
+          registeredFonts.current.add(font.family)
           console.log('[FONT INIT] FontFace 注册完成, family=', font.family)
         }
 
@@ -297,7 +302,7 @@ export default function App() {
     }
 
     run()
-  }, [effectiveFontFamily, customFonts])
+  }, [effectiveFontFamily, selectedCustomFont?.id, selectedCustomFont?.assetKey])
 
   useEffect(() => {
     document.documentElement.style.fontSize = `${effectiveFontSize}px`
@@ -373,9 +378,10 @@ export default function App() {
           )}
           {currentView === 'globalSettings' && <GlobalSettings theme={theme} onLogout={handleLogout} onForceSync={handleForceSync} />}
           {currentView === 'sessionSettings' && <SessionSettings theme={theme} />}
+          {currentView === 'voiceFavorites' && <VoiceFavorites theme={theme} />}
         </div>
 
-        {currentView !== 'sessionSettings' && currentView !== 'chat' && (
+        {currentView !== 'sessionSettings' && currentView !== 'voiceFavorites' && currentView !== 'chat' && (
           <BottomNav currentView={currentView} onChange={setCurrentView} theme={theme} />
         )}
       </div>
