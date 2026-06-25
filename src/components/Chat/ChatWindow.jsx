@@ -168,7 +168,11 @@ export default function ChatWindow({ theme }) {
       if (!value) return []
       const v = value.trim()
       if (v.startsWith('data:')) {
-        try { return JSON.parse(atob(v.slice(v.indexOf(',') + 1))) } catch { return [] }
+        try {
+          const b64 = v.slice(v.indexOf(',') + 1)
+          const bytes = Uint8Array.from(atob(b64), c => c.charCodeAt(0))
+          return JSON.parse(new TextDecoder().decode(bytes))
+        } catch { return [] }
       }
       try { return JSON.parse(v) } catch { return [] }
     }

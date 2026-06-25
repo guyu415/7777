@@ -7,6 +7,7 @@ import SessionSettings from './components/SessionSettings'
 import SessionList from './components/SessionList'
 import BottomNav from './components/BottomNav'
 import LoginPage from './components/LoginPage'
+import VoiceFavorites from './components/VoiceFavorites'
 import { getSettings, saveSettings, extractSettings, saveSessionMsgs, putAsset, loadAsset, getLetters } from './services/sync'
 import { mergeLetters } from './services/letters'
 
@@ -371,9 +372,10 @@ export default function App() {
           )}
           {currentView === 'globalSettings' && <GlobalSettings theme={theme} onLogout={handleLogout} onForceSync={handleForceSync} />}
           {currentView === 'sessionSettings' && <SessionSettings theme={theme} />}
+          {currentView === 'voiceFavorites' && <VoiceFavorites theme={theme} />}
         </div>
 
-        {currentView !== 'sessionSettings' && currentView !== 'chat' && (
+        {currentView !== 'sessionSettings' && currentView !== 'voiceFavorites' && currentView !== 'chat' && (
           <BottomNav currentView={currentView} onChange={setCurrentView} theme={theme} />
         )}
       </div>
