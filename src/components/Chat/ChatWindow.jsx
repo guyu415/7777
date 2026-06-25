@@ -170,9 +170,13 @@ export default function ChatWindow({ theme }) {
       const list = existing ? JSON.parse(existing) : []
       list.push({ id: favId, text: msg.voiceText || '', duration: msg.duration || 0, ts: Date.now() })
       await putAsset(password, LIST_KEY, new Blob([JSON.stringify(list)], { type: 'application/json' }))
-      // 回读确认写入成功
-      const confirm = await getAssetDataUrl(password, LIST_KEY)
-      if (confirm) showToast('已收藏 ⭐')
+      // 绕过内存缓存，直接回源读确认 favId 真正写入 KV
+      const confirmRes = await fetch(
+        `https://chat.xiaoman.xyz/sync/get?password=${encodeURIComponent(password)}&key=${encodeURIComponent(LIST_KEY)}`
+      )
+      const confirmJson = confirmRes.ok ? await confirmRes.json() : null
+      const confirmList = confirmJson?.value ? JSON.parse(confirmJson.value) : []
+      if (confirmList.some(item => item.id === favId)) showToast('已收藏 ⭐')
       else showToast('收藏失败，请重试')
     } catch (e) {
       showToast('收藏失败：' + e.message)
