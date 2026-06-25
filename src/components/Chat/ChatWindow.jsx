@@ -163,26 +163,38 @@ export default function ChatWindow({ theme }) {
     setMenuMsg(null)
     const password = localStorage.getItem('auth.password')
     if (!password) { showToast('请先登录'); return }
+    // 兼容解析 list：裸 JSON 直接 parse；旧版 data URL 先 base64 解码再 parse；失败才空数组
+    const parseFavList = (value) => {
+      if (!value) return []
+      const v = value.trim()
+      if (v.startsWith('data:')) {
+        try {
+          const b64 = v.slice(v.indexOf(',') + 1)
+          return JSON.parse(atob(b64))
+        } catch { return [] }
+      }
+      try { return JSON.parse(v) } catch { return [] }
+    }
     try {
       const blob = await getBlob(msg.voiceBlobId)
       if (!blob) { showToast('音频不存在'); return }
       const favId = 'fav_' + Date.now()
       // 音频是二进制，走 putAsset（base64 data URL）
       await putAsset(password, `user:xiaoman2.26:voice_fav:${favId}`, blob)
-      // list 是纯 JSON，直接裸存，避免 data URL 嵌套解析问题
+      // list 是纯 JSON，直接裸存，绝不走 putAsset
       const listRes = await fetch(`${SYNC_BASE}/sync/get?password=${encodeURIComponent(password)}&key=${encodeURIComponent(FAV_LIST_KEY)}`)
       const listJson = listRes.ok ? await listRes.json() : null
-      const list = listJson?.value ? JSON.parse(listJson.value) : []
+      const list = parseFavList(listJson?.value)
       list.push({ id: favId, text: msg.voiceText || '', duration: msg.duration || 0, ts: Date.now() })
       await fetch(`${SYNC_BASE}/sync/set`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ password, key: FAV_LIST_KEY, value: JSON.stringify(list) }),
       })
-      // 回源确认：重读并检查 favId 在列表里
+      // 回源确认：重读并检查 favId 在列表里（此时 KV 已是裸 JSON）
       const confirmRes = await fetch(`${SYNC_BASE}/sync/get?password=${encodeURIComponent(password)}&key=${encodeURIComponent(FAV_LIST_KEY)}`)
       const confirmJson = confirmRes.ok ? await confirmRes.json() : null
-      const confirmList = confirmJson?.value ? JSON.parse(confirmJson.value) : []
+      const confirmList = parseFavList(confirmJson?.value)
       if (confirmList.some(item => item.id === favId)) showToast('已收藏 ⭐')
       else showToast('收藏失败，请重试')
     } catch (e) {
