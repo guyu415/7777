@@ -1,5 +1,5 @@
 import { useEffect, useState, useRef } from 'react'
-import { useStore, getCustomFont, getBlob, getMessages } from './store'
+import { useStore, getCustomFont, getBlob, getMessages, saveMessage } from './store'
 import { THEMES } from './themes'
 import ChatWindow from './components/Chat/ChatWindow'
 import GlobalSettings from './components/GlobalSettings'
@@ -8,13 +8,24 @@ import SessionList from './components/SessionList'
 import BottomNav from './components/BottomNav'
 import LoginPage from './components/LoginPage'
 import VoiceFavorites from './components/VoiceFavorites'
-import { getSettings, saveSettings, extractSettings, saveSessionMsgs, putAsset, loadAsset, getLetters } from './services/sync'
+import { getSettings, saveSettings, extractSettings, saveSessionMsgs, putAsset, putAssetDataUrl, loadAsset, getLetters } from './services/sync'
 import { mergeLetters } from './services/letters'
+import { compressImage } from './utils/image'
 
 const FONT_MAP = {
   noto: "'Noto Sans SC', 'PingFang SC', -apple-system, sans-serif",
   zcool: "'ZCOOL XiaoWei', serif",
   mashan: "'Ma Shan Zheng', cursive",
+}
+
+// 用于「settings 是否真的变了」的对比指纹。lastMsgTime/lastMsgPreview 每条消息都在变，
+// 如果不剔除，聊天全程每轮都会触发一次整包 settings 上传，白白消耗 KV 每天
+// 1000 次的写入配额。这两个字段只影响会话列表排序展示，跟着下一次真实变更捎带上传即可。
+function settingsFingerprint(settings) {
+  return JSON.stringify({
+    ...settings,
+    sessions: (settings.sessions || []).map(({ lastMsgTime: _t, lastMsgPreview: _p, ...s }) => s),
+  })
 }
 
 export default function App() {
@@ -34,6 +45,7 @@ export default function App() {
   const [migrationStatus, setMigrationStatus] = useState(null)
   const syncReady = useRef(false)
   const syncTimer = useRef(null)
+  const lastSyncedSettings = useRef('')
   const registeredFonts = useRef(new Set())
 
   // One-time migration: upload all local IDB messages to cloud
@@ -131,6 +143,83 @@ export default function App() {
     console.log('[ASSET-MIGRATE] 全部完成')
   }
 
+  // One-time migration: legacy image messages carry full-resolution base64 inline,
+  // which rides along in every sessions:msgs:* upload. Compress each one, move the
+  // bytes to an asset:img:* KV key, then re-upload the (now slim) message arrays.
+  // Flag is only set when every image succeeded, so failures retry next login.
+  const runImageAssetMigration = async (password) => {
+    if (localStorage.getItem('imgAssetV1')) return
+    const { sessions: allSessions, currentSessionId } = useStore.getState()
+    let failures = 0
+    try {
+      for (const session of (allSessions || [])) {
+        const msgs = await getMessages(session.id)
+        const legacy = msgs.filter(m => m.type === 'image' && !m.imageAssetKey && (m.imageUrl || m.imageData))
+        if (!legacy.length) continue
+        let done = 0
+        let migrated = 0
+        for (const m of legacy) {
+          done++
+          setMigrationStatus(`正在压缩历史图片 ${done}/${legacy.length}`)
+          try {
+            const src = m.imageUrl || `data:${m.imageType || 'image/jpeg'};base64,${m.imageData}`
+            const { dataUrl, base64, mimeType } = await compressImage(src, { maxDim: 1280, quality: 0.8 })
+            const assetKey = `asset:img:${m.id}`
+            await putAssetDataUrl(password, assetKey, dataUrl)
+            await saveMessage({ ...m, imageAssetKey: assetKey, imageUrl: dataUrl, imageData: base64, imageType: mimeType })
+            migrated++
+          } catch (e) {
+            failures++
+            console.warn('[IMG-MIGRATE] 失败:', m.id, e.message)
+          }
+        }
+        if (migrated > 0) {
+          // Re-upload this session's msgs so the fat KV value is replaced by the slim one
+          try {
+            const fresh = await getMessages(session.id)
+            fresh.sort((a, b) => a.timestamp - b.timestamp)
+            await saveSessionMsgs(password, session.id, fresh)
+            if (session.id === currentSessionId) useStore.getState().setMessages(fresh)
+          } catch (e) {
+            failures++
+            console.warn('[IMG-MIGRATE] 会话上传失败:', session.id, e.message)
+          }
+        }
+      }
+    } finally {
+      setMigrationStatus(null)
+    }
+    if (failures === 0) localStorage.setItem('imgAssetV1', '1')
+    console.log('[IMG-MIGRATE] 完成 | 失败数=', failures)
+  }
+
+  // One-time cleanup: recompress oversized inline avatars (global + per-session).
+  // They live inside the synced `settings` blob, so every settings upload used to
+  // carry them at full resolution.
+  const slimAvatars = async () => {
+    if (localStorage.getItem('avatarSlimV1')) return
+    const LIMIT = 60_000 // data URL 字符数 ≈ 45KB 二进制
+    const slimOne = async (v) => {
+      if (!v || typeof v !== 'string' || !v.startsWith('data:image/') || v.length <= LIMIT) return null
+      try {
+        const { dataUrl } = await compressImage(v, { maxDim: 384, quality: 0.82 })
+        return dataUrl.length < v.length ? dataUrl : null
+      } catch { return null }
+    }
+    const state = useStore.getState()
+    const g1 = await slimOne(state.userAvatar)
+    if (g1) state.setUserAvatar(g1)
+    const g2 = await slimOne(state.aiAvatar)
+    if (g2) state.setAiAvatar(g2)
+    for (const s of (state.sessions || [])) {
+      const a1 = await slimOne(s.aiAvatar)
+      if (a1) useStore.getState().setSessionAiAvatar(s.id, a1)
+      const a2 = await slimOne(s.userAvatar)
+      if (a2) useStore.getState().setSessionUserAvatar(s.id, a2)
+    }
+    localStorage.setItem('avatarSlimV1', '1')
+  }
+
   // One-time cleanup: a legacy image background may have stored its base64 inline
   // in chatBg.value, which then rides along in the synced `settings` blob. Move any
   // such inline data URL out to a KV asset key so settings stays lightweight.
@@ -177,6 +266,8 @@ export default function App() {
         console.log('[SYNC] 云端配置拉取完成 | hasCloud=', !!cloud)
         if (cloud) {
           useStore.getState().restoreFromCloud(cloud)
+          // 刚恢复的状态和云端一致，记为已同步基线，避免启动后无意义的整包回传
+          lastSyncedSettings.current = settingsFingerprint(extractSettings(useStore.getState()))
           console.log('[SYNC] restoreFromCloud 完成')
         }
       })
@@ -198,6 +289,8 @@ export default function App() {
           console.log('[SYNC] 跳过资源迁移（已迁移）')
         }
         await separateInlineBgValues(password)
+        await runImageAssetMigration(password)
+        await slimAvatars()
       })
   }, [loggedIn])
 
@@ -221,8 +314,11 @@ export default function App() {
       clearTimeout(syncTimer.current)
       syncTimer.current = setTimeout(async () => {
         const settings = extractSettings(useStore.getState())
+        const fingerprint = settingsFingerprint(settings)
+        if (fingerprint === lastSyncedSettings.current) return
         try {
           await saveSettings(password, settings)
+          lastSyncedSettings.current = fingerprint
         } catch {
           setSyncError('云端同步失败，将在下次自动重试')
           setTimeout(() => setSyncError(null), 3000)

@@ -15,3 +15,9 @@ crons = ["*/30 * * * *"]
 # GLM (智谱AI) OpenAI 兼容格式，路径已含 /v4，代码只追加 /chat/completions
 # API Key 通过 Worker Secret 配置：Cloudflare 控制台 → Workers → scheduled-message-worker → Settings → Variables → CLAUDE_API_KEY
 # NCM_APP_ID and NCM_PRIVATE_KEY are set as Worker Secrets via Cloudflare dashboard
+#
+# 必须配置的 Secrets（源码中不再有硬编码兜底）：
+#   USER_PASSWORD  — 主动消息定时任务读取哪个用户的数据（原来硬编码在源码里，已移除）
+#                    wrangler secret put USER_PASSWORD --name scheduled-message-worker
+#   MUSIC_AUTH_KEY — 音乐代理的访问 key（可选；不配则仅允许 xiaoman.xyz Referer 访问）
+#                    wrangler secret put MUSIC_AUTH_KEY --name scheduled-message-worker

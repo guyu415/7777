@@ -3,6 +3,7 @@ import { ChevronLeft, Eye, EyeOff, RefreshCw } from 'lucide-react'
 import { useStore, getMessages } from '../store'
 import { putAsset } from '../services/sync'
 import { fetchModels } from '../services/claude'
+import { compressImage } from '../utils/image'
 
 const inputStyle = {
   width: '100%',
@@ -79,30 +80,38 @@ export default function SessionSettings({ theme }) {
   const [showApiKey, setShowApiKey] = useState(false)
   const [showTtsKey, setShowTtsKey] = useState(false)
 
-  const handleAvatarFile = (e) => {
-    const file = e.target.files?.[0]
-    if (!file) return
-    const reader = new FileReader()
-    reader.onload = () => {
-      const dataUrl = reader.result
-      setLocalAvatar(dataUrl)
-      setSessionAiAvatar(currentSessionId, dataUrl)
+  // 头像存进 settings 随每次同步整包上传，必须压小
+  const readAvatarFile = async (file) => {
+    try {
+      const { dataUrl } = await compressImage(file, { maxDim: 384, quality: 0.82 })
+      return dataUrl
+    } catch (err) {
+      console.warn('[AVATAR] 压缩失败，回退原图:', err.message)
+      return new Promise((resolve, reject) => {
+        const reader = new FileReader()
+        reader.onload = () => resolve(reader.result)
+        reader.onerror = reject
+        reader.readAsDataURL(file)
+      })
     }
-    reader.readAsDataURL(file)
-    e.target.value = ''
   }
 
-  const handleUserAvatarFile = (e) => {
+  const handleAvatarFile = async (e) => {
     const file = e.target.files?.[0]
     if (!file) return
-    const reader = new FileReader()
-    reader.onload = () => {
-      const dataUrl = reader.result
-      setLocalUserAvatar(dataUrl)
-      setSessionUserAvatar(currentSessionId, dataUrl)
-    }
-    reader.readAsDataURL(file)
     e.target.value = ''
+    const dataUrl = await readAvatarFile(file)
+    setLocalAvatar(dataUrl)
+    setSessionAiAvatar(currentSessionId, dataUrl)
+  }
+
+  const handleUserAvatarFile = async (e) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    e.target.value = ''
+    const dataUrl = await readAvatarFile(file)
+    setLocalUserAvatar(dataUrl)
+    setSessionUserAvatar(currentSessionId, dataUrl)
   }
 
   const handleBgFile = async (e) => {

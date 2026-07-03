@@ -13,7 +13,6 @@ export async function login(password) {
 }
 
 export async function getSettings(password) {
-  console.log('[KEY] getSettings 实际使用的password=', password)
   const res = await fetch(`${SYNC_BASE}/sync/get?password=${encodeURIComponent(password)}&key=settings`)
   if (!res.ok) return null
   const { value } = await res.json()
@@ -21,7 +20,6 @@ export async function getSettings(password) {
 }
 
 export async function saveSettings(password, settings) {
-  console.log('[KEY] saveSettings 实际使用的password=', password)
   const res = await fetch(`${SYNC_BASE}/sync/set`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -48,7 +46,6 @@ export function extractSettings(state) {
 // ── Message cloud sync ────────────────────────────────────────────
 
 export async function getSessionMsgs(password, sessionId) {
-  console.log('[KEY] getSessionMsgs 实际使用的password=', password, 'sessionId=', sessionId)
   const key = `sessions:msgs:${sessionId}`
   const res = await fetch(`${SYNC_BASE}/sync/get?password=${encodeURIComponent(password)}&key=${encodeURIComponent(key)}`)
   if (!res.ok) return null
@@ -56,17 +53,25 @@ export async function getSessionMsgs(password, sessionId) {
   return value // array or null
 }
 
+// 上传前剥离逐条消息里的 base64 大字段。图片以独立的 asset:img:* key 存 KV
+// （见 imageAssetKey），消息数组本身保持轻量，否则整包重传会撑爆
+// KV 单 value 25 MiB 上限。没有 assetKey 的旧消息原样保留，等迁移补齐。
+function slimMsgsForCloud(msgs) {
+  return msgs.map(m => {
+    if (m.type !== 'image' || !m.imageAssetKey) return m
+    const { imageUrl: _u, imageData: _d, ...rest } = m
+    return rest
+  })
+}
+
 export async function saveSessionMsgs(password, sessionId, msgs) {
-  console.log('[KEY] saveSessionMsgs 实际使用的password=', password, 'sessionId=', sessionId)
-  const body = { password, key: `sessions:msgs:${sessionId}`, value: msgs }
-  console.log('[SYNC-UP] fetch请求', 'key=', body.key, 'valueLen=', msgs.length, '请求体字节≈', JSON.stringify(body).length)
+  const body = { password, key: `sessions:msgs:${sessionId}`, value: slimMsgsForCloud(msgs) }
   const res = await fetch(`${SYNC_BASE}/sync/set`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
   })
   const text = await res.text()
-  console.log('[SYNC-UP] 响应', 'status=', res.status, 'body=', text)
   if (!res.ok) throw new Error(`HTTP ${res.status}: ${text}`)
 }
 
@@ -102,9 +107,8 @@ function _blobToDataUrl(blob) {
   })
 }
 
-// Upload blob to KV as base64 data URL; returns the data URL for immediate use
-export async function putAsset(password, assetKey, blob) {
-  const dataUrl = await _blobToDataUrl(blob)
+// Upload a data URL string to KV directly (skips the blob round-trip)
+export async function putAssetDataUrl(password, assetKey, dataUrl) {
   const res = await fetch(`${SYNC_BASE}/sync/set`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -116,6 +120,12 @@ export async function putAsset(password, assetKey, blob) {
   }
   _assetCache.set(assetKey, dataUrl)
   return dataUrl
+}
+
+// Upload blob to KV as base64 data URL; returns the data URL for immediate use
+export async function putAsset(password, assetKey, blob) {
+  const dataUrl = await _blobToDataUrl(blob)
+  return putAssetDataUrl(password, assetKey, dataUrl)
 }
 
 // Fetch asset data URL from KV (in-memory cached)
