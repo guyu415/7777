@@ -30,7 +30,7 @@ date 用当天日期。
 
 动作描写用 <i>动作内容</i> 包裹，对话和心理活动正常写，不要包裹。`
 import { fetchTTSAudio } from '../services/tts'
-import { getSessionMsgs, saveSessionMsgs } from '../services/sync'
+import { getSessionMsgs, saveSessionMsgs, putAssetDataUrl, loadAsset } from '../services/sync'
 import { addLetter, getLettersByCharacter } from '../services/letters'
 
 const CTX_KEEP    = 80  // 保留最近 N 条原文
@@ -118,7 +118,9 @@ export function useChat() {
   const msgSyncTimerRef = useRef(null)
   const isSummarizingRef = useRef(false)
 
-  // Debounced cloud sync for current session's messages (300ms)
+  // Debounced cloud sync for current session's messages. 2s 而不是 300ms：
+  // KV 免费版每天只有 1000 次写入，同一 key 的写入频率上限也只有 1 次/秒，
+  // 密集的分条回复合并成一次上传。
   const scheduleMsgSync = useCallback((sessionId) => {
     clearTimeout(msgSyncTimerRef.current)
     msgSyncTimerRef.current = setTimeout(async () => {
@@ -133,7 +135,7 @@ export function useChat() {
       } catch (e) {
         console.warn('[MSG-SYNC] 云端同步失败:', e.message)
       }
-    }, 300)
+    }, 2000)
   }, [])
 
   const stopStreaming = useCallback(() => {
@@ -151,7 +153,22 @@ export function useChat() {
         try {
           const cloudMsgs = await getSessionMsgs(password, CONVERSATION_ID)
           if (cloudMsgs?.length) {
-            for (const msg of cloudMsgs) await saveMessage(msg)
+            for (const msg of cloudMsgs) {
+              // 云端消息不带 base64（见 sync.js slimMsgsForCloud），按 assetKey 回填
+              if (msg.type === 'image' && msg.imageAssetKey && !msg.imageUrl) {
+                try {
+                  const dataUrl = await loadAsset(password, msg.imageAssetKey)
+                  if (dataUrl) {
+                    msg.imageUrl = dataUrl
+                    msg.imageData = dataUrl.split(',')[1]
+                    msg.imageType = dataUrl.slice(5).split(/[;,]/)[0] || msg.imageType
+                  }
+                } catch (e) {
+                  console.warn('[IMG-SYNC] 图片资源拉取失败:', msg.imageAssetKey, e.message)
+                }
+              }
+              await saveMessage(msg)
+            }
             history = cloudMsgs
           }
         } catch (e) {
@@ -544,6 +561,16 @@ export function useChat() {
       content,
       timestamp: Date.now(),
       ...extra,
+    }
+
+    // 图片走独立 asset key 存云端，消息数组只留引用（base64 仅保留在本地 IDB）
+    if (type === 'image' && extra.imageUrl) {
+      userMsg.imageAssetKey = `asset:img:${userMsg.id}`
+      const password = localStorage.getItem('auth.password')
+      if (password) {
+        putAssetDataUrl(password, userMsg.imageAssetKey, extra.imageUrl)
+          .catch(e => console.warn('[IMG-SYNC] 图片资源上传失败:', e.message))
+      }
     }
 
     // Auto-name session from first message

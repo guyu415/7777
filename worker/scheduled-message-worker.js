@@ -120,12 +120,7 @@ export default {
     if (pathname === '/sync/set' && request.method === 'POST') {
       const { password, key, value } = await request.json()
       if (!password) return Response.json({ error: 'unauthorized' }, { status: 401, headers: CORS })
-      const finalKey = `user:${password}:${key}`
-      const serialized = JSON.stringify(value)
-      console.log('[WORKER-SET] password前4位=', password.slice(0, 4), '| key=', key, '| valueType=', Array.isArray(value) ? 'array' : typeof value, '| valueLen=', Array.isArray(value) ? value.length : '?', '| serializedBytes=', serialized.length)
-      console.log('[WORKER-SET] 写入KV finalKey=', finalKey)
-      await env.CHAT_KV.put(finalKey, serialized)
-      console.log('[WORKER-SET] KV写入完成')
+      await env.CHAT_KV.put(`user:${password}:${key}`, JSON.stringify(value))
       return Response.json({ ok: true }, { headers: CORS })
     }
 
@@ -148,25 +143,6 @@ export default {
       if (!password) return Response.json({ error: 'unauthorized' }, { status: 401, headers: CORS })
       await env.CHAT_KV.delete(`user:${password}:${key}`)
       return Response.json({ ok: true }, { headers: CORS })
-    }
-
-    if (pathname === '/sync/debug' && request.method === 'GET') {
-      const { searchParams } = new URL(request.url)
-      const password = searchParams.get('password')
-      // List ALL keys in the KV (no prefix filter) so we can see exactly what exists
-      const listedAll = await env.CHAT_KV.list()
-      console.log('[WORKER-DEBUG] KV全部keys=', listedAll.keys.map(k => k.name))
-      const allKeys = await Promise.all(listedAll.keys.map(async k => {
-        const raw = await env.CHAT_KV.get(k.name)
-        return { rawKey: k.name, size: raw ? raw.length : 0 }
-      }))
-      // Also filter to user prefix if password provided
-      const prefix = password ? `user:${password}:` : null
-      console.log('[WORKER-DEBUG] 请求password前4位=', password ? password.slice(0, 4) : 'none', '| 过滤前缀=', prefix)
-      const userKeys = prefix
-        ? allKeys.filter(k => k.rawKey.startsWith(prefix)).map(k => ({ key: k.rawKey.slice(prefix.length), rawKey: k.rawKey, size: k.size }))
-        : []
-      return Response.json({ ok: true, allCount: allKeys.length, allKeys, userCount: userKeys.length, userKeys }, { headers: CORS })
     }
 
     // ── NetEase Cloud Music API proxy ─────────────────────────────
@@ -257,10 +233,11 @@ async function handleMusicProxy(request, env) {
     params = Object.fromEntries(url.searchParams.entries())
   }
 
-  // Auth: key=xiaoman2026 OR Referer from xiaoman.xyz
+  // Auth: key matches the MUSIC_AUTH_KEY secret OR Referer from xiaoman.xyz
   const authKey = params.authKey || url.searchParams.get('authKey') || params.key || url.searchParams.get('key') || ''
   const referer = request.headers.get('Referer') || ''
-  if (authKey !== 'xiaoman2026' && !referer.includes('xiaoman.xyz')) {
+  const keyOk = !!env.MUSIC_AUTH_KEY && authKey === env.MUSIC_AUTH_KEY
+  if (!keyOk && !referer.includes('xiaoman.xyz')) {
     return Response.json({ error: 'unauthorized' }, { status: 401, headers: CORS })
   }
 
@@ -535,8 +512,10 @@ function arrayBufferToBase64(buf) {
 
 // ── Proactive message generation (session-aware) ─────────────────
 
+// 用户密码只能来自 Worker Secret（wrangler secret put USER_PASSWORD），
+// 不允许硬编码在源码里
 function getUserPassword(env) {
-  return env.USER_PASSWORD || 'xiaoman2.26'
+  return env.USER_PASSWORD || null
 }
 
 async function kvGetJson(env, key) {
@@ -661,7 +640,9 @@ async function generateProactive(env, { force }) {
   const password = getUserPassword(env)
   const debug = {
     shouldSend: !!force,
-    passwordPrefix: password.slice(0, 4),
+  }
+  if (!password) {
+    return { ...debug, error: 'USER_PASSWORD secret not set — run: wrangler secret put USER_PASSWORD', savedToKV: false }
   }
 
   // 1. Load synced settings

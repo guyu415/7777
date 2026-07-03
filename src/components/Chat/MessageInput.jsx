@@ -1,5 +1,6 @@
 import { useState, useRef, forwardRef, useImperativeHandle } from 'react'
 import VoiceRecorder from '../Voice/VoiceRecorder'
+import { compressImage } from '../../utils/image'
 
 function MicIcon() {
   return (
@@ -72,13 +73,19 @@ const MessageInput = forwardRef(function MessageInput({ onSend, onSendVoice, onS
     }
   }
 
-  const handleImage = (e) => {
+  const handleImage = async (e) => {
     const file = e.target.files?.[0]
     if (!file) return
-    const reader = new FileReader()
-    reader.onload = () => onSendImage({ imageData: reader.result.split(',')[1], imageType: file.type, imageUrl: reader.result })
-    reader.readAsDataURL(file)
     e.target.value = ''
+    try {
+      const { dataUrl, base64, mimeType } = await compressImage(file, { maxDim: 1280, quality: 0.8 })
+      onSendImage({ imageData: base64, imageType: mimeType, imageUrl: dataUrl })
+    } catch (err) {
+      console.warn('[IMG] 压缩失败，回退原图:', err.message)
+      const reader = new FileReader()
+      reader.onload = () => onSendImage({ imageData: reader.result.split(',')[1], imageType: file.type, imageUrl: reader.result })
+      reader.readAsDataURL(file)
+    }
   }
 
   if (showVoice) {

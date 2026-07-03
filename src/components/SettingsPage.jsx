@@ -4,6 +4,7 @@ import { useStore, clearAllData, getAllMessages } from '../store'
 import { THEMES } from '../themes'
 import MemoryPanel from './MemoryPanel'
 import ProviderSettings from './ProviderSettings'
+import { compressImage } from '../utils/image'
 
 const inputStyle = {
   width: '100%',
@@ -20,13 +21,20 @@ const inputStyle = {
 
 function AvatarUpload({ label, value, onChange, defaultEmoji }) {
   const ref = useRef(null)
-  const handleFile = (e) => {
+  const handleFile = async (e) => {
     const file = e.target.files?.[0]
     if (!file) return
-    const reader = new FileReader()
-    reader.onload = () => onChange(reader.result)
-    reader.readAsDataURL(file)
     e.target.value = ''
+    // 头像存进 settings 随每次同步整包上传，必须压小
+    try {
+      const { dataUrl } = await compressImage(file, { maxDim: 384, quality: 0.82 })
+      onChange(dataUrl)
+    } catch (err) {
+      console.warn('[AVATAR] 压缩失败，回退原图:', err.message)
+      const reader = new FileReader()
+      reader.onload = () => onChange(reader.result)
+      reader.readAsDataURL(file)
+    }
   }
   return (
     <div className="flex flex-col items-center gap-2">
@@ -51,13 +59,19 @@ function AvatarUpload({ label, value, onChange, defaultEmoji }) {
 
 function ImageUpload({ value, onChange }) {
   const ref = useRef(null)
-  const handleFile = (e) => {
+  const handleFile = async (e) => {
     const file = e.target.files?.[0]
     if (!file) return
-    const reader = new FileReader()
-    reader.onload = () => onChange(reader.result)
-    reader.readAsDataURL(file)
     e.target.value = ''
+    try {
+      const { dataUrl } = await compressImage(file, { maxDim: 1920, quality: 0.85 })
+      onChange(dataUrl)
+    } catch (err) {
+      console.warn('[BG] 压缩失败，回退原图:', err.message)
+      const reader = new FileReader()
+      reader.onload = () => onChange(reader.result)
+      reader.readAsDataURL(file)
+    }
   }
   return (
     <div className="flex flex-col items-center gap-2">
