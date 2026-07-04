@@ -28,14 +28,15 @@ function dataUrlMime(dataUrl) {
 /**
  * 压缩一张图片。
  * @param {File|Blob|string} source 文件、Blob 或 data URL
- * @param {{maxDim?: number, quality?: number}} opts
+ * @param {{maxDim?: number, quality?: number, keepGif?: boolean}} opts
+ *   keepGif=false 时 GIF 也会被重编码成静态 JPEG（用于必须压小的场景，如头像瘦身）
  * @returns {Promise<{dataUrl: string, base64: string, mimeType: string}>}
  */
-export async function compressImage(source, { maxDim = 1280, quality = 0.8 } = {}) {
+export async function compressImage(source, { maxDim = 1280, quality = 0.8, keepGif = true } = {}) {
   const srcDataUrl = typeof source === 'string' ? source : await blobToDataUrl(source)
 
-  // GIF 重编码会丢动画，原样保留
-  if (srcDataUrl.startsWith('data:image/gif')) {
+  // GIF 重编码会丢动画，默认原样保留
+  if (keepGif && srcDataUrl.startsWith('data:image/gif')) {
     return { dataUrl: srcDataUrl, base64: srcDataUrl.split(',')[1], mimeType: 'image/gif' }
   }
 
@@ -62,4 +63,61 @@ export async function compressImage(source, { maxDim = 1280, quality = 0.8 } = {
     return { dataUrl: srcDataUrl, base64: srcDataUrl.split(',')[1], mimeType: dataUrlMime(srcDataUrl) }
   }
   return { dataUrl, base64: dataUrl.split(',')[1], mimeType: 'image/jpeg' }
+}
+
+// ── 云端 settings 就地瘦身 ──────────────────────────────────────────
+// 云端可能还留着旧版上传的"胖配置"（原图头像/内联背景）。恢复进 store 之前
+// 必须先压小：zustand persist 会把整个 settings 写进 localStorage，Safari
+// 上限约 5MB，胖配置直接触发 QuotaExceededError（"The quota has been
+// exceeded."），登录流程当场中断——这正是换新手机登不上去的最后一环。
+
+const AVATAR_LIMIT = 60_000   // data URL 字符数 ≈ 45KB 二进制
+const BG_LIMIT = 400_000      // ≈ 300KB 二进制
+
+async function slimDataUrl(v, limit, opts) {
+  if (typeof v !== 'string' || !v.startsWith('data:image/') || v.length <= limit) return v
+  try {
+    const { dataUrl } = await compressImage(v, opts)
+    return dataUrl.length < v.length ? dataUrl : v
+  } catch {
+    return v
+  }
+}
+
+/**
+ * 压缩 settings 对象里所有内联的超大图片（全局/会话头像、内联聊天背景）。
+ * @returns {Promise<{settings: object, changed: boolean}>}
+ */
+export async function slimSettings(settings) {
+  const avatarOpts = { maxDim: 384, quality: 0.82, keepGif: false }
+  const bgOpts = { maxDim: 1920, quality: 0.85 }
+  let changed = false
+  const track = async (v, limit, opts) => {
+    const out = await slimDataUrl(v, limit, opts)
+    if (out !== v) changed = true
+    return out
+  }
+  const slimBg = async (bg) => {
+    if (!bg || bg.type !== 'image' || !bg.value) return bg
+    const value = await track(bg.value, BG_LIMIT, bgOpts)
+    return value === bg.value ? bg : { ...bg, value }
+  }
+
+  const out = { ...settings }
+  out.userAvatar = await track(settings.userAvatar, AVATAR_LIMIT, avatarOpts)
+  out.aiAvatar = await track(settings.aiAvatar, AVATAR_LIMIT, avatarOpts)
+  out.chatBg = await slimBg(settings.chatBg)
+
+  const sessions = []
+  for (const s of (settings.sessions || [])) {
+    sessions.push({
+      ...s,
+      aiAvatar: await track(s.aiAvatar, AVATAR_LIMIT, avatarOpts),
+      userAvatar: await track(s.userAvatar, AVATAR_LIMIT, avatarOpts),
+      chatBg: await slimBg(s.chatBg),
+    })
+  }
+  out.sessions = sessions
+
+  return { settings: out, changed }
 }
