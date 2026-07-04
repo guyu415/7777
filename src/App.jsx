@@ -10,7 +10,7 @@ import LoginPage from './components/LoginPage'
 import VoiceFavorites from './components/VoiceFavorites'
 import { getSettings, saveSettings, extractSettings, saveSessionMsgs, putAsset, putAssetDataUrl, loadAsset, getLetters } from './services/sync'
 import { mergeLetters } from './services/letters'
-import { compressImage } from './utils/image'
+import { compressImage, slimSettings } from './utils/image'
 
 const FONT_MAP = {
   noto: "'Noto Sans SC', 'PingFang SC', -apple-system, sans-serif",
@@ -151,9 +151,11 @@ export default function App() {
     if (localStorage.getItem('imgAssetV1')) return
     const { sessions: allSessions, currentSessionId } = useStore.getState()
     let failures = 0
+    let scanned = 0
     try {
       for (const session of (allSessions || [])) {
         const msgs = await getMessages(session.id)
+        scanned += msgs.length
         const legacy = msgs.filter(m => m.type === 'image' && !m.imageAssetKey && (m.imageUrl || m.imageData))
         if (!legacy.length) continue
         let done = 0
@@ -189,8 +191,10 @@ export default function App() {
     } finally {
       setMigrationStatus(null)
     }
-    if (failures === 0) localStorage.setItem('imgAssetV1', '1')
-    console.log('[IMG-MIGRATE] 完成 | 失败数=', failures)
+    // 本地一条消息都没有（新设备刚登录、历史还没从云端拉下来）时不落标记，
+    // 等用户打开会话把云端消息拉进 IDB 后，下次启动再真正执行迁移
+    if (failures === 0 && scanned > 0) localStorage.setItem('imgAssetV1', '1')
+    console.log('[IMG-MIGRATE] 完成 | 扫描消息数=', scanned, '| 失败数=', failures)
   }
 
   // One-time cleanup: recompress oversized inline avatars (global + per-session).
@@ -262,12 +266,27 @@ export default function App() {
     console.log('[SYNC] 登录后流程开始 | msgSyncV1=', migratedFlag)
     console.log('[SYNC] 开始拉取云端配置...')
     getSettings(password)
-      .then(cloud => {
+      .then(async cloud => {
         console.log('[SYNC] 云端配置拉取完成 | hasCloud=', !!cloud)
         if (cloud) {
-          useStore.getState().restoreFromCloud(cloud)
+          // 云端可能还是旧版的"胖配置"，先压小再入库，避免 localStorage 爆容量
+          const { settings: slimmed, changed } = await slimSettings(cloud)
+          try {
+            useStore.getState().restoreFromCloud(slimmed)
+          } catch (e) {
+            console.warn('[SYNC] 本地持久化失败（配置已在内存生效）:', e.message)
+          }
           // 刚恢复的状态和云端一致，记为已同步基线，避免启动后无意义的整包回传
           lastSyncedSettings.current = settingsFingerprint(extractSettings(useStore.getState()))
+          if (changed) {
+            // 云端还是胖版本：立刻把瘦身后的写回去，之后所有设备直接拉到瘦版本
+            try {
+              await saveSettings(password, extractSettings(useStore.getState()))
+              console.log('[SYNC] 瘦身后的配置已回传云端')
+            } catch (e) {
+              console.warn('[SYNC] 瘦身配置回传失败（下次启动重试）:', e.message)
+            }
+          }
           console.log('[SYNC] restoreFromCloud 完成')
         }
       })

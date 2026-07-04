@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { login, getSettings, saveSettings, extractSettings } from '../services/sync'
 import { useStore } from '../store'
+import { slimSettings } from '../utils/image'
 
 export default function LoginPage({ onLogin }) {
   const [password, setPassword] = useState('')
@@ -27,7 +28,18 @@ export default function LoginPage({ onLogin }) {
       } else {
         setStatus('正在同步云端配置...')
         const cloudSettings = await getSettings(pwd)
-        if (cloudSettings) useStore.getState().restoreFromCloud(cloudSettings)
+        if (cloudSettings) {
+          // 云端可能还是旧版的"胖配置"，先把超大头像/背景压小再入库，
+          // 否则 zustand persist 写 localStorage 会触发 QuotaExceededError
+          setStatus('正在整理云端配置...')
+          const { settings: slimmed } = await slimSettings(cloudSettings)
+          try {
+            useStore.getState().restoreFromCloud(slimmed)
+          } catch (e) {
+            // 本地持久化失败也不中断登录——配置已在内存中生效
+            console.warn('[LOGIN] 本地持久化失败:', e.message)
+          }
+        }
         setStatus('配置已同步 ✓')
         await new Promise(r => setTimeout(r, 600))
       }
