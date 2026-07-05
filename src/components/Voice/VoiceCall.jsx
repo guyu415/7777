@@ -12,7 +12,7 @@ const STATUS_TEXT = {
 }
 
 // 全屏语音通话界面：识别（浏览器 STT）→ 对话模型 → MiniMax TTS 循环
-export default function VoiceCall({ theme, onClose, audioEl }) {
+export default function VoiceCall({ theme, onClose, audioKit }) {
   const {
     apiKey, apiBaseUrl, model, systemPrompt, workerUrl, useWorkerProxy,
     ttsApiKey, ttsGroupId, ttsVoiceId,
@@ -33,7 +33,7 @@ export default function VoiceCall({ theme, onClose, audioEl }) {
     // 配置解析与 useChat 一致：会话 > 供应商 > 全局
     startCall({
       sessionId: currentSessionId || 'main',
-      audioEl,
+      audioKit,
       apiKey: session?.apiKey || provider?.apiKey || apiKey,
       baseUrl: session?.baseUrl || provider?.baseUrl || apiBaseUrl,
       model: session?.model || model,
