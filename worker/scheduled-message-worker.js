@@ -145,6 +145,46 @@ export default {
       return Response.json({ ok: true }, { headers: CORS })
     }
 
+    // ── Web Push ──────────────────────────────────────────────────
+    if (pathname === '/push/subscribe' && request.method === 'POST') {
+      const { password, subscription } = await request.json()
+      if (!password) return Response.json({ error: 'unauthorized' }, { status: 401, headers: CORS })
+      if (!subscription?.endpoint || !subscription?.keys?.p256dh || !subscription?.keys?.auth) {
+        return Response.json({ error: 'invalid subscription' }, { status: 400, headers: CORS })
+      }
+      const key = `user:${password}:push:subs`
+      const existing = await kvGetJson(env, key)
+      const subs = Array.isArray(existing) ? existing : []
+      const filtered = subs.filter(s => s.endpoint !== subscription.endpoint)
+      filtered.push(subscription)
+      // 一个人的设备数有限，最多保留最近 5 个订阅
+      await env.CHAT_KV.put(key, JSON.stringify(filtered.slice(-5)))
+      return Response.json({ ok: true, count: filtered.length }, { headers: CORS })
+    }
+
+    if (pathname === '/push/unsubscribe' && request.method === 'POST') {
+      const { password, endpoint } = await request.json()
+      if (!password) return Response.json({ error: 'unauthorized' }, { status: 401, headers: CORS })
+      const key = `user:${password}:push:subs`
+      const existing = await kvGetJson(env, key)
+      const subs = (Array.isArray(existing) ? existing : []).filter(s => s.endpoint !== endpoint)
+      await env.CHAT_KV.put(key, JSON.stringify(subs))
+      return Response.json({ ok: true, count: subs.length }, { headers: CORS })
+    }
+
+    if (pathname === '/push/test' && request.method === 'POST') {
+      const { password } = await request.json()
+      if (!password) return Response.json({ error: 'unauthorized' }, { status: 401, headers: CORS })
+      if (!env.VAPID_PRIVATE_KEY) {
+        return Response.json({ error: 'VAPID_PRIVATE_KEY secret not set' }, { status: 500, headers: CORS })
+      }
+      const result = await sendPushToUser(env, password, {
+        title: '通知测试 🔔',
+        body: '推送链路正常，小满的主动消息会送到这里～',
+      })
+      return Response.json(result, { headers: CORS })
+    }
+
     // ── NetEase Cloud Music API proxy ─────────────────────────────
     if (pathname.startsWith('/music/') && (request.method === 'GET' || request.method === 'POST')) {
       return handleMusicProxy(request, env)
@@ -510,6 +550,143 @@ function arrayBufferToBase64(buf) {
   return btoa(binary)
 }
 
+// ── Web Push（VAPID RFC 8292 + aes128gcm RFC 8291，纯 WebCrypto 零依赖）──
+// 私钥来自 Worker Secret VAPID_PRIVATE_KEY；公钥是公开信息，与前端
+// src/services/push.js 中的常量一致。
+
+const VAPID_PUBLIC_KEY = 'BPKvBZCXuZkfYM2ecirl3U-2bbyeembT9Xzt8Z6LtO7_gAzAPLFhkBMfT0_bw3L_FczUdbzlF-Sst-a5fdpxI_w'
+
+function b64uToBytes(s) {
+  const pad = '='.repeat((4 - (s.length % 4)) % 4)
+  const bin = atob((s + pad).replace(/-/g, '+').replace(/_/g, '/'))
+  const out = new Uint8Array(bin.length)
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i)
+  return out
+}
+
+function bytesToB64u(bytes) {
+  let bin = ''
+  for (const b of bytes) bin += String.fromCharCode(b)
+  return btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
+}
+
+function utf8(s) {
+  return new TextEncoder().encode(s)
+}
+
+function concatBytes(...arrs) {
+  const total = arrs.reduce((n, a) => n + a.length, 0)
+  const out = new Uint8Array(total)
+  let off = 0
+  for (const a of arrs) { out.set(a, off); off += a.length }
+  return out
+}
+
+async function hkdf(ikm, salt, info, byteLen) {
+  const key = await crypto.subtle.importKey('raw', ikm, 'HKDF', false, ['deriveBits'])
+  const bits = await crypto.subtle.deriveBits(
+    { name: 'HKDF', hash: 'SHA-256', salt, info }, key, byteLen * 8)
+  return new Uint8Array(bits)
+}
+
+async function vapidJwt(env, audience) {
+  const pub = b64uToBytes(VAPID_PUBLIC_KEY)
+  const jwk = {
+    kty: 'EC', crv: 'P-256',
+    x: bytesToB64u(pub.slice(1, 33)),
+    y: bytesToB64u(pub.slice(33, 65)),
+    d: env.VAPID_PRIVATE_KEY,
+  }
+  const key = await crypto.subtle.importKey('jwk', jwk, { name: 'ECDSA', namedCurve: 'P-256' }, false, ['sign'])
+  const header = bytesToB64u(utf8(JSON.stringify({ typ: 'JWT', alg: 'ES256' })))
+  const claims = bytesToB64u(utf8(JSON.stringify({
+    aud: audience,
+    exp: Math.floor(Date.now() / 1000) + 12 * 3600,
+    sub: env.VAPID_SUBJECT || 'mailto:xw06085@gmail.com',
+  })))
+  const input = `${header}.${claims}`
+  const sig = await crypto.subtle.sign({ name: 'ECDSA', hash: 'SHA-256' }, key, utf8(input))
+  return `${input}.${bytesToB64u(new Uint8Array(sig))}`
+}
+
+// RFC 8291: ECDH(P-256) + HKDF → AES-128-GCM，Content-Encoding: aes128gcm
+async function encryptPushPayload(subscription, payloadStr) {
+  const uaPub = b64uToBytes(subscription.keys.p256dh)   // 65B 未压缩公钥
+  const authSecret = b64uToBytes(subscription.keys.auth) // 16B
+
+  const eph = await crypto.subtle.generateKey({ name: 'ECDH', namedCurve: 'P-256' }, true, ['deriveBits'])
+  const asPub = new Uint8Array(await crypto.subtle.exportKey('raw', eph.publicKey))
+  const uaKey = await crypto.subtle.importKey('raw', uaPub, { name: 'ECDH', namedCurve: 'P-256' }, false, [])
+  const ecdhSecret = new Uint8Array(await crypto.subtle.deriveBits({ name: 'ECDH', public: uaKey }, eph.privateKey, 256))
+
+  const keyInfo = concatBytes(utf8('WebPush: info\0'), uaPub, asPub)
+  const ikm = await hkdf(ecdhSecret, authSecret, keyInfo, 32)
+
+  const salt = crypto.getRandomValues(new Uint8Array(16))
+  const cek = await hkdf(ikm, salt, utf8('Content-Encoding: aes128gcm\0'), 16)
+  const nonce = await hkdf(ikm, salt, utf8('Content-Encoding: nonce\0'), 12)
+
+  // 明文末尾追加 0x02 = 最后一条记录的分隔符
+  const plaintext = concatBytes(utf8(payloadStr), new Uint8Array([2]))
+  const aesKey = await crypto.subtle.importKey('raw', cek, 'AES-GCM', false, ['encrypt'])
+  const ct = new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-GCM', iv: nonce }, aesKey, plaintext))
+
+  // aes128gcm 头：salt(16) + 记录大小(4, BE) + 公钥长度(1) + 发送方公钥(65)
+  const header = new Uint8Array(16 + 4 + 1 + asPub.length)
+  header.set(salt, 0)
+  new DataView(header.buffer).setUint32(16, 4096)
+  header[20] = asPub.length
+  header.set(asPub, 21)
+  return concatBytes(header, ct)
+}
+
+async function sendWebPush(env, subscription, payloadStr) {
+  const endpoint = subscription.endpoint
+  const aud = new URL(endpoint).origin
+  const [jwt, body] = await Promise.all([
+    vapidJwt(env, aud),
+    encryptPushPayload(subscription, payloadStr),
+  ])
+  const res = await fetch(endpoint, {
+    method: 'POST',
+    headers: {
+      Authorization: `vapid t=${jwt}, k=${VAPID_PUBLIC_KEY}`,
+      TTL: '86400',
+      Urgency: 'high',
+      'Content-Encoding': 'aes128gcm',
+      'Content-Type': 'application/octet-stream',
+    },
+    body,
+  })
+  return res.status
+}
+
+// 给该用户的所有订阅设备推送；404/410 的失效订阅顺手清掉
+async function sendPushToUser(env, password, payload) {
+  const key = `user:${password}:push:subs`
+  const stored = await kvGetJson(env, key)
+  const list = Array.isArray(stored) ? stored : []
+  if (!list.length) return { ok: false, error: 'no push subscriptions' }
+  const payloadStr = JSON.stringify(payload)
+  const results = []
+  const alive = []
+  for (const sub of list) {
+    try {
+      const status = await sendWebPush(env, sub, payloadStr)
+      results.push({ endpoint: sub.endpoint.slice(0, 60), status })
+      if (status === 404 || status === 410) continue
+      alive.push(sub)
+    } catch (e) {
+      results.push({ endpoint: sub.endpoint.slice(0, 60), error: `${e.name}: ${e.message}` })
+      alive.push(sub)
+    }
+  }
+  if (alive.length !== list.length) {
+    await env.CHAT_KV.put(key, JSON.stringify(alive))
+  }
+  return { ok: results.some(r => r.status >= 200 && r.status < 300), results }
+}
+
 // ── Proactive message generation (session-aware) ─────────────────
 
 // 用户密码只能来自 Worker Secret（wrangler secret put USER_PASSWORD），
@@ -762,5 +939,21 @@ async function generateProactive(env, { force }) {
   ])
   debug.savedToKV = true
   debug.kvKey = pendingKey
+
+  // 10. Web Push：把主动消息推到已订阅的设备（未配置 VAPID 或未订阅时静默跳过）
+  if (env.VAPID_PRIVATE_KEY) {
+    try {
+      const aiName = session.aiName || settings.aiName || '小满'
+      debug.push = await sendPushToUser(env, password, {
+        title: `${aiName} 🌸`,
+        body: result.text.slice(0, 120),
+        url: '/',
+        tag: `eunoia-${session.id}`,
+      })
+    } catch (e) {
+      debug.push = { ok: false, error: `${e.name}: ${e.message}` }
+    }
+  }
+
   return debug
 }

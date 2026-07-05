@@ -21,3 +21,7 @@ crons = ["*/30 * * * *"]
 #                    wrangler secret put USER_PASSWORD --name scheduled-message-worker
 #   MUSIC_AUTH_KEY — 音乐代理的访问 key（可选；不配则仅允许 xiaoman.xyz Referer 访问）
 #                    wrangler secret put MUSIC_AUTH_KEY --name scheduled-message-worker
+#   VAPID_PRIVATE_KEY — Web Push 推送的 VAPID 私钥（base64url 的 P-256 d 值），
+#                    与源码里的 VAPID_PUBLIC_KEY 配对；不配置则推送功能静默停用
+#                    wrangler secret put VAPID_PRIVATE_KEY --name scheduled-message-worker
+#   VAPID_SUBJECT  — 可选，VAPID 联系方式（mailto:...），默认见 vapidJwt()

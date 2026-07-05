@@ -1,7 +1,8 @@
-import { useState, useRef } from 'react'
+import { useState, useRef, useEffect } from 'react'
 import { Trash2 } from 'lucide-react'
 import { useStore, clearAllData, getAllMessages, getMessages, deleteCustomFont, saveAssetCache } from '../store'
 import { putAsset, deleteAsset } from '../services/sync'
+import { pushSupportState, getCurrentSubscription, subscribePush, unsubscribePush, sendTestPush } from '../services/push'
 
 import { THEMES } from '../themes'
 import MemoryPanel from './MemoryPanel'
@@ -64,6 +65,102 @@ function GlassCard({ icon, title, children }) {
       </div>
       {children}
     </div>
+  )
+}
+
+// 消息通知：开启后小满的主动消息会通过 Web Push 推到本设备
+// （iOS 需先"添加到主屏幕"并从桌面图标打开，16.4+）
+function NotificationCard({ primary }) {
+  const [state, setState] = useState('checking') // checking | need-install | unsupported | off | on
+  const [busy, setBusy] = useState(false)
+  const [msg, setMsg] = useState('')
+
+  useEffect(() => {
+    const support = pushSupportState()
+    if (support !== 'supported') { setState(support); return }
+    getCurrentSubscription()
+      .then(sub => setState(sub ? 'on' : 'off'))
+      .catch(() => setState('off'))
+  }, [])
+
+  const password = () => localStorage.getItem('auth.password') || ''
+
+  const handleToggle = async (next) => {
+    if (busy) return
+    setBusy(true)
+    setMsg('')
+    try {
+      if (next) {
+        await subscribePush(password())
+        setState('on')
+        setMsg('已开启，主动消息会推送到这台设备 ✓')
+      } else {
+        await unsubscribePush(password())
+        setState('off')
+        setMsg('已关闭')
+      }
+    } catch (e) {
+      setMsg(`失败：${e.message}`)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const handleTest = async () => {
+    if (busy) return
+    setBusy(true)
+    setMsg('正在发送测试通知...')
+    try {
+      const r = await sendTestPush(password())
+      setMsg(r.ok ? '测试通知已发出，几秒内应弹出 🔔' : `推送服务返回异常：${JSON.stringify(r.results || r.error).slice(0, 140)}`)
+    } catch (e) {
+      setMsg(`失败：${e.message}`)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <GlassCard icon="🔔" title="消息通知">
+      {state === 'need-install' && (
+        <p className="text-xs" style={{ color: '#7a9cc0', lineHeight: 1.7 }}>
+          iOS 上需要先把 Eunoia 安装成桌面应用才能收通知：<br />
+          1. Safari 底部 <b>分享</b> 按钮 → <b>添加到主屏幕</b><br />
+          2. 从桌面的 Eunoia 图标打开<br />
+          3. 回到这里开启通知
+        </p>
+      )}
+      {state === 'unsupported' && (
+        <p className="text-xs" style={{ color: '#7a9cc0' }}>当前浏览器不支持消息推送。</p>
+      )}
+      {(state === 'on' || state === 'off') && (
+        <>
+          <div className="flex items-center justify-between">
+            <div>
+              <span className="text-sm" style={{ color: '#2c5282' }}>推送小满的主动消息</span>
+              <p className="text-xs mt-0.5" style={{ color: '#7a9cc0' }}>App 没打开也能收到通知</p>
+            </div>
+            <Toggle value={state === 'on'} onChange={handleToggle} primary={primary} />
+          </div>
+          {state === 'on' && (
+            <button
+              onClick={handleTest}
+              disabled={busy}
+              className="mt-3 w-full py-2 rounded-full text-xs font-medium"
+              style={{
+                background: `${primary}18`,
+                border: `1px solid ${primary}55`,
+                color: primary,
+                cursor: busy ? 'default' : 'pointer',
+              }}
+            >
+              发送测试通知
+            </button>
+          )}
+        </>
+      )}
+      {msg && <p className="text-xs mt-2" style={{ color: '#7a9cc0' }}>{msg}</p>}
+    </GlassCard>
   )
 }
 
@@ -230,6 +327,9 @@ export default function GlobalSettings({ theme, onLogout, onForceSync }) {
             <Toggle value={memoryEnabled} onChange={setMemoryEnabled} primary={primary} />
           </div>
         </GlassCard>
+
+        {/* Push notifications */}
+        <NotificationCard primary={primary} />
 
         {workerUrl && (
           <GlassCard icon="🧠" title="记忆管理">
