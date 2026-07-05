@@ -3,6 +3,7 @@ import MessageBubble from './MessageBubble'
 import FallingParticles from './FallingParticles'
 import MessageInput from './MessageInput'
 import MemoryModal from './MemoryModal'
+import VoiceCall from '../Voice/VoiceCall'
 import BottomNav from '../BottomNav'
 import { useChat } from '../../hooks/useChat'
 import { useScheduledMessages } from '../../hooks/useScheduledMessages'
@@ -66,6 +67,8 @@ export default function ChatWindow({ theme }) {
   const [editMsg, setEditMsg] = useState(null)
   const [editText, setEditText] = useState('')
   const [toast, setToast] = useState(null)
+  const [showCall, setShowCall] = useState(false)
+  const callAudioRef = useRef(null)
 
   const selectedProvider = providers?.find(p => p.id === selectedProviderId)
   const effectiveApiKey = selectedProvider?.apiKey || apiKey
@@ -115,13 +118,19 @@ export default function ChatWindow({ theme }) {
     }
   }, [currentSessionId])
 
-  const handleSendVoice = ({ transcript }) => {
+  // 静音 wav：在用户点击的调用栈里 play 一次，解锁 iOS 的音频自动播放限制，
+  // 之后通话里的 TTS 复用同一个 <audio> 元素即可自由播放
+  const SILENT_WAV = 'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAIA+AAACABAAZGF0YQAAAAA='
+  const handleStartCall = () => {
     updateActiveTime()
-    if (transcript) {
-      sendMessage(transcript, 'text')
-    } else {
-      showToast('未能识别语音内容，请打字输入～')
-    }
+    const a = new Audio(SILENT_WAV)
+    a.play().catch(() => {})
+    callAudioRef.current = a
+    setShowCall(true)
+  }
+  const handleCallClose = async () => {
+    setShowCall(false)
+    await loadHistory() // 把通话产生的消息刷进聊天列表
   }
 
   const handleSendImage = ({ imageData, imageType, imageUrl }) => {
@@ -464,7 +473,7 @@ export default function ChatWindow({ theme }) {
             updateActiveTime()
             sendMessage(text, 'text').catch(e => console.error('[PAW] sendMessage error:', e.message))
           }}
-          onSendVoice={handleSendVoice}
+          onStartCall={handleStartCall}
           onSendImage={handleSendImage}
           disabled={isLoading}
           theme={theme}
@@ -510,6 +519,11 @@ export default function ChatWindow({ theme }) {
         >
           {toast}
         </div>
+      )}
+
+      {/* Voice call overlay */}
+      {showCall && (
+        <VoiceCall theme={theme} audioEl={callAudioRef.current} onClose={handleCallClose} />
       )}
     </div>
   )
