@@ -51,6 +51,7 @@ export function useVoiceCall() {
   const timerRef = useRef(null)
   const cfgRef = useRef(null)
   const sessionIdRef = useRef('main')
+  const visHandlerRef = useRef(null)
 
   const setSt = (s) => { statusRef.current = s; setStatus(s) }
 
@@ -124,6 +125,9 @@ export function useVoiceCall() {
     }
     rec.onerror = (e) => {
       if (e.error === 'not-allowed' || e.error === 'service-not-allowed') {
+        // 锁屏/切后台时 iOS 会掐断麦克风并抛同样的错误——不是真的没权限，
+        // 静默暂停，等 visibilitychange 恢复；只有前台时才当作权限被拒
+        if (document.visibilityState === 'hidden') return
         setError('麦克风权限被拒绝，请在系统设置里允许')
         endCall()
       }
@@ -134,6 +138,7 @@ export function useVoiceCall() {
       clearTimeout(maxTimer)
       recRef.current = null
       if (!activeRef.current || mutedRef.current) return
+      if (document.visibilityState === 'hidden') { setSt('paused'); return } // 锁屏暂停，回前台再续
       const text = (finalText.trim() || heard).trim()
       if (text) handleTurn(text)
       else setTimeout(() => listen(), 300) // 没听到内容，继续听
@@ -161,9 +166,46 @@ export function useVoiceCall() {
       .slice(-24)
     while (ctx.length && ctx[0].role === 'assistant') ctx = ctx.slice(1)
 
+    // ── 流水线：AI 边生成边按句切分，句子一完成立刻送 TTS 并按序播放，
+    // 后续句子在播放的同时并行合成，大幅缩短"文字→出声"的等待 ──
+    const ttsOpts = { apiKey: cfg.ttsApiKey, groupId: cfg.ttsGroupId, voiceId: cfg.ttsVoiceId, model: cfg.ttsModel }
+    const blobQueue = [] // 按序的 TTS Promise（已 catch，失败为 null）
+    let queueClosed = false
+
+    const pushSeg = (raw) => {
+      const seg = cleanForSpeech(raw)
+      if (!seg) return
+      blobQueue.push(fetchTTSAudio(seg, ttsOpts).catch((e) => {
+        console.warn('[CALL] TTS 失败，该句仅显示文字:', e.message)
+        setError(`语音合成失败：${e.message}`)
+        setTimeout(() => setError(''), 4000)
+        return null
+      }))
+    }
+
+    const consumer = (async () => {
+      let i = 0
+      let started = false
+      while (activeRef.current) {
+        if (i < blobQueue.length) {
+          const blob = await blobQueue[i++]
+          if (!activeRef.current) return
+          if (blob) {
+            if (!started) { started = true; setSt('speaking') }
+            await playBlob(blob)
+          }
+        } else if (queueClosed) {
+          return
+        } else {
+          await new Promise(r => setTimeout(r, 100))
+        }
+      }
+    })()
+
     const controller = new AbortController()
     abortRef.current = controller
     let full = ''
+    let segBuf = ''
     try {
       for await (const chunk of streamChat({
         apiKey: cfg.apiKey, apiBaseUrl: cfg.baseUrl, model: cfg.model,
@@ -173,9 +215,19 @@ export function useVoiceCall() {
         signal: controller.signal,
         disableThinking: true, webSearch: false, providerName: cfg.providerName,
       })) {
-        if (chunk.text) full += chunk.text
+        if (!chunk.text) continue
+        full += chunk.text
+        segBuf += chunk.text
+        setAiCaption(cleanForSpeech(full)) // 字幕跟着生成实时更新
+        // 句末标点即成句，切出去合成
+        let cut
+        while ((cut = segBuf.search(/[。！？!?…\n]/)) !== -1) {
+          pushSeg(segBuf.slice(0, cut + 1))
+          segBuf = segBuf.slice(cut + 1)
+        }
       }
     } catch (e) {
+      queueClosed = true
       if (!activeRef.current) return
       if (e.name !== 'AbortError') {
         setError(`AI 回复失败：${e.message}`)
@@ -184,30 +236,20 @@ export function useVoiceCall() {
       return
     }
     abortRef.current = null
-    if (!activeRef.current) return
+    if (!activeRef.current) { queueClosed = true; return }
 
     const spoken = cleanForSpeech(full) || '嗯嗯，我在听～'
+    if (segBuf.trim()) pushSeg(segBuf) // 结尾没有标点的残句
+    if (!blobQueue.length) pushSeg(spoken) // 一句都没切出来的兜底
+    queueClosed = true
+
     const aiMsg = { id: genId(), conversationId: sessionId, role: 'assistant', type: 'text', content: spoken, timestamp: Date.now() }
     useStore.getState().addMessage(aiMsg)
     try { await saveMessage(aiMsg) } catch {}
     setAiCaption(spoken)
     useStore.getState().updateSession(sessionId, { lastMsgPreview: spoken.slice(0, 40), lastMsgTime: Date.now() })
 
-    setSt('speaking')
-    try {
-      const blob = await fetchTTSAudio(spoken, {
-        apiKey: cfg.ttsApiKey, groupId: cfg.ttsGroupId,
-        voiceId: cfg.ttsVoiceId, model: cfg.ttsModel,
-      })
-      if (!activeRef.current) return
-      await playBlob(blob)
-    } catch (e) {
-      // 让用户看到语音失败的原因，而不是默默变成纯文字
-      console.warn('[CALL] TTS 失败，仅显示文字:', e.message)
-      setError(`语音合成失败：${e.message}`)
-      setTimeout(() => setError(''), 4000)
-      await new Promise(r => setTimeout(r, 1500))
-    }
+    await consumer // 等所有句子播完
     if (activeRef.current) setTimeout(() => listen(), 250)
   }, [listen])
 
@@ -229,6 +271,22 @@ export function useVoiceCall() {
     setAiCaption('')
     clearInterval(timerRef.current)
     timerRef.current = setInterval(() => setSeconds(s => s + 1), 1000)
+    // 锁屏/切后台：iOS 会掐断麦克风，安静暂停；回到前台自动恢复聆听
+    const onVis = () => {
+      if (!activeRef.current) return
+      if (document.visibilityState === 'hidden') {
+        try { recRef.current?.abort() } catch {}
+      } else {
+        setError('')
+        const c = audioCtxRef.current
+        if (c && c.state !== 'running') c.resume().catch(() => {})
+        if (!mutedRef.current && statusRef.current !== 'thinking' && statusRef.current !== 'speaking') {
+          setTimeout(() => { if (activeRef.current) listen() }, 300)
+        }
+      }
+    }
+    visHandlerRef.current = onVis
+    document.addEventListener('visibilitychange', onVis)
     listen()
     return true
   }, [listen])
@@ -236,6 +294,10 @@ export function useVoiceCall() {
   const endCall = useCallback(() => {
     activeRef.current = false
     clearInterval(timerRef.current)
+    if (visHandlerRef.current) {
+      document.removeEventListener('visibilitychange', visHandlerRef.current)
+      visHandlerRef.current = null
+    }
     try { recRef.current?.abort() } catch {}
     recRef.current = null
     abortRef.current?.abort()
