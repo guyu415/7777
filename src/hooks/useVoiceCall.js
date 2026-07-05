@@ -45,23 +45,52 @@ export function useVoiceCall() {
   const statusRef = useRef('idle')
   const recRef = useRef(null)
   const abortRef = useRef(null)
-  const audioRef = useRef(null)
+  const audioElRef = useRef(null)
+  const audioCtxRef = useRef(null)
+  const sourceRef = useRef(null)
   const timerRef = useRef(null)
   const cfgRef = useRef(null)
   const sessionIdRef = useRef('main')
 
   const setSt = (s) => { statusRef.current = s; setStatus(s) }
 
-  const playBlob = (blob) => new Promise((resolve) => {
-    const audio = audioRef.current
-    if (!audio) return resolve()
-    const url = URL.createObjectURL(blob)
-    audio.muted = false
-    audio.src = url
-    audio.onended = () => { URL.revokeObjectURL(url); resolve() }
-    audio.onerror = () => { URL.revokeObjectURL(url); resolve() }
-    audio.play().catch(() => { URL.revokeObjectURL(url); resolve() })
-  })
+  // 优先 WebAudio：AudioContext 在通话按钮的点击手势里已解锁，
+  // 之后可以无手势自由播放（iOS 对无手势的 audio.play() 很苛刻）
+  const playBlob = async (blob) => {
+    const ctx = audioCtxRef.current
+    if (ctx) {
+      try {
+        if (ctx.state !== 'running') await ctx.resume()
+        const buf = await ctx.decodeAudioData(await blob.arrayBuffer())
+        await new Promise((resolve) => {
+          const node = ctx.createBufferSource()
+          node.buffer = buf
+          node.connect(ctx.destination)
+          node.onended = resolve
+          sourceRef.current = node
+          node.start(0)
+        })
+        sourceRef.current = null
+        return
+      } catch (e) {
+        console.warn('[CALL] WebAudio 播放失败，回退 <audio>:', e.message)
+      }
+    }
+    await new Promise((resolve) => {
+      const audio = audioElRef.current
+      if (!audio) return resolve()
+      const url = URL.createObjectURL(blob)
+      audio.muted = false
+      audio.src = url
+      audio.onended = () => { URL.revokeObjectURL(url); resolve() }
+      audio.onerror = () => { URL.revokeObjectURL(url); resolve() }
+      audio.play().catch((e) => {
+        console.warn('[CALL] audio.play 被拒:', e.message)
+        URL.revokeObjectURL(url)
+        resolve()
+      })
+    })
+  }
 
   const listen = useCallback(() => {
     if (!activeRef.current) return
@@ -69,17 +98,29 @@ export function useVoiceCall() {
     setSt('listening')
     setUserCaption('')
     let finalText = ''
+    let heard = '' // finals + 当前 interim（iOS 经常不标 isFinal，必须兜底）
+    let silenceTimer = null
+    let maxTimer = null
     const rec = new SpeechRecognitionAPI()
     rec.lang = 'zh-CN'
     rec.interimResults = true
-    rec.continuous = false // 说完一句停顿后自动结束，正好用作"该我了"的信号
+    // iOS 的识别器不会在停顿后自动结束（安卓才会），所以用 continuous
+    // 模式自己判停：有内容且 1.4s 没有新结果就主动 stop
+    rec.continuous = true
+    const stopRec = () => { try { rec.stop() } catch {} }
     rec.onresult = (e) => {
       let interim = ''
-      for (let i = e.resultIndex; i < e.results.length; i++) {
-        if (e.results[i].isFinal) finalText += e.results[i][0].transcript
-        else interim += e.results[i][0].transcript
+      for (let i = 0; i < e.results.length; i++) {
+        if (e.results[i].isFinal) {
+          if (i >= e.resultIndex) finalText += e.results[i][0].transcript
+        } else {
+          interim += e.results[i][0].transcript
+        }
       }
-      setUserCaption((finalText + interim).trim())
+      heard = (finalText + interim).trim() || heard
+      setUserCaption(heard)
+      clearTimeout(silenceTimer)
+      if (heard) silenceTimer = setTimeout(stopRec, 1400)
     }
     rec.onerror = (e) => {
       if (e.error === 'not-allowed' || e.error === 'service-not-allowed') {
@@ -89,13 +130,16 @@ export function useVoiceCall() {
       // no-speech / aborted 等由 onend 的重听逻辑兜底
     }
     rec.onend = () => {
+      clearTimeout(silenceTimer)
+      clearTimeout(maxTimer)
       recRef.current = null
       if (!activeRef.current || mutedRef.current) return
-      const text = finalText.trim()
+      const text = (finalText.trim() || heard).trim()
       if (text) handleTurn(text)
       else setTimeout(() => listen(), 300) // 没听到内容，继续听
     }
     recRef.current = rec
+    maxTimer = setTimeout(stopRec, 30_000) // 单句上限 30s
     try { rec.start() } catch { setTimeout(() => listen(), 500) }
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -158,20 +202,24 @@ export function useVoiceCall() {
       if (!activeRef.current) return
       await playBlob(blob)
     } catch (e) {
+      // 让用户看到语音失败的原因，而不是默默变成纯文字
       console.warn('[CALL] TTS 失败，仅显示文字:', e.message)
+      setError(`语音合成失败：${e.message}`)
+      setTimeout(() => setError(''), 4000)
       await new Promise(r => setTimeout(r, 1500))
     }
     if (activeRef.current) setTimeout(() => listen(), 250)
   }, [listen])
 
-  // audioEl：调用方在用户点击的调用栈里创建并 play 过的 <audio>，用于绕过 iOS 自动播放限制
-  const startCall = useCallback(({ sessionId, audioEl, ...cfg }) => {
+  // audioKit：调用方在用户点击的调用栈里创建并解锁的 { el: <audio>, ctx: AudioContext }
+  const startCall = useCallback(({ sessionId, audioKit, ...cfg }) => {
     if (!SpeechRecognitionAPI) { setError('此浏览器不支持语音识别，无法通话'); return false }
     if (!cfg.apiKey) { setError('请先在设置中配置 API Key'); return false }
     if (!cfg.ttsApiKey || !cfg.ttsGroupId) { setError('请先在设置中配置语音（TTS）密钥'); return false }
     sessionIdRef.current = sessionId || 'main'
     cfgRef.current = cfg
-    audioRef.current = audioEl || new Audio()
+    audioElRef.current = audioKit?.el || new Audio()
+    audioCtxRef.current = audioKit?.ctx || null
     activeRef.current = true
     mutedRef.current = false
     setMuted(false)
@@ -192,8 +240,13 @@ export function useVoiceCall() {
     recRef.current = null
     abortRef.current?.abort()
     abortRef.current = null
-    const audio = audioRef.current
+    try { sourceRef.current?.stop() } catch {}
+    sourceRef.current = null
+    const audio = audioElRef.current
     if (audio) { try { audio.pause() } catch {} }
+    const ctx = audioCtxRef.current
+    audioCtxRef.current = null
+    if (ctx) { try { ctx.close() } catch {} }
     setSt('idle')
     // 通话内容整体同步到云端（一次写入）
     const password = localStorage.getItem('auth.password')

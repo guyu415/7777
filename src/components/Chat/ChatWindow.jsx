@@ -118,14 +118,28 @@ export default function ChatWindow({ theme }) {
     }
   }, [currentSessionId])
 
-  // 静音 wav：在用户点击的调用栈里 play 一次，解锁 iOS 的音频自动播放限制，
-  // 之后通话里的 TTS 复用同一个 <audio> 元素即可自由播放
+  // 在用户点击的调用栈里解锁音频：iOS 对无手势的自动播放很苛刻。
+  // 1) AudioContext 播一帧静音 → 之后通话中可用 WebAudio 自由播放
+  // 2) 备用 <audio> 播静音 wav → WebAudio 不可用时的回退通道
   const SILENT_WAV = 'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAIA+AAACABAAZGF0YQAAAAA='
   const handleStartCall = () => {
     updateActiveTime()
-    const a = new Audio(SILENT_WAV)
-    a.play().catch(() => {})
-    callAudioRef.current = a
+    const el = new Audio(SILENT_WAV)
+    el.play().catch(() => {})
+    let ctx = null
+    try {
+      const AC = window.AudioContext || window.webkitAudioContext
+      ctx = new AC()
+      ctx.resume().catch(() => {})
+      const buf = ctx.createBuffer(1, 1, 22050)
+      const src = ctx.createBufferSource()
+      src.buffer = buf
+      src.connect(ctx.destination)
+      src.start(0)
+    } catch (e) {
+      console.warn('[CALL] AudioContext 创建失败:', e.message)
+    }
+    callAudioRef.current = { el, ctx }
     setShowCall(true)
   }
   const handleCallClose = async () => {
@@ -523,7 +537,7 @@ export default function ChatWindow({ theme }) {
 
       {/* Voice call overlay */}
       {showCall && (
-        <VoiceCall theme={theme} audioEl={callAudioRef.current} onClose={handleCallClose} />
+        <VoiceCall theme={theme} audioKit={callAudioRef.current} onClose={handleCallClose} />
       )}
     </div>
   )
