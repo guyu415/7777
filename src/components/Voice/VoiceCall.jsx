@@ -8,6 +8,7 @@ const STATUS_TEXT = {
   thinking: '想想怎么回…',
   speaking: '正在说话',
   muted: '已静音',
+  paused: '已暂停（回到通话界面自动继续）',
   idle: '连接中…',
 }
 
