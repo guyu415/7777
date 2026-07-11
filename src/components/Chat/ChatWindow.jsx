@@ -242,6 +242,7 @@ export default function ChatWindow({ theme }) {
           background: `linear-gradient(to bottom, ${primaryColor}1f, rgba(255,255,255,0.55))`,
           backdropFilter: 'blur(24px)',
           WebkitBackdropFilter: 'blur(24px)',
+          borderBottom: `1px solid ${primaryColor}22`,
           flexShrink: 0,
         }}>
         <div className="flex items-center gap-3 min-w-0">
@@ -470,9 +471,12 @@ export default function ChatWindow({ theme }) {
       )}
 
       {/* Unified input + nav — one shared glass panel, no seam */}
+      {/* iOS Home 指示条的 safe-area 会在导航下方留一条空白，收窄它让图标贴近底部
+          （安卓 inset=0 不受影响，保持原样） */}
       <div
-        className="safe-bottom flex-shrink-0"
+        className="flex-shrink-0"
         style={{
+          paddingBottom: 'max(calc(var(--safe-bottom) - 22px), 0px)',
           background: `linear-gradient(to bottom, rgba(255,255,255,0.38), rgba(255,255,255,0.26))`,
           backdropFilter: 'blur(22px)',
           WebkitBackdropFilter: 'blur(22px)',
