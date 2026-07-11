@@ -301,7 +301,7 @@ async function handleNcmWebApi(request, env) {
       const s = (q.get('keywords') || '').slice(0, 100)
       if (!s) return Response.json({ ok: true, songs: [] }, { headers: CORS })
       const limit = Math.min(parseInt(q.get('limit') || '12', 10) || 12, 30)
-      const body = new URLSearchParams({ s, type: '1', limit: String(limit), offset: q.get('offset') || '0', total: 'true' })
+      const body = new URLSearchParams({ s, type: '1', limit: String(limit), offset: q.get('offset') || '0', total: 'true', realIP })
       const res = await fetch('https://music.163.com/api/cloudsearch/pc', { method: 'POST', headers, body: body.toString() })
       const data = await res.json()
       const songs = (data?.result?.songs || []).map(sg => ({
@@ -319,18 +319,11 @@ async function handleNcmWebApi(request, env) {
     if (url.pathname === '/ncm/playurl') {
       const id = parseInt(q.get('id'), 10)
       if (!id) return Response.json({ error: 'missing id' }, { status: 400, headers: CORS })
-      // v1（level 档位）对 VIP 曲目更可靠，失败再退回旧接口
-      let item = null
-      try {
-        const r1 = await fetch(`https://music.163.com/api/song/enhance/player/url/v1?ids=%5B${id}%5D&level=exhigh&encodeType=aac`, { headers })
-        const d1 = await r1.json()
-        item = d1?.data?.[0] || null
-      } catch {}
-      if (!item?.url) {
-        const r2 = await fetch(`https://music.163.com/api/song/enhance/player/url?ids=%5B${id}%5D&br=320000`, { headers })
-        const d2 = await r2.json()
-        item = d2?.data?.[0] || item
-      }
+      // 用经过验证的旧接口 /player/url（v1 明文路径会 404）。realIP 作为查询参数
+      // 传给网易——它认参数不认 X-Real-IP 头，这才是真正解除海外地区限制的开关。
+      const r = await fetch(`https://music.163.com/api/song/enhance/player/url?ids=%5B${id}%5D&br=320000&realIP=${realIP}`, { headers })
+      const d = await r.json().catch(() => null)
+      const item = d?.data?.[0] || null
       return Response.json({
         ok: !!item?.url,
         url: httpsify(item?.url || null),
@@ -356,10 +349,11 @@ async function handleNcmWebApi(request, env) {
       } catch {}
 
       // 会员专属歌探测（周杰伦《Mojito》，非 VIP 只给试听/空链接）
+      // 与正式播放同路径：旧接口 /player/url + realIP 查询参数
       const VIP_PROBE_ID = 1436664760
       let probe = null
       try {
-        const pr = await fetch(`https://music.163.com/api/song/enhance/player/url/v1?ids=%5B${VIP_PROBE_ID}%5D&level=exhigh&encodeType=aac`, { headers })
+        const pr = await fetch(`https://music.163.com/api/song/enhance/player/url?ids=%5B${VIP_PROBE_ID}%5D&br=320000&realIP=${realIP}`, { headers })
         const pd = await pr.json().catch(() => null)
         const it = pd?.data?.[0]
         probe = { hasUrl: !!it?.url, trial: !!it?.freeTrialInfo, code: it?.code, fee: it?.fee }
@@ -382,7 +376,7 @@ async function handleNcmWebApi(request, env) {
     if (url.pathname === '/ncm/lyric') {
       const id = parseInt(q.get('id'), 10)
       if (!id) return Response.json({ error: 'missing id' }, { status: 400, headers: CORS })
-      const res = await fetch(`https://music.163.com/api/song/lyric?id=${id}&lv=-1&kv=-1&tv=-1`, { headers })
+      const res = await fetch(`https://music.163.com/api/song/lyric?id=${id}&lv=-1&kv=-1&tv=-1&realIP=${realIP}`, { headers })
       const data = await res.json()
       return Response.json({ ok: true, lrc: data?.lrc?.lyric || '', tlyric: data?.tlyric?.lyric || '' }, { headers: CORS })
     }
