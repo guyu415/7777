@@ -28,12 +28,13 @@ export default function MusicDisc({ theme, visible = true }) {
     getNcmStatus().then(setAccount).catch(() => setAccount({ error: true }))
   }, [open, account])
 
+  const p = account?.probe
   const accountLine = !account ? '账号状态检查中…'
     : account.error ? '账号状态检查失败'
     : !account.cookieConfigured ? '未配置 Cookie（只能放免费歌）'
     : account.vipPlayable ? `会员歌可播 ✓${account.nickname ? ' · ' + account.nickname : ''}`
-    // 探测到不可播时把诊断显示出来（MUSIC_U 长度 + 试听标记/探测返回码）
-    : `会员歌放不了 · MUSIC_U长度${account.musicULen ?? '?'} · ${account.probe?.trial ? '仅试听' : ('码' + (account.probe?.code ?? account.probe?.error ?? '?'))}`
+    // 不可播时把 eapi 的真实诊断全暴露出来，用于定位到底卡哪
+    : `放不了 · MU${account.musicULen ?? '?'} · HTTP${p?.httpStatus ?? '?'} · 外码${p?.respCode ?? '?'} · 曲码${p?.songCode ?? '?'}${p?.trial ? ' · 仅试听' : ''}`
 
   const { current, playing, progress, duration } = player
   const primary = theme?.primary || '#ff85b3'
