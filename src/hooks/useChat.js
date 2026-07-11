@@ -31,6 +31,7 @@ date 用当天日期。
 动作描写用 <i>动作内容</i> 包裹，对话和心理活动正常写，不要包裹。`
 import { fetchTTSAudio } from '../services/tts'
 import { getSessionMsgs, saveSessionMsgs, putAssetDataUrl, loadAsset } from '../services/sync'
+import { playByQuery, pausePlayer, resumePlayer, stopPlayer, getPlayerState } from '../services/player'
 import { addLetter, getLettersByCharacter } from '../services/letters'
 
 const CTX_KEEP    = 80  // 保留最近 N 条原文
@@ -38,6 +39,7 @@ const CTX_TRIGGER = 150  // 超过 M 条时触发总结
 const CTX_BATCH   = 70  // 每次压缩最旧的 B 条（触发后原文回落到 CTX_KEEP）
 
 const AC_TAG_RE = /\[AC:([^\]]+)\]/
+const MUSIC_TAG_RE = /\[MUSIC:([^\]]+)\]/
 // Tokenization: split content on [VOICE]…[/VOICE] boundaries (capturing + global),
 // then test/extract each segment. VOICE_ONE_RE matches a single voice token.
 const VOICE_SPLIT_RE = /(\[VOICE\][\s\S]*?\[\/VOICE\])/g
@@ -48,6 +50,7 @@ const LETTER_RE = /\[LETTER\s+mood=(\S+?)\s+weather=(\S+?)\s+date=(\S+?)\]([\s\S
 function stripDisplayTags(content) {
   return content
     .replace(AC_TAG_RE, '')
+    .replace(MUSIC_TAG_RE, '')
     .replace(/\[VOICE\]/g, '').replace(/\[\/VOICE\]/g, '')
     .trim()
 }
@@ -232,6 +235,15 @@ export function useChat() {
       if (acWorkerUrl) {
         builtSystemPrompt += '\n\n你有空调控制能力。当用户提到温度不舒适、想开/关空调、调温度时，在回复末尾自然地加上控制指令标签（不要向用户提及标签格式本身）。\n格式：[AC:动作,温度,模式,风速]\n- 动作：on(开机)/off(关机)/set(调节)\n- 温度：16-30 的整数（推断不到默认26）\n- 模式：cool(制冷)/heat(制热)/auto(自动)/fan(送风)/dry(除湿)\n- 风速：auto(自动)/low(低)/mid(中)/high(高)\n示例："好的已经帮你开空调啦～[AC:on,26,cool,auto]"'
       }
+
+      // 音乐控制（网易云碟片播放器）
+      {
+        builtSystemPrompt += '\n\n你有音乐播放能力（网易云）。当用户想听歌/点歌/换歌/暂停/继续/关掉音乐时，在回复末尾自然地加上指令标签（不要向用户提及标签格式本身）。\n格式：\n- [MUSIC:play,歌名,歌手] 搜索并播放（歌手可省略：[MUSIC:play,歌名]）\n- [MUSIC:pause] 暂停　[MUSIC:resume] 继续　[MUSIC:stop] 停止\n只在用户明确表达想听歌或控制音乐时使用，不要自作主张放歌。\n示例："好呀，这就给你放～[MUSIC:play,晴天,周杰伦]"'
+        const np = getPlayerState()
+        if (np.current) {
+          builtSystemPrompt += `\n【正在播放】《${np.current.name}》- ${np.current.artists}（${np.playing ? '播放中' : '已暂停'}）`
+        }
+      }
       if (aiVoiceEnabled && effectiveVoiceFrequency !== 0) {
         const freqNote = effectiveVoiceFrequency < 0.3
           ? '尽量少发语音，只在非常合适时（撒娇、道晚安）才用。'
@@ -356,14 +368,39 @@ export function useChat() {
         }
       }
 
-      const acNote = acStatus
-        ? (acStatus.success
-          ? `[✓ 空调指令已生效（${acStatus.action} ${acStatus.temp}℃ ${acStatus.mode}）]`
-          : `[✗ 空调指令执行失败：${acStatus.error || '未知错误'}]`)
-        : ''
+      // Handle MUSIC command
+      const musicMatch = fullContent.match(MUSIC_TAG_RE)
+      let musicNote = ''
+      if (musicMatch) {
+        const [action, ...rest] = musicMatch[1].split(',').map(s => s.trim())
+        try {
+          if (action === 'play') {
+            const q = rest.filter(Boolean).join(' ')
+            if (q) {
+              const r = await playByQuery(q)
+              musicNote = r.ok
+                ? `[♪ 正在播放《${r.song.name}》- ${r.song.artists}]`
+                : `[✗ 没放出来：${r.reason}]`
+            }
+          } else if (action === 'pause') { pausePlayer(); musicNote = '[♪ 已暂停]' }
+          else if (action === 'resume') { resumePlayer(); musicNote = '[♪ 继续播放]' }
+          else if (action === 'stop') { stopPlayer(); musicNote = '[♪ 已停止]' }
+        } catch (e) {
+          musicNote = `[✗ 音乐指令失败：${e.message}]`
+        }
+      }
 
-      // AC tag already executed above — strip it from displayed content.
-      const cleanContent = fullContent.replace(AC_TAG_RE, '').trim()
+      const acNote = [
+        acStatus
+          ? (acStatus.success
+            ? `[✓ 空调指令已生效（${acStatus.action} ${acStatus.temp}℃ ${acStatus.mode}）]`
+            : `[✗ 空调指令执行失败：${acStatus.error || '未知错误'}]`)
+          : '',
+        musicNote,
+      ].filter(Boolean).join('\n')
+
+      // AC/MUSIC tags already executed above — strip them from displayed content.
+      const cleanContent = fullContent.replace(AC_TAG_RE, '').replace(MUSIC_TAG_RE, '').trim()
 
       const prob = effectiveVoiceFrequency  // 0=从不 0.3=偶尔 0.7=经常 1.0=总是
       const rand = Math.random()

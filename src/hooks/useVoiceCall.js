@@ -24,6 +24,7 @@ function cleanForSpeech(text) {
     .replace(/\[LETTER[\s\S]*?\[\/LETTER\]/g, '')
     .replace(/\{\{LETTER_CARD:[^}]*\}\}/g, '')
     .replace(/\[AC:[^\]]*\]/g, '')
+    .replace(/\[MUSIC:[^\]]*\]/g, '')
     .replace(/\[\/?VOICE\]/g, '')
     .replace(/\[SPLIT\]/g, ' ')
     .replace(/<\/?i>/g, '')
