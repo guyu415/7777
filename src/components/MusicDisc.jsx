@@ -1,6 +1,7 @@
-import { useState, useRef, useEffect, useCallback } from 'react'
+import { useState, useEffect } from 'react'
 import { Search, Play, Pause, X } from 'lucide-react'
-import { searchSongs, getPlayUrl } from '../services/music'
+import { searchSongs } from '../services/music'
+import { subscribePlayer, playSong, togglePlayer, seekPlayer } from '../services/player'
 
 function fmt(s) {
   if (!Number.isFinite(s)) return '0:00'
@@ -8,35 +9,20 @@ function fmt(s) {
 }
 
 // 网易云碟片挂件：收起是一张小黑胶（播放时旋转），点开是搜歌 + 迷你播放器。
+// 播放状态由 services/player 单例管理（AI 的 [MUSIC:...] 指令共用同一播放器），
 // visible=false 时只隐藏 UI，不卸载组件，切页面音乐不断。
 export default function MusicDisc({ theme, visible = true }) {
   const [open, setOpen] = useState(false)
   const [query, setQuery] = useState('')
   const [results, setResults] = useState([])
   const [searching, setSearching] = useState(false)
-  const [current, setCurrent] = useState(null)
-  const [playing, setPlaying] = useState(false)
-  const [progress, setProgress] = useState(0)
-  const [duration, setDuration] = useState(0)
   const [err, setErr] = useState('')
-  const audioRef = useRef(null)
+  const [player, setPlayer] = useState({ current: null, playing: false, progress: 0, duration: 0 })
 
+  useEffect(() => subscribePlayer(setPlayer), [])
+
+  const { current, playing, progress, duration } = player
   const primary = theme?.primary || '#ff85b3'
-
-  const getAudio = () => {
-    if (!audioRef.current) {
-      const a = new Audio()
-      a.addEventListener('timeupdate', () => setProgress(a.currentTime))
-      a.addEventListener('durationchange', () => setDuration(a.duration || 0))
-      a.addEventListener('play', () => setPlaying(true))
-      a.addEventListener('pause', () => setPlaying(false))
-      a.addEventListener('ended', () => setPlaying(false))
-      audioRef.current = a
-    }
-    return audioRef.current
-  }
-
-  useEffect(() => () => { try { audioRef.current?.pause() } catch {} }, [])
 
   const handleSearch = async () => {
     const kw = query.trim()
@@ -52,47 +38,14 @@ export default function MusicDisc({ theme, visible = true }) {
     }
   }
 
-  const playSong = useCallback(async (song) => {
+  const handlePlay = async (song) => {
     setErr('')
     try {
-      const { ok, url } = await getPlayUrl(song.id)
-      if (!ok || !url) {
-        setErr(song.fee === 1
-          ? '这首是 VIP 歌曲，需要在 Worker 配置 NCM_COOKIE（VIP 账号）才能播'
-          : '拿不到播放链接，可能无版权或已下架')
-        return
-      }
-      const a = getAudio()
-      a.src = url
-      await a.play()
-      setCurrent(song)
-      // 锁屏/控制中心显示歌曲信息
-      if ('mediaSession' in navigator) {
-        try {
-          navigator.mediaSession.metadata = new MediaMetadata({
-            title: song.name, artist: song.artists, album: song.album,
-            artwork: song.cover ? [{ src: song.cover, sizes: '512x512', type: 'image/jpeg' }] : [],
-          })
-          navigator.mediaSession.setActionHandler('play', () => getAudio().play())
-          navigator.mediaSession.setActionHandler('pause', () => getAudio().pause())
-        } catch {}
-      }
+      const r = await playSong(song)
+      if (!r.ok) setErr(r.reason)
     } catch (e) {
       setErr(`播放失败：${e.message}`)
     }
-  }, [])
-
-  const togglePlay = () => {
-    const a = getAudio()
-    if (!a.src) return
-    if (a.paused) a.play().catch(() => {})
-    else a.pause()
-  }
-
-  const seek = (e) => {
-    const a = getAudio()
-    if (!a.src || !duration) return
-    a.currentTime = Number(e.target.value)
   }
 
   if (!visible) return null
@@ -172,7 +125,7 @@ export default function MusicDisc({ theme, visible = true }) {
               {results.map(song => (
                 <button
                   key={song.id}
-                  onClick={() => playSong(song)}
+                  onClick={() => handlePlay(song)}
                   className="w-full flex items-center gap-2 text-left"
                   style={{
                     border: 'none', cursor: 'pointer', padding: '6px 4px', borderRadius: 10,
@@ -210,7 +163,7 @@ export default function MusicDisc({ theme, visible = true }) {
                   <p className="text-xs truncate" style={{ color: '#b08794' }}>{current.artists}</p>
                 </div>
                 <button
-                  onClick={togglePlay}
+                  onClick={togglePlayer}
                   style={{
                     width: 38, height: 38, borderRadius: '50%', border: 'none', cursor: 'pointer',
                     background: `linear-gradient(135deg, ${primary}, ${primary}cc)`, color: '#fff',
@@ -225,7 +178,7 @@ export default function MusicDisc({ theme, visible = true }) {
                 <span className="text-xs" style={{ color: '#c9a2ad', width: 32 }}>{fmt(progress)}</span>
                 <input
                   type="range" min="0" max={duration || 0} step="1" value={Math.min(progress, duration || 0)}
-                  onChange={seek}
+                  onChange={e => seekPlayer(Number(e.target.value))}
                   style={{ flex: 1, accentColor: primary, height: 4 }}
                 />
                 <span className="text-xs" style={{ color: '#c9a2ad', width: 32, textAlign: 'right' }}>{fmt(duration)}</span>
