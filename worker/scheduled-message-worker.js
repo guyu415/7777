@@ -344,13 +344,31 @@ async function handleBiliWebApi(request, env) {
       return Response.json({ ok: true, lrc, tlyric: '' }, { headers: CORS })
     }
 
-    // 数据源探测：B 站音频不登录也能拿 128k 直链，此接口只是让前端能
-    // 显示"数据源：Bilibili 音频区"提示
+    // 数据源探测：ping 一下 B 站音频搜索，把上游状态透传给前端，
+    // 好在 UI 上直接看到"接口是不是活的"
     if (url.pathname === '/bili/status') {
+      const probeApi = 'https://api.bilibili.com/audio/music-service-c/s?keyword=%E5%91%A8%E6%9D%B0%E4%BC%A6&page=1&pagesize=3&search_type=music'
+      let probe = null
+      try {
+        const res = await fetch(probeApi, { headers: BILI_HEADERS })
+        const text = await res.text()
+        let data = null
+        try { data = JSON.parse(text) } catch {}
+        probe = {
+          httpStatus: res.status,
+          upstreamCode: data?.code,
+          upstreamMsg: data?.msg || data?.message,
+          resultCount: (data?.data?.result || []).length,
+          totalSize: data?.data?.total_size ?? null,
+          rawSnippet: text.slice(0, 300),
+        }
+      } catch (e) {
+        probe = { error: `${e.name}: ${e.message}` }
+      }
       return Response.json({
         ok: true,
         source: 'Bilibili 音频区',
-        note: '无需登录，直接可播',
+        probe,
       }, { headers: CORS })
     }
 
