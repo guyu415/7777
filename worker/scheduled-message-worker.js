@@ -270,6 +270,107 @@ function normalizeNcmCookie(raw) {
   return bare ? `MUSIC_U=${bare}` : ''
 }
 
+// ── 网易 eapi 加密（AES-128-ECB + MD5 摘要）──────────────────────
+// 明文接口 /api/* 传的 realIP 已被网易的地区限制策略忽略，导致大量国内
+// 曲目从海外节点访问被识别为"无版权/已下架"（VIP、部分免费歌都受影响）。
+// eapi 是官方客户端用的加密通道，realIP 塞进加密体里网易才真的认。
+// 参考实现：Binaryify/NeteaseCloudMusicApi
+
+const EAPI_KEY = 'e82ckenh8dichen8'
+const ZERO_IV = new Uint8Array(16)
+
+// 迷你 MD5（Workers WebCrypto 不支持 MD5，只能自己写）— RFC 1321
+function md5Hex(msg) {
+  const bytes = typeof msg === 'string' ? new TextEncoder().encode(msg) : new Uint8Array(msg)
+  const bitLen = bytes.length * 8
+  const withOne = new Uint8Array(bytes.length + 1)
+  withOne.set(bytes)
+  withOne[bytes.length] = 0x80
+  const padLen = (56 - withOne.length % 64 + 64) % 64
+  const buf = new Uint8Array(withOne.length + padLen + 8)
+  buf.set(withOne)
+  const dv = new DataView(buf.buffer)
+  dv.setUint32(buf.length - 8, bitLen >>> 0, true)
+  dv.setUint32(buf.length - 4, Math.floor(bitLen / 0x100000000) >>> 0, true)
+
+  const S = [7,12,17,22,7,12,17,22,7,12,17,22,7,12,17,22,5,9,14,20,5,9,14,20,5,9,14,20,5,9,14,20,
+             4,11,16,23,4,11,16,23,4,11,16,23,4,11,16,23,6,10,15,21,6,10,15,21,6,10,15,21,6,10,15,21]
+  const K = new Int32Array(64)
+  for (let i = 0; i < 64; i++) K[i] = Math.floor(Math.abs(Math.sin(i + 1)) * 0x100000000) | 0
+
+  let a0 = 0x67452301|0, b0 = 0xefcdab89|0, c0 = 0x98badcfe|0, d0 = 0x10325476|0
+  const M = new Int32Array(16)
+  for (let off = 0; off < buf.length; off += 64) {
+    for (let i = 0; i < 16; i++) M[i] = dv.getInt32(off + i * 4, true)
+    let a = a0, b = b0, c = c0, d = d0
+    for (let i = 0; i < 64; i++) {
+      let f, g
+      if (i < 16)      { f = (b & c) | (~b & d); g = i }
+      else if (i < 32) { f = (d & b) | (~d & c); g = (5 * i + 1) % 16 }
+      else if (i < 48) { f = b ^ c ^ d;          g = (3 * i + 5) % 16 }
+      else             { f = c ^ (b | ~d);       g = (7 * i) % 16 }
+      const t = d; d = c; c = b
+      const x = (a + f + K[i] + M[g]) | 0
+      const s = S[i]
+      b = (b + ((x << s) | (x >>> (32 - s)))) | 0
+      a = t
+    }
+    a0 = (a0 + a) | 0; b0 = (b0 + b) | 0; c0 = (c0 + c) | 0; d0 = (d0 + d) | 0
+  }
+  const out = new Uint8Array(16)
+  const outDv = new DataView(out.buffer)
+  outDv.setInt32(0, a0, true); outDv.setInt32(4, b0, true); outDv.setInt32(8, c0, true); outDv.setInt32(12, d0, true)
+  return [...out].map(b => b.toString(16).padStart(2, '0')).join('')
+}
+
+// WebCrypto 没有原生 AES-ECB，用 AES-CBC(IV=0) 逐块加密并只取前 16 字节
+// （PKCS7 会追加一个填充块，丢掉即可）
+async function aesEcbEncrypt(keyBytes, plaintext) {
+  const key = await crypto.subtle.importKey('raw', keyBytes, 'AES-CBC', false, ['encrypt'])
+  const padLen = 16 - (plaintext.length % 16)
+  const padded = new Uint8Array(plaintext.length + padLen)
+  padded.set(plaintext)
+  padded.fill(padLen, plaintext.length)
+  const out = new Uint8Array(padded.length)
+  for (let i = 0; i < padded.length; i += 16) {
+    const block = padded.slice(i, i + 16)
+    const enc = new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-CBC', iv: ZERO_IV }, key, block))
+    out.set(enc.slice(0, 16), i)
+  }
+  return out
+}
+
+async function eapiEncrypt(apiPath, bodyObj) {
+  const bodyJson = JSON.stringify(bodyObj)
+  const digest = md5Hex(`nobody${apiPath}use${bodyJson}md5forencrypt`)
+  const plain = `${apiPath}-36cd479b6b5-${bodyJson}-36cd479b6b5-${digest}`
+  const encBytes = await aesEcbEncrypt(new TextEncoder().encode(EAPI_KEY), new TextEncoder().encode(plain))
+  return [...encBytes].map(b => b.toString(16).padStart(2, '0')).join('').toUpperCase()
+}
+
+async function eapiPlayUrl(cookie, songId, realIP) {
+  const body = {
+    ids: JSON.stringify([songId]),
+    level: 'exhigh',
+    encodeType: 'aac',
+    header: JSON.stringify({ os: 'pc', appver: '8.10.35', osver: '17.0.0', deviceId: 'pyncm!' }),
+    e_r: true,
+    realIP,
+  }
+  const params = await eapiEncrypt('/api/song/enhance/player/url/v1', body)
+  const res = await fetch('https://interface3.music.163.com/eapi/song/enhance/player/url/v1', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/x-www-form-urlencoded',
+      'User-Agent': 'NeteaseMusic/8.10.35.240605173201(240605173201);Dalvik/2.1.0 (Linux; U; Android 12; PCT-AL10 Build/HUAWEIPCT-AL10)',
+      'Cookie': cookie,
+      'Referer': 'https://music.163.com/',
+    },
+    body: `params=${params}`,
+  })
+  return res.json().catch(() => null)
+}
+
 async function handleNcmWebApi(request, env) {
   const url = new URL(request.url)
   const q = url.searchParams
@@ -319,17 +420,31 @@ async function handleNcmWebApi(request, env) {
     if (url.pathname === '/ncm/playurl') {
       const id = parseInt(q.get('id'), 10)
       if (!id) return Response.json({ error: 'missing id' }, { status: 400, headers: CORS })
-      // 用经过验证的旧接口 /player/url（v1 明文路径会 404）。realIP 作为查询参数
-      // 传给网易——它认参数不认 X-Real-IP 头，这才是真正解除海外地区限制的开关。
-      const r = await fetch(`https://music.163.com/api/song/enhance/player/url?ids=%5B${id}%5D&br=320000&realIP=${realIP}`, { headers })
-      const d = await r.json().catch(() => null)
-      const item = d?.data?.[0] || null
+      // 先走 eapi（realIP 放进加密体，网易的地区限制策略才真的接受）；
+      // 失败再退回明文接口。明文接口的 realIP 已被网易忽略，导致大量国内
+      // 曲目从海外访问被误报"无版权/已下架"。
+      let item = null, via = 'eapi'
+      try {
+        const d = await eapiPlayUrl(cookie, id, realIP)
+        item = d?.data?.[0] || null
+      } catch (e) {
+        console.log('[ncm] eapi playurl failed:', e.message)
+      }
+      if (!item?.url) {
+        via = 'plain'
+        try {
+          const r = await fetch(`https://music.163.com/api/song/enhance/player/url?ids=%5B${id}%5D&br=320000&realIP=${realIP}`, { headers })
+          const d = await r.json().catch(() => null)
+          item = d?.data?.[0] || item
+        } catch {}
+      }
       return Response.json({
         ok: !!item?.url,
         url: httpsify(item?.url || null),
         br: item?.br || 0,
         code: item?.code,
-        trial: !!item?.freeTrialInfo, // true = 只给了试听片段（Cookie 未生效/非 VIP）
+        trial: !!item?.freeTrialInfo, // true = 只给了试听片段
+        via,
       }, { headers: CORS })
     }
 
@@ -349,16 +464,15 @@ async function handleNcmWebApi(request, env) {
       } catch {}
 
       // 会员专属歌探测（周杰伦《Mojito》，非 VIP 只给试听/空链接）
-      // 与正式播放同路径：旧接口 /player/url + realIP 查询参数
+      // 走与正式播放同一路径：eapi + realIP
       const VIP_PROBE_ID = 1436664760
       let probe = null
       try {
-        const pr = await fetch(`https://music.163.com/api/song/enhance/player/url?ids=%5B${VIP_PROBE_ID}%5D&br=320000&realIP=${realIP}`, { headers })
-        const pd = await pr.json().catch(() => null)
+        const pd = await eapiPlayUrl(cookie, VIP_PROBE_ID, realIP)
         const it = pd?.data?.[0]
-        probe = { hasUrl: !!it?.url, trial: !!it?.freeTrialInfo, code: it?.code, fee: it?.fee }
+        probe = { hasUrl: !!it?.url, trial: !!it?.freeTrialInfo, code: it?.code, fee: it?.fee, via: 'eapi' }
       } catch (e) {
-        probe = { error: `${e.name}: ${e.message}` }
+        probe = { error: `${e.name}: ${e.message}`, via: 'eapi' }
       }
       const vipPlayable = !!(probe?.hasUrl && !probe?.trial)
 
