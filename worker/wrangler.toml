@@ -29,3 +29,6 @@ crons = ["*/30 * * * *"]
 #                    浏览器登录 music.163.com 后从开发者工具复制）。/ncm/* 代理
 #                    不配也能搜索和播放免费歌曲，配 VIP 账号 Cookie 可播 VIP 歌
 #                    wrangler secret put NCM_COOKIE --name scheduled-message-worker
+#   NCM_REAL_IP    — 可选，覆盖伪装的国内来源 IP（默认 116.25.146.177）。
+#                    海外节点被网易地区限制导致 VIP 歌放不出来时，此项与
+#                    X-Real-IP/X-Forwarded-For 头一起解除限制
