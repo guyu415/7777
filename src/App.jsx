@@ -8,6 +8,7 @@ import SessionList from './components/SessionList'
 import BottomNav from './components/BottomNav'
 import LoginPage from './components/LoginPage'
 import VoiceFavorites from './components/VoiceFavorites'
+import MusicDisc from './components/MusicDisc'
 import { getSettings, saveSettings, extractSettings, saveSessionMsgs, putAsset, putAssetDataUrl, loadAsset, getLetters } from './services/sync'
 import { mergeLetters } from './services/letters'
 import { compressImage, slimSettings } from './utils/image'
@@ -480,6 +481,9 @@ export default function App() {
         className="relative h-full w-full max-w-md mx-auto flex flex-col overflow-hidden"
         style={{ boxShadow: `0 0 60px ${theme.primary}26`, zIndex: 2 }}
       >
+        {/* 网易云碟片挂件：常驻挂载（切换页面音乐不断），只在聊天页显示 */}
+        <MusicDisc theme={theme} visible={currentView === 'chat'} />
+
         <div className="flex-1 overflow-hidden min-h-0">
           {currentView === 'chat' && <ChatWindow theme={theme} />}
           {currentView === 'sessions' && (

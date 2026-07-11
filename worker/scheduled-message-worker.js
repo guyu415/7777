@@ -185,6 +185,11 @@ export default {
       return Response.json(result, { headers: CORS })
     }
 
+    // ── NetEase web API proxy（Cookie 模式，前端碟片播放器用）───────
+    if (pathname.startsWith('/ncm/') && request.method === 'GET') {
+      return handleNcmWebApi(request, env)
+    }
+
     // ── NetEase Cloud Music API proxy ─────────────────────────────
     if (pathname.startsWith('/music/') && (request.method === 'GET' || request.method === 'POST')) {
       return handleMusicProxy(request, env)
@@ -235,6 +240,87 @@ async function handleChatProxy(request) {
       ...CORS,
     },
   })
+}
+
+// ── NetEase web API proxy（Cookie 模式）───────────────────────────
+// 走网页版 /api/* 接口 + MUSIC_U Cookie（netease-music-mcp 的思路），
+// 不需要开放平台的 appId/RSA 签名。NCM_COOKIE 不配置也能搜索和播放
+// 免费歌曲，配置后可播 VIP 歌。
+
+const NCM_WEB_UA = 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1'
+
+// 网易 CDN 常返回 http:// 链接，https 页面播不了（混合内容），统一升级
+function httpsify(u) {
+  return typeof u === 'string' ? u.replace(/^http:\/\//, 'https://') : u
+}
+
+async function handleNcmWebApi(request, env) {
+  const url = new URL(request.url)
+  const q = url.searchParams
+
+  const authKey = q.get('authKey') || q.get('key') || ''
+  const referer = request.headers.get('Referer') || ''
+  const keyOk = !!env.MUSIC_AUTH_KEY && authKey === env.MUSIC_AUTH_KEY
+  const refOk = referer.includes('xiaoman.xyz') || referer.includes('pink-chat-blt.pages.dev')
+  if (!keyOk && !refOk) {
+    return Response.json({ error: 'unauthorized' }, { status: 401, headers: CORS })
+  }
+
+  // os=pc 能解锁更高音质档位
+  const cookie = ['os=pc; appver=8.10.35', (env.NCM_COOKIE || '').trim()].filter(Boolean).join('; ')
+  const headers = {
+    'Referer': 'https://music.163.com/',
+    'User-Agent': NCM_WEB_UA,
+    'Content-Type': 'application/x-www-form-urlencoded',
+    'Cookie': cookie,
+  }
+
+  try {
+    if (url.pathname === '/ncm/search') {
+      const s = (q.get('keywords') || '').slice(0, 100)
+      if (!s) return Response.json({ ok: true, songs: [] }, { headers: CORS })
+      const limit = Math.min(parseInt(q.get('limit') || '12', 10) || 12, 30)
+      const body = new URLSearchParams({ s, type: '1', limit: String(limit), offset: q.get('offset') || '0', total: 'true' })
+      const res = await fetch('https://music.163.com/api/cloudsearch/pc', { method: 'POST', headers, body: body.toString() })
+      const data = await res.json()
+      const songs = (data?.result?.songs || []).map(sg => ({
+        id: sg.id,
+        name: sg.name,
+        artists: (sg.ar || []).map(a => a.name).join(' / '),
+        album: sg.al?.name || '',
+        cover: httpsify(sg.al?.picUrl || ''),
+        duration: Math.round((sg.dt || 0) / 1000),
+        fee: sg.fee ?? 0, // 1 = VIP 歌曲
+      }))
+      return Response.json({ ok: true, songs }, { headers: CORS })
+    }
+
+    if (url.pathname === '/ncm/playurl') {
+      const id = parseInt(q.get('id'), 10)
+      if (!id) return Response.json({ error: 'missing id' }, { status: 400, headers: CORS })
+      const res = await fetch(`https://music.163.com/api/song/enhance/player/url?ids=%5B${id}%5D&br=320000`, { headers })
+      const data = await res.json()
+      const item = data?.data?.[0]
+      return Response.json({
+        ok: !!item?.url,
+        url: httpsify(item?.url || null),
+        br: item?.br || 0,
+        code: item?.code ?? data?.code,
+      }, { headers: CORS })
+    }
+
+    if (url.pathname === '/ncm/lyric') {
+      const id = parseInt(q.get('id'), 10)
+      if (!id) return Response.json({ error: 'missing id' }, { status: 400, headers: CORS })
+      const res = await fetch(`https://music.163.com/api/song/lyric?id=${id}&lv=-1&kv=-1&tv=-1`, { headers })
+      const data = await res.json()
+      return Response.json({ ok: true, lrc: data?.lrc?.lyric || '', tlyric: data?.tlyric?.lyric || '' }, { headers: CORS })
+    }
+
+    return Response.json({ error: 'unknown ncm route' }, { status: 404, headers: CORS })
+  } catch (e) {
+    return Response.json({ error: `${e.name}: ${e.message}` }, { status: 500, headers: CORS })
+  }
 }
 
 // ── NetEase Cloud Music API proxy ────────────────────────────────

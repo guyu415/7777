@@ -25,3 +25,7 @@ crons = ["*/30 * * * *"]
 #                    与源码里的 VAPID_PUBLIC_KEY 配对；不配置则推送功能静默停用
 #                    wrangler secret put VAPID_PRIVATE_KEY --name scheduled-message-worker
 #   VAPID_SUBJECT  — 可选，VAPID 联系方式（mailto:...），默认见 vapidJwt()
+#   NCM_COOKIE     — 可选，网易云网页版 Cookie（形如 "MUSIC_U=xxx; __csrf=xxx"，
+#                    浏览器登录 music.163.com 后从开发者工具复制）。/ncm/* 代理
+#                    不配也能搜索和播放免费歌曲，配 VIP 账号 Cookie 可播 VIP 歌
+#                    wrangler secret put NCM_COOKIE --name scheduled-message-worker
