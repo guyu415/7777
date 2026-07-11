@@ -349,26 +349,35 @@ async function eapiEncrypt(apiPath, bodyObj) {
 }
 
 async function eapiPlayUrl(cookie, songId, realIP) {
+  // 关键：不要设 e_r（否则响应被 AES 加密，解不出来）；带上设备/请求标识 cookie
+  const eapiCookie = [cookie, 'os=pc', 'appver=8.10.35', 'deviceId=pyncm!', `requestId=${Date.now()}`].join('; ')
   const body = {
     ids: JSON.stringify([songId]),
     level: 'exhigh',
     encodeType: 'aac',
-    header: JSON.stringify({ os: 'pc', appver: '8.10.35', osver: '17.0.0', deviceId: 'pyncm!' }),
-    e_r: true,
+    header: JSON.stringify({ os: 'pc', appver: '8.10.35', osver: '17.0.0', deviceId: 'pyncm!', requestId: String(Date.now()), MUSIC_U: (cookie.match(/MUSIC_U=([^;]+)/) || [])[1] || '' }),
     realIP,
   }
   const params = await eapiEncrypt('/api/song/enhance/player/url/v1', body)
-  const res = await fetch('https://interface3.music.163.com/eapi/song/enhance/player/url/v1', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/x-www-form-urlencoded',
-      'User-Agent': 'NeteaseMusic/8.10.35.240605173201(240605173201);Dalvik/2.1.0 (Linux; U; Android 12; PCT-AL10 Build/HUAWEIPCT-AL10)',
-      'Cookie': cookie,
-      'Referer': 'https://music.163.com/',
-    },
-    body: `params=${params}`,
-  })
-  return res.json().catch(() => null)
+  let res
+  try {
+    res = await fetch('https://interface3.music.163.com/eapi/song/enhance/player/url/v1', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+        'User-Agent': 'NeteaseMusic/8.10.35.240605173201(240605173201);Dalvik/2.1.0 (Linux; U; Android 12; PCT-AL10 Build/HUAWEIPCT-AL10)',
+        'Cookie': eapiCookie,
+        'Referer': 'https://music.163.com/',
+      },
+      body: `params=${params}`,
+    })
+  } catch (e) {
+    return { data: null, httpStatus: 0, rawSnippet: `fetch error: ${e.message}` }
+  }
+  const text = await res.text()
+  let json = null
+  try { json = JSON.parse(text) } catch {}
+  return { data: json, httpStatus: res.status, rawSnippet: text.slice(0, 160) }
 }
 
 async function handleNcmWebApi(request, env) {
@@ -424,16 +433,14 @@ async function handleNcmWebApi(request, env) {
       // 失败再退回明文接口。明文接口的 realIP 已被网易忽略，导致大量国内
       // 曲目从海外访问被误报"无版权/已下架"。
       let item = null, via = 'eapi'
-      try {
-        const d = await eapiPlayUrl(cookie, id, realIP)
-        item = d?.data?.[0] || null
-      } catch (e) {
-        console.log('[ncm] eapi playurl failed:', e.message)
-      }
+      const e = await eapiPlayUrl(cookie, id, realIP)
+      item = e?.data?.data?.[0] || null
       if (!item?.url) {
+        // 明文回退：用 #56 验证可用的纯净形式（不带 realIP 查询参数，
+        // 那个未知参数会让网易返回 404）
         via = 'plain'
         try {
-          const r = await fetch(`https://music.163.com/api/song/enhance/player/url?ids=%5B${id}%5D&br=320000&realIP=${realIP}`, { headers })
+          const r = await fetch(`https://music.163.com/api/song/enhance/player/url?ids=%5B${id}%5D&br=320000`, { headers })
           const d = await r.json().catch(() => null)
           item = d?.data?.[0] || item
         } catch {}
@@ -464,17 +471,18 @@ async function handleNcmWebApi(request, env) {
       } catch {}
 
       // 会员专属歌探测（周杰伦《Mojito》，非 VIP 只给试听/空链接）
-      // 走与正式播放同一路径：eapi + realIP
       const VIP_PROBE_ID = 1436664760
-      let probe = null
-      try {
-        const pd = await eapiPlayUrl(cookie, VIP_PROBE_ID, realIP)
-        const it = pd?.data?.[0]
-        probe = { hasUrl: !!it?.url, trial: !!it?.freeTrialInfo, code: it?.code, fee: it?.fee, via: 'eapi' }
-      } catch (e) {
-        probe = { error: `${e.name}: ${e.message}`, via: 'eapi' }
+      const eapi = await eapiPlayUrl(cookie, VIP_PROBE_ID, realIP)
+      const it = eapi?.data?.data?.[0]
+      const probe = {
+        httpStatus: eapi?.httpStatus,          // eapi HTTP 状态
+        respCode: eapi?.data?.code ?? null,    // 响应体外层 code
+        songCode: it?.code ?? null,            // 单曲 code
+        hasUrl: !!it?.url,
+        trial: !!it?.freeTrialInfo,
+        raw: eapi?.rawSnippet,                 // 原始响应片段（判断是否加密/报错页）
       }
-      const vipPlayable = !!(probe?.hasUrl && !probe?.trial)
+      const vipPlayable = !!(probe.hasUrl && !probe.trial)
 
       return Response.json({
         ok: true,
@@ -482,7 +490,7 @@ async function handleNcmWebApi(request, env) {
         musicULen: muMatch ? muMatch[1].length : 0,
         nickname,
         vipType,
-        vipPlayable,   // 真正的判据
+        vipPlayable,
         probe,
       }, { headers: CORS })
     }
