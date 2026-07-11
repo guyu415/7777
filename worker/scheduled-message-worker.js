@@ -268,11 +268,16 @@ async function handleNcmWebApi(request, env) {
 
   // os=pc 能解锁更高音质档位
   const cookie = ['os=pc; appver=8.10.35', (env.NCM_COOKIE || '').trim()].filter(Boolean).join('; ')
+  // Cloudflare 海外节点会被网易按来源 IP 做地区限制，VIP 歌即使带 Cookie
+  // 也返回空链接。伪装成国内 IP（可用 NCM_REAL_IP 覆盖）解除限制。
+  const realIP = (env.NCM_REAL_IP || '116.25.146.177').trim()
   const headers = {
     'Referer': 'https://music.163.com/',
     'User-Agent': NCM_WEB_UA,
     'Content-Type': 'application/x-www-form-urlencoded',
     'Cookie': cookie,
+    'X-Real-IP': realIP,
+    'X-Forwarded-For': realIP,
   }
 
   try {

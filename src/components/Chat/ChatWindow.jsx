@@ -242,7 +242,6 @@ export default function ChatWindow({ theme }) {
           background: `linear-gradient(to bottom, ${primaryColor}1f, rgba(255,255,255,0.55))`,
           backdropFilter: 'blur(24px)',
           WebkitBackdropFilter: 'blur(24px)',
-          borderBottom: `1px solid ${primaryColor}22`,
           flexShrink: 0,
         }}>
         <div className="flex items-center gap-3 min-w-0">
