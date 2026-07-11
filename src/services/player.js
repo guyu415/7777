@@ -52,12 +52,9 @@ export function getPlayerState() {
 }
 
 export async function playSong(song) {
-  const { ok, url, code, trial } = await getPlayUrl(song.id)
+  const { ok, url, code } = await getPlayUrl(song.id)
   if (!ok || !url) {
-    const reason = song.fee === 1
-      ? `VIP 歌曲拿不到链接（code ${code ?? '?'}），看下碟片面板顶部的账号状态`
-      : `拿不到播放链接（code ${code ?? '?'}），可能无版权或已下架`
-    return { ok: false, reason }
+    return { ok: false, reason: `拿不到播放链接（code ${code ?? '?'}），可能无版权或已下架` }
   }
   const a = getAudio()
   a.src = url
@@ -89,7 +86,7 @@ export async function playByQuery(query) {
       console.warn('[PLAYER] 尝试播放失败:', song.name, e.message)
     }
   }
-  return { ok: false, reason: '搜到了但都播放不了（版权/VIP 限制）' }
+  return { ok: false, reason: '搜到了但都播放不了' }
 }
 
 export function pausePlayer() {

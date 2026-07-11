@@ -185,9 +185,9 @@ export default {
       return Response.json(result, { headers: CORS })
     }
 
-    // ── NetEase web API proxy（Cookie 模式，前端碟片播放器用）───────
-    if (pathname.startsWith('/ncm/') && request.method === 'GET') {
-      return handleNcmWebApi(request, env)
+    // ── Bilibili 音频代理（前端碟片播放器用）─────────────────────
+    if (pathname.startsWith('/bili/') && request.method === 'GET') {
+      return handleBiliWebApi(request, env)
     }
 
     // ── NetEase Cloud Music API proxy ─────────────────────────────
@@ -242,145 +242,29 @@ async function handleChatProxy(request) {
   })
 }
 
-// ── NetEase web API proxy（Cookie 模式）───────────────────────────
-// 走网页版 /api/* 接口 + MUSIC_U Cookie（netease-music-mcp 的思路），
-// 不需要开放平台的 appId/RSA 签名。NCM_COOKIE 不配置也能搜索和播放
-// 免费歌曲，配置后可播 VIP 歌。
+// ── Bilibili 音频代理（/bili/*）─────────────────────────────────
+// 之前用网易云直连（/ncm/*）——网易按 TCP 源 IP 做地区限制，Worker 出口
+// 全在境外，realIP 头/加密体伪装全被忽略，大量曲目 404 无法播放。
+// 换成 B 站音频区：搜索/播放/歌词都是公开接口，不看境外出口 IP。
+// 代价是曲库比网易小，热门流行歌可能要用翻唱版。
 
-const NCM_WEB_UA = 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1'
+const BILI_UA = 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1'
+const BILI_HEADERS = {
+  'User-Agent': BILI_UA,
+  'Referer': 'https://www.bilibili.com/',
+}
 
-// 网易 CDN 常返回 http:// 链接，https 页面播不了（混合内容），统一升级
+// B 站 CDN 偶尔返回 http:// 链接，https 页面播不了（混合内容），统一升级
 function httpsify(u) {
   return typeof u === 'string' ? u.replace(/^http:\/\//, 'https://') : u
 }
 
-// Cookie 粘贴格式容错：裸值、MUSIC_U=xxx、MUSIC_U: xxx、带引号/换行/制表符、
-// 整段 "Cookie: a=b; MUSIC_U=xxx; __csrf=yyy" 都提取成规范的 "MUSIC_U=...; __csrf=..."
-function normalizeNcmCookie(raw) {
-  let c = (raw || '').replace(/^\s*cookie\s*:/i, '')
-  c = c.replace(/[\r\n\t]+/g, ' ').replace(/^["'\s]+|["'\s]+$/g, '').trim()
-  if (!c) return ''
-  const mu = c.match(/MUSIC_U\s*[=:]\s*([^;,\s"']+)/i)
-  if (mu) {
-    const csrf = c.match(/__csrf\s*[=:]\s*([^;,\s"']+)/i)
-    return `MUSIC_U=${mu[1]}` + (csrf ? `; __csrf=${csrf[1]}` : '')
-  }
-  // 没识别到 MUSIC_U 关键字，视为裸值
-  const bare = c.replace(/^MUSIC_U\s*[=:]\s*/i, '').replace(/[;,].*$/, '').trim()
-  return bare ? `MUSIC_U=${bare}` : ''
+// B 站搜索结果的 title/author 会带 <em class="keyword"> 高亮标签，去掉
+function stripHtml(s) {
+  return typeof s === 'string' ? s.replace(/<[^>]+>/g, '') : ''
 }
 
-// ── 网易 eapi 加密（AES-128-ECB + MD5 摘要）──────────────────────
-// 明文接口 /api/* 传的 realIP 已被网易的地区限制策略忽略，导致大量国内
-// 曲目从海外节点访问被识别为"无版权/已下架"（VIP、部分免费歌都受影响）。
-// eapi 是官方客户端用的加密通道，realIP 塞进加密体里网易才真的认。
-// 参考实现：Binaryify/NeteaseCloudMusicApi
-
-const EAPI_KEY = 'e82ckenh8dichen8'
-const ZERO_IV = new Uint8Array(16)
-
-// 迷你 MD5（Workers WebCrypto 不支持 MD5，只能自己写）— RFC 1321
-function md5Hex(msg) {
-  const bytes = typeof msg === 'string' ? new TextEncoder().encode(msg) : new Uint8Array(msg)
-  const bitLen = bytes.length * 8
-  const withOne = new Uint8Array(bytes.length + 1)
-  withOne.set(bytes)
-  withOne[bytes.length] = 0x80
-  const padLen = (56 - withOne.length % 64 + 64) % 64
-  const buf = new Uint8Array(withOne.length + padLen + 8)
-  buf.set(withOne)
-  const dv = new DataView(buf.buffer)
-  dv.setUint32(buf.length - 8, bitLen >>> 0, true)
-  dv.setUint32(buf.length - 4, Math.floor(bitLen / 0x100000000) >>> 0, true)
-
-  const S = [7,12,17,22,7,12,17,22,7,12,17,22,7,12,17,22,5,9,14,20,5,9,14,20,5,9,14,20,5,9,14,20,
-             4,11,16,23,4,11,16,23,4,11,16,23,4,11,16,23,6,10,15,21,6,10,15,21,6,10,15,21,6,10,15,21]
-  const K = new Int32Array(64)
-  for (let i = 0; i < 64; i++) K[i] = Math.floor(Math.abs(Math.sin(i + 1)) * 0x100000000) | 0
-
-  let a0 = 0x67452301|0, b0 = 0xefcdab89|0, c0 = 0x98badcfe|0, d0 = 0x10325476|0
-  const M = new Int32Array(16)
-  for (let off = 0; off < buf.length; off += 64) {
-    for (let i = 0; i < 16; i++) M[i] = dv.getInt32(off + i * 4, true)
-    let a = a0, b = b0, c = c0, d = d0
-    for (let i = 0; i < 64; i++) {
-      let f, g
-      if (i < 16)      { f = (b & c) | (~b & d); g = i }
-      else if (i < 32) { f = (d & b) | (~d & c); g = (5 * i + 1) % 16 }
-      else if (i < 48) { f = b ^ c ^ d;          g = (3 * i + 5) % 16 }
-      else             { f = c ^ (b | ~d);       g = (7 * i) % 16 }
-      const t = d; d = c; c = b
-      const x = (a + f + K[i] + M[g]) | 0
-      const s = S[i]
-      b = (b + ((x << s) | (x >>> (32 - s)))) | 0
-      a = t
-    }
-    a0 = (a0 + a) | 0; b0 = (b0 + b) | 0; c0 = (c0 + c) | 0; d0 = (d0 + d) | 0
-  }
-  const out = new Uint8Array(16)
-  const outDv = new DataView(out.buffer)
-  outDv.setInt32(0, a0, true); outDv.setInt32(4, b0, true); outDv.setInt32(8, c0, true); outDv.setInt32(12, d0, true)
-  return [...out].map(b => b.toString(16).padStart(2, '0')).join('')
-}
-
-// WebCrypto 没有原生 AES-ECB，用 AES-CBC(IV=0) 逐块加密并只取前 16 字节
-// （PKCS7 会追加一个填充块，丢掉即可）
-async function aesEcbEncrypt(keyBytes, plaintext) {
-  const key = await crypto.subtle.importKey('raw', keyBytes, 'AES-CBC', false, ['encrypt'])
-  const padLen = 16 - (plaintext.length % 16)
-  const padded = new Uint8Array(plaintext.length + padLen)
-  padded.set(plaintext)
-  padded.fill(padLen, plaintext.length)
-  const out = new Uint8Array(padded.length)
-  for (let i = 0; i < padded.length; i += 16) {
-    const block = padded.slice(i, i + 16)
-    const enc = new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-CBC', iv: ZERO_IV }, key, block))
-    out.set(enc.slice(0, 16), i)
-  }
-  return out
-}
-
-async function eapiEncrypt(apiPath, bodyObj) {
-  const bodyJson = JSON.stringify(bodyObj)
-  const digest = md5Hex(`nobody${apiPath}use${bodyJson}md5forencrypt`)
-  const plain = `${apiPath}-36cd479b6b5-${bodyJson}-36cd479b6b5-${digest}`
-  const encBytes = await aesEcbEncrypt(new TextEncoder().encode(EAPI_KEY), new TextEncoder().encode(plain))
-  return [...encBytes].map(b => b.toString(16).padStart(2, '0')).join('').toUpperCase()
-}
-
-async function eapiPlayUrl(cookie, songId, realIP) {
-  // 关键：不要设 e_r（否则响应被 AES 加密，解不出来）；带上设备/请求标识 cookie
-  const eapiCookie = [cookie, 'os=pc', 'appver=8.10.35', 'deviceId=pyncm!', `requestId=${Date.now()}`].join('; ')
-  const body = {
-    ids: JSON.stringify([songId]),
-    level: 'exhigh',
-    encodeType: 'aac',
-    header: JSON.stringify({ os: 'pc', appver: '8.10.35', osver: '17.0.0', deviceId: 'pyncm!', requestId: String(Date.now()), MUSIC_U: (cookie.match(/MUSIC_U=([^;]+)/) || [])[1] || '' }),
-    realIP,
-  }
-  const params = await eapiEncrypt('/api/song/enhance/player/url/v1', body)
-  let res
-  try {
-    res = await fetch('https://interface3.music.163.com/eapi/song/enhance/player/url/v1', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/x-www-form-urlencoded',
-        'User-Agent': 'NeteaseMusic/8.10.35.240605173201(240605173201);Dalvik/2.1.0 (Linux; U; Android 12; PCT-AL10 Build/HUAWEIPCT-AL10)',
-        'Cookie': eapiCookie,
-        'Referer': 'https://music.163.com/',
-      },
-      body: `params=${params}`,
-    })
-  } catch (e) {
-    return { data: null, httpStatus: 0, rawSnippet: `fetch error: ${e.message}` }
-  }
-  const text = await res.text()
-  let json = null
-  try { json = JSON.parse(text) } catch {}
-  return { data: json, httpStatus: res.status, rawSnippet: text.slice(0, 160) }
-}
-
-async function handleNcmWebApi(request, env) {
+async function handleBiliWebApi(request, env) {
   const url = new URL(request.url)
   const q = url.searchParams
 
@@ -392,126 +276,94 @@ async function handleNcmWebApi(request, env) {
     return Response.json({ error: 'unauthorized' }, { status: 401, headers: CORS })
   }
 
-  // os=pc 能解锁更高音质档位
-  const cookie = ['os=pc; appver=8.10.35', normalizeNcmCookie(env.NCM_COOKIE)].filter(Boolean).join('; ')
-  // Cloudflare 海外节点会被网易按来源 IP 做地区限制。固定 IP 易被识别/拉黑，
-  // 每次随机生成一个广东电信段 IP（NeteaseCloudMusicApi 的做法），NCM_REAL_IP 可覆盖。
-  const rnd = (n) => Math.floor(Math.random() * n)
-  const realIP = (env.NCM_REAL_IP || `116.25.${rnd(256)}.${1 + rnd(254)}`).trim()
-  const headers = {
-    'Referer': 'https://music.163.com/',
-    'User-Agent': NCM_WEB_UA,
-    'Content-Type': 'application/x-www-form-urlencoded',
-    'Cookie': cookie,
-    'X-Real-IP': realIP,
-    'X-Forwarded-For': realIP,
-  }
-
   try {
-    if (url.pathname === '/ncm/search') {
-      const s = (q.get('keywords') || '').slice(0, 100)
-      if (!s) return Response.json({ ok: true, songs: [] }, { headers: CORS })
+    if (url.pathname === '/bili/search') {
+      const keyword = (q.get('keywords') || '').slice(0, 100)
+      if (!keyword) return Response.json({ ok: true, songs: [] }, { headers: CORS })
       const limit = Math.min(parseInt(q.get('limit') || '12', 10) || 12, 30)
-      const body = new URLSearchParams({ s, type: '1', limit: String(limit), offset: q.get('offset') || '0', total: 'true', realIP })
-      const res = await fetch('https://music.163.com/api/cloudsearch/pc', { method: 'POST', headers, body: body.toString() })
-      const data = await res.json()
-      const songs = (data?.result?.songs || []).map(sg => ({
-        id: sg.id,
-        name: sg.name,
-        artists: (sg.ar || []).map(a => a.name).join(' / '),
-        album: sg.al?.name || '',
-        cover: httpsify(sg.al?.picUrl || ''),
-        duration: Math.round((sg.dt || 0) / 1000),
-        fee: sg.fee ?? 0, // 1 = VIP 歌曲
+      const api = `https://api.bilibili.com/audio/music-service-c/s?keyword=${encodeURIComponent(keyword)}&page=1&pagesize=${limit}&search_type=music`
+      const res = await fetch(api, { headers: BILI_HEADERS })
+      const data = await res.json().catch(() => null)
+      const songs = (data?.data?.result || []).map(x => ({
+        id: x.id,
+        name: stripHtml(x.title || ''),
+        artists: stripHtml(x.author || ''),
+        album: '',
+        cover: httpsify(x.cover_url || x.cover || ''),
+        duration: x.duration || 0,
+        fee: 0, // B 站音频区不分 VIP，保留字段是为了 MusicDisc 兼容
       }))
       return Response.json({ ok: true, songs }, { headers: CORS })
     }
 
-    if (url.pathname === '/ncm/playurl') {
+    if (url.pathname === '/bili/playurl') {
       const id = parseInt(q.get('id'), 10)
       if (!id) return Response.json({ error: 'missing id' }, { status: 400, headers: CORS })
-      // 先走 eapi（realIP 放进加密体，网易的地区限制策略才真的接受）；
-      // 失败再退回明文接口。明文接口的 realIP 已被网易忽略，导致大量国内
-      // 曲目从海外访问被误报"无版权/已下架"。
-      let item = null, via = 'eapi'
-      const e = await eapiPlayUrl(cookie, id, realIP)
-      item = e?.data?.data?.[0] || null
-      if (!item?.url) {
-        // 明文回退：用 #56 验证可用的纯净形式（不带 realIP 查询参数，
-        // 那个未知参数会让网易返回 404）
-        via = 'plain'
-        try {
-          const r = await fetch(`https://music.163.com/api/song/enhance/player/url?ids=%5B${id}%5D&br=320000`, { headers })
-          const d = await r.json().catch(() => null)
-          item = d?.data?.[0] || item
-        } catch {}
+      // quality: 0=128k, 1=192k, 2=320k, 3=flac(VIP)。从 320k 往下试，
+      // 高音质需要 B 站音频 VIP，未登录只能拿到 128k。
+      let picked = null, lastCode = null
+      const brMap = { 0: 128000, 1: 192000, 2: 320000, 3: 999000 }
+      for (const quality of [2, 1, 0]) {
+        const api = `https://www.bilibili.com/audio/music-service-c/web/url?sid=${id}&privilege=2&quality=${quality}`
+        const res = await fetch(api, { headers: BILI_HEADERS })
+        const data = await res.json().catch(() => null)
+        lastCode = data?.code
+        const cdns = data?.data?.cdns
+        if (data?.code === 0 && Array.isArray(cdns) && cdns[0]) {
+          picked = { url: cdns[0], br: brMap[quality] }
+          break
+        }
       }
       return Response.json({
-        ok: !!item?.url,
-        url: httpsify(item?.url || null),
-        br: item?.br || 0,
-        code: item?.code,
-        trial: !!item?.freeTrialInfo, // true = 只给了试听片段
-        via,
+        ok: !!picked?.url,
+        url: httpsify(picked?.url || null),
+        br: picked?.br || 0,
+        code: lastCode,
       }, { headers: CORS })
     }
 
-    // Cookie 自检：昵称尽力而为，核心是"真实能力探测"——拿一首会员专属歌的
-    // 播放链接，看拿到完整版还是 30 秒试听，直接回答"VIP 到底能不能放"
-    if (url.pathname === '/ncm/status') {
-      const parsed = normalizeNcmCookie(env.NCM_COOKIE)
-      const muMatch = parsed.match(/MUSIC_U=([^;]+)/)
-
-      // 尽力拿昵称（该接口明文调用可能不返回 profile，仅作参考不作判据）
-      let nickname = null, vipType = 0
-      try {
-        const r = await fetch('https://music.163.com/api/nuser/account/get', { method: 'POST', headers, body: '' })
-        const d = await r.json().catch(() => null)
-        nickname = d?.profile?.nickname || null
-        vipType = d?.account?.vipType ?? 0
-      } catch {}
-
-      // 会员专属歌探测（周杰伦《Mojito》，非 VIP 只给试听/空链接）
-      const VIP_PROBE_ID = 1436664760
-      const eapi = await eapiPlayUrl(cookie, VIP_PROBE_ID, realIP)
-      const it = eapi?.data?.data?.[0]
-      const probe = {
-        httpStatus: eapi?.httpStatus,          // eapi HTTP 状态
-        respCode: eapi?.data?.code ?? null,    // 响应体外层 code
-        songCode: it?.code ?? null,            // 单曲 code
-        hasUrl: !!it?.url,
-        trial: !!it?.freeTrialInfo,
-        raw: eapi?.rawSnippet,                 // 原始响应片段（判断是否加密/报错页）
+    if (url.pathname === '/bili/lyric') {
+      const id = parseInt(q.get('id'), 10)
+      if (!id) return Response.json({ error: 'missing id' }, { status: 400, headers: CORS })
+      const api = `https://www.bilibili.com/audio/music-service-c/web/song/lyric?sid=${id}`
+      const res = await fetch(api, { headers: BILI_HEADERS })
+      const data = await res.json().catch(() => null)
+      // data.data 通常是一个指向 LRC 文本的 URL，也可能就是文本本身
+      const raw = data?.data
+      let lrc = ''
+      if (typeof raw === 'string' && raw) {
+        if (/^https?:\/\//i.test(raw)) {
+          try {
+            const r = await fetch(httpsify(raw), { headers: BILI_HEADERS })
+            lrc = await r.text()
+          } catch {}
+        } else {
+          lrc = raw
+        }
       }
-      const vipPlayable = !!(probe.hasUrl && !probe.trial)
+      return Response.json({ ok: true, lrc, tlyric: '' }, { headers: CORS })
+    }
 
+    // 数据源探测：B 站音频不登录也能拿 128k 直链，此接口只是让前端能
+    // 显示"数据源：Bilibili 音频区"提示
+    if (url.pathname === '/bili/status') {
       return Response.json({
         ok: true,
-        cookieConfigured: !!(env.NCM_COOKIE || '').trim(),
-        musicULen: muMatch ? muMatch[1].length : 0,
-        nickname,
-        vipType,
-        vipPlayable,
-        realIP,
-        probe,
+        source: 'Bilibili 音频区',
+        note: '无需登录，直接可播',
       }, { headers: CORS })
     }
 
-    if (url.pathname === '/ncm/lyric') {
-      const id = parseInt(q.get('id'), 10)
-      if (!id) return Response.json({ error: 'missing id' }, { status: 400, headers: CORS })
-      const res = await fetch(`https://music.163.com/api/song/lyric?id=${id}&lv=-1&kv=-1&tv=-1&realIP=${realIP}`, { headers })
-      const data = await res.json()
-      return Response.json({ ok: true, lrc: data?.lrc?.lyric || '', tlyric: data?.tlyric?.lyric || '' }, { headers: CORS })
-    }
-
-    return Response.json({ error: 'unknown ncm route' }, { status: 404, headers: CORS })
+    return Response.json({ error: 'unknown bili route' }, { status: 404, headers: CORS })
   } catch (e) {
     return Response.json({ error: `${e.name}: ${e.message}` }, { status: 500, headers: CORS })
   }
 }
 
-// ── NetEase Cloud Music API proxy ────────────────────────────────
+// ── NetEase Cloud Music OpenAPI proxy（RSA 签名走开放平台）───────
+// 说明：这套是走网易云开放平台 OAuth 的另一条路，历史遗留、前端未使用。
+// 保留在这里是因为 Worker 的其它入口（如手动 /music/qrcode 扫码流程）
+// 可能还挂着；如需彻底移除也很直接。
 
 const NCM_BASE = 'https://openapi.music.163.com'
 

@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { Search, Play, Pause, X } from 'lucide-react'
-import { searchSongs, getNcmStatus } from '../services/music'
+import { searchSongs, getMusicStatus } from '../services/music'
 import { subscribePlayer, playSong, togglePlayer, seekPlayer } from '../services/player'
 
 function fmt(s) {
@@ -8,9 +8,10 @@ function fmt(s) {
   return `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`
 }
 
-// 网易云碟片挂件：收起是一张小黑胶（播放时旋转），点开是搜歌 + 迷你播放器。
-// 播放状态由 services/player 单例管理（AI 的 [MUSIC:...] 指令共用同一播放器），
-// visible=false 时只隐藏 UI，不卸载组件，切页面音乐不断。
+// 音乐碟片挂件（数据源：B 站音频区）：收起是一张小黑胶（播放时旋转），
+// 点开是搜歌 + 迷你播放器。播放状态由 services/player 单例管理
+// （AI 的 [MUSIC:...] 指令共用同一播放器），visible=false 时只隐藏 UI，
+// 不卸载组件，切页面音乐不断。
 export default function MusicDisc({ theme, visible = true }) {
   const [open, setOpen] = useState(false)
   const [query, setQuery] = useState('')
@@ -18,23 +19,19 @@ export default function MusicDisc({ theme, visible = true }) {
   const [searching, setSearching] = useState(false)
   const [err, setErr] = useState('')
   const [player, setPlayer] = useState({ current: null, playing: false, progress: 0, duration: 0 })
-  const [account, setAccount] = useState(null) // /ncm/status 结果
+  const [status, setStatus] = useState(null) // /bili/status 结果
 
   useEffect(() => subscribePlayer(setPlayer), [])
 
-  // 打开面板时自检 Cookie 登录状态，一眼看出 VIP 放不了是哪一环的问题
+  // 打开面板时探一下数据源
   useEffect(() => {
-    if (!open || account) return
-    getNcmStatus().then(setAccount).catch(() => setAccount({ error: true }))
-  }, [open, account])
+    if (!open || status) return
+    getMusicStatus().then(setStatus).catch(() => setStatus({ error: true }))
+  }, [open, status])
 
-  const p = account?.probe
-  const accountLine = !account ? '账号状态检查中…'
-    : account.error ? '账号状态检查失败'
-    : !account.cookieConfigured ? '未配置 Cookie（只能放免费歌）'
-    : account.vipPlayable ? `会员歌可播 ✓${account.nickname ? ' · ' + account.nickname : ''}`
-    // 不可播时把 eapi 的真实诊断全暴露出来，用于定位到底卡哪
-    : `放不了 · MU${account.musicULen ?? '?'} · HTTP${p?.httpStatus ?? '?'} · 外码${p?.respCode ?? '?'} · 曲码${p?.songCode ?? '?'}${p?.trial ? ' · 仅试听' : ''}`
+  const sourceLine = !status ? '数据源检查中…'
+    : status.error ? '数据源不可用'
+    : `数据源：${status.source || 'Bilibili 音频区'}`
 
   const { current, playing, progress, duration } = player
   const primary = theme?.primary || '#ff85b3'
@@ -58,7 +55,6 @@ export default function MusicDisc({ theme, visible = true }) {
     try {
       const r = await playSong(song)
       if (!r.ok) setErr(r.reason)
-      else if (r.trial) setErr('⚠️ 只拿到 30 秒试听片段——看看上面的账号状态是否 VIP 生效')
     } catch (e) {
       setErr(`播放失败：${e.message}`)
     }
@@ -102,12 +98,12 @@ export default function MusicDisc({ theme, visible = true }) {
           boxShadow: '0 10px 36px rgba(0,0,0,0.16)',
         }}>
           <div className="flex items-center justify-between mb-1">
-            <span className="text-sm font-semibold" style={{ color: '#8b5060' }}>🎶 网易云点歌</span>
+            <span className="text-sm font-semibold" style={{ color: '#8b5060' }}>🎶 B 站音乐点歌</span>
             <button onClick={() => setOpen(false)} style={{ border: 'none', background: 'transparent', color: '#b08794', cursor: 'pointer', padding: 4 }}>
               <X size={16} />
             </button>
           </div>
-          <p className="text-xs mb-2" style={{ color: '#b08794' }}>{accountLine}</p>
+          <p className="text-xs mb-2" style={{ color: '#b08794' }}>{sourceLine}</p>
 
           <div className="flex gap-2 mb-2">
             <input
@@ -150,10 +146,10 @@ export default function MusicDisc({ theme, visible = true }) {
                   }}
                 >
                   {song.cover
-                    ? <img src={`${song.cover}?param=80y80`} alt="" style={{ width: 34, height: 34, borderRadius: 8, objectFit: 'cover', flexShrink: 0 }} />
+                    ? <img src={song.cover} alt="" style={{ width: 34, height: 34, borderRadius: 8, objectFit: 'cover', flexShrink: 0 }} />
                     : <div style={{ width: 34, height: 34, borderRadius: 8, background: `${primary}22`, flexShrink: 0 }} />}
                   <div style={{ minWidth: 0, flex: 1 }}>
-                    <p className="text-sm truncate" style={{ color: '#7a4a58' }}>{song.name}{song.fee === 1 && <span style={{ color: primary, fontSize: 10 }}> VIP</span>}</p>
+                    <p className="text-sm truncate" style={{ color: '#7a4a58' }}>{song.name}</p>
                     <p className="text-xs truncate" style={{ color: '#b08794' }}>{song.artists}</p>
                   </div>
                   <span className="text-xs flex-shrink-0" style={{ color: '#c9a2ad' }}>{fmt(song.duration)}</span>
@@ -166,7 +162,7 @@ export default function MusicDisc({ theme, visible = true }) {
             <div className="mt-2 pt-2" style={{ borderTop: `1px solid ${primary}22` }}>
               <div className="flex items-center gap-2">
                 <img
-                  src={current.cover ? `${current.cover}?param=100y100` : ''}
+                  src={current.cover || ''}
                   alt=""
                   style={{
                     width: 38, height: 38, borderRadius: '50%', objectFit: 'cover', flexShrink: 0,
