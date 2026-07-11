@@ -1,5 +1,6 @@
-// Bilibili 音频（经 Worker 的 /bili/* 代理）
-// 之前接的网易云被境外 IP 挡在门外，改用 B 站音频区。
+// Bilibili 视频区（经 Worker 的 /bili/* 代理）
+// 迭代：网易云（地区限制 404）→ B 站音频区（HTTP 412 反爬）→
+// B 站视频区（WBI 签名 + buvid3，曲库巨大）。song.id 现在是 bvid 字符串。
 
 const SYNC_BASE = 'https://chat.xiaoman.xyz'
 
@@ -11,20 +12,20 @@ export async function searchSongs(keywords, limit = 12) {
 }
 
 export async function getPlayUrl(id) {
-  const res = await fetch(`${SYNC_BASE}/bili/playurl?id=${id}`)
+  const res = await fetch(`${SYNC_BASE}/bili/playurl?id=${encodeURIComponent(id)}`)
   if (!res.ok) throw new Error(`获取播放链接失败 HTTP ${res.status}`)
-  return res.json() // { ok, url, br, code }
+  return res.json() // { ok, url, br, code, stage? }
 }
 
 export async function getLyric(id) {
-  const res = await fetch(`${SYNC_BASE}/bili/lyric?id=${id}`)
+  const res = await fetch(`${SYNC_BASE}/bili/lyric?id=${encodeURIComponent(id)}`)
   if (!res.ok) return { lrc: '', tlyric: '' }
   return res.json()
 }
 
-// 数据源探测：显示"数据源：Bilibili 音频区"
+// 数据源探测：面板顶部显示"数据源：Bilibili 视频区 · 探测正常 (N 首)"
 export async function getMusicStatus() {
   const res = await fetch(`${SYNC_BASE}/bili/status`)
   if (!res.ok) throw new Error(`HTTP ${res.status}`)
-  return res.json() // { ok, source, note }
+  return res.json() // { ok, source, probe }
 }
