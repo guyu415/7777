@@ -31,9 +31,9 @@ export default function MusicDisc({ theme, visible = true }) {
   const accountLine = !account ? '账号状态检查中…'
     : account.error ? '账号状态检查失败'
     : !account.cookieConfigured ? '未配置 Cookie（只能放免费歌）'
-    : account.loggedIn ? `已登录：${account.nickname}${account.vipType > 0 ? '（VIP ✓）' : '（非 VIP 账号）'}`
-    // 未登录时把诊断数据也显示出来，方便判断是没抠对（MUSIC_U 太短）还是 Cookie 失效（code 301）
-    : `Cookie 未生效 · MUSIC_U长度${account.musicULen ?? '?'} · 返回码${account.upstreamCode ?? account.fetchError ?? '?'}`
+    : account.vipPlayable ? `会员歌可播 ✓${account.nickname ? ' · ' + account.nickname : ''}`
+    // 探测到不可播时把诊断显示出来（MUSIC_U 长度 + 试听标记/探测返回码）
+    : `会员歌放不了 · MUSIC_U长度${account.musicULen ?? '?'} · ${account.probe?.trial ? '仅试听' : ('码' + (account.probe?.code ?? account.probe?.error ?? '?'))}`
 
   const { current, playing, progress, duration } = player
   const primary = theme?.primary || '#ff85b3'

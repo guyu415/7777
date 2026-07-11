@@ -340,28 +340,42 @@ async function handleNcmWebApi(request, env) {
       }, { headers: CORS })
     }
 
-    // Cookie 登录状态自检：碟片面板用它显示"账号是否生效"，附带诊断字段
+    // Cookie 自检：昵称尽力而为，核心是"真实能力探测"——拿一首会员专属歌的
+    // 播放链接，看拿到完整版还是 30 秒试听，直接回答"VIP 到底能不能放"
     if (url.pathname === '/ncm/status') {
       const parsed = normalizeNcmCookie(env.NCM_COOKIE)
       const muMatch = parsed.match(/MUSIC_U=([^;]+)/)
-      let data = null, upstreamStatus = 0
+
+      // 尽力拿昵称（该接口明文调用可能不返回 profile，仅作参考不作判据）
+      let nickname = null, vipType = 0
       try {
-        const res = await fetch('https://music.163.com/api/nuser/account/get', { method: 'POST', headers, body: '' })
-        upstreamStatus = res.status
-        data = await res.json().catch(() => null)
+        const r = await fetch('https://music.163.com/api/nuser/account/get', { method: 'POST', headers, body: '' })
+        const d = await r.json().catch(() => null)
+        nickname = d?.profile?.nickname || null
+        vipType = d?.account?.vipType ?? 0
+      } catch {}
+
+      // 会员专属歌探测（周杰伦《Mojito》，非 VIP 只给试听/空链接）
+      const VIP_PROBE_ID = 1436664760
+      let probe = null
+      try {
+        const pr = await fetch(`https://music.163.com/api/song/enhance/player/url/v1?ids=%5B${VIP_PROBE_ID}%5D&level=exhigh&encodeType=aac`, { headers })
+        const pd = await pr.json().catch(() => null)
+        const it = pd?.data?.[0]
+        probe = { hasUrl: !!it?.url, trial: !!it?.freeTrialInfo, code: it?.code, fee: it?.fee }
       } catch (e) {
-        return Response.json({ ok: true, cookieConfigured: !!(env.NCM_COOKIE || '').trim(), musicULen: muMatch ? muMatch[1].length : 0, loggedIn: false, fetchError: `${e.name}: ${e.message}` }, { headers: CORS })
+        probe = { error: `${e.name}: ${e.message}` }
       }
-      const profile = data?.profile
+      const vipPlayable = !!(probe?.hasUrl && !probe?.trial)
+
       return Response.json({
         ok: true,
         cookieConfigured: !!(env.NCM_COOKIE || '').trim(),
-        musicULen: muMatch ? muMatch[1].length : 0, // MUSIC_U 正常长度 ~100+，太短说明没抠对
-        loggedIn: !!profile,
-        nickname: profile?.nickname || null,
-        vipType: data?.account?.vipType ?? 0,
-        upstreamCode: data?.code ?? null, // 301 = 未登录/Cookie 失效
-        upstreamStatus,
+        musicULen: muMatch ? muMatch[1].length : 0,
+        nickname,
+        vipType,
+        vipPlayable,   // 真正的判据
+        probe,
       }, { headers: CORS })
     }
 
