@@ -254,6 +254,14 @@ function httpsify(u) {
   return typeof u === 'string' ? u.replace(/^http:\/\//, 'https://') : u
 }
 
+// Cookie 粘贴格式容错：裸值（没带 MUSIC_U= 前缀）、首尾引号、换行都修正掉
+function normalizeNcmCookie(raw) {
+  let c = (raw || '').trim().replace(/^["']+|["']+$/g, '').replace(/[\r\n]+/g, ' ').trim()
+  if (!c) return ''
+  if (!c.includes('=')) c = `MUSIC_U=${c}`
+  return c.replace(/;\s*$/, '')
+}
+
 async function handleNcmWebApi(request, env) {
   const url = new URL(request.url)
   const q = url.searchParams
@@ -267,7 +275,7 @@ async function handleNcmWebApi(request, env) {
   }
 
   // os=pc 能解锁更高音质档位
-  const cookie = ['os=pc; appver=8.10.35', (env.NCM_COOKIE || '').trim()].filter(Boolean).join('; ')
+  const cookie = ['os=pc; appver=8.10.35', normalizeNcmCookie(env.NCM_COOKIE)].filter(Boolean).join('; ')
   // Cloudflare 海外节点会被网易按来源 IP 做地区限制，VIP 歌即使带 Cookie
   // 也返回空链接。伪装成国内 IP（可用 NCM_REAL_IP 覆盖）解除限制。
   const realIP = (env.NCM_REAL_IP || '116.25.146.177').trim()
@@ -303,14 +311,38 @@ async function handleNcmWebApi(request, env) {
     if (url.pathname === '/ncm/playurl') {
       const id = parseInt(q.get('id'), 10)
       if (!id) return Response.json({ error: 'missing id' }, { status: 400, headers: CORS })
-      const res = await fetch(`https://music.163.com/api/song/enhance/player/url?ids=%5B${id}%5D&br=320000`, { headers })
-      const data = await res.json()
-      const item = data?.data?.[0]
+      // v1（level 档位）对 VIP 曲目更可靠，失败再退回旧接口
+      let item = null
+      try {
+        const r1 = await fetch(`https://music.163.com/api/song/enhance/player/url/v1?ids=%5B${id}%5D&level=exhigh&encodeType=aac`, { headers })
+        const d1 = await r1.json()
+        item = d1?.data?.[0] || null
+      } catch {}
+      if (!item?.url) {
+        const r2 = await fetch(`https://music.163.com/api/song/enhance/player/url?ids=%5B${id}%5D&br=320000`, { headers })
+        const d2 = await r2.json()
+        item = d2?.data?.[0] || item
+      }
       return Response.json({
         ok: !!item?.url,
         url: httpsify(item?.url || null),
         br: item?.br || 0,
-        code: item?.code ?? data?.code,
+        code: item?.code,
+        trial: !!item?.freeTrialInfo, // true = 只给了试听片段（Cookie 未生效/非 VIP）
+      }, { headers: CORS })
+    }
+
+    // Cookie 登录状态自检：碟片面板用它显示"账号是否生效"
+    if (url.pathname === '/ncm/status') {
+      const res = await fetch('https://music.163.com/api/nuser/account/get', { method: 'POST', headers, body: '' })
+      const data = await res.json().catch(() => null)
+      const profile = data?.profile
+      return Response.json({
+        ok: true,
+        cookieConfigured: !!(env.NCM_COOKIE || '').trim(),
+        loggedIn: !!profile,
+        nickname: profile?.nickname || null,
+        vipType: data?.account?.vipType ?? 0,
       }, { headers: CORS })
     }
 

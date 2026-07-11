@@ -20,3 +20,10 @@ export async function getLyric(id) {
   if (!res.ok) return { lrc: '', tlyric: '' }
   return res.json()
 }
+
+// Cookie 登录状态自检（面板顶部显示账号是否生效）
+export async function getNcmStatus() {
+  const res = await fetch(`${SYNC_BASE}/ncm/status`)
+  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  return res.json() // { cookieConfigured, loggedIn, nickname, vipType }
+}

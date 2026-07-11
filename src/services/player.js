@@ -52,11 +52,11 @@ export function getPlayerState() {
 }
 
 export async function playSong(song) {
-  const { ok, url } = await getPlayUrl(song.id)
+  const { ok, url, code, trial } = await getPlayUrl(song.id)
   if (!ok || !url) {
     const reason = song.fee === 1
-      ? 'VIP 歌曲，需要在 Worker 配置 NCM_COOKIE（VIP 账号）'
-      : '拿不到播放链接，可能无版权或已下架'
+      ? `VIP 歌曲拿不到链接（code ${code ?? '?'}），看下碟片面板顶部的账号状态`
+      : `拿不到播放链接（code ${code ?? '?'}），可能无版权或已下架`
     return { ok: false, reason }
   }
   const a = getAudio()
@@ -74,7 +74,7 @@ export async function playSong(song) {
       navigator.mediaSession.setActionHandler('pause', () => getAudio().pause())
     } catch {}
   }
-  return { ok: true, song }
+  return { ok: true, song, trial }
 }
 
 // AI 点歌入口：搜索并按顺序尝试前几首（跳过放不出来的）
