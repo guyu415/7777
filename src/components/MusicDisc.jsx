@@ -32,7 +32,8 @@ export default function MusicDisc({ theme, visible = true }) {
     : account.error ? '账号状态检查失败'
     : !account.cookieConfigured ? '未配置 Cookie（只能放免费歌）'
     : account.loggedIn ? `已登录：${account.nickname}${account.vipType > 0 ? '（VIP ✓）' : '（非 VIP 账号）'}`
-    : 'Cookie 已配置但未登录成功——多半是格式/失效问题，重新复制 MUSIC_U'
+    // 未登录时把诊断数据也显示出来，方便判断是没抠对（MUSIC_U 太短）还是 Cookie 失效（code 301）
+    : `Cookie 未生效 · MUSIC_U长度${account.musicULen ?? '?'} · 返回码${account.upstreamCode ?? account.fetchError ?? '?'}`
 
   const { current, playing, progress, duration } = player
   const primary = theme?.primary || '#ff85b3'

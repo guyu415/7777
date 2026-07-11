@@ -254,12 +254,20 @@ function httpsify(u) {
   return typeof u === 'string' ? u.replace(/^http:\/\//, 'https://') : u
 }
 
-// Cookie 粘贴格式容错：裸值（没带 MUSIC_U= 前缀）、首尾引号、换行都修正掉
+// Cookie 粘贴格式容错：裸值、MUSIC_U=xxx、MUSIC_U: xxx、带引号/换行/制表符、
+// 整段 "Cookie: a=b; MUSIC_U=xxx; __csrf=yyy" 都提取成规范的 "MUSIC_U=...; __csrf=..."
 function normalizeNcmCookie(raw) {
-  let c = (raw || '').trim().replace(/^["']+|["']+$/g, '').replace(/[\r\n]+/g, ' ').trim()
+  let c = (raw || '').replace(/^\s*cookie\s*:/i, '')
+  c = c.replace(/[\r\n\t]+/g, ' ').replace(/^["'\s]+|["'\s]+$/g, '').trim()
   if (!c) return ''
-  if (!c.includes('=')) c = `MUSIC_U=${c}`
-  return c.replace(/;\s*$/, '')
+  const mu = c.match(/MUSIC_U\s*[=:]\s*([^;,\s"']+)/i)
+  if (mu) {
+    const csrf = c.match(/__csrf\s*[=:]\s*([^;,\s"']+)/i)
+    return `MUSIC_U=${mu[1]}` + (csrf ? `; __csrf=${csrf[1]}` : '')
+  }
+  // 没识别到 MUSIC_U 关键字，视为裸值
+  const bare = c.replace(/^MUSIC_U\s*[=:]\s*/i, '').replace(/[;,].*$/, '').trim()
+  return bare ? `MUSIC_U=${bare}` : ''
 }
 
 async function handleNcmWebApi(request, env) {
@@ -332,17 +340,28 @@ async function handleNcmWebApi(request, env) {
       }, { headers: CORS })
     }
 
-    // Cookie 登录状态自检：碟片面板用它显示"账号是否生效"
+    // Cookie 登录状态自检：碟片面板用它显示"账号是否生效"，附带诊断字段
     if (url.pathname === '/ncm/status') {
-      const res = await fetch('https://music.163.com/api/nuser/account/get', { method: 'POST', headers, body: '' })
-      const data = await res.json().catch(() => null)
+      const parsed = normalizeNcmCookie(env.NCM_COOKIE)
+      const muMatch = parsed.match(/MUSIC_U=([^;]+)/)
+      let data = null, upstreamStatus = 0
+      try {
+        const res = await fetch('https://music.163.com/api/nuser/account/get', { method: 'POST', headers, body: '' })
+        upstreamStatus = res.status
+        data = await res.json().catch(() => null)
+      } catch (e) {
+        return Response.json({ ok: true, cookieConfigured: !!(env.NCM_COOKIE || '').trim(), musicULen: muMatch ? muMatch[1].length : 0, loggedIn: false, fetchError: `${e.name}: ${e.message}` }, { headers: CORS })
+      }
       const profile = data?.profile
       return Response.json({
         ok: true,
         cookieConfigured: !!(env.NCM_COOKIE || '').trim(),
+        musicULen: muMatch ? muMatch[1].length : 0, // MUSIC_U 正常长度 ~100+，太短说明没抠对
         loggedIn: !!profile,
         nickname: profile?.nickname || null,
         vipType: data?.account?.vipType ?? 0,
+        upstreamCode: data?.code ?? null, // 301 = 未登录/Cookie 失效
+        upstreamStatus,
       }, { headers: CORS })
     }
 
