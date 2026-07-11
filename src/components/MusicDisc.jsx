@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { Search, Play, Pause, X } from 'lucide-react'
-import { searchSongs } from '../services/music'
+import { searchSongs, getNcmStatus } from '../services/music'
 import { subscribePlayer, playSong, togglePlayer, seekPlayer } from '../services/player'
 
 function fmt(s) {
@@ -18,8 +18,21 @@ export default function MusicDisc({ theme, visible = true }) {
   const [searching, setSearching] = useState(false)
   const [err, setErr] = useState('')
   const [player, setPlayer] = useState({ current: null, playing: false, progress: 0, duration: 0 })
+  const [account, setAccount] = useState(null) // /ncm/status 结果
 
   useEffect(() => subscribePlayer(setPlayer), [])
+
+  // 打开面板时自检 Cookie 登录状态，一眼看出 VIP 放不了是哪一环的问题
+  useEffect(() => {
+    if (!open || account) return
+    getNcmStatus().then(setAccount).catch(() => setAccount({ error: true }))
+  }, [open, account])
+
+  const accountLine = !account ? '账号状态检查中…'
+    : account.error ? '账号状态检查失败'
+    : !account.cookieConfigured ? '未配置 Cookie（只能放免费歌）'
+    : account.loggedIn ? `已登录：${account.nickname}${account.vipType > 0 ? '（VIP ✓）' : '（非 VIP 账号）'}`
+    : 'Cookie 已配置但未登录成功——多半是格式/失效问题，重新复制 MUSIC_U'
 
   const { current, playing, progress, duration } = player
   const primary = theme?.primary || '#ff85b3'
@@ -43,6 +56,7 @@ export default function MusicDisc({ theme, visible = true }) {
     try {
       const r = await playSong(song)
       if (!r.ok) setErr(r.reason)
+      else if (r.trial) setErr('⚠️ 只拿到 30 秒试听片段——看看上面的账号状态是否 VIP 生效')
     } catch (e) {
       setErr(`播放失败：${e.message}`)
     }
@@ -85,12 +99,13 @@ export default function MusicDisc({ theme, visible = true }) {
           border: `1px solid ${primary}33`,
           boxShadow: '0 10px 36px rgba(0,0,0,0.16)',
         }}>
-          <div className="flex items-center justify-between mb-2">
+          <div className="flex items-center justify-between mb-1">
             <span className="text-sm font-semibold" style={{ color: '#8b5060' }}>🎶 网易云点歌</span>
             <button onClick={() => setOpen(false)} style={{ border: 'none', background: 'transparent', color: '#b08794', cursor: 'pointer', padding: 4 }}>
               <X size={16} />
             </button>
           </div>
+          <p className="text-xs mb-2" style={{ color: '#b08794' }}>{accountLine}</p>
 
           <div className="flex gap-2 mb-2">
             <input
