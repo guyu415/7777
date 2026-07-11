@@ -35,7 +35,7 @@ export default function MusicDisc({ theme, visible = true }) {
     : p?.error ? `数据源异常 · ${p.error}`
     : p && p.resultCount > 0 ? `数据源：${status.source} · 探测正常 (${p.resultCount} 首)`
     : p ? `上游异常 · HTTP${p.httpStatus} · code=${p.upstreamCode} · ${(p.upstreamMsg || p.rawSnippet || '').slice(0, 80)}`
-    : `数据源：${status.source || 'Bilibili 音频区'}`
+    : `数据源：${status.source || 'Bilibili 视频区'}`
 
   const { current, playing, progress, duration } = player
   const primary = theme?.primary || '#ff85b3'
