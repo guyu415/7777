@@ -236,9 +236,9 @@ export function useChat() {
         builtSystemPrompt += '\n\n你有空调控制能力。当用户提到温度不舒适、想开/关空调、调温度时，在回复末尾自然地加上控制指令标签（不要向用户提及标签格式本身）。\n格式：[AC:动作,温度,模式,风速]\n- 动作：on(开机)/off(关机)/set(调节)\n- 温度：16-30 的整数（推断不到默认26）\n- 模式：cool(制冷)/heat(制热)/auto(自动)/fan(送风)/dry(除湿)\n- 风速：auto(自动)/low(低)/mid(中)/high(高)\n示例："好的已经帮你开空调啦～[AC:on,26,cool,auto]"'
       }
 
-      // 音乐控制（网易云碟片播放器）
+      // 音乐控制（碟片播放器）
       {
-        builtSystemPrompt += '\n\n你有音乐播放能力（网易云）。当用户想听歌/点歌/换歌/暂停/继续/关掉音乐时，在回复末尾自然地加上指令标签（不要向用户提及标签格式本身）。\n格式：\n- [MUSIC:play,歌名,歌手] 搜索并播放（歌手可省略：[MUSIC:play,歌名]）\n- [MUSIC:pause] 暂停　[MUSIC:resume] 继续　[MUSIC:stop] 停止\n只在用户明确表达想听歌或控制音乐时使用，不要自作主张放歌。\n示例："好呀，这就给你放～[MUSIC:play,晴天,周杰伦]"'
+        builtSystemPrompt += '\n\n你有音乐播放能力。当用户想听歌/点歌/换歌/暂停/继续/关掉音乐时，在回复末尾自然地加上指令标签（不要向用户提及标签格式本身）。播放的是官方 30 秒试听片段，若用户追问为何只有半分钟，可自然说明是试听。\n格式：\n- [MUSIC:play,歌名,歌手] 搜索并播放（歌手可省略：[MUSIC:play,歌名]）\n- [MUSIC:pause] 暂停　[MUSIC:resume] 继续　[MUSIC:stop] 停止\n只在用户明确表达想听歌或控制音乐时使用，不要自作主张放歌。\n示例："好呀，这就给你放～[MUSIC:play,晴天,周杰伦]"'
         const np = getPlayerState()
         if (np.current) {
           builtSystemPrompt += `\n【正在播放】《${np.current.name}》- ${np.current.artists}（${np.playing ? '播放中' : '已暂停'}）`

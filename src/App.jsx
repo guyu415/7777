@@ -481,7 +481,7 @@ export default function App() {
         className="relative h-full w-full max-w-md mx-auto flex flex-col overflow-hidden"
         style={{ boxShadow: `0 0 60px ${theme.primary}26`, zIndex: 2 }}
       >
-        {/* 网易云碟片挂件：常驻挂载（切换页面音乐不断），只在聊天页显示 */}
+        {/* 音乐碟片挂件：常驻挂载（切换页面音乐不断），只在聊天页显示 */}
         <MusicDisc theme={theme} visible={currentView === 'chat'} />
 
         <div className="flex-1 overflow-hidden min-h-0">
