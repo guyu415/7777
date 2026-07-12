@@ -8,7 +8,7 @@ function fmt(s) {
   return `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`
 }
 
-// 音乐碟片挂件（数据源：B 站音频区）：收起是一张小黑胶（播放时旋转），
+// 音乐碟片挂件（数据源：Apple Music 试听）：收起是一张小黑胶（播放时旋转），
 // 点开是搜歌 + 迷你播放器。播放状态由 services/player 单例管理
 // （AI 的 [MUSIC:...] 指令共用同一播放器），visible=false 时只隐藏 UI，
 // 不卸载组件，切页面音乐不断。
@@ -19,7 +19,7 @@ export default function MusicDisc({ theme, visible = true }) {
   const [searching, setSearching] = useState(false)
   const [err, setErr] = useState('')
   const [player, setPlayer] = useState({ current: null, playing: false, progress: 0, duration: 0 })
-  const [status, setStatus] = useState(null) // /bili/status 结果
+  const [status, setStatus] = useState(null) // /itunes/status 结果
 
   useEffect(() => subscribePlayer(setPlayer), [])
 
@@ -35,7 +35,7 @@ export default function MusicDisc({ theme, visible = true }) {
     : p?.error ? `数据源异常 · ${p.error}`
     : p && p.resultCount > 0 ? `数据源：${status.source} · 探测正常 (${p.resultCount} 首)`
     : p ? `上游异常 · HTTP${p.httpStatus} · code=${p.upstreamCode} · ${(p.upstreamMsg || p.rawSnippet || '').slice(0, 80)}`
-    : `数据源：${status.source || 'Bilibili 视频区'}`
+    : `数据源：${status.source || 'Apple Music 试听'}`
 
   const { current, playing, progress, duration } = player
   const primary = theme?.primary || '#ff85b3'
@@ -102,7 +102,7 @@ export default function MusicDisc({ theme, visible = true }) {
           boxShadow: '0 10px 36px rgba(0,0,0,0.16)',
         }}>
           <div className="flex items-center justify-between mb-1">
-            <span className="text-sm font-semibold" style={{ color: '#8b5060' }}>🎶 B 站音乐点歌</span>
+            <span className="text-sm font-semibold" style={{ color: '#8b5060' }}>🎶 音乐点歌</span>
             <button onClick={() => setOpen(false)} style={{ border: 'none', background: 'transparent', color: '#b08794', cursor: 'pointer', padding: 4 }}>
               <X size={16} />
             </button>

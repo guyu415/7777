@@ -185,9 +185,9 @@ export default {
       return Response.json(result, { headers: CORS })
     }
 
-    // ── Bilibili 音频代理（前端碟片播放器用）─────────────────────
-    if (pathname.startsWith('/bili/') && request.method === 'GET') {
-      return handleBiliWebApi(request, env)
+    // ── iTunes/Apple Music 代理（前端碟片播放器用）───────────────
+    if (pathname.startsWith('/itunes/') && request.method === 'GET') {
+      return handleItunesApi(request, env)
     }
 
     // ── NetEase Cloud Music API proxy ─────────────────────────────
@@ -242,175 +242,53 @@ async function handleChatProxy(request) {
   })
 }
 
-// ── Bilibili 视频区代理（/bili/*）────────────────────────────────
+// ── iTunes / Apple Music 代理（/itunes/*）─────────────────────────
 // 迭代史：
-//   1. 网易云直连（/ncm/*）：网易按 TCP 源 IP 做地区限制，Worker 出口
-//      全在境外，realIP 头/加密体伪装全被忽略，大量曲目 404。
-//   2. B 站音频区（/audio/music-service-c/*）：那套 API 在 2023 后期
-//      开始对匿名请求返回 HTTP 412 + 反爬 HTML（B 站现在强制 WBI 签名
-//      + buvid3 cookie），且 audio 区本身早已收缩、曲库很小。
-//   3. 现在：走 B 站视频区。
-//        搜索：/x/web-interface/wbi/search/type?search_type=video（WBI 签名）
-//        播放：bvid → view 拿 cid → wbi/playurl 拿 dash.audio.baseUrl
-//        音频流：B 站 CDN 检查 Referer=bilibili.com，客户端直连会 403，
-//               所以经 /bili/stream 反代（透传 Range，加 Referer）
-// 曲库巨大（几乎所有中文歌都有 MV/翻唱/正版），代价是每首播放消耗一
-// 点 Cloudflare 出站带宽。
+//   网易云（源 IP 判海外 → 曲链 404）
+//   → B 站音频区（HTTP 412 反爬）
+//   → B 站视频区（WBI+buvid 也被机房 IP 风控 412）
+//   → 现在：iTunes 搜索接口。
+// 关键洞察：Worker 出口是境外机房 IP，国内服务（网易/B站/QQ）都对机房
+// IP 做风控，怎么伪装都绕不过。反过来用「不封境外」的境外源就一劳永逸。
+// iTunes Search API 零登录、零风控、境外 IP 照用，几乎每首华语流行都有，
+// 返回可直接播放的 m4a。代价：只有 30 秒官方试听片段。
+//
+//   搜索  /itunes/search?keywords=&limit=
+//   播放  /itunes/playurl?id=<trackId>（lookup 取 previewUrl）
+//   歌词  /itunes/lyric（iTunes 无歌词接口，返回空）
+//   探测  /itunes/status
+//
+// previewUrl 由 Apple CDN 提供，<audio> 跨域直连即可播放（媒体元素不受
+// CORS 限制），无需再走 Worker 反代。只有搜索/lookup 的 JSON 需要经
+// Worker 补 CORS 头。
 
-const BILI_UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-const BILI_HEADERS = {
-  'User-Agent': BILI_UA,
-  'Referer': 'https://www.bilibili.com/',
-}
-// /bili/stream 反代的目标域名白名单（防止被当成开放代理滥用）
-const STREAM_HOST_ALLOW = /(?:^|\.)(bilibili\.com|bilivideo\.com|bilivideo\.cn|hdslb\.com|akamaized\.net|acgvideo\.com)$/i
+const ITUNES_UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
 
 function httpsify(u) {
   return typeof u === 'string' ? u.replace(/^http:\/\//, 'https://') : u
 }
 
-// 搜索结果 title/author 会带 <em class="keyword"> 高亮，去掉
-function stripHtml(s) {
-  return typeof s === 'string' ? s.replace(/<[^>]+>/g, '') : ''
+// artworkUrl100 形如 .../100x100bb.jpg，替换成更大尺寸
+function upsizeArtwork(u, size = 300) {
+  return typeof u === 'string' ? u.replace(/\/\d+x\d+bb\./, `/${size}x${size}bb.`) : u
 }
 
-// 视频区搜索的 duration 是 "3:45" 或 "1:23:45"，转成秒
-function parseDuration(s) {
-  if (typeof s !== 'string') return 0
-  const parts = s.split(':').map(n => parseInt(n, 10) || 0)
-  if (parts.length === 3) return parts[0] * 3600 + parts[1] * 60 + parts[2]
-  if (parts.length === 2) return parts[0] * 60 + parts[1]
-  return 0
-}
-
-// ── WBI 签名 ────────────────────────────────────────────────────
-// 从 nav 接口的 wbi_img.{img_url,sub_url} 抠出文件名基名作为
-// img_key/sub_key，按固定 64 长度索引表打乱拼成 32 字符 mixin_key；
-// 请求参数按 key 字典序 + wts + w_rid=md5(sortedQuery + mixin_key)
-
-const WBI_MIXIN_KEY_ENC_TAB = [
-  46, 47, 18, 2, 53, 8, 23, 32, 15, 50, 10, 31, 58, 3, 45, 35, 27, 43, 5, 49,
-  33, 9, 42, 19, 29, 28, 14, 39, 12, 38, 41, 13, 37, 48, 7, 16, 24, 55, 40,
-  61, 26, 17, 0, 1, 60, 51, 30, 4, 22, 25, 54, 21, 56, 59, 6, 63, 57, 62, 11,
-  36, 20, 34, 44, 52,
-]
-
-async function fetchWbiKeys(env) {
-  try {
-    const cached = await env.CHAT_KV.get('bili:wbi_keys')
-    if (cached) {
-      const parsed = JSON.parse(cached)
-      if (parsed?.img_key && parsed?.sub_key) return parsed
-    }
-  } catch {}
-  try {
-    const res = await fetch('https://api.bilibili.com/x/web-interface/nav', { headers: BILI_HEADERS })
-    const data = await res.json().catch(() => null)
-    const imgUrl = data?.data?.wbi_img?.img_url || ''
-    const subUrl = data?.data?.wbi_img?.sub_url || ''
-    const base = u => u.slice(u.lastIndexOf('/') + 1, u.lastIndexOf('.'))
-    const keys = { img_key: base(imgUrl), sub_key: base(subUrl) }
-    if (keys.img_key && keys.sub_key) {
-      try { await env.CHAT_KV.put('bili:wbi_keys', JSON.stringify(keys), { expirationTtl: 21600 }) } catch {}
-      return keys
-    }
-  } catch {}
-  return { img_key: '', sub_key: '' }
-}
-
-function mixinKey(img_key, sub_key) {
-  const s = img_key + sub_key
-  return WBI_MIXIN_KEY_ENC_TAB.map(i => s[i] || '').join('').slice(0, 32)
-}
-
-async function wbiSign(env, params) {
-  const { img_key, sub_key } = await fetchWbiKeys(env)
-  const mk = mixinKey(img_key, sub_key)
-  const wts = Math.floor(Date.now() / 1000)
-  const merged = { ...params, wts }
-  // value 去除 B 站签名规则里禁止的 !'()* 字符，再按 key 字典序 URL 编码
-  const query = Object.keys(merged).sort()
-    .map(k => `${encodeURIComponent(k)}=${encodeURIComponent(String(merged[k]).replace(/[!'()*]/g, ''))}`)
-    .join('&')
-  const w_rid = md5Hex(query + mk)
-  return `${query}&w_rid=${w_rid}`
-}
-
-// buvid3：从 finger/spi 拿一个匿名指纹，B 站有些接口要 Cookie 带上
-async function getBuvid3(env) {
-  try {
-    const cached = await env.CHAT_KV.get('bili:buvid3')
-    if (cached) return cached
-  } catch {}
-  try {
-    const res = await fetch('https://api.bilibili.com/x/frontend/finger/spi', { headers: BILI_HEADERS })
-    const data = await res.json().catch(() => null)
-    const buvid = data?.data?.b_3 || ''
-    if (buvid) {
-      try { await env.CHAT_KV.put('bili:buvid3', buvid, { expirationTtl: 86400 }) } catch {}
-      return buvid
-    }
-  } catch {}
-  return ''
-}
-
-async function biliHeaders(env) {
-  const buvid = await getBuvid3(env)
-  const h = { ...BILI_HEADERS }
-  if (buvid) h.Cookie = `buvid3=${buvid}`
-  return h
-}
-
-// 迷你 MD5（Workers WebCrypto 不支持 MD5，只能自己写）— RFC 1321
-function md5Hex(msg) {
-  const bytes = typeof msg === 'string' ? new TextEncoder().encode(msg) : new Uint8Array(msg)
-  const bitLen = bytes.length * 8
-  const withOne = new Uint8Array(bytes.length + 1)
-  withOne.set(bytes)
-  withOne[bytes.length] = 0x80
-  const padLen = (56 - withOne.length % 64 + 64) % 64
-  const buf = new Uint8Array(withOne.length + padLen + 8)
-  buf.set(withOne)
-  const dv = new DataView(buf.buffer)
-  dv.setUint32(buf.length - 8, bitLen >>> 0, true)
-  dv.setUint32(buf.length - 4, Math.floor(bitLen / 0x100000000) >>> 0, true)
-  const S = [7,12,17,22,7,12,17,22,7,12,17,22,7,12,17,22,5,9,14,20,5,9,14,20,5,9,14,20,5,9,14,20,
-             4,11,16,23,4,11,16,23,4,11,16,23,4,11,16,23,6,10,15,21,6,10,15,21,6,10,15,21,6,10,15,21]
-  const K = new Int32Array(64)
-  for (let i = 0; i < 64; i++) K[i] = Math.floor(Math.abs(Math.sin(i + 1)) * 0x100000000) | 0
-  let a0 = 0x67452301|0, b0 = 0xefcdab89|0, c0 = 0x98badcfe|0, d0 = 0x10325476|0
-  const M = new Int32Array(16)
-  for (let off = 0; off < buf.length; off += 64) {
-    for (let i = 0; i < 16; i++) M[i] = dv.getInt32(off + i * 4, true)
-    let a = a0, b = b0, c = c0, d = d0
-    for (let i = 0; i < 64; i++) {
-      let f, g
-      if (i < 16)      { f = (b & c) | (~b & d); g = i }
-      else if (i < 32) { f = (d & b) | (~d & c); g = (5 * i + 1) % 16 }
-      else if (i < 48) { f = b ^ c ^ d;          g = (3 * i + 5) % 16 }
-      else             { f = c ^ (b | ~d);       g = (7 * i) % 16 }
-      const t = d; d = c; c = b
-      const x = (a + f + K[i] + M[g]) | 0
-      const s = S[i]
-      b = (b + ((x << s) | (x >>> (32 - s)))) | 0
-      a = t
-    }
-    a0 = (a0 + a) | 0; b0 = (b0 + b) | 0; c0 = (c0 + c) | 0; d0 = (d0 + d) | 0
+function mapItunesTrack(t) {
+  return {
+    id: t.trackId,
+    name: t.trackName || '',
+    artists: t.artistName || '',
+    album: t.collectionName || '',
+    cover: upsizeArtwork(httpsify(t.artworkUrl100 || t.artworkUrl60 || ''), 300),
+    duration: Math.round((t.trackTimeMillis || 0) / 1000), // 整首时长（试听仍是 30s）
+    preview: httpsify(t.previewUrl || ''),
+    fee: 0,
   }
-  const out = new Uint8Array(16)
-  const outDv = new DataView(out.buffer)
-  outDv.setInt32(0, a0, true); outDv.setInt32(4, b0, true); outDv.setInt32(8, c0, true); outDv.setInt32(12, d0, true)
-  return [...out].map(b => b.toString(16).padStart(2, '0')).join('')
 }
 
-async function handleBiliWebApi(request, env) {
+async function handleItunesApi(request, env) {
   const url = new URL(request.url)
   const q = url.searchParams
-
-  // /bili/stream 是 <audio> 直接命中的，不做 auth 检查（安全靠域名白名单）
-  if (url.pathname === '/bili/stream') {
-    return handleBiliStream(request, q)
-  }
 
   const authKey = q.get('authKey') || q.get('key') || ''
   const referer = request.headers.get('Referer') || ''
@@ -420,133 +298,74 @@ async function handleBiliWebApi(request, env) {
     return Response.json({ error: 'unauthorized' }, { status: 401, headers: CORS })
   }
 
+  const ITUNES_HEADERS = { 'User-Agent': ITUNES_UA }
+
   try {
-    if (url.pathname === '/bili/search') {
-      const keyword = (q.get('keywords') || '').slice(0, 100)
-      if (!keyword) return Response.json({ ok: true, songs: [] }, { headers: CORS })
-      const limit = Math.min(parseInt(q.get('limit') || '12', 10) || 12, 30)
-      const signed = await wbiSign(env, {
-        search_type: 'video',
-        keyword,
-        page: 1,
-        page_size: limit,
-        order: 'totalrank',
-      })
-      const headers = await biliHeaders(env)
-      const res = await fetch(`https://api.bilibili.com/x/web-interface/wbi/search/type?${signed}`, { headers })
+    if (url.pathname === '/itunes/search') {
+      const term = (q.get('keywords') || '').slice(0, 100)
+      if (!term) return Response.json({ ok: true, songs: [] }, { headers: CORS })
+      const limit = Math.min(parseInt(q.get('limit') || '12', 10) || 12, 25)
+      // country=CN 用中国区商店，华语匹配和中文元数据更准
+      const api = `https://itunes.apple.com/search?term=${encodeURIComponent(term)}&media=music&entity=song&limit=${limit}&country=CN`
+      const res = await fetch(api, { headers: ITUNES_HEADERS })
       const data = await res.json().catch(() => null)
-      const songs = ((data?.data?.result || []).slice(0, limit)).map(x => ({
-        id: x.bvid, // 现在 id 是 bvid 字符串（如 "BV1xxxxxxxxx"）
-        name: stripHtml(x.title || ''),
-        artists: stripHtml(x.author || ''),
-        album: '',
-        cover: httpsify((x.pic || '').replace(/^\/\//, 'https://')),
-        duration: parseDuration(x.duration),
-        fee: 0,
-      }))
+      const songs = (data?.results || [])
+        .map(mapItunesTrack)
+        .filter(s => s.preview) // 没试听链接的丢掉（放不了）
       return Response.json({ ok: true, songs }, { headers: CORS })
     }
 
-    if (url.pathname === '/bili/playurl') {
-      const bvid = (q.get('id') || '').trim()
-      if (!/^BV[0-9A-Za-z]+$/.test(bvid)) {
-        return Response.json({ ok: false, url: null, br: 0, code: -1, stage: 'invalid_bvid' }, { headers: CORS })
+    if (url.pathname === '/itunes/playurl') {
+      const id = (q.get('id') || '').trim()
+      if (!/^\d+$/.test(id)) {
+        return Response.json({ ok: false, url: null, br: 0, code: -1 }, { headers: CORS })
       }
-      const headers = await biliHeaders(env)
-      // Step 1: bvid → cid（拿第一个分 P）
-      const viewRes = await fetch(`https://api.bilibili.com/x/web-interface/view?bvid=${encodeURIComponent(bvid)}`, { headers })
-      const viewData = await viewRes.json().catch(() => null)
-      const cid = viewData?.data?.cid
-      if (!cid) {
-        return Response.json({ ok: false, url: null, br: 0, code: viewData?.code ?? -1, stage: 'view' }, { headers: CORS })
-      }
-      // Step 2: bvid + cid → dash 音频流（fnval=16 才带 dash）
-      const signed = await wbiSign(env, { bvid, cid, fnval: 16, fourk: 1 })
-      const purlRes = await fetch(`https://api.bilibili.com/x/player/wbi/playurl?${signed}`, { headers })
-      const purlData = await purlRes.json().catch(() => null)
-      const audio = (purlData?.data?.dash?.audio || [])[0]
-      const audioUrl = audio?.baseUrl || audio?.base_url
-      if (!audioUrl) {
-        return Response.json({ ok: false, url: null, br: 0, code: purlData?.code ?? -1, stage: 'playurl' }, { headers: CORS })
-      }
-      // 客户端不能直连 CDN（要 Referer=bilibili.com），走 /bili/stream 反代
-      const proxied = `${url.origin}/bili/stream?u=${encodeURIComponent(audioUrl)}`
+      const api = `https://itunes.apple.com/lookup?id=${id}&country=CN`
+      const res = await fetch(api, { headers: ITUNES_HEADERS })
+      const data = await res.json().catch(() => null)
+      const track = (data?.results || [])[0]
+      const preview = httpsify(track?.previewUrl || '')
       return Response.json({
-        ok: true,
-        url: proxied,
-        br: audio?.bandwidth || 0,
-        code: 0,
+        ok: !!preview,
+        url: preview || null,
+        br: 0,
+        code: preview ? 0 : -1,
       }, { headers: CORS })
     }
 
-    // 视频没有内建歌词接口；返回空（前端已容错）
-    if (url.pathname === '/bili/lyric') {
+    // iTunes 没有歌词接口，返回空（前端已容错）
+    if (url.pathname === '/itunes/lyric') {
       return Response.json({ ok: true, lrc: '', tlyric: '' }, { headers: CORS })
     }
 
-    // 数据源探测：ping 一下 wbi 视频搜索，透传上游状态给前端
-    if (url.pathname === '/bili/status') {
+    // 数据源探测：ping 一下搜索，透传上游状态给前端
+    if (url.pathname === '/itunes/status') {
       let probe = null
       try {
-        const signed = await wbiSign(env, {
-          search_type: 'video',
-          keyword: '周杰伦',
-          page: 1,
-          page_size: 3,
-          order: 'totalrank',
-        })
-        const headers = await biliHeaders(env)
-        const res = await fetch(`https://api.bilibili.com/x/web-interface/wbi/search/type?${signed}`, { headers })
+        const api = 'https://itunes.apple.com/search?term=%E5%91%A8%E6%9D%B0%E4%BC%A6&media=music&entity=song&limit=3&country=CN'
+        const res = await fetch(api, { headers: ITUNES_HEADERS })
         const text = await res.text()
         let data = null
         try { data = JSON.parse(text) } catch {}
         probe = {
           httpStatus: res.status,
-          upstreamCode: data?.code,
-          upstreamMsg: data?.message || data?.msg,
-          resultCount: (data?.data?.result || []).length,
-          rawSnippet: text.slice(0, 300),
+          resultCount: (data?.results || []).length,
+          rawSnippet: text.slice(0, 200),
         }
       } catch (e) {
         probe = { error: `${e.name}: ${e.message}` }
       }
       return Response.json({
         ok: true,
-        source: 'Bilibili 视频区',
+        source: 'Apple Music 试听',
         probe,
       }, { headers: CORS })
     }
 
-    return Response.json({ error: 'unknown bili route' }, { status: 404, headers: CORS })
+    return Response.json({ error: 'unknown itunes route' }, { status: 404, headers: CORS })
   } catch (e) {
     return Response.json({ error: `${e.name}: ${e.message}` }, { status: 500, headers: CORS })
   }
-}
-
-// 音频流反代：客户端 <audio> 直接命中，透传 Range，加 Referer 骗过 B 站 CDN
-async function handleBiliStream(request, q) {
-  const target = q.get('u') || ''
-  let host = ''
-  try { host = new URL(target).hostname } catch { return new Response('bad url', { status: 400 }) }
-  if (!STREAM_HOST_ALLOW.test(host)) {
-    return new Response('host not allowed', { status: 403 })
-  }
-  const headers = { ...BILI_HEADERS }
-  const range = request.headers.get('Range')
-  if (range) headers.Range = range
-  const upstream = await fetch(target, { headers })
-  const respHeaders = new Headers()
-  respHeaders.set('Access-Control-Allow-Origin', '*')
-  respHeaders.set('Accept-Ranges', 'bytes')
-  const passthru = ['Content-Type', 'Content-Length', 'Content-Range', 'Cache-Control']
-  for (const h of passthru) {
-    const v = upstream.headers.get(h)
-    if (v) respHeaders.set(h, v)
-  }
-  return new Response(upstream.body, {
-    status: upstream.status,
-    headers: respHeaders,
-  })
 }
 
 // ── NetEase Cloud Music OpenAPI proxy（RSA 签名走开放平台）───────
