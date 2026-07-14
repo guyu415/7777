@@ -220,13 +220,20 @@ export default new OAuthProvider({
   apiHandler: AcMcpAgent.mount("/sse") as any,
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   defaultHandler: defaultHandler as any,
-  authorizeEndpoint: "/authorize",
-  tokenEndpoint: "/token",
-  clientRegistrationEndpoint: "/register",
+  // Absolute URLs so DCR responses (registration_client_uri) and AS metadata
+  // are absolute — ChatGPT's DCR client rejects relative URIs.
+  authorizeEndpoint: "https://mcp.xiaoman.xyz/authorize",
+  tokenEndpoint: "https://mcp.xiaoman.xyz/token",
+  clientRegistrationEndpoint: "https://mcp.xiaoman.xyz/register",
   scopesSupported: ["mcp"],
   accessTokenTTL: 86400, // 24 h
+  // CIMD (URL-shaped client_ids) preferred by ChatGPT; DCR stays as fallback.
+  // Requires the global_fetch_strictly_public compatibility flag.
+  clientIdMetadataDocumentEnabled: true,
   // RFC 9728 — served at /.well-known/oauth-protected-resource
   resourceMetadata: {
+    resource: "https://mcp.xiaoman.xyz",
+    authorization_servers: ["https://mcp.xiaoman.xyz"],
     scopes_supported: ["mcp"],
     resource_name: "AC MCP Controller",
   },
