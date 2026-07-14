@@ -45,9 +45,97 @@ const MAX_EVENTS = 100;
 const MAX_SESSIONS = 100;
 
 function cleanText(value: unknown, maxLength = 120): string | undefined {
+  if (typeof value === "number" || typeof value === "boolean") value = String(value);
   if (typeof value !== "string") return undefined;
   const text = value.trim();
   return text ? text.slice(0, maxLength) : undefined;
+}
+
+/** Accepts 85, "85", "85%", "85.0 %" — Shortcuts often sends numbers as text */
+function cleanNumber(value: unknown): number | undefined {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string") {
+    const parsed = Number.parseFloat(value.replace(/%/g, "").trim());
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return undefined;
+}
+
+/** Accepts true/false, 1/0 and the strings Shortcuts tends to produce */
+function cleanBoolean(value: unknown): boolean | undefined {
+  if (typeof value === "boolean") return value;
+  if (typeof value === "number") return value === 0 ? false : value === 1 ? true : undefined;
+  if (typeof value === "string") {
+    const text = value.trim().toLowerCase();
+    if (["true", "yes", "1", "是", "充电中", "正在充电", "charging"].includes(text)) return true;
+    if (["false", "no", "0", "否", "未充电", "没有充电", "not charging"].includes(text)) return false;
+  }
+  return undefined;
+}
+
+function cleanAppAction(value: unknown): AppAction | undefined {
+  if (typeof value !== "string") return undefined;
+  const text = value.trim().toLowerCase();
+  if (["open", "opened", "打开", "开启", "已打开"].includes(text)) return "open";
+  if (["close", "closed", "关闭", "已关闭"].includes(text)) return "close";
+  return undefined;
+}
+
+/**
+ * Common alternate key names (Shortcuts dictionaries are hand-typed, so
+ * casing/underscores/Chinese labels all show up in practice). Keys are
+ * folded: lowercased with spaces/underscores/hyphens removed.
+ */
+const KEY_ALIASES: Record<string, keyof DeviceReport> = {
+  reportedat: "reportedAt", time: "reportedAt", timestamp: "reportedAt",
+  date: "reportedAt", 时间: "reportedAt", 上报时间: "reportedAt", 当前日期: "reportedAt",
+  batterylevel: "batteryLevel", battery: "batteryLevel", batterypercent: "batteryLevel",
+  batterypercentage: "batteryLevel", 电量: "batteryLevel", 电池电量: "batteryLevel",
+  charging: "charging", ischarging: "charging", chargingstate: "charging",
+  chargingstatus: "charging", 充电: "charging", 充电状态: "charging", 是否充电: "charging",
+  devicename: "deviceName", device: "deviceName", 设备: "deviceName",
+  设备名: "deviceName", 设备名称: "deviceName",
+  devicemodel: "deviceModel", model: "deviceModel", 型号: "deviceModel", 设备型号: "deviceModel",
+  systemname: "systemName", system: "systemName", os: "systemName", 系统: "systemName", 系统名称: "systemName",
+  systemversion: "systemVersion", osversion: "systemVersion", version: "systemVersion", 系统版本: "systemVersion",
+  networktype: "networkType", network: "networkType", 网络: "networkType", 网络类型: "networkType",
+  focusmode: "focusMode", focus: "focusMode", 专注: "focusMode", 专注模式: "focusMode",
+  appname: "appName", app: "appName", 应用: "appName", 应用名称: "appName", app名称: "appName",
+  appaction: "appAction", action: "appAction", appevent: "appAction", 动作: "appAction", 事件: "appAction",
+};
+
+function canonicalizeKeys(raw: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(raw)) {
+    const folded = key.trim().toLowerCase().replace(/[\s_-]/g, "");
+    const canonical = KEY_ALIASES[folded] ?? key;
+    if (!(canonical in out)) out[canonical] = value;
+  }
+  return out;
+}
+
+const SENSITIVE_KEY = /auth|token|secret|password|credential|密钥|令牌/i;
+
+/** Temporary debug payload so we can see what the Shortcut actually sends */
+function buildDebugInfo(raw: Record<string, unknown>, report: StoredDeviceReport) {
+  const receivedValues: Record<string, string> = {};
+  for (const [key, value] of Object.entries(raw)) {
+    if (SENSITIVE_KEY.test(key)) {
+      receivedValues[key] = "[redacted]";
+      continue;
+    }
+    const text = value === null ? "null"
+      : typeof value === "object" ? JSON.stringify(value)
+      : String(value);
+    receivedValues[key] = `${typeof value}: ${text.slice(0, 80)}`;
+  }
+  return {
+    receivedKeys: Object.keys(raw),
+    receivedValues,
+    normalizedKeys: Object.entries(report)
+      .filter(([key, value]) => value !== undefined && key !== "receivedAt")
+      .map(([key]) => key),
+  };
 }
 
 function cleanTimestamp(value: unknown, fallback: string): string {
@@ -61,11 +149,8 @@ function normalizeReport(input: unknown, receivedAt: string): StoredDeviceReport
     throw new Error("请求体必须是 JSON 对象");
   }
 
-  const raw = input as Record<string, unknown>;
-  const battery = typeof raw.batteryLevel === "number" ? raw.batteryLevel : undefined;
-  const appAction = raw.appAction === "open" || raw.appAction === "close"
-    ? raw.appAction
-    : undefined;
+  const raw = canonicalizeKeys(input as Record<string, unknown>);
+  const battery = cleanNumber(raw.batteryLevel);
 
   return {
     receivedAt,
@@ -73,15 +158,15 @@ function normalizeReport(input: unknown, receivedAt: string): StoredDeviceReport
     batteryLevel: battery === undefined
       ? undefined
       : Math.min(100, Math.max(0, Math.round(battery))),
-    charging: typeof raw.charging === "boolean" ? raw.charging : undefined,
+    charging: cleanBoolean(raw.charging),
     deviceName: cleanText(raw.deviceName),
     deviceModel: cleanText(raw.deviceModel),
     systemName: cleanText(raw.systemName),
     systemVersion: cleanText(raw.systemVersion),
     networkType: cleanText(raw.networkType),
     focusMode: cleanText(raw.focusMode),
-    appName: cleanText(raw.appName),
-    appAction,
+    appName: cleanText(raw.appName, 60),
+    appAction: cleanAppAction(raw.appAction),
   };
 }
 
@@ -107,10 +192,15 @@ export class DeviceStateStore {
 
   private async saveReport(request: Request): Promise<Response> {
     const receivedAt = new Date().toISOString();
+    let raw: Record<string, unknown> = {};
     let report: StoredDeviceReport;
 
     try {
-      report = normalizeReport(await request.json(), receivedAt);
+      const parsed = await request.json();
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        raw = parsed as Record<string, unknown>;
+      }
+      report = normalizeReport(parsed, receivedAt);
     } catch (error) {
       return Response.json(
         { ok: false, error: error instanceof Error ? error.message : String(error) },
@@ -166,7 +256,8 @@ export class DeviceStateStore {
       recentSessions: current.recentSessions,
     });
 
-    return Response.json({ ok: true, receivedAt });
+    // debug is temporary — remove once the Shortcut's field names are settled
+    return Response.json({ ok: true, receivedAt, debug: buildDebugInfo(raw, report) });
   }
 
   private async snapshot(): Promise<DeviceSnapshot> {
