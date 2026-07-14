@@ -1,4 +1,4 @@
-import OAuthProvider from "@cloudflare/workers-oauth-provider";
+import { OAuthProvider, type OAuthHelpers } from "@cloudflare/workers-oauth-provider";
 import { AcMcpAgent } from "./ac-agent";
 import { DeviceStateStore } from "./device-state";
 
@@ -12,32 +12,6 @@ export type Props = {
   userId: string;
   approvedAt: string;
 };
-
-/** OAuthProvider injects this helper into env at runtime */
-interface OAuthHelpers {
-  parseAuthRequest(req: Request): Promise<AuthReqInfo>;
-  lookupClient(clientId: string): Promise<ClientInfo | null>;
-  completeAuthorization(opts: {
-    request: AuthReqInfo;
-    userId: string;
-    metadata: Record<string, unknown>;
-    scope: string[];
-    props: Props;
-  }): Promise<{ redirectTo: string }>;
-}
-
-interface AuthReqInfo {
-  clientId: string;
-  redirectUri: string;
-  scope: string[];
-  state?: string;
-}
-
-interface ClientInfo {
-  clientId: string;
-  clientName?: string;
-  redirectUris: string[];
-}
 
 export interface Env {
   OAUTH_KV: KVNamespace;
@@ -242,7 +216,8 @@ const defaultHandler = {
 
 export default new OAuthProvider({
   apiRoute: "/sse",
-  apiHandler: AcMcpAgent.mount("/sse"),
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  apiHandler: AcMcpAgent.mount("/sse") as any,
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   defaultHandler: defaultHandler as any,
   authorizeEndpoint: "/authorize",
@@ -250,4 +225,27 @@ export default new OAuthProvider({
   clientRegistrationEndpoint: "/register",
   scopesSupported: ["mcp"],
   accessTokenTTL: 86400, // 24 h
+  // RFC 9728 — served at /.well-known/oauth-protected-resource
+  resourceMetadata: {
+    scopes_supported: ["mcp"],
+    resource_name: "AC MCP Controller",
+  },
+  // The library's WWW-Authenticate omits scope; MCP clients use it to
+  // request the right scope during discovery, so append it on 401s.
+  onError({ code, description, status, headers }) {
+    const www = headers["WWW-Authenticate"];
+    if (status === 401 && www && !/\bscope=/.test(www)) {
+      return new Response(
+        JSON.stringify({ error: code, error_description: description }),
+        {
+          status,
+          headers: {
+            "Content-Type": "application/json",
+            ...headers,
+            "WWW-Authenticate": `${www}, scope="mcp"`,
+          },
+        }
+      );
+    }
+  },
 });
