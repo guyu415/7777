@@ -3,6 +3,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { getTuyaToken, sendAcCommand, getAcStatus } from "./tuya";
 import type { Env, Props } from "./index";
+import type { DeviceSnapshot } from "./device-state";
 
 type AcMode   = "cool" | "heat" | "fan" | "auto" | "dry";
 type FanSpeed  = "low"  | "medium" | "high" | "auto";
@@ -26,6 +27,25 @@ const TUYA_TO_WIND: Record<number, FanSpeed> = { 0: "auto", 1: "low", 2: "medium
 
 const MODE_NAMES:  Record<AcMode,   string> = { cool: "制冷", heat: "制热", fan: "送风", auto: "自动", dry: "除湿" };
 const SPEED_NAMES: Record<FanSpeed, string> = { low: "低速", medium: "中速", high: "高速", auto: "自动" };
+
+function formatDuration(totalSeconds: number): string {
+  const seconds = Math.max(0, Math.round(totalSeconds));
+  const hours = Math.floor(seconds / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+  if (hours > 0) return `${hours} 小时 ${minutes} 分钟`;
+  if (minutes > 0) return `${minutes} 分钟`;
+  return `${seconds} 秒`;
+}
+
+function formatTime(value: string | undefined): string {
+  if (!value) return "未知";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleString("zh-CN", {
+    timeZone: "Asia/Shanghai",
+    hour12: false,
+  });
+}
 
 export class AcMcpAgent extends McpAgent<Env, AcState, Props> {
   server = new McpServer({ name: "ac-controller", version: "1.0.0" });
@@ -63,7 +83,77 @@ export class AcMcpAgent extends McpAgent<Env, AcState, Props> {
     this.setState(s);
   }
 
+  private async deviceSnapshot(): Promise<DeviceSnapshot> {
+    const id = this.env.DeviceStateStore.idFromName("primary-phone");
+    const stub = this.env.DeviceStateStore.get(id);
+    const response = await stub.fetch("https://device-state.internal/snapshot");
+    if (!response.ok) {
+      throw new Error(`读取手机状态失败（HTTP ${response.status}）`);
+    }
+    return response.json<DeviceSnapshot>();
+  }
+
   async init() {
+    // ── get_device_status ──────────────────────────────────────────────────
+    this.server.tool(
+      "get_device_status",
+      "查看手机最近主动上报的电量、设备信息、当前 App 动态和近 24 小时使用概况（只读）",
+      {},
+      async () => {
+        const snapshot = await this.deviceSnapshot();
+        const latest = snapshot.latest;
+        if (!latest) {
+          return {
+            content: [{
+              type: "text" as const,
+              text: "还没有收到手机上报。请先运行 iPhone 上的「查岗上报」快捷指令。",
+            }],
+          };
+        }
+
+        const lines = [
+          "手机最近状态：",
+          `  上报时间：${formatTime(latest.reportedAt ?? latest.receivedAt)}（北京时间）`,
+        ];
+
+        const device = [latest.deviceName, latest.deviceModel].filter(Boolean).join(" · ");
+        const system = [latest.systemName, latest.systemVersion].filter(Boolean).join(" ");
+        if (device) lines.push(`  设备：${device}`);
+        if (system) lines.push(`  系统：${system}`);
+        if (latest.batteryLevel !== undefined) {
+          lines.push(`  电量：${latest.batteryLevel}%${latest.charging === true ? "（充电中）" : latest.charging === false ? "（未充电）" : ""}`);
+        }
+        if (latest.networkType) lines.push(`  网络：${latest.networkType}`);
+        if (latest.focusMode) lines.push(`  专注模式：${latest.focusMode}`);
+
+        const activeApps = Object.entries(snapshot.activeApps);
+        if (activeApps.length) {
+          lines.push("", "当前记录为打开状态的 App：");
+          for (const [appName, openedAt] of activeApps) {
+            lines.push(`  • ${appName}（${formatTime(openedAt)} 打开）`);
+          }
+        }
+
+        const since = Date.now() - 24 * 60 * 60 * 1000;
+        const totals = new Map<string, number>();
+        for (const session of snapshot.recentSessions) {
+          if (new Date(session.closedAt).getTime() < since) continue;
+          totals.set(session.appName, (totals.get(session.appName) ?? 0) + session.durationSeconds);
+        }
+        const ranked = [...totals.entries()].sort((a, b) => b[1] - a[1]);
+        if (ranked.length) {
+          lines.push("", "近 24 小时已记录的 App 使用时长：");
+          for (const [appName, seconds] of ranked.slice(0, 10)) {
+            lines.push(`  • ${appName}：${formatDuration(seconds)}`);
+          }
+        } else {
+          lines.push("", "近 24 小时尚无完整的 App 打开/关闭记录。");
+        }
+
+        return { content: [{ type: "text" as const, text: lines.join("\n") }] };
+      }
+    );
+
     // ── get_ac_status ──────────────────────────────────────────────────────
     this.server.tool(
       "get_ac_status",

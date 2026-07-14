@@ -5,12 +5,17 @@ compatibility_flags = ["nodejs_compat"]
 
 [durable_objects]
 bindings = [
-  { name = "AcMcpAgent", class_name = "AcMcpAgent" }
+  { name = "AcMcpAgent", class_name = "AcMcpAgent" },
+  { name = "DeviceStateStore", class_name = "DeviceStateStore" }
 ]
 
 [[migrations]]
 tag = "v1"
 new_classes = ["AcMcpAgent"]
+
+[[migrations]]
+tag = "v2"
+new_classes = ["DeviceStateStore"]
 
 [[kv_namespaces]]
 binding = "OAUTH_KV"
@@ -25,4 +30,4 @@ TUYA_BASE_URL  = "https://openapi-sg.iotbing.com"
 TUYA_CLIENT_ID = "43pypnu4k84sxtmus9g5"
 TUYA_IR_ID     = "a365b8d696e9af6606imhf"
 TUYA_AC_ID     = "a3d580e07fd41298b4ufil"
-# COOKIE_SECRET and TUYA_CLIENT_SECRET are stored as wrangler secrets
+# COOKIE_SECRET, TUYA_CLIENT_SECRET and DEVICE_WRITE_TOKEN are stored as wrangler secrets
