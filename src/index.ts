@@ -215,9 +215,15 @@ const defaultHandler = {
 // ─── Main export: OAuthProvider wraps the MCP agent ──────────────────────────
 
 export default new OAuthProvider({
-  apiRoute: "/sse",
+  // /sse = legacy HTTP+SSE transport, /mcp = Streamable HTTP (ChatGPT uses this).
+  // binding must match the Durable Object binding name in wrangler.toml —
+  // the library default is "MCP_OBJECT", which silently 500s if omitted.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  apiHandler: AcMcpAgent.mount("/sse") as any,
+  apiHandlers: {
+    "/sse": AcMcpAgent.serveSSE("/sse", { binding: "AcMcpAgent" }),
+    "/mcp": AcMcpAgent.serve("/mcp", { binding: "AcMcpAgent" }),
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  } as any,
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   defaultHandler: defaultHandler as any,
   // Absolute URLs so DCR responses (registration_client_uri) and AS metadata
@@ -227,6 +233,8 @@ export default new OAuthProvider({
   clientRegistrationEndpoint: "https://mcp.xiaoman.xyz/register",
   scopesSupported: ["mcp"],
   accessTokenTTL: 86400, // 24 h
+  // Tokens carry an origin-only resource; accept them for /sse and /mcp paths.
+  resourceMatchOriginOnly: true,
   // CIMD (URL-shaped client_ids) preferred by ChatGPT; DCR stays as fallback.
   // Requires the global_fetch_strictly_public compatibility flag.
   clientIdMetadataDocumentEnabled: true,
