@@ -119,7 +119,13 @@ export class DeviceStateStore {
     }
 
     const current = await this.snapshot();
-    const latest = { ...(current.latest ?? {}), ...report };
+    // Spreading `report` directly would clobber previously stored fields with
+    // undefined (app open/close events only carry appName/appAction), so only
+    // fields actually present in this report may overwrite the saved state.
+    const definedReport = Object.fromEntries(
+      Object.entries(report).filter(([, value]) => value !== undefined)
+    ) as StoredDeviceReport;
+    const latest: StoredDeviceReport = { ...(current.latest ?? {}), ...definedReport };
 
     if (report.appName && report.appAction) {
       const occurredAt = report.reportedAt ?? receivedAt;
