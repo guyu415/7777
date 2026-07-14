@@ -11,18 +11,18 @@ bindings = [
 
 [[migrations]]
 tag = "v1"
-new_classes = ["AcMcpAgent"]
+new_sqlite_classes = ["AcMcpAgent"]
 
 [[migrations]]
 tag = "v2"
-new_classes = ["DeviceStateStore"]
+new_sqlite_classes = ["DeviceStateStore"]
 
 [[kv_namespaces]]
 binding = "OAUTH_KV"
 id = "416d98f1c5bd477bb58f5afbd79d25b7"
 
 [[routes]]
-pattern = "ac.xiaoman.xyz/*"
+pattern = "mcp.xiaoman.xyz/*"
 zone_name = "xiaoman.xyz"
 
 [vars]
