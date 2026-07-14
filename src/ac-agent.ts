@@ -134,6 +134,14 @@ export class AcMcpAgent extends McpAgent<Env, AcState, Props> {
           }
         }
 
+        if (snapshot.recentEvents.length) {
+          lines.push("", "最近收到的 App 事件：");
+          for (const event of snapshot.recentEvents.slice(0, 5)) {
+            const label = event.action === "open" ? "打开" : "关闭";
+            lines.push(`  • ${event.appName} ${label}（${formatTime(event.occurredAt)}）`);
+          }
+        }
+
         const since = Date.now() - 24 * 60 * 60 * 1000;
         const totals = new Map<string, number>();
         for (const session of snapshot.recentSessions) {
