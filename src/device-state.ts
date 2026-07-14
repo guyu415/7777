@@ -104,6 +104,33 @@ const KEY_ALIASES: Record<string, keyof DeviceReport> = {
   appaction: "appAction", action: "appAction", appevent: "appAction", 动作: "appAction", 事件: "appAction",
 };
 
+/**
+ * Salvage a common Shortcuts mistake: the whole JSON payload pasted into a
+ * dictionary KEY (arriving as {"{\"batteryLevel\":62,...}": {}}). If a key
+ * parses as a JSON object and its value is empty, merge the parsed object in.
+ */
+function unwrapMisnestedJson(raw: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(raw)) {
+    const trimmed = key.trim();
+    const valueIsEmpty = value === "" || value === null || value === undefined ||
+      (typeof value === "object" && value !== null && Object.keys(value).length === 0);
+    if (trimmed.startsWith("{") && valueIsEmpty) {
+      try {
+        const parsed = JSON.parse(trimmed);
+        if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+          Object.assign(out, parsed);
+          continue;
+        }
+      } catch {
+        // not valid JSON — keep as a normal key below
+      }
+    }
+    out[key] = value;
+  }
+  return out;
+}
+
 function canonicalizeKeys(raw: Record<string, unknown>): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(raw)) {
@@ -149,7 +176,7 @@ function normalizeReport(input: unknown, receivedAt: string): StoredDeviceReport
     throw new Error("请求体必须是 JSON 对象");
   }
 
-  const raw = canonicalizeKeys(input as Record<string, unknown>);
+  const raw = canonicalizeKeys(unwrapMisnestedJson(input as Record<string, unknown>));
   const battery = cleanNumber(raw.batteryLevel);
 
   return {
