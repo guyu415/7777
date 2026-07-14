@@ -22,8 +22,8 @@ binding = "OAUTH_KV"
 id = "416d98f1c5bd477bb58f5afbd79d25b7"
 
 [[routes]]
-pattern = "mcp.xiaoman.xyz/*"
-zone_name = "xiaoman.xyz"
+pattern = "mcp.xiaoman.xyz"
+custom_domain = true
 
 [vars]
 TUYA_BASE_URL  = "https://openapi-sg.iotbing.com"
