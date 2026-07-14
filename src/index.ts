@@ -1,8 +1,9 @@
 import OAuthProvider from "@cloudflare/workers-oauth-provider";
 import { AcMcpAgent } from "./ac-agent";
+import { DeviceStateStore } from "./device-state";
 
 // Re-export the Durable Object class so Cloudflare can find it
-export { AcMcpAgent };
+export { AcMcpAgent, DeviceStateStore };
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -41,7 +42,9 @@ interface ClientInfo {
 export interface Env {
   OAUTH_KV: KVNamespace;
   AcMcpAgent: DurableObjectNamespace;
+  DeviceStateStore: DurableObjectNamespace;
   COOKIE_SECRET: string;
+  DEVICE_WRITE_TOKEN: string;
   // Tuya API (vars + secret)
   TUYA_BASE_URL: string;
   TUYA_CLIENT_ID: string;
@@ -50,6 +53,32 @@ export interface Env {
   TUYA_AC_ID: string;
   /** Injected at runtime by OAuthProvider — not a real wrangler binding */
   OAUTH_PROVIDER: OAuthHelpers;
+}
+
+function isAuthorizedDeviceReport(request: Request, env: Env): boolean {
+  const header = request.headers.get("Authorization");
+  return Boolean(env.DEVICE_WRITE_TOKEN) && header === `Bearer ${env.DEVICE_WRITE_TOKEN}`;
+}
+
+async function handleDeviceReport(request: Request, env: Env): Promise<Response> {
+  if (request.method !== "POST") {
+    return new Response("Method Not Allowed", {
+      status: 405,
+      headers: { Allow: "POST" },
+    });
+  }
+
+  if (!isAuthorizedDeviceReport(request, env)) {
+    return Response.json({ ok: false, error: "Unauthorized" }, { status: 401 });
+  }
+
+  const id = env.DeviceStateStore.idFromName("primary-phone");
+  const stub = env.DeviceStateStore.get(id);
+  return stub.fetch("https://device-state.internal/report", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: await request.text(),
+  });
 }
 
 // ─── Authorization handler ────────────────────────────────────────────────────
@@ -135,6 +164,7 @@ async function handleAuthorize(request: Request, env: Env): Promise<Response> {
       <div class="perm"><span class="check">✓</span> 控制空调开关</div>
       <div class="perm"><span class="check">✓</span> 调节温度（16–30°C）</div>
       <div class="perm"><span class="check">✓</span> 切换运行模式与风速</div>
+      <div class="perm"><span class="check">✓</span> 查看手机主动上报的设备状态（只读）</div>
       <div class="perm"><span class="check">✓</span> 权限范围：${escHtml(scopeLabel)}</div>
     </div>
     <form method="POST">
@@ -187,6 +217,7 @@ function landingPage(origin: string): Response {
   <div class="tool"><span class="tool-name">set_temperature</span><span class="tool-desc">设置目标温度（16–30°C）</span></div>
   <div class="tool"><span class="tool-name">set_mode</span><span class="tool-desc">切换运行模式（制冷 / 制热 / 送风 / 自动 / 除湿）</span></div>
   <div class="tool"><span class="tool-name">set_fan_speed</span><span class="tool-desc">调节风速（低速 / 中速 / 高速 / 自动）</span></div>
+  <div class="tool"><span class="tool-name">get_device_status</span><span class="tool-desc">查看手机最近主动上报的电量、设备信息和 App 使用动态</span></div>
 </body>
 </html>`,
     { headers: { "Content-Type": "text/html; charset=utf-8" } }
@@ -199,6 +230,7 @@ const defaultHandler = {
   async fetch(request: Request, env: Env): Promise<Response> {
     const { pathname } = new URL(request.url);
 
+    if (pathname === "/device/report") return handleDeviceReport(request, env);
     if (pathname === "/authorize") return handleAuthorize(request, env);
     if (pathname === "/" || pathname === "") return landingPage(new URL(request.url).origin);
 
