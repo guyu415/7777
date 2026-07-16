@@ -160,7 +160,7 @@ export class AcMcpAgent extends McpAgent<Env, AcState, Props> {
         }
 
         const queryTime = new Date().toISOString();
-        const dataTime = latest.reportedAt ?? latest.receivedAt;
+        const dataTime = latest.statusReportedAt ?? latest.reportedAt ?? latest.receivedAt;
         const lines = [
           "手机最近状态：",
           `  查询当前时间：${formatTime(queryTime)}（北京时间）`,
