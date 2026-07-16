@@ -141,6 +141,34 @@ export class AcMcpAgent extends McpAgent<Env, AcState, Props> {
       }));
   }
 
+  private async addInteractionRule(predicate: string, value: string): Promise<"created" | "duplicate"> {
+    const normalizedPredicate = predicate.trim();
+    const normalizedValue = value.trim();
+    const existing = await this.interactionRules();
+    if (existing.some((rule) =>
+      rule.predicate === normalizedPredicate && rule.value === normalizedValue
+    )) {
+      return "duplicate";
+    }
+
+    const response = await fetch("https://chat.xiaoman.xyz/memory/remember", {
+      method: "POST",
+      headers: {
+        Accept: "application/json",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        subject: "互动准则",
+        predicate: normalizedPredicate,
+        value: normalizedValue,
+      }),
+    });
+    if (!response.ok) {
+      throw new Error(`写入互动准则失败（HTTP ${response.status}）`);
+    }
+    return "created";
+  }
+
   async init() {
     // ── get_device_status ──────────────────────────────────────────────────
     this.server.tool(
@@ -262,6 +290,36 @@ export class AcMcpAgent extends McpAgent<Env, AcState, Props> {
             content: [{
               type: "text" as const,
               text: `暂时无法读取互动准则：${error instanceof Error ? error.message : String(error)}`,
+            }],
+          };
+        }
+      }
+    );
+
+    // ── add_interaction_rule ────────────────────────────────────────────────
+    this.server.tool(
+      "add_interaction_rule",
+      "新增一条用户明确要求长期记住的互动准则。只在用户明确要求记住或写入长期记忆时调用；主体固定为「互动准则」。不得保存密码、密钥、验证码、精确位置或其他高风险敏感信息。",
+      {
+        predicate: z.string().trim().min(1).max(40).describe("准则分类，例如：称呼、语气、查岗、互动方式"),
+        value: z.string().trim().min(1).max(600).describe("用户明确要求长期记住的具体准则"),
+      },
+      async ({ predicate, value }) => {
+        try {
+          const result = await this.addInteractionRule(predicate, value);
+          return {
+            content: [{
+              type: "text" as const,
+              text: result === "duplicate"
+                ? "这条互动准则已经存在，没有重复写入。"
+                : `已写入互动准则：[${predicate.trim()}] ${value.trim()}`,
+            }],
+          };
+        } catch (error) {
+          return {
+            content: [{
+              type: "text" as const,
+              text: `暂时无法写入互动准则：${error instanceof Error ? error.message : String(error)}`,
             }],
           };
         }
