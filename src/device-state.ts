@@ -12,6 +12,14 @@ export interface DeviceReport {
   systemVersion?: string;
   networkType?: string;
   focusMode?: string;
+  locationName?: string;
+  latitude?: number;
+  longitude?: number;
+  locationAccuracyMeters?: number;
+  weatherCondition?: string;
+  temperatureC?: number;
+  feelsLikeC?: number;
+  precipitationChance?: number;
   appName?: string;
   appAction?: AppAction;
 }
@@ -100,6 +108,20 @@ const KEY_ALIASES: Record<string, keyof DeviceReport> = {
   systemversion: "systemVersion", osversion: "systemVersion", version: "systemVersion", 系统版本: "systemVersion",
   networktype: "networkType", network: "networkType", 网络: "networkType", 网络类型: "networkType",
   focusmode: "focusMode", focus: "focusMode", 专注: "focusMode", 专注模式: "focusMode",
+  locationname: "locationName", location: "locationName", address: "locationName",
+  位置: "locationName", 地址: "locationName", 当前位置: "locationName",
+  latitude: "latitude", lat: "latitude", 纬度: "latitude",
+  longitude: "longitude", lng: "longitude", lon: "longitude", 经度: "longitude",
+  locationaccuracymeters: "locationAccuracyMeters", locationaccuracy: "locationAccuracyMeters",
+  accuracy: "locationAccuracyMeters", 定位精度: "locationAccuracyMeters", 精度: "locationAccuracyMeters",
+  weathercondition: "weatherCondition", condition: "weatherCondition",
+  weather: "weatherCondition", 天气: "weatherCondition", 天气状况: "weatherCondition",
+  temperaturec: "temperatureC", temperature: "temperatureC", temp: "temperatureC",
+  气温: "temperatureC", 温度: "temperatureC", 当前温度: "temperatureC",
+  feelslikec: "feelsLikeC", feelslike: "feelsLikeC", apparenttemperature: "feelsLikeC",
+  体感温度: "feelsLikeC", 体感: "feelsLikeC",
+  precipitationchance: "precipitationChance", precipitationprobability: "precipitationChance",
+  rainchance: "precipitationChance", 降水概率: "precipitationChance", 下雨概率: "precipitationChance",
   appname: "appName", app: "appName", 应用: "appName", 应用名称: "appName", app名称: "appName",
   appaction: "appAction", action: "appAction", appevent: "appAction", 动作: "appAction", 事件: "appAction",
 };
@@ -192,6 +214,32 @@ function normalizeReport(input: unknown, receivedAt: string): StoredDeviceReport
     systemVersion: cleanText(raw.systemVersion),
     networkType: cleanText(raw.networkType),
     focusMode: cleanText(raw.focusMode),
+    locationName: cleanText(raw.locationName, 240),
+    latitude: (() => {
+      const value = cleanNumber(raw.latitude);
+      return value === undefined ? undefined : Math.min(90, Math.max(-90, value));
+    })(),
+    longitude: (() => {
+      const value = cleanNumber(raw.longitude);
+      return value === undefined ? undefined : Math.min(180, Math.max(-180, value));
+    })(),
+    locationAccuracyMeters: (() => {
+      const value = cleanNumber(raw.locationAccuracyMeters);
+      return value === undefined ? undefined : Math.max(0, Math.round(value));
+    })(),
+    weatherCondition: cleanText(raw.weatherCondition, 120),
+    temperatureC: (() => {
+      const value = cleanNumber(raw.temperatureC);
+      return value === undefined ? undefined : Math.min(100, Math.max(-100, value));
+    })(),
+    feelsLikeC: (() => {
+      const value = cleanNumber(raw.feelsLikeC);
+      return value === undefined ? undefined : Math.min(100, Math.max(-100, value));
+    })(),
+    precipitationChance: (() => {
+      const value = cleanNumber(raw.precipitationChance);
+      return value === undefined ? undefined : Math.min(100, Math.max(0, value));
+    })(),
     appName: cleanText(raw.appName, 60),
     appAction: cleanAppAction(raw.appAction),
   };
