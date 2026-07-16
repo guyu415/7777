@@ -217,6 +217,10 @@ export class AcMcpAgent extends McpAgent<Env, AcState, Props> {
             locationParts.push(`精度约 ${Math.round(latest.locationAccuracyMeters)} 米`);
           }
           lines.push(`  位置：${locationParts.join(" · ")}`);
+          if (hasCoordinates) {
+            const mapUrl = `https://maps.apple.com/?ll=${latest.latitude},${latest.longitude}&q=${encodeURIComponent("手机定位")}`;
+            lines.push(`  精确定位点（苹果地图）：${mapUrl}`);
+          }
         }
 
         const weatherParts: string[] = [];
