@@ -26,6 +26,8 @@ export interface DeviceReport {
 
 export interface StoredDeviceReport extends DeviceReport {
   receivedAt: string;
+  /** Updated only when the payload contains device/context fields, not for app-only events. */
+  statusReportedAt?: string;
 }
 
 export interface AppEvent {
@@ -284,6 +286,19 @@ export class DeviceStateStore {
     }
 
     const current = await this.snapshot();
+
+    // App-only automations arrive frequently. They must not make older battery,
+    // location or weather values look fresh, so keep a separate status timestamp.
+    const statusFields: Array<keyof DeviceReport> = [
+      "batteryLevel", "charging", "deviceName", "deviceModel", "systemName",
+      "systemVersion", "networkType", "focusMode", "locationName", "latitude",
+      "longitude", "locationAccuracyMeters", "weatherCondition", "temperatureC",
+      "feelsLikeC", "precipitationChance",
+    ];
+    if (statusFields.some((key) => report[key] !== undefined)) {
+      report.statusReportedAt = report.reportedAt ?? receivedAt;
+    }
+
     // Spreading `report` directly would clobber previously stored fields with
     // undefined (app open/close events only carry appName/appAction), so only
     // fields actually present in this report may overwrite the saved state.
