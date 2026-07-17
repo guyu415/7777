@@ -38,6 +38,8 @@ export interface DeviceReport {
   stepsToday?: number;
   /** Shortcut input only; raw dates are reduced to a summary before storage. */
   menstrualDates?: string[];
+  /** Shortcut input only; records one manually confirmed period start. */
+  periodStartedAt?: string;
   cycleLengthDays?: number;
   periodLengthDays?: number;
   menstrualCycle?: MenstrualCycleSummary | null;
@@ -96,6 +98,7 @@ export interface DeviceSnapshot {
 
 const MAX_EVENTS = 100;
 const MAX_SESSIONS = 100;
+const MAX_PERIOD_STARTS = 24;
 
 function cleanText(value: unknown, maxLength = 120): string | undefined {
   if (typeof value === "number" || typeof value === "boolean") value = String(value);
@@ -315,23 +318,25 @@ function median(values: number[]): number | undefined {
   return sorted.length % 2 ? sorted[middle] : (sorted[middle - 1] + sorted[middle]) / 2;
 }
 
-function summarizeMenstrualCycle(
-  dates: string[],
-  cycleLengthHint?: number,
-  periodLengthHint?: number,
-  now = new Date()
-): MenstrualCycleSummary | undefined {
+function periodStartsFromDates(dates: string[]): string[] {
   const dayKeys = [...new Set(dates.map(chinaDateKey).filter((key): key is string => Boolean(key)))].sort();
-  if (!dayKeys.length) return undefined;
-
   const groups: string[][] = [];
   for (const day of dayKeys) {
     const current = groups[groups.length - 1];
     if (!current || daysBetween(current[current.length - 1], day) > 10) groups.push([day]);
     else current.push(day);
   }
+  return groups.map((group) => group[0]).slice(-MAX_PERIOD_STARTS);
+}
 
-  const starts = groups.map((group) => group[0]);
+function summarizeMenstrualCycle(
+  dates: string[],
+  cycleLengthHint?: number,
+  periodLengthHint?: number,
+  now = new Date()
+): MenstrualCycleSummary | undefined {
+  const starts = periodStartsFromDates(dates);
+  if (!starts.length) return undefined;
   const observedLengths = starts.slice(1)
     .map((start, index) => daysBetween(starts[index], start))
     .filter((days) => days >= 15 && days <= 60);
@@ -442,6 +447,8 @@ const KEY_ALIASES: Record<string, keyof DeviceReport> = {
   步数: "stepsToday", 今日步数: "stepsToday", 当日步数: "stepsToday",
   menstrualdates: "menstrualDates", perioddates: "menstrualDates", menstruationdates: "menstrualDates",
   月经日期: "menstrualDates", 经期日期: "menstrualDates", 月经记录日期: "menstrualDates",
+  periodstartedat: "periodStartedAt", periodstart: "periodStartedAt", lastperiodstart: "periodStartedAt",
+  本次月经开始: "periodStartedAt", 月经开始日期: "periodStartedAt", 经期开始日期: "periodStartedAt",
   cyclelengthdays: "cycleLengthDays", cyclelength: "cycleLengthDays", 周期长度: "cycleLengthDays",
   periodlengthdays: "periodLengthDays", periodlength: "periodLengthDays", 经期长度: "periodLengthDays",
   appname: "appName", app: "appName", 应用: "appName", 应用名称: "appName", app名称: "appName",
@@ -567,6 +574,7 @@ function normalizeReport(input: unknown, receivedAt: string): StoredDeviceReport
       return value === undefined ? undefined : Math.min(1_000_000, Math.max(0, Math.round(value)));
     })(),
     menstrualDates: cleanDateList(raw.menstrualDates),
+    periodStartedAt: cleanText(raw.periodStartedAt),
     cycleLengthDays: cleanNumber(raw.cycleLengthDays),
     periodLengthDays: cleanNumber(raw.periodLengthDays),
     appName: cleanText(raw.appName, 60),
@@ -584,6 +592,10 @@ export class DeviceStateStore {
 
     if (request.method === "POST" && pathname === "/report") {
       return this.saveReport(request);
+    }
+
+    if (request.method === "POST" && pathname === "/period-start") {
+      return this.savePeriodStart(request);
     }
 
     if (request.method === "GET" && pathname === "/snapshot") {
@@ -613,10 +625,21 @@ export class DeviceStateStore {
     }
 
     const current = await this.snapshot();
+    let periodStarts = await this.loadPeriodStarts();
 
-    if (report.menstrualDates !== undefined) {
+    if (report.periodStartedAt !== undefined) {
+      const start = chinaDateKey(report.periodStartedAt);
+      if (!start) {
+        return Response.json({ ok: false, error: "无法识别月经开始日期" }, { status: 400 });
+      }
+      periodStarts = periodStartsFromDates([...periodStarts, start]);
+      delete report.periodStartedAt;
+    }
+
+    if (report.menstrualDates?.length) {
+      periodStarts = periodStartsFromDates([...periodStarts, ...report.menstrualDates]);
       const summary = summarizeMenstrualCycle(
-        report.menstrualDates,
+        periodStarts,
         report.cycleLengthDays,
         report.periodLengthDays,
         new Date(report.reportedAt ?? receivedAt)
@@ -624,12 +647,20 @@ export class DeviceStateStore {
       report.menstrualCycle = summary ?? null;
       report.menstrualCycleIssue = summary
         ? null
-        : report.menstrualDates.length
-          ? `收到 ${report.menstrualDates.length} 条经期日期，但无法识别日期格式`
-          : "快捷指令在最近 180 天没有找到经期记录";
-      delete report.menstrualDates;
-      delete report.cycleLengthDays;
-      delete report.periodLengthDays;
+        : `收到 ${report.menstrualDates.length} 条经期日期，但无法识别日期格式`;
+    }
+    delete report.menstrualDates;
+    delete report.cycleLengthDays;
+    delete report.periodLengthDays;
+
+    if (periodStarts.length) {
+      report.menstrualCycle = summarizeMenstrualCycle(
+        periodStarts,
+        undefined,
+        undefined,
+        new Date(report.reportedAt ?? receivedAt)
+      ) ?? report.menstrualCycle;
+      report.menstrualCycleIssue = report.menstrualCycle ? null : report.menstrualCycleIssue;
     }
 
     if (report.latitude !== undefined && report.longitude !== undefined) {
@@ -701,6 +732,7 @@ export class DeviceStateStore {
 
     await this.state.storage.put({
       latest,
+      periodStarts,
       activeApps: current.activeApps,
       recentEvents: current.recentEvents,
       recentSessions: current.recentSessions,
@@ -710,16 +742,90 @@ export class DeviceStateStore {
     return Response.json({ ok: true, receivedAt, debug: buildDebugInfo(raw, report) });
   }
 
+  private async savePeriodStart(request: Request): Promise<Response> {
+    const receivedAt = new Date();
+    let requestedDate: unknown;
+
+    try {
+      const text = await request.text();
+      if (text.trim()) {
+        const parsed = JSON.parse(text) as unknown;
+        if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+          throw new Error("请求体必须是 JSON 对象");
+        }
+        const raw = canonicalizeKeys(unwrapMisnestedJson(parsed as Record<string, unknown>));
+        requestedDate = raw.periodStartedAt ?? raw.reportedAt;
+      }
+    } catch (error) {
+      return Response.json(
+        { ok: false, error: error instanceof Error ? error.message : String(error) },
+        { status: 400 }
+      );
+    }
+
+    const start = chinaDateKey(typeof requestedDate === "string" ? requestedDate : receivedAt);
+    const today = chinaDateKey(receivedAt);
+    if (!start || !today) {
+      return Response.json({ ok: false, error: "无法识别月经开始日期" }, { status: 400 });
+    }
+    if (daysBetween(today, start) > 0) {
+      return Response.json({ ok: false, error: "月经开始日期不能是未来日期" }, { status: 400 });
+    }
+
+    const current = await this.snapshot();
+    const storedStarts = await this.loadPeriodStarts();
+    const previousStart = current.latest?.menstrualCycle?.lastPeriodStart;
+    const periodStarts = periodStartsFromDates([
+      ...storedStarts,
+      ...(storedStarts.length || !previousStart ? [] : [previousStart]),
+      start,
+    ]);
+    const cycle = summarizeMenstrualCycle(periodStarts, undefined, undefined, receivedAt);
+    const latest: StoredDeviceReport = {
+      ...(current.latest ?? { receivedAt: receivedAt.toISOString() }),
+      menstrualCycle: cycle ?? null,
+      menstrualCycleIssue: cycle ? null : "尚未记录可用的月经开始日期",
+    };
+
+    await this.state.storage.put({ latest, periodStarts });
+    return Response.json({
+      ok: true,
+      recordedPeriodStart: start,
+      cycle,
+      message: `已记录 ${start} 为本次月经开始日期`,
+    });
+  }
+
+  private async loadPeriodStarts(): Promise<string[]> {
+    const stored = await this.state.storage.get<string[]>("periodStarts");
+    return periodStartsFromDates(Array.isArray(stored) ? stored : []);
+  }
+
   private async snapshot(): Promise<DeviceSnapshot> {
-    const [latest, activeApps, recentEvents, recentSessions] = await Promise.all([
+    const [storedLatest, periodStarts, activeApps, recentEvents, recentSessions] = await Promise.all([
       this.state.storage.get<StoredDeviceReport>("latest"),
+      this.loadPeriodStarts(),
       this.state.storage.get<Record<string, string>>("activeApps"),
       this.state.storage.get<AppEvent[]>("recentEvents"),
       this.state.storage.get<AppSession[]>("recentSessions"),
     ]);
 
+    let latest = storedLatest ? { ...storedLatest } : null;
+    const cycleSource = periodStarts.length
+      ? periodStarts
+      : latest?.menstrualCycle?.lastPeriodStart
+        ? [latest.menstrualCycle.lastPeriodStart]
+        : [];
+    if (latest && cycleSource.length) {
+      const cycleLengthHint = periodStarts.length
+        ? undefined
+        : latest.menstrualCycle?.estimatedCycleLengthDays;
+      latest.menstrualCycle = summarizeMenstrualCycle(cycleSource, cycleLengthHint) ?? null;
+      latest.menstrualCycleIssue = latest.menstrualCycle ? null : latest.menstrualCycleIssue;
+    }
+
     return {
-      latest: latest ?? null,
+      latest,
       activeApps: activeApps ?? {},
       recentEvents: recentEvents ?? [],
       recentSessions: recentSessions ?? [],
