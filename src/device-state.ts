@@ -20,6 +20,8 @@ export interface DeviceReport {
   temperatureC?: number;
   feelsLikeC?: number;
   precipitationChance?: number;
+  /** Health app step total for the current local day at report time. */
+  stepsToday?: number;
   appName?: string;
   appAction?: AppAction;
 }
@@ -282,6 +284,8 @@ const KEY_ALIASES: Record<string, keyof DeviceReport> = {
   体感温度: "feelsLikeC", 体感: "feelsLikeC",
   precipitationchance: "precipitationChance", precipitationprobability: "precipitationChance",
   rainchance: "precipitationChance", 降水概率: "precipitationChance", 下雨概率: "precipitationChance",
+  stepstoday: "stepsToday", stepcount: "stepsToday", steps: "stepsToday",
+  步数: "stepsToday", 今日步数: "stepsToday", 当日步数: "stepsToday",
   appname: "appName", app: "appName", 应用: "appName", 应用名称: "appName", app名称: "appName",
   appaction: "appAction", action: "appAction", appevent: "appAction", 动作: "appAction", 事件: "appAction",
 };
@@ -400,6 +404,10 @@ function normalizeReport(input: unknown, receivedAt: string): StoredDeviceReport
       const value = cleanNumber(raw.precipitationChance);
       return value === undefined ? undefined : Math.min(100, Math.max(0, value));
     })(),
+    stepsToday: (() => {
+      const value = cleanNumber(raw.stepsToday);
+      return value === undefined ? undefined : Math.min(1_000_000, Math.max(0, Math.round(value)));
+    })(),
     appName: cleanText(raw.appName, 60),
     appAction: cleanAppAction(raw.appAction),
   };
@@ -466,7 +474,7 @@ export class DeviceStateStore {
       "batteryLevel", "charging", "deviceName", "deviceModel", "systemName",
       "systemVersion", "networkType", "focusMode", "locationName", "latitude",
       "longitude", "locationAccuracyMeters", "weatherCondition", "temperatureC",
-      "feelsLikeC", "precipitationChance",
+      "feelsLikeC", "precipitationChance", "stepsToday",
     ];
     if (statusFields.some((key) => report[key] !== undefined)) {
       report.statusReportedAt = report.reportedAt ?? receivedAt;
