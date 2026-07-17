@@ -173,7 +173,7 @@ export class AcMcpAgent extends McpAgent<Env, AcState, Props> {
     // ── get_device_status ──────────────────────────────────────────────────
     this.server.tool(
       "get_device_status",
-      "查看手机最近主动上报的电量、设备信息、定位、天气、当前 App 动态和近 24 小时使用概况；同时返回查询当前时间与数据新鲜度（只读）",
+      "查看手机最近主动上报的电量、设备信息、今日步数、定位、天气、当前 App 动态和近 24 小时使用概况；同时返回查询当前时间与数据新鲜度（只读）",
       {},
       async () => {
         const snapshot = await this.deviceSnapshot();
@@ -205,6 +205,9 @@ export class AcMcpAgent extends McpAgent<Env, AcState, Props> {
         }
         if (latest.networkType) lines.push(`  网络：${latest.networkType}`);
         if (latest.focusMode) lines.push(`  专注模式：${latest.focusMode}`);
+        if (latest.stepsToday !== undefined) {
+          lines.push(`  今日步数：${latest.stepsToday.toLocaleString("zh-CN")} 步（截至本次上报）`);
+        }
 
         const hasCoordinates = latest.latitude !== undefined && latest.longitude !== undefined;
         if (latest.locationName || hasCoordinates) {
