@@ -19,6 +19,8 @@ export interface Env {
   DeviceStateStore: DurableObjectNamespace;
   COOKIE_SECRET: string;
   DEVICE_WRITE_TOKEN: string;
+  /** AMap Web Service API key, stored as a Wrangler secret. */
+  AMAP_WEB_SERVICE_KEY?: string;
   // Tuya API (vars + secret)
   TUYA_BASE_URL: string;
   TUYA_CLIENT_ID: string;
