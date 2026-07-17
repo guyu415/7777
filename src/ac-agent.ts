@@ -219,6 +219,8 @@ export class AcMcpAgent extends McpAgent<Env, AcState, Props> {
             `  周期日期参考：最近开始 ${cycle.lastPeriodStart} · 预计排卵 ${cycle.estimatedOvulationDate} · 预计下次 ${cycle.estimatedNextPeriodStart}`,
             `  估算依据：${basis}；不能用于避孕或医疗判断`
           );
+        } else if (latest.menstrualCycleIssue) {
+          lines.push(`  月经周期数据：${latest.menstrualCycleIssue}`);
         }
 
         const hasCoordinates = latest.latitude !== undefined && latest.longitude !== undefined;
