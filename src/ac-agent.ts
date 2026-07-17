@@ -216,10 +216,34 @@ export class AcMcpAgent extends McpAgent<Env, AcState, Props> {
           if (latest.locationAccuracyMeters !== undefined) {
             locationParts.push(`精度约 ${Math.round(latest.locationAccuracyMeters)} 米`);
           }
-          lines.push(`  位置：${locationParts.join(" · ")}`);
-          if (hasCoordinates) {
-            const mapUrl = `https://maps.apple.com/?ll=${latest.latitude},${latest.longitude}&q=${encodeURIComponent("手机定位")}`;
-            lines.push(`  精确定位点（苹果地图）：${mapUrl}`);
+          lines.push(`  手机原始位置：${locationParts.join(" · ")}`);
+          const resolved = latest.resolvedLocation;
+          if (resolved) {
+            if (resolved.formattedAddress) {
+              lines.push(`  后台解析地址（高德）：${resolved.formattedAddress}`);
+            }
+            const areaParts = [resolved.township, resolved.neighborhood].filter(Boolean);
+            if (areaParts.length) {
+              lines.push(`  所属乡镇/社区：${areaParts.join(" · ")}`);
+            }
+            if (resolved.nearestRoad) {
+              const roadParts = [resolved.nearestRoad.name];
+              if (resolved.nearestRoad.distanceMeters !== undefined) {
+                roadParts.push(`约 ${resolved.nearestRoad.distanceMeters} 米`);
+              }
+              if (resolved.nearestRoad.direction) roadParts.push(resolved.nearestRoad.direction);
+              lines.push(`  最近道路：${roadParts.join(" · ")}`);
+            }
+            if (resolved.nearbyLandmarks.length) {
+              const landmarks = resolved.nearbyLandmarks.map((landmark) => {
+                const details = [
+                  landmark.distanceMeters !== undefined ? `约 ${landmark.distanceMeters} 米` : "",
+                  landmark.direction ?? "",
+                ].filter(Boolean).join(" · ");
+                return details ? `${landmark.name}（${details}）` : landmark.name;
+              });
+              lines.push(`  附近地标（不代表就在地标内）：${landmarks.join("；")}`);
+            }
           }
         }
 

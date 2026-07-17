@@ -24,10 +24,31 @@ export interface DeviceReport {
   appAction?: AppAction;
 }
 
+export interface ResolvedLocation {
+  source: "amap";
+  formattedAddress?: string;
+  township?: string;
+  neighborhood?: string;
+  nearestRoad?: {
+    name: string;
+    distanceMeters?: number;
+    direction?: string;
+  };
+  nearbyLandmarks: Array<{
+    name: string;
+    distanceMeters?: number;
+    direction?: string;
+    address?: string;
+  }>;
+  resolvedAt: string;
+}
+
 export interface StoredDeviceReport extends DeviceReport {
   receivedAt: string;
   /** Updated only when the payload contains device/context fields, not for app-only events. */
   statusReportedAt?: string;
+  /** Server-side reverse geocoding result for the coordinates in this report. */
+  resolvedLocation?: ResolvedLocation | null;
 }
 
 export interface AppEvent {
@@ -69,6 +90,143 @@ function cleanNumber(value: unknown): number | undefined {
     if (Number.isFinite(parsed)) return parsed;
   }
   return undefined;
+}
+
+function asRecord(value: unknown): Record<string, unknown> | undefined {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : undefined;
+}
+
+function apiText(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const text = value.trim();
+  return text ? text : undefined;
+}
+
+function apiDistance(value: unknown): number | undefined {
+  const parsed = typeof value === "number" ? value
+    : typeof value === "string" ? Number.parseFloat(value)
+    : Number.NaN;
+  return Number.isFinite(parsed) ? Math.max(0, Math.round(parsed)) : undefined;
+}
+
+async function reverseGeocodeWithAmap(
+  env: Env,
+  latitude: number,
+  longitude: number
+): Promise<ResolvedLocation | undefined> {
+  const key = env.AMAP_WEB_SERVICE_KEY?.trim();
+  if (!key) return undefined;
+
+  // iPhone Core Location reports WGS84 coordinates. AMap uses GCJ-02, so
+  // convert the coordinate before reverse geocoding to avoid a several-hundred
+  // metre offset in mainland China.
+  const source = `${longitude.toFixed(6)},${latitude.toFixed(6)}`;
+  const convertUrl = new URL("https://restapi.amap.com/v3/assistant/coordinate/convert");
+  convertUrl.searchParams.set("key", key);
+  convertUrl.searchParams.set("locations", source);
+  convertUrl.searchParams.set("coordsys", "gps");
+  convertUrl.searchParams.set("output", "JSON");
+
+  const convertResponse = await fetch(convertUrl);
+  if (!convertResponse.ok) {
+    throw new Error(`高德坐标转换失败（HTTP ${convertResponse.status}）`);
+  }
+  const convertData = asRecord(await convertResponse.json());
+  const amapLocation = apiText(convertData?.locations)?.split(";")[0];
+  if (convertData?.status !== "1" || !amapLocation) {
+    throw new Error(`高德坐标转换失败：${apiText(convertData?.info) ?? "未知错误"}`);
+  }
+
+  const regeoUrl = new URL("https://restapi.amap.com/v3/geocode/regeo");
+  regeoUrl.searchParams.set("key", key);
+  regeoUrl.searchParams.set("location", amapLocation);
+  regeoUrl.searchParams.set("extensions", "all");
+  regeoUrl.searchParams.set("radius", "1000");
+  regeoUrl.searchParams.set("roadlevel", "0");
+  regeoUrl.searchParams.set("homeorcorp", "1");
+  regeoUrl.searchParams.set("output", "JSON");
+
+  const regeoResponse = await fetch(regeoUrl);
+  if (!regeoResponse.ok) {
+    throw new Error(`高德逆地理编码失败（HTTP ${regeoResponse.status}）`);
+  }
+  const regeoData = asRecord(await regeoResponse.json());
+  if (regeoData?.status !== "1") {
+    throw new Error(`高德逆地理编码失败：${apiText(regeoData?.info) ?? "未知错误"}`);
+  }
+
+  const regeocode = asRecord(regeoData.regeocode);
+  if (!regeocode) return undefined;
+  const component = asRecord(regeocode.addressComponent);
+  const neighborhood = asRecord(component?.neighborhood);
+
+  const roads = (Array.isArray(regeocode.roads) ? regeocode.roads : [])
+    .map(asRecord)
+    .filter((item): item is Record<string, unknown> => Boolean(item))
+    .map((item) => ({
+      name: apiText(item.name),
+      distanceMeters: apiDistance(item.distance),
+      direction: apiText(item.direction),
+    }))
+    .filter((item) => Boolean(item.name))
+    .sort((a, b) => (a.distanceMeters ?? Number.POSITIVE_INFINITY) - (b.distanceMeters ?? Number.POSITIVE_INFINITY)) as Array<{
+      name: string;
+      distanceMeters?: number;
+      direction?: string;
+    }>;
+
+  const pois = (Array.isArray(regeocode.pois) ? regeocode.pois : [])
+    .map(asRecord)
+    .filter((item): item is Record<string, unknown> => Boolean(item))
+    .map((item) => ({
+      name: apiText(item.name),
+      distanceMeters: apiDistance(item.distance),
+      direction: apiText(item.direction),
+      address: apiText(item.address),
+    }))
+    .filter((item) => Boolean(item.name))
+    .sort((a, b) => (a.distanceMeters ?? Number.POSITIVE_INFINITY) - (b.distanceMeters ?? Number.POSITIVE_INFINITY))
+    .slice(0, 3) as Array<{
+      name: string;
+      distanceMeters?: number;
+      direction?: string;
+      address?: string;
+    }>;
+
+  const aois = (Array.isArray(regeocode.aois) ? regeocode.aois : [])
+    .map(asRecord)
+    .filter((item): item is Record<string, unknown> => Boolean(item))
+    .map((item) => ({
+      name: apiText(item.name),
+      distanceMeters: apiDistance(item.distance),
+      direction: apiText(item.direction),
+      address: undefined,
+    }))
+    .filter((item) => Boolean(item.name))
+    .sort((a, b) => (a.distanceMeters ?? Number.POSITIVE_INFINITY) - (b.distanceMeters ?? Number.POSITIVE_INFINITY)) as Array<{
+      name: string;
+      distanceMeters?: number;
+      direction?: string;
+      address?: string;
+    }>;
+
+  const landmarks = [...pois];
+  for (const aoi of aois) {
+    if (landmarks.length >= 3) break;
+    if (!landmarks.some((item) => item.name === aoi.name)) landmarks.push(aoi);
+  }
+
+  return {
+    source: "amap",
+    formattedAddress: apiText(regeocode.formatted_address),
+    township: apiText(component?.township),
+    neighborhood: apiText(neighborhood?.name),
+    nearestRoad: roads[0],
+    nearbyLandmarks: landmarks,
+    resolvedAt: new Date().toISOString(),
+  };
 }
 
 /** Accepts true/false, 1/0 and the strings Shortcuts tends to produce */
@@ -286,6 +444,21 @@ export class DeviceStateStore {
     }
 
     const current = await this.snapshot();
+
+    if (report.latitude !== undefined && report.longitude !== undefined) {
+      // Never let a newly reported coordinate inherit a reverse-geocoded label
+      // from an older coordinate. Failure falls back to Apple's address text.
+      report.resolvedLocation = null;
+      try {
+        report.resolvedLocation = await reverseGeocodeWithAmap(
+          this.env,
+          report.latitude,
+          report.longitude
+        ) ?? null;
+      } catch (error) {
+        console.warn("[AMAP] reverse geocoding failed:", error);
+      }
+    }
 
     // App-only automations arrive frequently. They must not make older battery,
     // location or weather values look fresh, so keep a separate status timestamp.
