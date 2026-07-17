@@ -173,7 +173,7 @@ export class AcMcpAgent extends McpAgent<Env, AcState, Props> {
     // ── get_device_status ──────────────────────────────────────────────────
     this.server.tool(
       "get_device_status",
-      "查看手机最近主动上报的电量、设备信息、今日步数、定位、天气、当前 App 动态和近 24 小时使用概况；同时返回查询当前时间与数据新鲜度（只读）",
+      "查看手机最近主动上报的电量、设备信息、今日步数、月经周期阶段估算、定位、天气、当前 App 动态和近 24 小时使用概况；同时返回查询当前时间与数据新鲜度（只读）",
       {},
       async () => {
         const snapshot = await this.deviceSnapshot();
@@ -207,6 +207,18 @@ export class AcMcpAgent extends McpAgent<Env, AcState, Props> {
         if (latest.focusMode) lines.push(`  专注模式：${latest.focusMode}`);
         if (latest.stepsToday !== undefined) {
           lines.push(`  今日步数：${latest.stepsToday.toLocaleString("zh-CN")} 步（截至本次上报）`);
+        }
+
+        if (latest.menstrualCycle) {
+          const cycle = latest.menstrualCycle;
+          const basis = cycle.estimateBasis === "history"
+            ? `按最近记录估算为 ${cycle.estimatedCycleLengthDays} 天周期`
+            : "记录不足，暂按 28 天周期估算";
+          lines.push(
+            `  月经周期阶段（估算）：${cycle.phaseLabel} · 周期第 ${cycle.cycleDay} 天`,
+            `  周期日期参考：最近开始 ${cycle.lastPeriodStart} · 预计排卵 ${cycle.estimatedOvulationDate} · 预计下次 ${cycle.estimatedNextPeriodStart}`,
+            `  估算依据：${basis}；不能用于避孕或医疗判断`
+          );
         }
 
         const hasCoordinates = latest.latitude !== undefined && latest.longitude !== undefined;
