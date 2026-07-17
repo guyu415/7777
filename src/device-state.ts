@@ -170,8 +170,12 @@ async function reverseGeocodeWithAmap(
       distanceMeters: apiDistance(item.distance),
       direction: apiText(item.direction),
     }))
-    .filter((item): item is { name: string; distanceMeters?: number; direction?: string } => Boolean(item.name))
-    .sort((a, b) => (a.distanceMeters ?? Number.POSITIVE_INFINITY) - (b.distanceMeters ?? Number.POSITIVE_INFINITY));
+    .filter((item) => Boolean(item.name))
+    .sort((a, b) => (a.distanceMeters ?? Number.POSITIVE_INFINITY) - (b.distanceMeters ?? Number.POSITIVE_INFINITY)) as Array<{
+      name: string;
+      distanceMeters?: number;
+      direction?: string;
+    }>;
 
   const pois = (Array.isArray(regeocode.pois) ? regeocode.pois : [])
     .map(asRecord)
@@ -182,9 +186,14 @@ async function reverseGeocodeWithAmap(
       direction: apiText(item.direction),
       address: apiText(item.address),
     }))
-    .filter((item): item is { name: string; distanceMeters?: number; direction?: string; address?: string } => Boolean(item.name))
+    .filter((item) => Boolean(item.name))
     .sort((a, b) => (a.distanceMeters ?? Number.POSITIVE_INFINITY) - (b.distanceMeters ?? Number.POSITIVE_INFINITY))
-    .slice(0, 3);
+    .slice(0, 3) as Array<{
+      name: string;
+      distanceMeters?: number;
+      direction?: string;
+      address?: string;
+    }>;
 
   const aois = (Array.isArray(regeocode.aois) ? regeocode.aois : [])
     .map(asRecord)
@@ -195,8 +204,13 @@ async function reverseGeocodeWithAmap(
       direction: apiText(item.direction),
       address: undefined,
     }))
-    .filter((item): item is { name: string; distanceMeters?: number; direction?: string; address?: undefined } => Boolean(item.name))
-    .sort((a, b) => (a.distanceMeters ?? Number.POSITIVE_INFINITY) - (b.distanceMeters ?? Number.POSITIVE_INFINITY));
+    .filter((item) => Boolean(item.name))
+    .sort((a, b) => (a.distanceMeters ?? Number.POSITIVE_INFINITY) - (b.distanceMeters ?? Number.POSITIVE_INFINITY)) as Array<{
+      name: string;
+      distanceMeters?: number;
+      direction?: string;
+      address?: string;
+    }>;
 
   const landmarks = [...pois];
   for (const aoi of aois) {
