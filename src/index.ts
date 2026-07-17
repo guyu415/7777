@@ -57,6 +57,27 @@ async function handleDeviceReport(request: Request, env: Env): Promise<Response>
   });
 }
 
+async function handlePeriodStart(request: Request, env: Env): Promise<Response> {
+  if (request.method !== "POST") {
+    return new Response("Method Not Allowed", {
+      status: 405,
+      headers: { Allow: "POST" },
+    });
+  }
+
+  if (!isAuthorizedDeviceReport(request, env)) {
+    return Response.json({ ok: false, error: "Unauthorized" }, { status: 401 });
+  }
+
+  const id = env.DeviceStateStore.idFromName("primary-phone");
+  const stub = env.DeviceStateStore.get(id);
+  return stub.fetch("https://device-state.internal/period-start", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: await request.text(),
+  });
+}
+
 // ─── Authorization handler ────────────────────────────────────────────────────
 
 function escHtml(s: string): string {
@@ -141,6 +162,7 @@ async function handleAuthorize(request: Request, env: Env): Promise<Response> {
       <div class="perm"><span class="check">✓</span> 调节温度（16–30°C）</div>
       <div class="perm"><span class="check">✓</span> 切换运行模式与风速</div>
       <div class="perm"><span class="check">✓</span> 查看手机主动上报的设备、今日步数、月经周期估算、位置和天气状态（只读）</div>
+      <div class="perm"><span class="check">✓</span> 接收用户主动记录的月经开始日期</div>
       <div class="perm"><span class="check">✓</span> 读取用户手写的互动准则（只读）</div>
       <div class="perm"><span class="check">✓</span> 在用户明确要求时新增互动准则</div>
       <div class="perm"><span class="check">✓</span> 权限范围：${escHtml(scopeLabel)}</div>
@@ -211,6 +233,7 @@ const defaultHandler = {
     const { pathname } = new URL(request.url);
 
     if (pathname === "/device/report") return handleDeviceReport(request, env);
+    if (pathname === "/device/period-start") return handlePeriodStart(request, env);
     if (pathname === "/authorize") return handleAuthorize(request, env);
     if (pathname === "/" || pathname === "") return landingPage(new URL(request.url).origin);
 
