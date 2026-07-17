@@ -40,7 +40,8 @@ export interface DeviceReport {
   menstrualDates?: string[];
   cycleLengthDays?: number;
   periodLengthDays?: number;
-  menstrualCycle?: MenstrualCycleSummary;
+  menstrualCycle?: MenstrualCycleSummary | null;
+  menstrualCycleIssue?: string | null;
   appName?: string;
   appAction?: AppAction;
 }
@@ -251,6 +252,7 @@ async function reverseGeocodeWithAmap(
 }
 
 function cleanDateList(value: unknown): string[] | undefined {
+  if (value === undefined || value === null) return undefined;
   const values = Array.isArray(value)
     ? value
     : typeof value === "string"
@@ -261,11 +263,17 @@ function cleanDateList(value: unknown): string[] | undefined {
     .map((item) => String(item).trim())
     .filter(Boolean)
     .slice(0, 400);
-  return dates.length ? dates : undefined;
+  return dates;
 }
 
 function chinaDateKey(value: string | Date): string | undefined {
   if (typeof value === "string") {
+    const chinese = value.trim().match(/^(\d{4})\s*年\s*([01]?\d)\s*月\s*([0-3]?\d)\s*日/);
+    if (chinese) {
+      const month = chinese[2].padStart(2, "0");
+      const day = chinese[3].padStart(2, "0");
+      return `${chinese[1]}-${month}-${day}`;
+    }
     const simple = value.trim().match(/^(\d{4})[-\/]([01]?\d)[-\/]([0-3]?\d)(?:\D|$)/);
     if (simple) {
       const month = simple[2].padStart(2, "0");
@@ -606,13 +614,19 @@ export class DeviceStateStore {
 
     const current = await this.snapshot();
 
-    if (report.menstrualDates?.length) {
-      report.menstrualCycle = summarizeMenstrualCycle(
+    if (report.menstrualDates !== undefined) {
+      const summary = summarizeMenstrualCycle(
         report.menstrualDates,
         report.cycleLengthDays,
         report.periodLengthDays,
         new Date(report.reportedAt ?? receivedAt)
       );
+      report.menstrualCycle = summary ?? null;
+      report.menstrualCycleIssue = summary
+        ? null
+        : report.menstrualDates.length
+          ? `收到 ${report.menstrualDates.length} 条经期日期，但无法识别日期格式`
+          : "快捷指令在最近 180 天没有找到经期记录";
       delete report.menstrualDates;
       delete report.cycleLengthDays;
       delete report.periodLengthDays;
@@ -639,7 +653,7 @@ export class DeviceStateStore {
       "batteryLevel", "charging", "deviceName", "deviceModel", "systemName",
       "systemVersion", "networkType", "focusMode", "locationName", "latitude",
       "longitude", "locationAccuracyMeters", "weatherCondition", "temperatureC",
-      "feelsLikeC", "precipitationChance", "stepsToday", "menstrualCycle",
+      "feelsLikeC", "precipitationChance", "stepsToday", "menstrualCycle", "menstrualCycleIssue",
     ];
     if (statusFields.some((key) => report[key] !== undefined)) {
       report.statusReportedAt = report.reportedAt ?? receivedAt;
