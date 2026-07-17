@@ -2,6 +2,20 @@ import type { Env } from "./index";
 
 export type AppAction = "open" | "close";
 
+export type MenstrualPhase = "menstrual" | "follicular" | "ovulation" | "luteal" | "unknown";
+
+export interface MenstrualCycleSummary {
+  phase: MenstrualPhase;
+  phaseLabel: string;
+  cycleDay: number;
+  lastPeriodStart: string;
+  estimatedOvulationDate: string;
+  estimatedNextPeriodStart: string;
+  estimatedCycleLengthDays: number;
+  estimateBasis: "history" | "default";
+  calculatedAt: string;
+}
+
 export interface DeviceReport {
   reportedAt?: string;
   batteryLevel?: number;
@@ -22,6 +36,11 @@ export interface DeviceReport {
   precipitationChance?: number;
   /** Health app step total for the current local day at report time. */
   stepsToday?: number;
+  /** Shortcut input only; raw dates are reduced to a summary before storage. */
+  menstrualDates?: string[];
+  cycleLengthDays?: number;
+  periodLengthDays?: number;
+  menstrualCycle?: MenstrualCycleSummary;
   appName?: string;
   appAction?: AppAction;
 }
@@ -231,6 +250,133 @@ async function reverseGeocodeWithAmap(
   };
 }
 
+function cleanDateList(value: unknown): string[] | undefined {
+  const values = Array.isArray(value)
+    ? value
+    : typeof value === "string"
+      ? value.split(/[\n;|]+/)
+      : [];
+  const dates = values
+    .filter((item): item is string | number => typeof item === "string" || typeof item === "number")
+    .map((item) => String(item).trim())
+    .filter(Boolean)
+    .slice(0, 400);
+  return dates.length ? dates : undefined;
+}
+
+function chinaDateKey(value: string | Date): string | undefined {
+  if (typeof value === "string") {
+    const simple = value.trim().match(/^(\d{4})[-\/]([01]?\d)[-\/]([0-3]?\d)(?:\D|$)/);
+    if (simple) {
+      const month = simple[2].padStart(2, "0");
+      const day = simple[3].padStart(2, "0");
+      return `${simple[1]}-${month}-${day}`;
+    }
+  }
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) return undefined;
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: "Asia/Shanghai",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(date);
+  const get = (type: Intl.DateTimeFormatPartTypes) => parts.find((part) => part.type === type)?.value;
+  const year = get("year");
+  const month = get("month");
+  const day = get("day");
+  return year && month && day ? `${year}-${month}-${day}` : undefined;
+}
+
+function dateKeyMillis(key: string): number {
+  return new Date(`${key}T00:00:00+08:00`).getTime();
+}
+
+function daysBetween(start: string, end: string): number {
+  return Math.round((dateKeyMillis(end) - dateKeyMillis(start)) / 86_400_000);
+}
+
+function addDays(key: string, days: number): string {
+  return chinaDateKey(new Date(dateKeyMillis(key) + days * 86_400_000)) ?? key;
+}
+
+function median(values: number[]): number | undefined {
+  if (!values.length) return undefined;
+  const sorted = [...values].sort((a, b) => a - b);
+  const middle = Math.floor(sorted.length / 2);
+  return sorted.length % 2 ? sorted[middle] : (sorted[middle - 1] + sorted[middle]) / 2;
+}
+
+function summarizeMenstrualCycle(
+  dates: string[],
+  cycleLengthHint?: number,
+  periodLengthHint?: number,
+  now = new Date()
+): MenstrualCycleSummary | undefined {
+  const dayKeys = [...new Set(dates.map(chinaDateKey).filter((key): key is string => Boolean(key)))].sort();
+  if (!dayKeys.length) return undefined;
+
+  const groups: string[][] = [];
+  for (const day of dayKeys) {
+    const current = groups[groups.length - 1];
+    if (!current || daysBetween(current[current.length - 1], day) > 10) groups.push([day]);
+    else current.push(day);
+  }
+
+  const starts = groups.map((group) => group[0]);
+  const observedLengths = starts.slice(1)
+    .map((start, index) => daysBetween(starts[index], start))
+    .filter((days) => days >= 15 && days <= 60);
+  const validCycleHint = cycleLengthHint !== undefined && cycleLengthHint >= 15 && cycleLengthHint <= 60
+    ? Math.round(cycleLengthHint)
+    : undefined;
+  const historyLength = median(observedLengths.slice(-6));
+  const cycleLength = validCycleHint ?? (historyLength === undefined ? 28 : Math.round(historyLength));
+  const estimateBasis = validCycleHint !== undefined || historyLength !== undefined ? "history" : "default";
+
+  const lastPeriodStart = starts[starts.length - 1];
+  const today = chinaDateKey(now);
+  if (!today) return undefined;
+  const cycleDay = daysBetween(lastPeriodStart, today) + 1;
+  if (cycleDay < 1) return undefined;
+
+  const validPeriodHint = periodLengthHint !== undefined && periodLengthHint >= 1 && periodLengthHint <= 10
+    ? Math.round(periodLengthHint)
+    : 5;
+  const ovulationDay = Math.max(validPeriodHint + 2, cycleLength - 14);
+
+  let phase: MenstrualPhase;
+  let phaseLabel: string;
+  if (cycleDay > cycleLength + 7) {
+    phase = "unknown";
+    phaseLabel = "周期记录待更新";
+  } else if (cycleDay <= validPeriodHint) {
+    phase = "menstrual";
+    phaseLabel = "月经期";
+  } else if (cycleDay < ovulationDay - 2) {
+    phase = "follicular";
+    phaseLabel = "卵泡期";
+  } else if (cycleDay <= ovulationDay + 1) {
+    phase = "ovulation";
+    phaseLabel = "排卵期";
+  } else {
+    phase = "luteal";
+    phaseLabel = "黄体期";
+  }
+
+  return {
+    phase,
+    phaseLabel,
+    cycleDay,
+    lastPeriodStart,
+    estimatedOvulationDate: addDays(lastPeriodStart, ovulationDay - 1),
+    estimatedNextPeriodStart: addDays(lastPeriodStart, cycleLength),
+    estimatedCycleLengthDays: cycleLength,
+    estimateBasis,
+    calculatedAt: now.toISOString(),
+  };
+}
+
 /** Accepts true/false, 1/0 and the strings Shortcuts tends to produce */
 function cleanBoolean(value: unknown): boolean | undefined {
   if (typeof value === "boolean") return value;
@@ -286,6 +432,10 @@ const KEY_ALIASES: Record<string, keyof DeviceReport> = {
   rainchance: "precipitationChance", 降水概率: "precipitationChance", 下雨概率: "precipitationChance",
   stepstoday: "stepsToday", stepcount: "stepsToday", steps: "stepsToday",
   步数: "stepsToday", 今日步数: "stepsToday", 当日步数: "stepsToday",
+  menstrualdates: "menstrualDates", perioddates: "menstrualDates", menstruationdates: "menstrualDates",
+  月经日期: "menstrualDates", 经期日期: "menstrualDates", 月经记录日期: "menstrualDates",
+  cyclelengthdays: "cycleLengthDays", cyclelength: "cycleLengthDays", 周期长度: "cycleLengthDays",
+  periodlengthdays: "periodLengthDays", periodlength: "periodLengthDays", 经期长度: "periodLengthDays",
   appname: "appName", app: "appName", 应用: "appName", 应用名称: "appName", app名称: "appName",
   appaction: "appAction", action: "appAction", appevent: "appAction", 动作: "appAction", 事件: "appAction",
 };
@@ -408,6 +558,9 @@ function normalizeReport(input: unknown, receivedAt: string): StoredDeviceReport
       const value = cleanNumber(raw.stepsToday);
       return value === undefined ? undefined : Math.min(1_000_000, Math.max(0, Math.round(value)));
     })(),
+    menstrualDates: cleanDateList(raw.menstrualDates),
+    cycleLengthDays: cleanNumber(raw.cycleLengthDays),
+    periodLengthDays: cleanNumber(raw.periodLengthDays),
     appName: cleanText(raw.appName, 60),
     appAction: cleanAppAction(raw.appAction),
   };
@@ -453,6 +606,18 @@ export class DeviceStateStore {
 
     const current = await this.snapshot();
 
+    if (report.menstrualDates?.length) {
+      report.menstrualCycle = summarizeMenstrualCycle(
+        report.menstrualDates,
+        report.cycleLengthDays,
+        report.periodLengthDays,
+        new Date(report.reportedAt ?? receivedAt)
+      );
+      delete report.menstrualDates;
+      delete report.cycleLengthDays;
+      delete report.periodLengthDays;
+    }
+
     if (report.latitude !== undefined && report.longitude !== undefined) {
       // Never let a newly reported coordinate inherit a reverse-geocoded label
       // from an older coordinate. Failure falls back to Apple's address text.
@@ -474,7 +639,7 @@ export class DeviceStateStore {
       "batteryLevel", "charging", "deviceName", "deviceModel", "systemName",
       "systemVersion", "networkType", "focusMode", "locationName", "latitude",
       "longitude", "locationAccuracyMeters", "weatherCondition", "temperatureC",
-      "feelsLikeC", "precipitationChance", "stepsToday",
+      "feelsLikeC", "precipitationChance", "stepsToday", "menstrualCycle",
     ];
     if (statusFields.some((key) => report[key] !== undefined)) {
       report.statusReportedAt = report.reportedAt ?? receivedAt;
