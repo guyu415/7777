@@ -5,6 +5,8 @@ const WEAPI_IV = "0102030405060708";
 const WEAPI_PRESET_KEY = "0CoJUm6Qyw8W8jud";
 const WEAPI_BASE62 = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
 const WEAPI_PUBLIC_EXPONENT = 0x10001n;
+// Recent-play timestamps arrive slightly ahead of the audible lyric position.
+const LYRIC_SYNC_COMPENSATION_SECONDS = 3;
 const WEAPI_MODULUS = BigInt(
   "0xe0b509f6259df8642dbc35662901477df22677ec152b5ff68ace615bb7b725152b3ab17a876aea8a5aa76d2e417629ec4ee341f56135fccf695280104e0312ecbda92557c93870114af6c9d05c4f7f0c3685b7a46bee255932575cce10b424d813cfe4875d3e82047b97ddef52741d546b8e289dc6935b3ece0462db0a22b8e7"
 );
@@ -334,7 +336,12 @@ export async function handleNeteaseRecentProbe(request: Request, env: Env): Prom
 
     const song = extractRecentSong(payload, checkedAtMs);
     const currentLyric = song?.likelyPlaying && song.ageSeconds !== null
-      ? await fetchCurrentLyric(song.id, song.ageSeconds, cookie, csrfToken).catch(() => null)
+      ? await fetchCurrentLyric(
+          song.id,
+          Math.max(0, song.ageSeconds - LYRIC_SYNC_COMPENSATION_SECONDS),
+          cookie,
+          csrfToken
+        ).catch(() => null)
       : null;
 
     return noStoreJson({
