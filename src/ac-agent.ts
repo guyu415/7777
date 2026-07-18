@@ -2,6 +2,7 @@ import { McpAgent } from "agents/mcp";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { getTuyaToken, sendAcCommand, getAcStatus } from "./tuya";
+import { handleNeteaseRecentProbe } from "./netease";
 import type { Env, Props } from "./index";
 import type { DeviceSnapshot } from "./device-state";
 
@@ -64,6 +65,24 @@ interface InteractionRule {
   value: string;
 }
 
+interface NeteaseRecentSong {
+  id: number;
+  name: string;
+  artists: string[];
+  album: string | null;
+  durationSeconds: number | null;
+  playedAt: string | null;
+  ageSeconds: number | null;
+  likelyPlaying: boolean;
+}
+
+interface NeteaseProbePayload {
+  ok: boolean;
+  checkedAt?: string;
+  song?: NeteaseRecentSong | null;
+  error?: string;
+}
+
 export class AcMcpAgent extends McpAgent<Env, AcState, Props> {
   server = new McpServer({ name: "ac-controller", version: "1.0.0" });
 
@@ -108,6 +127,36 @@ export class AcMcpAgent extends McpAgent<Env, AcState, Props> {
       throw new Error(`读取手机状态失败（HTTP ${response.status}）`);
     }
     return response.json<DeviceSnapshot>();
+  }
+
+  private async neteaseRecentSong(): Promise<NeteaseProbePayload> {
+    const response = await handleNeteaseRecentProbe(
+      new Request("https://netease.internal/device/netease-probe"),
+      this.env
+    );
+    const payload = await response.json<NeteaseProbePayload>();
+    if (!response.ok || !payload.ok) {
+      throw new Error(payload.error || `查询网易云失败（HTTP ${response.status}）`);
+    }
+    return payload;
+  }
+
+  private formatNeteaseRecent(payload: NeteaseProbePayload): string[] {
+    const song = payload.song;
+    if (!song) return ["网易云最近播放：暂无记录"];
+
+    const artists = song.artists.length ? song.artists.join(" / ") : "未知歌手";
+    const status = song.likelyPlaying ? "可能正在播放" : "最近播放过";
+    const lines = [
+      `网易云最近播放（${status}）：`,
+      `  歌曲：${song.name}`,
+      `  歌手：${artists}`,
+    ];
+    if (song.album) lines.push(`  专辑：${song.album}`);
+    if (song.playedAt) lines.push(`  网易云记录时间：${formatTime(song.playedAt)}（北京时间）`);
+    if (song.ageSeconds !== null) lines.push(`  距查询时间：${formatDuration(song.ageSeconds)}前`);
+    lines.push("  说明：这是网易云最近播放记录推断，不等同于播放器的实时状态。");
+    return lines;
   }
 
   private async interactionRules(): Promise<InteractionRule[]> {
@@ -176,13 +225,25 @@ export class AcMcpAgent extends McpAgent<Env, AcState, Props> {
       "查看手机最近主动上报的电量、设备信息、今日步数、月经周期阶段估算、定位、天气、当前 App 动态和近 24 小时使用概况；同时返回查询当前时间与数据新鲜度（只读）",
       {},
       async () => {
-        const snapshot = await this.deviceSnapshot();
+        const [snapshot, netease] = await Promise.all([
+          this.deviceSnapshot(),
+          this.neteaseRecentSong().catch((error) => ({
+            ok: false,
+            error: error instanceof Error ? error.message : String(error),
+          } satisfies NeteaseProbePayload)),
+        ]);
         const latest = snapshot.latest;
         if (!latest) {
+          const lines = ["还没有收到手机上报。请先运行 iPhone 上的「查岗上报」快捷指令。", ""];
+          if (netease.ok) {
+            lines.push(...this.formatNeteaseRecent(netease));
+          } else {
+            lines.push(`网易云最近播放：暂时无法查询（${netease.error || "未知错误"}）`);
+          }
           return {
             content: [{
               type: "text" as const,
-              text: "还没有收到手机上报。请先运行 iPhone 上的「查岗上报」快捷指令。",
+              text: lines.join("\n"),
             }],
           };
         }
@@ -305,7 +366,39 @@ export class AcMcpAgent extends McpAgent<Env, AcState, Props> {
           lines.push("", "近 24 小时尚无完整的 App 打开/关闭记录。");
         }
 
+        lines.push("");
+        if (netease.ok) {
+          lines.push(...this.formatNeteaseRecent(netease));
+        } else {
+          lines.push(`网易云最近播放：暂时无法查询（${netease.error || "未知错误"}）`);
+        }
+
         return { content: [{ type: "text" as const, text: lines.join("\n") }] };
+      }
+    );
+
+    // ── get_netease_recent ────────────────────────────────────────────────
+    this.server.tool(
+      "get_netease_recent",
+      "查询网易云账号最新一条最近播放记录，并根据记录时间估计是否可能仍在播放；适合询问正在听什么歌、网易云在放什么或单独测试音乐查岗（只读）",
+      {},
+      async () => {
+        try {
+          const payload = await this.neteaseRecentSong();
+          return {
+            content: [{
+              type: "text" as const,
+              text: this.formatNeteaseRecent(payload).join("\n"),
+            }],
+          };
+        } catch (error) {
+          return {
+            content: [{
+              type: "text" as const,
+              text: `暂时无法查询网易云最近播放：${error instanceof Error ? error.message : String(error)}`,
+            }],
+          };
+        }
       }
     );
 
