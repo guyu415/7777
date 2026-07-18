@@ -1,6 +1,7 @@
 import { OAuthProvider, type OAuthHelpers } from "@cloudflare/workers-oauth-provider";
 import { AcMcpAgent } from "./ac-agent";
 import { DeviceStateStore } from "./device-state";
+import { handleNeteaseRecentProbe } from "./netease";
 
 // Re-export the Durable Object class so Cloudflare can find it
 export { AcMcpAgent, DeviceStateStore };
@@ -21,6 +22,8 @@ export interface Env {
   DEVICE_WRITE_TOKEN: string;
   /** AMap Web Service API key, stored as a Wrangler secret. */
   AMAP_WEB_SERVICE_KEY?: string;
+  /** NetEase Cloud Music browser cookie, stored as a Wrangler secret. */
+  NCM_COOKIE?: string;
   // Tuya API (vars + secret)
   TUYA_BASE_URL: string;
   TUYA_CLIENT_ID: string;
@@ -76,6 +79,16 @@ async function handlePeriodStart(request: Request, env: Env): Promise<Response> 
     headers: { "Content-Type": "application/json" },
     body: await request.text(),
   });
+}
+
+async function handleProtectedNeteaseProbe(request: Request, env: Env): Promise<Response> {
+  if (!isAuthorizedDeviceReport(request, env)) {
+    return Response.json(
+      { ok: false, error: "Unauthorized" },
+      { status: 401, headers: { "Cache-Control": "no-store" } }
+    );
+  }
+  return handleNeteaseRecentProbe(request, env);
 }
 
 // ─── Authorization handler ────────────────────────────────────────────────────
@@ -234,6 +247,7 @@ const defaultHandler = {
 
     if (pathname === "/device/report") return handleDeviceReport(request, env);
     if (pathname === "/device/period-start") return handlePeriodStart(request, env);
+    if (pathname === "/device/netease-probe") return handleProtectedNeteaseProbe(request, env);
     if (pathname === "/authorize") return handleAuthorize(request, env);
     if (pathname === "/" || pathname === "") return landingPage(new URL(request.url).origin);
 
