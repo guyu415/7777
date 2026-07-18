@@ -153,6 +153,15 @@ function noStoreJson(body: unknown, init?: ResponseInit): Response {
   return response;
 }
 
+function neteaseHeaders(cookie: string): HeadersInit {
+  return {
+    "Content-Type": "application/x-www-form-urlencoded",
+    "Cookie": cookie,
+    "Referer": "https://music.163.com/",
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/126.0 Safari/537.36",
+  };
+}
+
 export async function handleNeteaseRecentProbe(request: Request, env: Env): Promise<Response> {
   if (request.method !== "GET") {
     return new Response("Method Not Allowed", {
@@ -170,23 +179,58 @@ export async function handleNeteaseRecentProbe(request: Request, env: Env): Prom
   }
 
   const cookie = normalizeCookie(rawCookie);
-  const encrypted = await encryptWeapi({
-    limit: 1,
-    csrf_token: cookieValue(cookie, "__csrf"),
-  });
-  const body = new URLSearchParams(encrypted);
+  const csrfToken = cookieValue(cookie, "__csrf");
   const checkedAtMs = Date.now();
 
   try {
+    // The recent-play endpoint can return code 200 with an empty list for an
+    // anonymous/expired cookie. Verify the account first so that state is not
+    // mistaken for a real account with no listening history.
+    const accountEncrypted = await encryptWeapi({ csrf_token: csrfToken });
+    const accountResponse = await fetch("https://music.163.com/weapi/w/nuser/account/get", {
+      method: "POST",
+      headers: neteaseHeaders(cookie),
+      body: new URLSearchParams(accountEncrypted).toString(),
+    });
+    const accountPayload = await accountResponse.json<unknown>().catch(() => null);
+    const accountCode = isRecord(accountPayload) ? cleanNumber(accountPayload.code) : undefined;
+    const account = isRecord(accountPayload) && isRecord(accountPayload.account)
+      ? accountPayload.account
+      : null;
+    const profile = isRecord(accountPayload) && isRecord(accountPayload.profile)
+      ? accountPayload.profile
+      : null;
+    const userId = cleanNumber(account?.id ?? profile?.userId);
+
+    if (!accountResponse.ok || !isRecord(accountPayload) || accountCode !== 200) {
+      return noStoreJson(
+        {
+          ok: false,
+          error: "网易云登录态检查失败",
+          upstreamHttpStatus: accountResponse.status,
+          upstreamCode: accountCode ?? null,
+        },
+        { status: 502 }
+      );
+    }
+    if (userId === undefined) {
+      return noStoreJson(
+        {
+          ok: false,
+          error: "网易云 Cookie 未登录或已失效；请先登录 music.163.com，再更新 MUSIC_U（建议同时带上 __csrf）",
+        },
+        { status: 502 }
+      );
+    }
+
+    const encrypted = await encryptWeapi({
+      limit: 1,
+      csrf_token: csrfToken,
+    });
     const upstream = await fetch("https://music.163.com/weapi/play-record/song/list", {
       method: "POST",
-      headers: {
-        "Content-Type": "application/x-www-form-urlencoded",
-        "Cookie": cookie,
-        "Referer": "https://music.163.com/",
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/126.0 Safari/537.36",
-      },
-      body: body.toString(),
+      headers: neteaseHeaders(cookie),
+      body: new URLSearchParams(encrypted).toString(),
     });
     const payload = await upstream.json<unknown>().catch(() => null);
     const upstreamCode = isRecord(payload) ? cleanNumber(payload.code) : undefined;
