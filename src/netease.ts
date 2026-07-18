@@ -151,6 +151,86 @@ function extractRecentSong(payload: UnknownRecord, checkedAtMs: number) {
   };
 }
 
+interface TimedLyricLine {
+  atSeconds: number;
+  text: string;
+}
+
+function lyricExcerpt(text: string): string {
+  const compact = text.replace(/\s+/g, " ").trim();
+  if (!compact) return "";
+
+  // Return only a short current-line excerpt, never the full lyrics.
+  if (/\s/.test(compact)) {
+    const words = compact.split(" ");
+    return words.length > 10 ? `${words.slice(0, 10).join(" ")}…` : compact;
+  }
+  const characters = Array.from(compact);
+  return characters.length > 10 ? `${characters.slice(0, 10).join("")}…` : compact;
+}
+
+function parseTimedLyrics(raw: string): TimedLyricLine[] {
+  const result: TimedLyricLine[] = [];
+  for (const row of raw.split(/\r?\n/)) {
+    const text = lyricExcerpt(row.replace(/(?:\[\d{1,3}:\d{2}(?:[.:]\d{1,3})?\])+/g, ""));
+    if (!text) continue;
+
+    const timestampPattern = /\[(\d{1,3}):(\d{2})(?:[.:](\d{1,3}))?\]/g;
+    for (const match of row.matchAll(timestampPattern)) {
+      const minutes = Number(match[1]);
+      const seconds = Number(match[2]);
+      const fractionText = match[3] ?? "0";
+      const fraction = Number(fractionText) / (10 ** fractionText.length);
+      const atSeconds = minutes * 60 + seconds + fraction;
+      if (Number.isFinite(atSeconds)) result.push({ atSeconds, text });
+    }
+  }
+  return result.sort((a, b) => a.atSeconds - b.atSeconds);
+}
+
+function selectCurrentLyric(raw: string, elapsedSeconds: number) {
+  const lines = parseTimedLyrics(raw);
+  if (!lines.length) return null;
+  let selected = lines[0];
+  for (const line of lines) {
+    if (line.atSeconds > elapsedSeconds) break;
+    selected = line;
+  }
+  return {
+    text: selected.text,
+    atSeconds: Math.round(selected.atSeconds * 10) / 10,
+    estimated: true,
+  };
+}
+
+async function fetchCurrentLyric(
+  songId: number,
+  elapsedSeconds: number,
+  cookie: string,
+  csrfToken: string
+) {
+  const encrypted = await encryptWeapi({
+    id: songId,
+    lv: -1,
+    tv: -1,
+    rv: -1,
+    kv: -1,
+    _nmclfl: 1,
+    csrf_token: csrfToken,
+  });
+  const response = await fetch("https://music.163.com/weapi/song/lyric", {
+    method: "POST",
+    headers: neteaseHeaders(cookie),
+    body: new URLSearchParams(encrypted).toString(),
+  });
+  if (!response.ok) return null;
+
+  const payload = await response.json<unknown>().catch(() => null);
+  const lrc = isRecord(payload) && isRecord(payload.lrc) ? payload.lrc : null;
+  const raw = lrc ? cleanText(lrc.lyric) : undefined;
+  return raw ? selectCurrentLyric(raw, elapsedSeconds) : null;
+}
+
 function noStoreJson(body: unknown, init?: ResponseInit): Response {
   const response = Response.json(body, init);
   response.headers.set("Cache-Control", "no-store");
@@ -252,10 +332,15 @@ export async function handleNeteaseRecentProbe(request: Request, env: Env): Prom
       );
     }
 
+    const song = extractRecentSong(payload, checkedAtMs);
+    const currentLyric = song?.likelyPlaying && song.ageSeconds !== null
+      ? await fetchCurrentLyric(song.id, song.ageSeconds, cookie, csrfToken).catch(() => null)
+      : null;
+
     return noStoreJson({
       ok: true,
       checkedAt: new Date(checkedAtMs).toISOString(),
-      song: extractRecentSong(payload, checkedAtMs),
+      song: song ? { ...song, currentLyric } : null,
     });
   } catch (error) {
     return noStoreJson(
