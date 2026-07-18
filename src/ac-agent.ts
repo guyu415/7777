@@ -74,6 +74,11 @@ interface NeteaseRecentSong {
   playedAt: string | null;
   ageSeconds: number | null;
   likelyPlaying: boolean;
+  currentLyric: {
+    text: string;
+    atSeconds: number;
+    estimated: true;
+  } | null;
 }
 
 interface NeteaseProbePayload {
@@ -153,6 +158,9 @@ export class AcMcpAgent extends McpAgent<Env, AcState, Props> {
       `  歌手：${artists}`,
     ];
     if (song.album) lines.push(`  专辑：${song.album}`);
+    if (song.currentLyric?.text) {
+      lines.push(`  当前歌词（估算）：${song.currentLyric.text}`);
+    }
     if (song.playedAt) lines.push(`  网易云记录时间：${formatTime(song.playedAt)}（北京时间）`);
     if (song.ageSeconds !== null) lines.push(`  距查询时间：${formatDuration(song.ageSeconds)}前`);
     lines.push("  说明：这是网易云最近播放记录推断，不等同于播放器的实时状态。");
