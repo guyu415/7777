@@ -119,7 +119,11 @@ function extractRecentSong(payload: UnknownRecord, checkedAtMs: number) {
   const data = isRecord(payload.data) ? payload.data : null;
   const list = data && Array.isArray(data.list) ? data.list : [];
   const first = isRecord(list[0]) ? list[0] : null;
-  const resource = first && isRecord(first.resource) ? first.resource : null;
+  const resource = first && isRecord(first.data)
+    ? first.data
+    : first && isRecord(first.resource)
+      ? first.resource
+      : null;
   if (!first || !resource) return null;
 
   const id = cleanNumber(resource.id ?? first.resourceId);
