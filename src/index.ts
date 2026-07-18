@@ -230,7 +230,8 @@ function landingPage(origin: string): Response {
   <div class="tool"><span class="tool-name">set_temperature</span><span class="tool-desc">设置目标温度（16–30°C）</span></div>
   <div class="tool"><span class="tool-name">set_mode</span><span class="tool-desc">切换运行模式（制冷 / 制热 / 送风 / 自动 / 除湿）</span></div>
   <div class="tool"><span class="tool-name">set_fan_speed</span><span class="tool-desc">调节风速（低速 / 中速 / 高速 / 自动）</span></div>
-  <div class="tool"><span class="tool-name">get_device_status</span><span class="tool-desc">查看手机最近主动上报的电量、今日步数、月经周期估算、定位、天气、App 使用动态与数据新鲜度</span></div>
+  <div class="tool"><span class="tool-name">get_device_status</span><span class="tool-desc">查看手机状态、位置天气、App 动态，以及网易云最近播放</span></div>
+  <div class="tool"><span class="tool-name">get_netease_recent</span><span class="tool-desc">单独查询网易云最近播放，并估计是否可能仍在播放</span></div>
   <div class="tool"><span class="tool-name">get_interaction_rules</span><span class="tool-desc">读取记忆库中用户手写的长期互动准则</span></div>
   <div class="tool"><span class="tool-name">add_interaction_rule</span><span class="tool-desc">在用户明确要求时新增一条长期互动准则</span></div>
 </body>
