@@ -3,7 +3,8 @@
 // Enable request-body access and MITM for api.bilibili.com.
 
 const REPORT_URL = "https://mcp.xiaoman.xyz/device/bilibili-report";
-const DEVICE_WRITE_TOKEN = "把DEVICE_WRITE_TOKEN粘贴到这里";
+const MODULE_ARGUMENT = typeof $argument === "string" ? $argument.trim() : "";
+const DEVICE_WRITE_TOKEN = MODULE_ARGUMENT || "把DEVICE_WRITE_TOKEN粘贴到这里";
 
 function finish() {
   $done({});
