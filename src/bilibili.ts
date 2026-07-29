@@ -63,10 +63,16 @@ function uniqueEpisodeTitle(item: UnknownRecord, history: UnknownRecord, title: 
 }
 
 export function extractLatestHistory(payload: UnknownRecord, checkedAtMs: number) {
-  const data = isRecord(payload.data) ? payload.data : null;
-  const list = data && Array.isArray(data.list) ? data.list : [];
+  const data = payload.data;
+  const list = Array.isArray(data)
+    ? data
+    : isRecord(data) && Array.isArray(data.list)
+      ? data.list
+      : [];
   const item = isRecord(list[0]) ? list[0] : null;
-  const history = item && isRecord(item.history) ? item.history : null;
+  // The cursor API nests identity fields under `history`; the legacy API
+  // returns the same fields directly on each item.
+  const history = item && isRecord(item.history) ? item.history : item;
   if (!item || !history) return null;
 
   const title = cleanText(item.title);
@@ -160,16 +166,27 @@ export async function handleBilibiliRecentProbe(request: Request, env: Env): Pro
     historyUrl.searchParams.set("ps", "1");
 
     const historyResponse = await fetch(historyUrl, { headers });
-    const payload = await historyResponse.json<unknown>().catch(() => null);
-    const upstreamCode = isRecord(payload) ? cleanNumber(payload.code) : undefined;
+    let payload = await historyResponse.json<unknown>().catch(() => null);
+    let upstreamCode = isRecord(payload) ? cleanNumber(payload.code) : undefined;
+    let upstreamStatus = historyResponse.status;
 
-    if (!historyResponse.ok || !isRecord(payload) || upstreamCode !== 0) {
+    if (historyResponse.status === 412 || upstreamCode === -412) {
+      const legacyUrl = new URL("https://api.bilibili.com/x/v2/history");
+      legacyUrl.searchParams.set("pn", "1");
+      legacyUrl.searchParams.set("ps", "1");
+      const legacyResponse = await fetch(legacyUrl, { headers });
+      payload = await legacyResponse.json<unknown>().catch(() => null);
+      upstreamCode = isRecord(payload) ? cleanNumber(payload.code) : undefined;
+      upstreamStatus = legacyResponse.status;
+    }
+
+    if (upstreamStatus < 200 || upstreamStatus >= 300 || !isRecord(payload) || upstreamCode !== 0) {
       const loginExpired = upstreamCode === -101;
       return noStoreJson(
         {
           ok: false,
           error: loginExpired ? "B站登录态已失效" : "B站最近观看接口请求失败",
-          upstreamHttpStatus: historyResponse.status,
+          upstreamHttpStatus: upstreamStatus,
           upstreamCode: upstreamCode ?? null,
         },
         { status: 502 }
