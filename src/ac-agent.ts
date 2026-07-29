@@ -5,7 +5,12 @@ import { getTuyaToken, sendAcCommand, getAcStatus } from "./tuya";
 import { handleNeteaseRecentProbe } from "./netease";
 import { handleBilibiliRecentProbe } from "./bilibili";
 import type { Env, Props } from "./index";
-import type { BilibiliPlaybackSnapshot, DeviceSnapshot } from "./device-state";
+import type {
+  BilibiliPlaybackSnapshot,
+  CheckinTopic,
+  CompactCheckinSnapshot,
+  DeviceSnapshot,
+} from "./device-state";
 
 type AcMode   = "cool" | "heat" | "fan" | "auto" | "dry";
 type FanSpeed  = "low"  | "medium" | "high" | "auto";
@@ -166,6 +171,37 @@ export class AcMcpAgent extends McpAgent<Env, AcState, Props> {
       throw new Error(`读取手机状态失败（HTTP ${response.status}）`);
     }
     return response.json<DeviceSnapshot>();
+  }
+
+  private async compactCheckinSnapshot(): Promise<CompactCheckinSnapshot> {
+    const id = this.env.DeviceStateStore.idFromName("primary-phone");
+    const stub = this.env.DeviceStateStore.get(id);
+    const response = await stub.fetch("https://device-state.internal/checkin-status");
+    if (!response.ok) {
+      throw new Error(`读取精简查岗状态失败（HTTP ${response.status}）`);
+    }
+    return response.json<CompactCheckinSnapshot>();
+  }
+
+  private async recordCheckinAction(topic: CheckinTopic, summary?: string): Promise<unknown> {
+    const id = this.env.DeviceStateStore.idFromName("primary-phone");
+    const stub = this.env.DeviceStateStore.get(id);
+    const response = await stub.fetch("https://device-state.internal/checkin-action", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ topic, summary }),
+    });
+    const payload: Record<string, unknown> = await response
+      .json<Record<string, unknown>>()
+      .catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(
+        typeof payload.error === "string"
+          ? payload.error
+          : `记录查岗消息失败（HTTP ${response.status}）`
+      );
+    }
+    return payload;
   }
 
   private async neteaseRecentSong(): Promise<NeteaseProbePayload> {
@@ -376,6 +412,85 @@ export class AcMcpAgent extends McpAgent<Env, AcState, Props> {
   }
 
   async init() {
+    // ── get_checkin_status ─────────────────────────────────────────────────
+    this.server.tool(
+      "get_checkin_status",
+      "定时主动查岗专用的精简状态接口。只返回本轮新变化、简要手机状态、当前外出和少量去重状态；不返回坐标、完整地址、附近地标或近 24 小时列表。定时任务优先调用本工具，不要用 get_device_status。",
+      {},
+      async () => {
+        const [compact, snapshot, netease] = await Promise.all([
+          this.compactCheckinSnapshot(),
+          this.deviceSnapshot(),
+          this.neteaseRecentSong().catch(() => null),
+        ]);
+        const bilibili = snapshot.bilibiliPlayback
+          ? this.bilibiliFromDevice(snapshot.bilibiliPlayback)
+          : await this.bilibiliRecentVideo().catch(() => null);
+        const song = netease?.song?.likelyPlaying ? netease.song : null;
+        const video = bilibili?.video?.likelyWatching ? bilibili.video : null;
+
+        const payload = {
+          ...compact,
+          media: {
+            music: song ? {
+              title: song.name,
+              artists: song.artists,
+              lyric: song.currentLyric?.text ?? null,
+              playedAt: song.playedAt,
+            } : null,
+            bilibili: video ? {
+              title: video.title,
+              episodeTitle: video.episodeTitle,
+              progressPercent: video.progressPercent,
+              viewedAt: video.viewedAt,
+            } : null,
+          },
+        };
+        return {
+          content: [{
+            type: "text" as const,
+            text: JSON.stringify(payload, null, 2),
+          }],
+        };
+      }
+    );
+
+    // ── record_checkin_action ──────────────────────────────────────────────
+    this.server.tool(
+      "record_checkin_action",
+      "记录本轮即将发出的主动消息，用于服务端去重。只在已经决定于同一回复中发送主动消息时调用：早安用 good_morning，外出关心用 outing，下午关心用 afternoon_checkin，熬夜提醒用 late_night；不要为未发送的消息写入。",
+      {
+        topic: z.enum([
+          "good_morning",
+          "outing",
+          "afternoon_checkin",
+          "late_night",
+          "other",
+        ]).describe("本轮主动消息针对的主题"),
+        summary: z.string().trim().min(1).max(160).optional()
+          .describe("可选的一句话摘要，不要写入完整聊天内容"),
+      },
+      async ({ topic, summary }) => {
+        try {
+          const result = await this.recordCheckinAction(topic, summary);
+          return {
+            content: [{
+              type: "text" as const,
+              text: JSON.stringify(result, null, 2),
+            }],
+          };
+        } catch (error) {
+          return {
+            content: [{
+              type: "text" as const,
+              text: `未记录查岗消息：${error instanceof Error ? error.message : String(error)}`,
+            }],
+            isError: true,
+          };
+        }
+      }
+    );
+
     // ── get_device_status ──────────────────────────────────────────────────
     this.server.tool(
       "get_device_status",

@@ -119,9 +119,76 @@ export interface DeviceSnapshot {
   bilibiliPlayback: BilibiliPlaybackSnapshot | null;
 }
 
+export type CheckinTopic =
+  | "good_morning"
+  | "outing"
+  | "afternoon_checkin"
+  | "late_night"
+  | "other";
+
+export interface ProactiveMessageState {
+  topic: CheckinTopic;
+  sentAt: string;
+  summary?: string;
+  outingId?: string;
+}
+
+export interface CurrentOutingState {
+  id: string;
+  startedAt: string;
+  remindedAt?: string;
+}
+
+export interface CheckinState {
+  lastCompactReadAt?: string;
+  goodMorningDate?: string;
+  homeStatus: "home" | "away" | "unknown";
+  currentOuting: CurrentOutingState | null;
+  lastOutingEndedAt?: string;
+  lastProactiveMessage: ProactiveMessageState | null;
+}
+
+export interface CompactCheckinSnapshot {
+  checkedAt: string;
+  previousCheckedAt: string | null;
+  status: {
+    reportedAt: string | null;
+    ageSeconds: number | null;
+    batteryLevel?: number;
+    charging?: boolean;
+    networkType?: string;
+    focusMode?: string;
+    stepsToday?: number;
+    menstrualPhase?: string;
+    location?: string;
+    weather?: {
+      condition?: string;
+      temperatureC?: number;
+      feelsLikeC?: number;
+      precipitationChance?: number;
+    };
+  } | null;
+  changes: AppEvent[];
+  activeApps: Array<{ name: string; openedAt: string }>;
+  outing: {
+    homeStatus: CheckinState["homeStatus"];
+    currentOutingId: string | null;
+    startedAt: string | null;
+    reminded: boolean;
+    remindedAt: string | null;
+  };
+  dedupe: {
+    today: string;
+    goodMorningSentToday: boolean;
+    currentOutingReminded: boolean;
+    lastProactiveMessage: ProactiveMessageState | null;
+  };
+}
+
 const MAX_EVENTS = 100;
 const MAX_SESSIONS = 100;
 const MAX_PERIOD_STARTS = 24;
+const MAX_COMPACT_CHANGES = 5;
 
 function cleanText(value: unknown, maxLength = 120): string | undefined {
   if (typeof value === "number" || typeof value === "boolean") value = String(value);
@@ -696,6 +763,14 @@ export class DeviceStateStore {
       return Response.json(snapshot);
     }
 
+    if (request.method === "GET" && pathname === "/checkin-status") {
+      return Response.json(await this.compactCheckinStatus());
+    }
+
+    if (request.method === "POST" && pathname === "/checkin-action") {
+      return this.recordCheckinAction(request);
+    }
+
     return new Response("Not Found", { status: 404 });
   }
 
@@ -718,6 +793,7 @@ export class DeviceStateStore {
     }
 
     const current = await this.snapshot();
+    const checkinState = await this.loadCheckinState(current.recentEvents);
     let periodStarts = await this.loadPeriodStarts();
 
     if (report.periodStartedAt !== undefined) {
@@ -821,6 +897,23 @@ export class DeviceStateStore {
           delete current.activeApps[report.appName];
         }
       }
+
+      // The iPhone shortcuts use these two special events as durable home/away
+      // signals. Keep the outing lifecycle separate from ordinary app history so
+      // a later app event cannot overwrite it.
+      if (report.appName === "离家" && report.appAction === "close") {
+        if (checkinState.homeStatus !== "away" || !checkinState.currentOuting) {
+          checkinState.currentOuting = {
+            id: `outing:${occurredAt}`,
+            startedAt: occurredAt,
+          };
+        }
+        checkinState.homeStatus = "away";
+      } else if (report.appName === "到家" && report.appAction === "open") {
+        checkinState.homeStatus = "home";
+        checkinState.currentOuting = null;
+        checkinState.lastOutingEndedAt = occurredAt;
+      }
     }
 
     await this.state.storage.put({
@@ -829,6 +922,7 @@ export class DeviceStateStore {
       activeApps: current.activeApps,
       recentEvents: current.recentEvents,
       recentSessions: current.recentSessions,
+      checkinState,
     });
 
     // debug is temporary — remove once the Shortcut's field names are settled
@@ -913,6 +1007,196 @@ export class DeviceStateStore {
   private async loadPeriodStarts(): Promise<string[]> {
     const stored = await this.state.storage.get<string[]>("periodStarts");
     return periodStartsFromDates(Array.isArray(stored) ? stored : []);
+  }
+
+  private async loadCheckinState(recentEvents: AppEvent[] = []): Promise<CheckinState> {
+    const stored = await this.state.storage.get<Partial<CheckinState>>("checkinState");
+    const state: CheckinState = {
+      lastCompactReadAt: stored?.lastCompactReadAt,
+      goodMorningDate: stored?.goodMorningDate,
+      homeStatus: stored?.homeStatus ?? "unknown",
+      currentOuting: stored?.currentOuting ?? null,
+      lastOutingEndedAt: stored?.lastOutingEndedAt,
+      lastProactiveMessage: stored?.lastProactiveMessage ?? null,
+    };
+
+    // Bootstrap a freshly deployed state from the newest existing home/away
+    // event. This avoids requiring the user to leave and arrive once again.
+    if (!stored || state.homeStatus === "unknown") {
+      const latestHomeEvent = recentEvents.find((event) =>
+        (event.appName === "离家" && event.action === "close") ||
+        (event.appName === "到家" && event.action === "open")
+      );
+      if (latestHomeEvent?.appName === "离家") {
+        state.homeStatus = "away";
+        state.currentOuting = {
+          id: `outing:${latestHomeEvent.occurredAt}`,
+          startedAt: latestHomeEvent.occurredAt,
+        };
+      } else if (latestHomeEvent?.appName === "到家") {
+        state.homeStatus = "home";
+        state.currentOuting = null;
+        state.lastOutingEndedAt = latestHomeEvent.occurredAt;
+      }
+    }
+
+    return state;
+  }
+
+  private conciseLocation(latest: StoredDeviceReport): string | undefined {
+    const resolved = latest.resolvedLocation;
+    // Intentionally omit the raw Shortcut address, coordinates, road and POIs.
+    // The scheduled check only needs a coarse area label.
+    return [resolved?.township, resolved?.neighborhood].filter(Boolean).join(" · ") || undefined;
+  }
+
+  private async compactCheckinStatus(): Promise<CompactCheckinSnapshot> {
+    const checkedAt = new Date().toISOString();
+    const checkedAtMs = new Date(checkedAt).getTime();
+    const snapshot = await this.snapshot();
+    const checkinState = await this.loadCheckinState(snapshot.recentEvents);
+    const previousCheckedAt = checkinState.lastCompactReadAt ?? null;
+    const previousCheckedAtMs = previousCheckedAt
+      ? new Date(previousCheckedAt).getTime()
+      : checkedAtMs - 4 * 60 * 60 * 1000;
+    const effectivePreviousMs = Number.isNaN(previousCheckedAtMs)
+      ? checkedAtMs - 4 * 60 * 60 * 1000
+      : previousCheckedAtMs;
+
+    const changes = snapshot.recentEvents
+      .filter((event) => {
+        const eventMs = new Date(event.receivedAt || event.occurredAt).getTime();
+        return !Number.isNaN(eventMs) && eventMs > effectivePreviousMs && eventMs <= checkedAtMs;
+      })
+      .slice(0, MAX_COMPACT_CHANGES);
+
+    const latest = snapshot.latest;
+    const reportedAt = latest
+      ? latest.statusReportedAt ?? latest.reportedAt ?? latest.receivedAt
+      : null;
+    const reportedAtMs = reportedAt ? new Date(reportedAt).getTime() : Number.NaN;
+    const weather = latest && (
+      latest.weatherCondition !== undefined ||
+      latest.temperatureC !== undefined ||
+      latest.feelsLikeC !== undefined ||
+      latest.precipitationChance !== undefined
+    ) ? {
+      condition: latest.weatherCondition,
+      temperatureC: latest.temperatureC,
+      feelsLikeC: latest.feelsLikeC,
+      precipitationChance: latest.precipitationChance,
+    } : undefined;
+
+    const currentOuting = checkinState.currentOuting;
+    const today = chinaDateKey(new Date(checkedAt)) ?? checkedAt.slice(0, 10);
+    const status: CompactCheckinSnapshot = {
+      checkedAt,
+      previousCheckedAt,
+      status: latest ? {
+        reportedAt,
+        ageSeconds: Number.isNaN(reportedAtMs)
+          ? null
+          : Math.max(0, Math.round((checkedAtMs - reportedAtMs) / 1000)),
+        batteryLevel: latest.batteryLevel,
+        charging: latest.charging,
+        networkType: latest.networkType,
+        focusMode: latest.focusMode,
+        stepsToday: latest.stepsToday,
+        menstrualPhase: latest.menstrualCycle?.phaseLabel,
+        location: this.conciseLocation(latest),
+        weather,
+      } : null,
+      changes,
+      activeApps: Object.entries(snapshot.activeApps)
+        .filter(([name]) => name !== "到家" && name !== "离家")
+        .slice(0, 5)
+        .map(([name, openedAt]) => ({ name, openedAt })),
+      outing: {
+        homeStatus: checkinState.homeStatus,
+        currentOutingId: currentOuting?.id ?? null,
+        startedAt: currentOuting?.startedAt ?? null,
+        reminded: Boolean(currentOuting?.remindedAt),
+        remindedAt: currentOuting?.remindedAt ?? null,
+      },
+      dedupe: {
+        today,
+        goodMorningSentToday: checkinState.goodMorningDate === today,
+        currentOutingReminded: Boolean(currentOuting?.remindedAt),
+        lastProactiveMessage: checkinState.lastProactiveMessage,
+      },
+    };
+
+    checkinState.lastCompactReadAt = checkedAt;
+    await this.state.storage.put("checkinState", checkinState);
+    return status;
+  }
+
+  private async recordCheckinAction(request: Request): Promise<Response> {
+    const sentAt = new Date().toISOString();
+    let input: Record<string, unknown>;
+    try {
+      const parsed = await request.json<unknown>();
+      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+        throw new Error("请求体必须是 JSON 对象");
+      }
+      input = parsed as Record<string, unknown>;
+    } catch (error) {
+      return Response.json(
+        { ok: false, error: error instanceof Error ? error.message : String(error) },
+        { status: 400 }
+      );
+    }
+
+    const allowedTopics: CheckinTopic[] = [
+      "good_morning",
+      "outing",
+      "afternoon_checkin",
+      "late_night",
+      "other",
+    ];
+    const topic = typeof input.topic === "string" && allowedTopics.includes(input.topic as CheckinTopic)
+      ? input.topic as CheckinTopic
+      : undefined;
+    if (!topic) {
+      return Response.json({ ok: false, error: "无效的主动消息类型" }, { status: 400 });
+    }
+
+    const snapshot = await this.snapshot();
+    const checkinState = await this.loadCheckinState(snapshot.recentEvents);
+    if (topic === "outing" && !checkinState.currentOuting) {
+      return Response.json(
+        { ok: false, error: "当前没有进行中的外出，未写入提醒状态" },
+        { status: 409 }
+      );
+    }
+
+    const summary = cleanText(input.summary, 160);
+    const proactive: ProactiveMessageState = {
+      topic,
+      sentAt,
+      summary,
+      outingId: topic === "outing" ? checkinState.currentOuting?.id : undefined,
+    };
+    checkinState.lastProactiveMessage = proactive;
+    if (topic === "good_morning") {
+      checkinState.goodMorningDate = chinaDateKey(new Date(sentAt));
+    }
+    if (topic === "outing" && checkinState.currentOuting) {
+      checkinState.currentOuting.remindedAt = sentAt;
+    }
+
+    await this.state.storage.put("checkinState", checkinState);
+    const today = chinaDateKey(new Date(sentAt)) ?? sentAt.slice(0, 10);
+    return Response.json({
+      ok: true,
+      dedupe: {
+        today,
+        goodMorningSentToday: checkinState.goodMorningDate === today,
+        currentOutingId: checkinState.currentOuting?.id ?? null,
+        currentOutingReminded: Boolean(checkinState.currentOuting?.remindedAt),
+        lastProactiveMessage: checkinState.lastProactiveMessage,
+      },
+    });
   }
 
   private async snapshot(): Promise<DeviceSnapshot> {
