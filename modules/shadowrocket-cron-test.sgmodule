@@ -1,0 +1,5 @@
+#!name=小G cron 三分钟测试
+#!desc=每分钟运行一次，只发送“cron 已运行”通知；测试结束后应停用或删除。
+
+[Script]
+小G cron 测试 = type=cron,script-path=https://raw.githubusercontent.com/guyu415/7777/refs/heads/claude/worker-oauth-auth-6wxiq4/scripts/shadowrocket-cron-test.js,cronexpr="* * * * *",wake-system=true,timeout=10,script-update-interval=0,enable=true
