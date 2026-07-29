@@ -2,6 +2,7 @@ import { OAuthProvider, type OAuthHelpers } from "@cloudflare/workers-oauth-prov
 import { AcMcpAgent } from "./ac-agent";
 import { DeviceStateStore } from "./device-state";
 import { handleNeteaseRecentProbe } from "./netease";
+import { handleBilibiliRecentProbe } from "./bilibili";
 
 // Re-export the Durable Object class so Cloudflare can find it
 export { AcMcpAgent, DeviceStateStore };
@@ -24,6 +25,8 @@ export interface Env {
   AMAP_WEB_SERVICE_KEY?: string;
   /** NetEase Cloud Music browser cookie, stored as a Wrangler secret. */
   NCM_COOKIE?: string;
+  /** Bilibili browser cookie, stored as a Wrangler secret. */
+  BILIBILI_COOKIE?: string;
   // Tuya API (vars + secret)
   TUYA_BASE_URL: string;
   TUYA_CLIENT_ID: string;
@@ -89,6 +92,16 @@ async function handleProtectedNeteaseProbe(request: Request, env: Env): Promise<
     );
   }
   return handleNeteaseRecentProbe(request, env);
+}
+
+async function handleProtectedBilibiliProbe(request: Request, env: Env): Promise<Response> {
+  if (!isAuthorizedDeviceReport(request, env)) {
+    return Response.json(
+      { ok: false, error: "Unauthorized" },
+      { status: 401, headers: { "Cache-Control": "no-store" } }
+    );
+  }
+  return handleBilibiliRecentProbe(request, env);
 }
 
 // ─── Authorization handler ────────────────────────────────────────────────────
@@ -178,6 +191,7 @@ async function handleAuthorize(request: Request, env: Env): Promise<Response> {
       <div class="perm"><span class="check">✓</span> 接收用户主动记录的月经开始日期</div>
       <div class="perm"><span class="check">✓</span> 读取用户手写的互动准则（只读）</div>
       <div class="perm"><span class="check">✓</span> 在用户明确要求时新增互动准则</div>
+      <div class="perm"><span class="check">✓</span> 查看网易云最近播放和 B 站最近观看（只读）</div>
       <div class="perm"><span class="check">✓</span> 权限范围：${escHtml(scopeLabel)}</div>
     </div>
     <form method="POST">
@@ -230,8 +244,9 @@ function landingPage(origin: string): Response {
   <div class="tool"><span class="tool-name">set_temperature</span><span class="tool-desc">设置目标温度（16–30°C）</span></div>
   <div class="tool"><span class="tool-name">set_mode</span><span class="tool-desc">切换运行模式（制冷 / 制热 / 送风 / 自动 / 除湿）</span></div>
   <div class="tool"><span class="tool-name">set_fan_speed</span><span class="tool-desc">调节风速（低速 / 中速 / 高速 / 自动）</span></div>
-  <div class="tool"><span class="tool-name">get_device_status</span><span class="tool-desc">查看手机状态、位置天气、App 动态，以及网易云最近播放</span></div>
+  <div class="tool"><span class="tool-name">get_device_status</span><span class="tool-desc">查看手机状态、位置天气、App 动态、网易云最近播放和 B 站最近观看</span></div>
   <div class="tool"><span class="tool-name">get_netease_recent</span><span class="tool-desc">单独查询网易云最近播放，并估计是否可能仍在播放</span></div>
+  <div class="tool"><span class="tool-name">get_bilibili_recent</span><span class="tool-desc">单独查询 B 站最新观看，并返回分集标题和观看进度</span></div>
   <div class="tool"><span class="tool-name">get_interaction_rules</span><span class="tool-desc">读取记忆库中用户手写的长期互动准则</span></div>
   <div class="tool"><span class="tool-name">add_interaction_rule</span><span class="tool-desc">在用户明确要求时新增一条长期互动准则</span></div>
 </body>
@@ -249,6 +264,7 @@ const defaultHandler = {
     if (pathname === "/device/report") return handleDeviceReport(request, env);
     if (pathname === "/device/period-start") return handlePeriodStart(request, env);
     if (pathname === "/device/netease-probe") return handleProtectedNeteaseProbe(request, env);
+    if (pathname === "/device/bilibili-probe") return handleProtectedBilibiliProbe(request, env);
     if (pathname === "/authorize") return handleAuthorize(request, env);
     if (pathname === "/" || pathname === "") return landingPage(new URL(request.url).origin);
 
