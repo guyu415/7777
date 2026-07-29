@@ -109,6 +109,8 @@ export function extractLatestHistory(payload: UnknownRecord, checkedAtMs: number
   const page = cleanNumber(history.page) ?? null;
   const episodeId = cleanNumber(history.epid) ?? null;
   const oid = cleanNumber(history.oid) ?? null;
+  const cid = cleanNumber(history.cid) ?? null;
+  const seasonId = cleanNumber(history.season_id) ?? null;
   const historyKey = episodeId !== null
     ? `${business}:ep${episodeId}`
     : bvid
@@ -122,8 +124,11 @@ export function extractLatestHistory(payload: UnknownRecord, checkedAtMs: number
     episodeTitle: uniqueEpisodeTitle(item, history, title),
     authorName: cleanText(item.author_name) ?? null,
     business,
+    aid: business === "archive" ? oid : null,
     bvid,
+    cid,
     episodeId,
+    seasonId,
     page,
     url: cleanText(item.uri) ?? null,
     cover: cleanText(item.cover) ?? null,

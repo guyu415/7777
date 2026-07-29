@@ -2,7 +2,7 @@ import { OAuthProvider, type OAuthHelpers } from "@cloudflare/workers-oauth-prov
 import { AcMcpAgent } from "./ac-agent";
 import { DeviceStateStore } from "./device-state";
 import { handleNeteaseRecentProbe } from "./netease";
-import { handleBilibiliRecentProbe } from "./bilibili";
+import { extractLatestHistory, handleBilibiliRecentProbe } from "./bilibili";
 
 // Re-export the Durable Object class so Cloudflare can find it
 export { AcMcpAgent, DeviceStateStore };
@@ -106,6 +106,99 @@ async function handleBilibiliReport(request: Request, env: Env): Promise<Respons
     headers: { "Content-Type": "application/json" },
     body: await request.text(),
   });
+}
+
+function jsonRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null;
+}
+
+async function handleBilibiliHistoryReport(request: Request, env: Env): Promise<Response> {
+  if (request.method !== "POST") {
+    return new Response("Method Not Allowed", {
+      status: 405,
+      headers: { Allow: "POST", "Cache-Control": "no-store" },
+    });
+  }
+
+  if (!isAuthorizedDeviceReport(request, env)) {
+    return Response.json(
+      { ok: false, error: "Unauthorized" },
+      { status: 401, headers: { "Cache-Control": "no-store" } }
+    );
+  }
+
+  try {
+    const body = jsonRecord(await request.json<unknown>());
+    const payload = jsonRecord(body?.payload) ?? jsonRecord(body?.historyResponse) ?? body;
+    if (!payload) {
+      return Response.json(
+        { ok: false, error: "请求体必须包含 B站历史接口返回的 JSON 对象" },
+        { status: 400, headers: { "Cache-Control": "no-store" } }
+      );
+    }
+
+    const upstreamCode = Number(payload.code);
+    if (!Number.isFinite(upstreamCode) || upstreamCode !== 0) {
+      return Response.json(
+        {
+          ok: false,
+          error: upstreamCode === -101 ? "B站登录态已失效" : "B站历史响应无效",
+          upstreamCode: Number.isFinite(upstreamCode) ? upstreamCode : null,
+        },
+        { status: 400, headers: { "Cache-Control": "no-store" } }
+      );
+    }
+
+    const checkedAtMs = Date.now();
+    const video = extractLatestHistory(payload, checkedAtMs);
+    if (!video) {
+      return Response.json(
+        { ok: false, error: "B站历史响应中没有可识别的观看记录" },
+        { status: 400, headers: { "Cache-Control": "no-store" } }
+      );
+    }
+
+    const id = env.DeviceStateStore.idFromName("primary-phone");
+    const stub = env.DeviceStateStore.get(id);
+    const saved = await stub.fetch("https://device-state.internal/bilibili-report", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        title: video.title,
+        episodeTitle: video.episodeTitle,
+        authorName: video.authorName,
+        business: video.business,
+        aid: video.aid,
+        bvid: video.bvid,
+        cid: video.cid,
+        episodeId: video.episodeId,
+        seasonId: video.seasonId,
+        page: video.page,
+        url: video.url,
+        durationSeconds: video.durationSeconds,
+        progressSeconds: video.progressSeconds,
+        reportedAt: new Date(checkedAtMs).toISOString(),
+      }),
+    });
+    const result = await saved.json<unknown>().catch(() => null);
+    return Response.json(
+      { ok: saved.ok, receivedAt: new Date(checkedAtMs).toISOString(), video, result },
+      {
+        status: saved.status,
+        headers: { "Cache-Control": "no-store" },
+      }
+    );
+  } catch (error) {
+    return Response.json(
+      {
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+      },
+      { status: 400, headers: { "Cache-Control": "no-store" } }
+    );
+  }
 }
 
 async function handleProtectedNeteaseProbe(request: Request, env: Env): Promise<Response> {
@@ -289,6 +382,9 @@ const defaultHandler = {
     if (pathname === "/device/report") return handleDeviceReport(request, env);
     if (pathname === "/device/period-start") return handlePeriodStart(request, env);
     if (pathname === "/device/bilibili-report") return handleBilibiliReport(request, env);
+    if (pathname === "/device/bilibili-history-report") {
+      return handleBilibiliHistoryReport(request, env);
+    }
     if (pathname === "/device/netease-probe") return handleProtectedNeteaseProbe(request, env);
     if (pathname === "/device/bilibili-probe") return handleProtectedBilibiliProbe(request, env);
     if (pathname === "/authorize") return handleAuthorize(request, env);
