@@ -3,6 +3,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { getTuyaToken, sendAcCommand, getAcStatus } from "./tuya";
 import { handleNeteaseRecentProbe } from "./netease";
+import { handleBilibiliRecentProbe } from "./bilibili";
 import type { Env, Props } from "./index";
 import type { DeviceSnapshot } from "./device-state";
 
@@ -15,6 +16,9 @@ interface AcState {
   mode:            AcMode;
   fanSpeed:        FanSpeed;
   roomTemperature: number;
+  lastBilibiliHistoryKey?: string;
+  lastBilibiliViewedAt?: string | null;
+  lastBilibiliProgressSeconds?: number | null;
 }
 
 // ─── Tuya IR AC value mappings ────────────────────────────────────────────────
@@ -85,6 +89,33 @@ interface NeteaseProbePayload {
   ok: boolean;
   checkedAt?: string;
   song?: NeteaseRecentSong | null;
+  error?: string;
+}
+
+interface BilibiliRecentVideo {
+  historyKey: string;
+  title: string;
+  episodeTitle: string | null;
+  authorName: string | null;
+  business: string;
+  bvid: string | null;
+  episodeId: number | null;
+  page: number | null;
+  url: string | null;
+  cover: string | null;
+  durationSeconds: number | null;
+  progressSeconds: number | null;
+  progressPercent: number | null;
+  viewedAt: string | null;
+  ageSeconds: number | null;
+  completed: boolean;
+  likelyWatching: boolean;
+}
+
+interface BilibiliProbePayload {
+  ok: boolean;
+  checkedAt?: string;
+  video?: BilibiliRecentVideo | null;
   error?: string;
 }
 
@@ -167,6 +198,76 @@ export class AcMcpAgent extends McpAgent<Env, AcState, Props> {
     return lines;
   }
 
+  private async bilibiliRecentVideo(): Promise<BilibiliProbePayload> {
+    const response = await handleBilibiliRecentProbe(
+      new Request("https://bilibili.internal/device/bilibili-probe"),
+      this.env
+    );
+    const payload = await response.json<BilibiliProbePayload>();
+    if (!response.ok || !payload.ok) {
+      throw new Error(payload.error || `查询 B 站失败（HTTP ${response.status}）`);
+    }
+    return payload;
+  }
+
+  private formatBilibiliRecent(payload: BilibiliProbePayload): string[] {
+    const video = payload.video;
+    if (!video) return ["B站最近观看：暂无记录"];
+
+    const status = video.completed
+      ? "最近已看完"
+      : video.likelyWatching
+        ? "可能正在观看"
+        : "最近观看过";
+    const lines = [
+      `B站最近观看（${status}）：`,
+      `  标题：${video.title}`,
+    ];
+    if (video.episodeTitle) lines.push(`  分集：${video.episodeTitle}`);
+    if (video.authorName) lines.push(`  UP主：${video.authorName}`);
+    if (video.progressSeconds !== null) {
+      const duration = video.durationSeconds !== null
+        ? ` / ${formatDuration(video.durationSeconds)}`
+        : "";
+      const percent = video.progressPercent !== null ? `（${video.progressPercent}%）` : "";
+      lines.push(`  观看进度：${formatDuration(video.progressSeconds)}${duration}${percent}`);
+    }
+    if (video.viewedAt) {
+      lines.push(`  B站记录时间：${formatTime(video.viewedAt)}（北京时间）`);
+    }
+    if (video.ageSeconds !== null) {
+      lines.push(`  距查询时间：${formatDuration(video.ageSeconds)}前`);
+    }
+
+    const previousKey = this.state.lastBilibiliHistoryKey;
+    const previousProgress = this.state.lastBilibiliProgressSeconds;
+    if (!previousKey) {
+      lines.push("  与上次查询相比：这是首次记录。");
+    } else if (previousKey !== video.historyKey) {
+      lines.push("  与上次查询相比：已切换到另一条视频或另一集。");
+    } else if (
+      previousProgress !== undefined &&
+      previousProgress !== null &&
+      video.progressSeconds !== null &&
+      video.progressSeconds > previousProgress
+    ) {
+      lines.push(
+        `  与上次查询相比：同一条内容继续看了约 ${formatDuration(video.progressSeconds - previousProgress)}。`
+      );
+    } else {
+      lines.push("  与上次查询相比：仍是同一条内容，暂未发现明显进度变化。");
+    }
+    lines.push("  说明：这是 B 站历史记录的准实时推断，通常会比实际播放稍晚。");
+
+    this.setState({
+      ...this.state,
+      lastBilibiliHistoryKey: video.historyKey,
+      lastBilibiliViewedAt: video.viewedAt,
+      lastBilibiliProgressSeconds: video.progressSeconds,
+    });
+    return lines;
+  }
+
   private async interactionRules(): Promise<InteractionRule[]> {
     const response = await fetch("https://chat.xiaoman.xyz/memory/list", {
       headers: { Accept: "application/json" },
@@ -230,15 +331,19 @@ export class AcMcpAgent extends McpAgent<Env, AcState, Props> {
     // ── get_device_status ──────────────────────────────────────────────────
     this.server.tool(
       "get_device_status",
-      "查看手机最近主动上报的电量、设备信息、今日步数、月经周期阶段估算、定位、天气、当前 App 动态和近 24 小时使用概况；同时返回查询当前时间与数据新鲜度（只读）",
+      "查看手机最近主动上报的电量、设备信息、今日步数、月经周期阶段估算、定位、天气、当前 App 动态和近 24 小时使用概况；同时返回网易云最近播放、B站最近观看、查询当前时间与数据新鲜度（只读）",
       {},
       async () => {
-        const [snapshot, netease] = await Promise.all([
+        const [snapshot, netease, bilibili] = await Promise.all([
           this.deviceSnapshot(),
           this.neteaseRecentSong().catch((error) => ({
             ok: false,
             error: error instanceof Error ? error.message : String(error),
           } satisfies NeteaseProbePayload)),
+          this.bilibiliRecentVideo().catch((error) => ({
+            ok: false,
+            error: error instanceof Error ? error.message : String(error),
+          } satisfies BilibiliProbePayload)),
         ]);
         const latest = snapshot.latest;
         if (!latest) {
@@ -247,6 +352,12 @@ export class AcMcpAgent extends McpAgent<Env, AcState, Props> {
             lines.push(...this.formatNeteaseRecent(netease));
           } else {
             lines.push(`网易云最近播放：暂时无法查询（${netease.error || "未知错误"}）`);
+          }
+          lines.push("");
+          if (bilibili.ok) {
+            lines.push(...this.formatBilibiliRecent(bilibili));
+          } else {
+            lines.push(`B站最近观看：暂时无法查询（${bilibili.error || "未知错误"}）`);
           }
           return {
             content: [{
@@ -381,7 +492,39 @@ export class AcMcpAgent extends McpAgent<Env, AcState, Props> {
           lines.push(`网易云最近播放：暂时无法查询（${netease.error || "未知错误"}）`);
         }
 
+        lines.push("");
+        if (bilibili.ok) {
+          lines.push(...this.formatBilibiliRecent(bilibili));
+        } else {
+          lines.push(`B站最近观看：暂时无法查询（${bilibili.error || "未知错误"}）`);
+        }
+
         return { content: [{ type: "text" as const, text: lines.join("\n") }] };
+      }
+    );
+
+    // ── get_bilibili_recent ───────────────────────────────────────────────
+    this.server.tool(
+      "get_bilibili_recent",
+      "查询 B 站账号最新一条观看历史，返回视频或番剧名称、分集标题、观看时间和进度，并与上一次查询比较是否换视频、切集或继续观看；适合询问 B 站在看什么、看到哪一集或单独测试视频查岗（只读）",
+      {},
+      async () => {
+        try {
+          const payload = await this.bilibiliRecentVideo();
+          return {
+            content: [{
+              type: "text" as const,
+              text: this.formatBilibiliRecent(payload).join("\n"),
+            }],
+          };
+        } catch (error) {
+          return {
+            content: [{
+              type: "text" as const,
+              text: `暂时无法查询 B 站最近观看：${error instanceof Error ? error.message : String(error)}`,
+            }],
+          };
+        }
       }
     );
 
