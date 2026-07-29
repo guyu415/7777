@@ -5,7 +5,7 @@ import { getTuyaToken, sendAcCommand, getAcStatus } from "./tuya";
 import { handleNeteaseRecentProbe } from "./netease";
 import { handleBilibiliRecentProbe } from "./bilibili";
 import type { Env, Props } from "./index";
-import type { DeviceSnapshot } from "./device-state";
+import type { BilibiliPlaybackSnapshot, DeviceSnapshot } from "./device-state";
 
 type AcMode   = "cool" | "heat" | "fan" | "auto" | "dry";
 type FanSpeed  = "low"  | "medium" | "high" | "auto";
@@ -93,6 +93,7 @@ interface NeteaseProbePayload {
 }
 
 interface BilibiliRecentVideo {
+  source?: "account-history" | "device";
   historyKey: string;
   title: string;
   episodeTitle: string | null;
@@ -219,6 +220,40 @@ export class AcMcpAgent extends McpAgent<Env, AcState, Props> {
     return payload;
   }
 
+  private bilibiliFromDevice(playback: BilibiliPlaybackSnapshot): BilibiliProbePayload {
+    const reportedAtMs = new Date(playback.reportedAt).getTime();
+    const ageSeconds = Number.isNaN(reportedAtMs)
+      ? null
+      : Math.max(0, Math.round((Date.now() - reportedAtMs) / 1000));
+    const freshnessWindow = playback.durationSeconds === null
+      ? 10 * 60
+      : Math.min(4 * 60 * 60, Math.max(10 * 60, playback.durationSeconds + 2 * 60));
+    return {
+      ok: true,
+      checkedAt: new Date().toISOString(),
+      video: {
+        source: "device",
+        historyKey: playback.historyKey,
+        title: playback.title,
+        episodeTitle: playback.episodeTitle,
+        authorName: playback.authorName,
+        business: playback.business,
+        bvid: playback.bvid,
+        episodeId: playback.episodeId,
+        page: playback.page,
+        url: playback.url,
+        cover: null,
+        durationSeconds: playback.durationSeconds,
+        progressSeconds: playback.progressSeconds,
+        progressPercent: playback.progressPercent,
+        viewedAt: playback.reportedAt,
+        ageSeconds,
+        completed: playback.completed,
+        likelyWatching: ageSeconds !== null && ageSeconds <= freshnessWindow && !playback.completed,
+      },
+    };
+  }
+
   private formatBilibiliRecent(payload: BilibiliProbePayload): string[] {
     const video = payload.video;
     if (!video) return ["B站最近观看：暂无记录"];
@@ -266,7 +301,11 @@ export class AcMcpAgent extends McpAgent<Env, AcState, Props> {
     } else {
       lines.push("  与上次查询相比：仍是同一条内容，暂未发现明显进度变化。");
     }
-    lines.push("  说明：这是 B 站历史记录的准实时推断，通常会比实际播放稍晚。");
+    lines.push(
+      video.source === "device"
+        ? "  说明：这是手机端播放心跳上报；手机投屏时也会继续更新。"
+        : "  说明：这是 B 站历史记录的准实时推断，通常会比实际播放稍晚。"
+    );
 
     this.setState({
       ...this.state,
@@ -343,17 +382,19 @@ export class AcMcpAgent extends McpAgent<Env, AcState, Props> {
       "查看手机最近主动上报的电量、设备信息、今日步数、月经周期阶段估算、定位、天气、当前 App 动态和近 24 小时使用概况；同时返回网易云最近播放、B站最近观看、查询当前时间与数据新鲜度（只读）",
       {},
       async () => {
-        const [snapshot, netease, bilibili] = await Promise.all([
+        const [snapshot, netease] = await Promise.all([
           this.deviceSnapshot(),
           this.neteaseRecentSong().catch((error) => ({
             ok: false,
             error: error instanceof Error ? error.message : String(error),
           } satisfies NeteaseProbePayload)),
-          this.bilibiliRecentVideo().catch((error) => ({
+        ]);
+        const bilibili = snapshot.bilibiliPlayback
+          ? this.bilibiliFromDevice(snapshot.bilibiliPlayback)
+          : await this.bilibiliRecentVideo().catch((error) => ({
             ok: false,
             error: error instanceof Error ? error.message : String(error),
-          } satisfies BilibiliProbePayload)),
-        ]);
+          } satisfies BilibiliProbePayload));
         const latest = snapshot.latest;
         if (!latest) {
           const lines = ["还没有收到手机上报。请先运行 iPhone 上的「查岗上报」快捷指令。", ""];
@@ -519,7 +560,10 @@ export class AcMcpAgent extends McpAgent<Env, AcState, Props> {
       {},
       async () => {
         try {
-          const payload = await this.bilibiliRecentVideo();
+          const snapshot = await this.deviceSnapshot();
+          const payload = snapshot.bilibiliPlayback
+            ? this.bilibiliFromDevice(snapshot.bilibiliPlayback)
+            : await this.bilibiliRecentVideo();
           return {
             content: [{
               type: "text" as const,

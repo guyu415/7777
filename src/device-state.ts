@@ -89,11 +89,34 @@ export interface AppSession {
   durationSeconds: number;
 }
 
+export interface BilibiliPlaybackSnapshot {
+  historyKey: string;
+  title: string;
+  episodeTitle: string | null;
+  authorName: string | null;
+  business: string;
+  aid: number | null;
+  bvid: string | null;
+  cid: number | null;
+  episodeId: number | null;
+  seasonId: number | null;
+  page: number | null;
+  url: string | null;
+  durationSeconds: number | null;
+  progressSeconds: number | null;
+  progressPercent: number | null;
+  reportedAt: string;
+  receivedAt: string;
+  completed: boolean;
+  source: "device";
+}
+
 export interface DeviceSnapshot {
   latest: StoredDeviceReport | null;
   activeApps: Record<string, string>;
   recentEvents: AppEvent[];
   recentSessions: AppSession[];
+  bilibiliPlayback: BilibiliPlaybackSnapshot | null;
 }
 
 const MAX_EVENTS = 100;
@@ -582,6 +605,72 @@ function normalizeReport(input: unknown, receivedAt: string): StoredDeviceReport
   };
 }
 
+function normalizeBilibiliReport(input: unknown, receivedAt: string): BilibiliPlaybackSnapshot {
+  if (!input || typeof input !== "object" || Array.isArray(input)) {
+    throw new Error("请求体必须是 JSON 对象");
+  }
+  const raw = input as Record<string, unknown>;
+  const aid = cleanNumber(raw.aid);
+  const bvid = cleanText(raw.bvid, 24);
+  const cid = cleanNumber(raw.cid);
+  const episodeId = cleanNumber(raw.episodeId ?? raw.epid);
+  const seasonId = cleanNumber(raw.seasonId ?? raw.sid);
+  const page = cleanNumber(raw.page);
+  const title = cleanText(raw.title, 240) ?? (
+    episodeId !== undefined ? `B站番剧 ep${Math.round(episodeId)}` :
+      bvid ? `B站视频 ${bvid}` :
+        aid !== undefined ? `B站视频 av${Math.round(aid)}` :
+          undefined
+  );
+  if (!title || (aid === undefined && !bvid && episodeId === undefined && cid === undefined)) {
+    throw new Error("缺少可识别的 B站视频或分集信息");
+  }
+
+  const duration = cleanNumber(raw.durationSeconds ?? raw.duration);
+  const progress = cleanNumber(raw.progressSeconds ?? raw.progress);
+  const durationSeconds = duration === undefined ? null : Math.max(0, Math.round(duration));
+  const progressSeconds = progress === undefined ? null : Math.max(0, Math.round(progress));
+  const completed = durationSeconds !== null && durationSeconds > 0 && progressSeconds !== null
+    ? progressSeconds >= durationSeconds * 0.95
+    : false;
+  const business = cleanText(raw.business, 32) ?? (
+    episodeId !== undefined || seasonId !== undefined ? "pgc" : "archive"
+  );
+  const normalizedEpisodeId = episodeId === undefined ? null : Math.round(episodeId);
+  const normalizedAid = aid === undefined ? null : Math.round(aid);
+  const normalizedCid = cid === undefined ? null : Math.round(cid);
+  const normalizedPage = page === undefined ? null : Math.max(1, Math.round(page));
+  const historyKey = normalizedEpisodeId !== null
+    ? `${business}:ep${normalizedEpisodeId}`
+    : bvid
+      ? `${business}:${bvid}:p${normalizedPage ?? 1}`
+      : `${business}:av${normalizedAid ?? "unknown"}:cid${normalizedCid ?? "unknown"}`;
+
+  return {
+    historyKey,
+    title,
+    episodeTitle: cleanText(raw.episodeTitle ?? raw.part, 240) ?? null,
+    authorName: cleanText(raw.authorName, 160) ?? null,
+    business,
+    aid: normalizedAid,
+    bvid: bvid ?? null,
+    cid: normalizedCid,
+    episodeId: normalizedEpisodeId,
+    seasonId: seasonId === undefined ? null : Math.round(seasonId),
+    page: normalizedPage,
+    url: cleanText(raw.url, 500) ?? null,
+    durationSeconds,
+    progressSeconds,
+    progressPercent: durationSeconds !== null && durationSeconds > 0 && progressSeconds !== null
+      ? Math.min(100, Math.max(0, Math.round((progressSeconds / durationSeconds) * 100)))
+      : null,
+    reportedAt: cleanTimestamp(raw.reportedAt, receivedAt),
+    receivedAt,
+    completed,
+    source: "device",
+  };
+}
+
 export class DeviceStateStore {
   constructor(private state: DurableObjectState, private env: Env) {
     void this.env;
@@ -596,6 +685,10 @@ export class DeviceStateStore {
 
     if (request.method === "POST" && pathname === "/period-start") {
       return this.savePeriodStart(request);
+    }
+
+    if (request.method === "POST" && pathname === "/bilibili-report") {
+      return this.saveBilibiliReport(request);
     }
 
     if (request.method === "GET" && pathname === "/snapshot") {
@@ -796,18 +889,47 @@ export class DeviceStateStore {
     });
   }
 
+  private async saveBilibiliReport(request: Request): Promise<Response> {
+    const receivedAt = new Date().toISOString();
+    try {
+      const report = normalizeBilibiliReport(await request.json(), receivedAt);
+      await this.state.storage.put("bilibiliPlayback", report);
+      return Response.json({
+        ok: true,
+        receivedAt,
+        historyKey: report.historyKey,
+        title: report.title,
+        episodeTitle: report.episodeTitle,
+        progressSeconds: report.progressSeconds,
+      });
+    } catch (error) {
+      return Response.json(
+        { ok: false, error: error instanceof Error ? error.message : String(error) },
+        { status: 400 }
+      );
+    }
+  }
+
   private async loadPeriodStarts(): Promise<string[]> {
     const stored = await this.state.storage.get<string[]>("periodStarts");
     return periodStartsFromDates(Array.isArray(stored) ? stored : []);
   }
 
   private async snapshot(): Promise<DeviceSnapshot> {
-    const [storedLatest, periodStarts, activeApps, recentEvents, recentSessions] = await Promise.all([
+    const [
+      storedLatest,
+      periodStarts,
+      activeApps,
+      recentEvents,
+      recentSessions,
+      bilibiliPlayback,
+    ] = await Promise.all([
       this.state.storage.get<StoredDeviceReport>("latest"),
       this.loadPeriodStarts(),
       this.state.storage.get<Record<string, string>>("activeApps"),
       this.state.storage.get<AppEvent[]>("recentEvents"),
       this.state.storage.get<AppSession[]>("recentSessions"),
+      this.state.storage.get<BilibiliPlaybackSnapshot>("bilibiliPlayback"),
     ]);
 
     let latest = storedLatest ? { ...storedLatest } : null;
@@ -829,6 +951,7 @@ export class DeviceStateStore {
       activeApps: activeApps ?? {},
       recentEvents: recentEvents ?? [],
       recentSessions: recentSessions ?? [],
+      bilibiliPlayback: bilibiliPlayback ?? null,
     };
   }
 }

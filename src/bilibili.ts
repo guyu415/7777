@@ -116,6 +116,7 @@ export function extractLatestHistory(payload: UnknownRecord, checkedAtMs: number
       : `${business}:oid${oid ?? "unknown"}:p${page ?? 1}`;
 
   return {
+    source: "account-history" as const,
     historyKey,
     title,
     episodeTitle: uniqueEpisodeTitle(item, history, title),

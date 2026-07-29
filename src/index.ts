@@ -84,6 +84,30 @@ async function handlePeriodStart(request: Request, env: Env): Promise<Response> 
   });
 }
 
+async function handleBilibiliReport(request: Request, env: Env): Promise<Response> {
+  if (request.method !== "POST") {
+    return new Response("Method Not Allowed", {
+      status: 405,
+      headers: { Allow: "POST", "Cache-Control": "no-store" },
+    });
+  }
+
+  if (!isAuthorizedDeviceReport(request, env)) {
+    return Response.json(
+      { ok: false, error: "Unauthorized" },
+      { status: 401, headers: { "Cache-Control": "no-store" } }
+    );
+  }
+
+  const id = env.DeviceStateStore.idFromName("primary-phone");
+  const stub = env.DeviceStateStore.get(id);
+  return stub.fetch("https://device-state.internal/bilibili-report", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: await request.text(),
+  });
+}
+
 async function handleProtectedNeteaseProbe(request: Request, env: Env): Promise<Response> {
   if (!isAuthorizedDeviceReport(request, env)) {
     return Response.json(
@@ -189,6 +213,7 @@ async function handleAuthorize(request: Request, env: Env): Promise<Response> {
       <div class="perm"><span class="check">✓</span> 切换运行模式与风速</div>
       <div class="perm"><span class="check">✓</span> 查看手机主动上报的设备、今日步数、月经周期估算、位置和天气状态（只读）</div>
       <div class="perm"><span class="check">✓</span> 接收用户主动记录的月经开始日期</div>
+      <div class="perm"><span class="check">✓</span> 接收用户手机主动上报的 B 站播放进度</div>
       <div class="perm"><span class="check">✓</span> 读取用户手写的互动准则（只读）</div>
       <div class="perm"><span class="check">✓</span> 在用户明确要求时新增互动准则</div>
       <div class="perm"><span class="check">✓</span> 查看网易云最近播放和 B 站最近观看（只读）</div>
@@ -263,6 +288,7 @@ const defaultHandler = {
 
     if (pathname === "/device/report") return handleDeviceReport(request, env);
     if (pathname === "/device/period-start") return handlePeriodStart(request, env);
+    if (pathname === "/device/bilibili-report") return handleBilibiliReport(request, env);
     if (pathname === "/device/netease-probe") return handleProtectedNeteaseProbe(request, env);
     if (pathname === "/device/bilibili-probe") return handleProtectedBilibiliProbe(request, env);
     if (pathname === "/authorize") return handleAuthorize(request, env);
