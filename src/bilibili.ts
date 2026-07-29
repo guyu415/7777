@@ -148,37 +148,6 @@ export async function handleBilibiliRecentProbe(request: Request, env: Env): Pro
   const checkedAtMs = Date.now();
 
   try {
-    const accountResponse = await fetch("https://api.bilibili.com/x/web-interface/nav", {
-      headers,
-    });
-    const accountPayload = await accountResponse.json<unknown>().catch(() => null);
-    const accountCode = isRecord(accountPayload) ? cleanNumber(accountPayload.code) : undefined;
-    const accountData = isRecord(accountPayload) && isRecord(accountPayload.data)
-      ? accountPayload.data
-      : null;
-    const isLoggedIn = accountData?.isLogin === true;
-
-    if (!accountResponse.ok || !isRecord(accountPayload) || accountCode !== 0) {
-      return noStoreJson(
-        {
-          ok: false,
-          error: "B站登录态检查失败",
-          upstreamHttpStatus: accountResponse.status,
-          upstreamCode: accountCode ?? null,
-        },
-        { status: 502 }
-      );
-    }
-    if (!isLoggedIn) {
-      return noStoreJson(
-        {
-          ok: false,
-          error: "B站 Cookie 未登录或已失效；请登录 bilibili.com 后更新完整 Cookie（至少包含 SESSDATA）",
-        },
-        { status: 502 }
-      );
-    }
-
     const historyUrl = new URL("https://api.bilibili.com/x/web-interface/history/cursor");
     historyUrl.searchParams.set("max", "0");
     historyUrl.searchParams.set("view_at", "0");
