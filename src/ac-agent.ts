@@ -117,6 +117,8 @@ interface BilibiliProbePayload {
   checkedAt?: string;
   video?: BilibiliRecentVideo | null;
   error?: string;
+  upstreamHttpStatus?: number;
+  upstreamCode?: number | null;
 }
 
 export class AcMcpAgent extends McpAgent<Env, AcState, Props> {
@@ -205,7 +207,14 @@ export class AcMcpAgent extends McpAgent<Env, AcState, Props> {
     );
     const payload = await response.json<BilibiliProbePayload>();
     if (!response.ok || !payload.ok) {
-      throw new Error(payload.error || `查询 B 站失败（HTTP ${response.status}）`);
+      const diagnostics = [
+        payload.upstreamHttpStatus !== undefined ? `HTTP ${payload.upstreamHttpStatus}` : "",
+        payload.upstreamCode !== undefined && payload.upstreamCode !== null
+          ? `code ${payload.upstreamCode}`
+          : "",
+      ].filter(Boolean).join("，");
+      const message = payload.error || `查询 B 站失败（HTTP ${response.status}）`;
+      throw new Error(diagnostics ? `${message}（${diagnostics}）` : message);
     }
     return payload;
   }
