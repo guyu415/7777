@@ -303,7 +303,7 @@ export class AcMcpAgent extends McpAgent<Env, AcState, Props> {
     }
     lines.push(
       video.source === "device"
-        ? "  说明：这是手机端播放心跳上报；手机投屏时也会继续更新。"
+        ? "  说明：这是手机端上报；更新时间取决于手机自动化或播放心跳。"
         : "  说明：这是 B 站历史记录的准实时推断，通常会比实际播放稍晚。"
     );
 
