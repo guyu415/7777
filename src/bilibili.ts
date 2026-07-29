@@ -26,10 +26,15 @@ function normalizeCookie(rawCookie: string): string {
 function bilibiliHeaders(cookie: string): HeadersInit {
   return {
     Accept: "application/json, text/plain, */*",
+    "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
     Cookie: cookie,
-    Referer: "https://www.bilibili.com/account/history",
+    Origin: "https://www.bilibili.com",
+    Referer: "https://www.bilibili.com/",
+    "Sec-Fetch-Dest": "empty",
+    "Sec-Fetch-Mode": "cors",
+    "Sec-Fetch-Site": "same-site",
     "User-Agent":
-      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/126.0 Safari/537.36",
+      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/138.0.0.0 Safari/537.36",
   };
 }
 
@@ -152,6 +157,7 @@ export async function handleBilibiliRecentProbe(request: Request, env: Env): Pro
     historyUrl.searchParams.set("max", "0");
     historyUrl.searchParams.set("view_at", "0");
     historyUrl.searchParams.set("business", "");
+    historyUrl.searchParams.set("ps", "1");
 
     const historyResponse = await fetch(historyUrl, { headers });
     const payload = await historyResponse.json<unknown>().catch(() => null);
