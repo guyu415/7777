@@ -1,11 +1,12 @@
 import { OAuthProvider, type OAuthHelpers } from "@cloudflare/workers-oauth-provider";
 import { AcMcpAgent } from "./ac-agent";
 import { DeviceStateStore } from "./device-state";
+import { HeartStateStore } from "./heart-state";
 import { handleNeteaseRecentProbe } from "./netease";
 import { extractLatestHistory, handleBilibiliRecentProbe } from "./bilibili";
 
 // Re-export the Durable Object class so Cloudflare can find it
-export { AcMcpAgent, DeviceStateStore };
+export { AcMcpAgent, DeviceStateStore, HeartStateStore };
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -19,6 +20,7 @@ export interface Env {
   OAUTH_KV: KVNamespace;
   AcMcpAgent: DurableObjectNamespace;
   DeviceStateStore: DurableObjectNamespace;
+  HeartStateStore: DurableObjectNamespace;
   COOKIE_SECRET: string;
   DEVICE_WRITE_TOKEN: string;
   /** AMap Web Service API key, stored as a Wrangler secret. */
@@ -308,6 +310,7 @@ async function handleAuthorize(request: Request, env: Env): Promise<Response> {
       <div class="perm"><span class="check">✓</span> 接收用户主动记录的月经开始日期</div>
       <div class="perm"><span class="check">✓</span> 接收用户手机主动上报的 B 站播放进度</div>
       <div class="perm"><span class="check">✓</span> 保存少量查岗去重状态（早安、当前外出提醒、上次主动消息主题）</div>
+      <div class="perm"><span class="check">✓</span> 保存哥哥的轻量心潮状态（驱力、疲劳、睡眠与情绪余韵）</div>
       <div class="perm"><span class="check">✓</span> 读取用户手写的互动准则（只读）</div>
       <div class="perm"><span class="check">✓</span> 在用户明确要求时新增互动准则</div>
       <div class="perm"><span class="check">✓</span> 查看网易云最近播放和 B 站最近观看（只读）</div>
@@ -365,6 +368,8 @@ function landingPage(origin: string): Response {
   <div class="tool"><span class="tool-name">set_fan_speed</span><span class="tool-desc">调节风速（低速 / 中速 / 高速 / 自动）</span></div>
   <div class="tool"><span class="tool-name">get_checkin_status</span><span class="tool-desc">定时查岗专用精简状态，只返回本轮变化和去重状态</span></div>
   <div class="tool"><span class="tool-name">record_checkin_action</span><span class="tool-desc">记录已经发出的主动消息主题，用于早安和外出关心去重</span></div>
+  <div class="tool"><span class="tool-name">get_heart_state</span><span class="tool-desc">读取哥哥当前的轻量心潮状态</span></div>
+  <div class="tool"><span class="tool-name">record_heart_event</span><span class="tool-desc">记录一次明确完成的互动及可选闪念</span></div>
   <div class="tool"><span class="tool-name">get_device_status</span><span class="tool-desc">查看手机状态、位置天气、App 动态、网易云最近播放和 B 站最近观看</span></div>
   <div class="tool"><span class="tool-name">get_netease_recent</span><span class="tool-desc">单独查询网易云最近播放，并估计是否可能仍在播放</span></div>
   <div class="tool"><span class="tool-name">get_bilibili_recent</span><span class="tool-desc">单独查询 B 站最新观看，并返回分集标题和观看进度</span></div>
