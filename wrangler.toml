@@ -6,7 +6,8 @@ compatibility_flags = ["nodejs_compat", "global_fetch_strictly_public"]
 [durable_objects]
 bindings = [
   { name = "AcMcpAgent", class_name = "AcMcpAgent" },
-  { name = "DeviceStateStore", class_name = "DeviceStateStore" }
+  { name = "DeviceStateStore", class_name = "DeviceStateStore" },
+  { name = "HeartStateStore", class_name = "HeartStateStore" }
 ]
 
 [[migrations]]
@@ -16,6 +17,10 @@ new_sqlite_classes = ["AcMcpAgent"]
 [[migrations]]
 tag = "v2"
 new_sqlite_classes = ["DeviceStateStore"]
+
+[[migrations]]
+tag = "v3"
+new_sqlite_classes = ["HeartStateStore"]
 
 [[kv_namespaces]]
 binding = "OAUTH_KV"

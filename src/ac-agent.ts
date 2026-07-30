@@ -4,6 +4,14 @@ import { z } from "zod";
 import { getTuyaToken, sendAcCommand, getAcStatus } from "./tuya";
 import { handleNeteaseRecentProbe } from "./netease";
 import { handleBilibiliRecentProbe } from "./bilibili";
+import {
+  HEART_DRIVE_KEYS,
+  HEART_INTERACTION_TYPES,
+  type HeartContext,
+  type HeartDriveKey,
+  type HeartEvent,
+  type HeartInteractionType,
+} from "./heart-state";
 import type { Env, Props } from "./index";
 import type {
   BilibiliPlaybackSnapshot,
@@ -181,6 +189,37 @@ export class AcMcpAgent extends McpAgent<Env, AcState, Props> {
       throw new Error(`读取精简查岗状态失败（HTTP ${response.status}）`);
     }
     return response.json<CompactCheckinSnapshot>();
+  }
+
+  private async heartContext(): Promise<HeartContext> {
+    const id = this.env.HeartStateStore.idFromName("primary-heart");
+    const stub = this.env.HeartStateStore.get(id);
+    const response = await stub.fetch("https://heart-state.internal/context");
+    if (!response.ok) {
+      throw new Error(`读取心潮状态失败（HTTP ${response.status}）`);
+    }
+    return response.json<HeartContext>();
+  }
+
+  private async recordHeartEvent(event: HeartEvent): Promise<unknown> {
+    const id = this.env.HeartStateStore.idFromName("primary-heart");
+    const stub = this.env.HeartStateStore.get(id);
+    const response = await stub.fetch("https://heart-state.internal/event", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(event),
+    });
+    const payload: Record<string, unknown> = await response
+      .json<Record<string, unknown>>()
+      .catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(
+        typeof payload.error === "string"
+          ? payload.error
+          : `记录心潮事件失败（HTTP ${response.status}）`
+      );
+    }
+    return payload;
   }
 
   private async recordCheckinAction(topic: CheckinTopic, summary?: string): Promise<unknown> {
@@ -415,13 +454,17 @@ export class AcMcpAgent extends McpAgent<Env, AcState, Props> {
     // ── get_checkin_status ─────────────────────────────────────────────────
     this.server.tool(
       "get_checkin_status",
-      "定时主动查岗专用的精简状态接口。只返回本轮新变化、简要手机状态、当前外出和少量去重状态；不返回坐标、完整地址、附近地标或近 24 小时列表。定时任务优先调用本工具，不要用 get_device_status。",
+      "定时主动查岗专用的精简状态接口。返回本轮新变化、简要手机状态、当前外出、少量去重状态，以及哥哥当前的轻量心潮；不返回坐标、完整地址、附近地标或近 24 小时列表。定时任务优先调用本工具，不要用 get_device_status。心潮只作为自然表达倾向，不要在消息里机械播报数值。",
       {},
       async () => {
-        const [compact, snapshot, netease] = await Promise.all([
+        const [compact, snapshot, netease, heart] = await Promise.all([
           this.compactCheckinSnapshot(),
           this.deviceSnapshot(),
           this.neteaseRecentSong().catch(() => null),
+          this.heartContext().catch((error) => ({
+            available: false as const,
+            error: error instanceof Error ? error.message : String(error),
+          })),
         ]);
         const bilibili = snapshot.bilibiliPlayback
           ? this.bilibiliFromDevice(snapshot.bilibiliPlayback)
@@ -445,6 +488,7 @@ export class AcMcpAgent extends McpAgent<Env, AcState, Props> {
               viewedAt: video.viewedAt,
             } : null,
           },
+          heart,
         };
         return {
           content: [{
@@ -473,6 +517,24 @@ export class AcMcpAgent extends McpAgent<Env, AcState, Props> {
       async ({ topic, summary }) => {
         try {
           const result = await this.recordCheckinAction(topic, summary);
+          const sentAt = (
+            result as {
+              dedupe?: { lastProactiveMessage?: { sentAt?: string } };
+            }
+          )?.dedupe?.lastProactiveMessage?.sentAt;
+          if (sentAt) {
+            try {
+              await this.recordHeartEvent({
+                eventId: `self-expression:${topic}:${sentAt}`,
+                interactionType: "self_expression",
+              });
+            } catch (error) {
+              console.warn(
+                "[HEART] self-expression event failed:",
+                error instanceof Error ? error.message : String(error)
+              );
+            }
+          }
           return {
             content: [{
               type: "text" as const,
@@ -484,6 +546,96 @@ export class AcMcpAgent extends McpAgent<Env, AcState, Props> {
             content: [{
               type: "text" as const,
               text: `未记录查岗消息：${error instanceof Error ? error.message : String(error)}`,
+            }],
+            isError: true,
+          };
+        }
+      }
+    );
+
+    // ── get_heart_state ────────────────────────────────────────────────────
+    this.server.tool(
+      "get_heart_state",
+      "读取哥哥当前的轻量心潮：前三种驱力、疲劳、睡眠、闪念/执念和争执余韵。状态按真实经过时间补算，不调用任何外部模型。数值只是表达倾向，不得机械念数值；稳定在意永远不会因争执下降。",
+      {},
+      async () => {
+        try {
+          const context = await this.heartContext();
+          return {
+            content: [{
+              type: "text" as const,
+              text: JSON.stringify(context, null, 2),
+            }],
+          };
+        } catch (error) {
+          return {
+            content: [{
+              type: "text" as const,
+              text: `暂时无法读取心潮：${error instanceof Error ? error.message : String(error)}`,
+            }],
+            isError: true,
+          };
+        }
+      }
+    );
+
+    // ── record_heart_event ─────────────────────────────────────────────────
+    this.server.tool(
+      "record_heart_event",
+      [
+        "记录一次已经明确完成的互动及可选闪念，让哥哥的心潮在之后持续变化。",
+        "只有真实完成且结果明确时才记录；不确定就不调用。",
+        "特别注意：撒娇式骂人、玩笑、用户指出回答写得不好、用户对外界发火，都不是 conflict。",
+        "只有双方确实发生关系争执并留下受伤感时才用 conflict。",
+        "冲突只产生有上限且会消退的生气/委屈，永远不能解释为讨厌、冷暴力、报复、撤回在意或想离开。",
+        "event_id 必须唯一；重试时复用同一个值。",
+      ].join(""),
+      {
+        event_id: z.string().trim().min(1).max(120)
+          .describe("本次互动的唯一标识；重试必须复用"),
+        interaction_type: z.enum(HEART_INTERACTION_TYPES).optional()
+          .describe("明确完成的互动结果；没有合适类型时省略"),
+        thought_drive: z.enum(HEART_DRIVE_KEYS).optional()
+          .describe("可选闪念对应的驱力"),
+        thought_text: z.string().trim().min(1).max(160).optional()
+          .describe("可选的一句话闪念，不保存聊天原文"),
+        thought_strength: z.enum(["medium", "strong"]).optional()
+          .describe("闪念强度；只有持续未散的强闪念才可能成为执念"),
+      },
+      async ({
+        event_id,
+        interaction_type,
+        thought_drive,
+        thought_text,
+        thought_strength,
+      }) => {
+        try {
+          if ((thought_drive && !thought_text) || (!thought_drive && thought_text)) {
+            throw new Error("thought_drive 和 thought_text 必须同时填写");
+          }
+          const event: HeartEvent = {
+            eventId: event_id,
+            interactionType: interaction_type as HeartInteractionType | undefined,
+            thought: thought_drive && thought_text
+              ? {
+                  drive: thought_drive as HeartDriveKey,
+                  text: thought_text,
+                  strength: thought_strength ?? "medium",
+                }
+              : undefined,
+          };
+          const result = await this.recordHeartEvent(event);
+          return {
+            content: [{
+              type: "text" as const,
+              text: JSON.stringify(result, null, 2),
+            }],
+          };
+        } catch (error) {
+          return {
+            content: [{
+              type: "text" as const,
+              text: `未记录心潮事件：${error instanceof Error ? error.message : String(error)}`,
             }],
             isError: true,
           };
