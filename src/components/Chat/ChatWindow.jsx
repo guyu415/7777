@@ -256,6 +256,8 @@ export default function ChatWindow({ theme }) {
           WebkitBackdropFilter: 'blur(24px)',
           borderBottom: `1px solid ${primaryColor}22`,
           flexShrink: 0,
+          position: 'relative',
+          zIndex: 10,
         }}>
         <div className="flex items-center gap-3 min-w-0">
           <div className="w-11 h-11 rounded-full overflow-hidden flex items-center justify-center text-xl flex-shrink-0"
