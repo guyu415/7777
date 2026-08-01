@@ -3,7 +3,7 @@ import { ChevronLeft, Eye, EyeOff, RefreshCw } from 'lucide-react'
 import { useStore, getMessages } from '../store'
 import { putAsset, saveSettings, extractSettings } from '../services/sync'
 import { fetchModels } from '../services/claude'
-import { getAuthStatus, logout as companionLogout, COMPANION_LOGIN_URL, COMPANION_RETURN_URL } from '../services/companion'
+import { getAuthStatus, logout as companionLogout, COMPANION_LOGIN_URL, COMPANION_RETURN_URL, getProactiveSettings, setProactiveSettings } from '../services/companion'
 import { compressImage } from '../utils/image'
 
 const VPS_PROVIDER = 'claude-code-vps'
@@ -99,9 +99,35 @@ export default function SessionSettings({ theme }) {
     }
   }
 
+  // Proactive-message master switch — state lives on the VPS
+  // (config/proactive.json), not browser localStorage, and is independent
+  // of the API Key: clearing/changing the key must never touch this.
+  const [proactiveEnabled, setProactiveEnabled] = useState(false)
+  const [proactiveLoading, setProactiveLoading] = useState(false)
+  const refreshProactiveSettings = async () => {
+    try {
+      const { enabled } = await getProactiveSettings()
+      setProactiveEnabled(enabled)
+    } catch {
+      // best-effort — leave last-known value showing
+    }
+  }
+  const toggleProactive = async () => {
+    setProactiveLoading(true)
+    try {
+      const { enabled } = await setProactiveSettings(!proactiveEnabled)
+      setProactiveEnabled(enabled)
+    } catch (e) {
+      window.alert('切换失败：' + (e.message || '未知错误'))
+    } finally {
+      setProactiveLoading(false)
+    }
+  }
+
   useEffect(() => {
     if (localProviderName !== VPS_PROVIDER) return
     refreshVpsStatus()
+    refreshProactiveSettings()
     // Returning from the companion /login page is a full-page redirect back to
     // eunoia.xiaoman.xyz — re-check on focus/visibility too in case the app
     // shell wasn't fully torn down and this effect didn't re-run on its own.
@@ -611,6 +637,30 @@ export default function SessionSettings({ theme }) {
                 >
                   🧠 VPS 本体记忆管理
                 </button>
+                <div className="flex items-center justify-between mt-3 pt-3" style={{ borderTop: '1px solid rgba(120,160,220,0.2)' }}>
+                  <div>
+                    <div className="text-xs" style={{ color: '#2c5282' }}>主动消息</div>
+                    <p className="text-[10px] mt-0.5" style={{ color: '#a0b8d0' }}>默认关闭；开启后由常驻会话自行判断是否主动发消息</p>
+                  </div>
+                  <button
+                    onClick={toggleProactive}
+                    disabled={proactiveLoading}
+                    style={{
+                      flexShrink: 0,
+                      width: 44, height: 24, borderRadius: 12, border: 'none',
+                      cursor: proactiveLoading ? 'default' : 'pointer',
+                      background: proactiveEnabled ? '#4aacf0' : 'rgba(160,180,200,0.4)',
+                      position: 'relative', transition: 'background 0.2s',
+                      opacity: proactiveLoading ? 0.6 : 1,
+                    }}
+                  >
+                    <span style={{
+                      position: 'absolute', top: 2, left: proactiveEnabled ? 22 : 2,
+                      width: 20, height: 20, borderRadius: '50%', background: '#fff',
+                      transition: 'left 0.2s', boxShadow: '0 1px 3px rgba(0,0,0,0.2)',
+                    }} />
+                  </button>
+                </div>
               </div>
             ) : (
             <>

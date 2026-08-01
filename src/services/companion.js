@@ -147,6 +147,52 @@ function connect() {
   }
 }
 
+// ---------- spontaneous (proactive) cc messages ----------
+// A from:'cc' wire message normally arrives while some streamChatViaCompanion()
+// generator is actively awaiting a reply, and that generator's own temporary
+// listener (added to `listeners` above) claims it via markDelivered(). A
+// proactive message the VPS injects on its own initiative arrives with NO
+// generator waiting — nothing would ever claim it, so it would otherwise be
+// silently dropped. This permanent, module-scope listener is the backstop:
+// it only acts on messages still unclaimed once every synchronous listener
+// (including any active generator's) has had its turn.
+const proactiveListeners = new Set()
+/** Subscribe to spontaneous cc messages (proactive, not a reply to a user send). Returns an unsubscribe fn. */
+export function onProactiveMessage(fn) {
+  proactiveListeners.add(fn)
+  return () => proactiveListeners.delete(fn)
+}
+
+function maybeAnnounceProactive(id, text, ts) {
+  // Deferred to the next tick: lets any active generator's listener (which
+  // runs synchronously within the same notify() call) markDelivered() first.
+  // Only messages still unclaimed after that are genuinely spontaneous.
+  setTimeout(() => {
+    if (alreadyDelivered(id)) return
+    markDelivered(id)
+    for (const fn of proactiveListeners) {
+      try {
+        fn({ id, text, ts })
+      } catch {
+        // a subscriber throwing must not break delivery to the others
+      }
+    }
+  }, 0)
+}
+
+listeners.add(evt => {
+  if (evt.kind === 'wire') {
+    const m = evt.wire
+    if (m.type === 'msg' && m.from === 'cc') maybeAnnounceProactive(m.id, m.text, m.ts)
+    return
+  }
+  if (evt.kind === 'history') {
+    for (const item of evt.items) {
+      if (item.from === 'cc') maybeAnnounceProactive(item.id, item.text, item.ts)
+    }
+  }
+})
+
 /** Idempotent: opens the shared connection if it isn't already open/connecting. */
 export function ensureConnected() {
   clearTimeout(reconnectTimer)
@@ -464,5 +510,22 @@ export async function switchCompanionModel(alias) {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ model: alias }),
+  })
+}
+
+// ---------- proactive-message master switch ----------
+// State lives on the VPS (config/proactive.json), not just browser
+// localStorage — the systemd timer needs the real current state even when
+// no phone/browser is open at all.
+
+export async function getProactiveSettings() {
+  return companionJson('/proactive/settings')
+}
+
+export async function setProactiveSettings(enabled) {
+  return companionJson('/proactive/settings', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ enabled }),
   })
 }

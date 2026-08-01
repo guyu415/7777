@@ -967,6 +967,14 @@ async function generateProactive(env, { force }) {
   if (!session) {
     return { ...debug, error: 'no sessions found in settings', savedToKV: false }
   }
+  if (session.providerName === 'claude-code-vps') {
+    // This session is bound to the VPS-resident Claude Code companion, which
+    // runs its own proactive-message pipeline now (systemd timer -> 小G查岗
+    // MCP status check -> the resident session's own judgment -> its own
+    // reply tool -> companion WS/history). This worker must never build an
+    // Eunoia persona/context prompt and call a model API for this session.
+    return { ...debug, skipped: 'target session is VPS-bound (claude-code-vps) — handled by the VPS proactive pipeline instead', savedToKV: false, targetSessionId: session.id }
+  }
   const { apiKey, baseUrl, model, persona } = resolveSessionConfig(settings, session)
   debug.targetSessionId = session.id
   debug.targetSessionName = session.name || ''

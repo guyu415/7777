@@ -13,6 +13,7 @@ import MusicDisc from './components/MusicDisc'
 import { getSettings, saveSettings, extractSettings, saveSessionMsgs, putAsset, putAssetDataUrl, loadAsset, getLetters } from './services/sync'
 import { mergeLetters } from './services/letters'
 import { compressImage, slimSettings } from './utils/image'
+import { ensureConnected as ensureCompanionConnected, getAuthStatus as getCompanionAuthStatus, onProactiveMessage } from './services/companion'
 
 const FONT_MAP = {
   noto: "'Noto Sans SC', 'PingFang SC', -apple-system, sans-serif",
@@ -418,6 +419,40 @@ export default function App() {
   useEffect(() => {
     document.documentElement.style.fontSize = `${effectiveFontSize}px`
   }, [effectiveFontSize])
+
+  // Keep the companion WS alive whenever a VPS-bound session exists, not
+  // just while the user is actively sending — proactive messages can arrive
+  // with no user action to lazily trigger a connection otherwise.
+  useEffect(() => {
+    const vpsSession = sessions?.find(s => s.providerName === 'claude-code-vps')
+    if (!vpsSession) return
+    let cancelled = false
+    getCompanionAuthStatus().then(({ loggedIn: companionLoggedIn }) => {
+      if (!cancelled && companionLoggedIn) ensureCompanionConnected()
+    })
+    return () => { cancelled = true }
+  }, [sessions])
+
+  // Proactive (VPS-initiated) messages: land only in the single VPS-bound
+  // session's real message store, deduped by Wire.id against what's already
+  // in IndexedDB (survives page reloads, unlike the in-memory dedup cache in
+  // companion.js which resets per page load). Never fabricates a user
+  // bubble or a sendMessage() call — this only ever appends an assistant
+  // (from:'cc') message.
+  useEffect(() => {
+    const unsub = onProactiveMessage(async ({ id, text, ts }) => {
+      const vpsSession = useStore.getState().sessions?.find(s => s.providerName === 'claude-code-vps')
+      if (!vpsSession) return
+      const existing = await getMessages(vpsSession.id)
+      if (existing.some(m => m.id === id)) return
+      const msg = { id, conversationId: vpsSession.id, role: 'assistant', type: 'text', content: text, timestamp: ts, streaming: false }
+      await saveMessage(msg)
+      if (useStore.getState().currentSessionId === vpsSession.id) {
+        useStore.getState().addMessage(msg)
+      }
+    })
+    return unsub
+  }, [])
 
   useEffect(() => {
     if (effectiveChatBg?.type !== 'image') { setBgUrl(null); return }
