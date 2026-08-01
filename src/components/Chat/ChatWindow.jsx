@@ -287,7 +287,7 @@ export default function ChatWindow({ theme }) {
             </div>
           </div>
         </div>
-        <div className="flex items-center gap-2 flex-shrink-0">
+        <div className="flex items-center gap-2 flex-shrink-0" style={{ position: 'relative', zIndex: 10 }}>
           {currentSession?.providerName === 'claude-code-vps' && (
             <VpsStatusBall theme={theme} isLoading={isLoading} />
           )}
