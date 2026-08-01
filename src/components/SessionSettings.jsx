@@ -3,7 +3,10 @@ import { ChevronLeft, Eye, EyeOff, RefreshCw } from 'lucide-react'
 import { useStore, getMessages } from '../store'
 import { putAsset } from '../services/sync'
 import { fetchModels } from '../services/claude'
+import { getAuthStatus, logout as companionLogout, COMPANION_LOGIN_URL, COMPANION_RETURN_URL } from '../services/companion'
 import { compressImage } from '../utils/image'
+
+const VPS_PROVIDER = 'claude-code-vps'
 
 const inputStyle = {
   width: '100%',
@@ -79,6 +82,61 @@ export default function SessionSettings({ theme }) {
   const [localTtsModel, setLocalTtsModel] = useState('')
   const [showApiKey, setShowApiKey] = useState(false)
   const [showTtsKey, setShowTtsKey] = useState(false)
+
+  // Claude Code (VPS) — login state (never the raw token, only a boolean from
+  // /auth/status) and single-session-binding bookkeeping.
+  const [vpsLoggedIn, setVpsLoggedIn] = useState(false)
+  const [vpsStatusChecking, setVpsStatusChecking] = useState(false)
+  const otherVpsSession = sessions?.find(s => s.id !== currentSessionId && s.providerName === VPS_PROVIDER)
+
+  const refreshVpsStatus = async () => {
+    setVpsStatusChecking(true)
+    try {
+      const { loggedIn } = await getAuthStatus()
+      setVpsLoggedIn(loggedIn)
+    } finally {
+      setVpsStatusChecking(false)
+    }
+  }
+
+  useEffect(() => {
+    if (localProviderName !== VPS_PROVIDER) return
+    refreshVpsStatus()
+    // Returning from the companion /login page is a full-page redirect back to
+    // chat.xiaoman.xyz — re-check on focus/visibility too in case the app
+    // shell wasn't fully torn down and this effect didn't re-run on its own.
+    const onFocus = () => refreshVpsStatus()
+    window.addEventListener('focus', onFocus)
+    document.addEventListener('visibilitychange', onFocus)
+    return () => {
+      window.removeEventListener('focus', onFocus)
+      document.removeEventListener('visibilitychange', onFocus)
+    }
+  }, [localProviderName, currentSessionId])
+
+  const handleProviderSelect = (value) => {
+    if (value === VPS_PROVIDER && otherVpsSession) {
+      // The transfer below touches exactly one field on the other session:
+      // providerName. Its messages (IndexedDB), apiKey, baseUrl, model, name,
+      // and every other setting are untouched — this is a rebind, not a reset.
+      const ok = window.confirm(
+        `Claude Code（VPS）同一时间只能绑定一个会话。\n` +
+        `当前已绑定在「${otherVpsSession.name || otherVpsSession.id}」。\n\n` +
+        `是否要把绑定转移到当前会话「${currentSession?.name || currentSessionId}」？\n` +
+        `（原会话不会被删除，聊天记录、API Key、Base URL、模型设置都保留原样，` +
+        `只是解除 VPS 绑定——供应商会显示为空，你可以随时重新选择）`
+      )
+      if (!ok) return // leave everything untouched, do not silently switch
+      setSessionProviderName(otherVpsSession.id, '')
+    }
+    setLocalProviderName(value)
+    setSessionProviderName(currentSessionId, value)
+  }
+
+  const handleVpsLogout = async () => {
+    await companionLogout()
+    setVpsLoggedIn(false)
+  }
 
   // 头像存进 settings 随每次同步整包上传，必须压小
   const readAvatarFile = async (file) => {
@@ -468,15 +526,65 @@ export default function SessionSettings({ theme }) {
               <label className="text-xs pl-1 mb-1 block" style={{ color: '#6a90b8' }}>模型供应商</label>
               <select
                 value={localProviderName}
-                onChange={e => { setLocalProviderName(e.target.value); setSessionProviderName(currentSessionId, e.target.value) }}
+                onChange={e => handleProviderSelect(e.target.value)}
                 style={{ ...inputStyle, cursor: 'pointer', appearance: 'auto' }}
               >
                 <option value="">通用 OpenAI 兼容</option>
                 <option value="glm">智谱 GLM</option>
                 <option value="claude">Claude（AiHubMix 等中转）</option>
                 <option value="deepseek">DeepSeek</option>
+                <option value={VPS_PROVIDER}>Claude Code（VPS）</option>
               </select>
             </div>
+            {localProviderName === VPS_PROVIDER ? (
+              <div style={{
+                background: 'rgba(74,172,240,0.08)', borderRadius: 14, padding: 12,
+                border: '1px solid rgba(74,172,240,0.2)',
+              }}>
+                <div className="flex items-center gap-2 mb-2">
+                  <span style={{
+                    width: 8, height: 8, borderRadius: '50%',
+                    background: vpsStatusChecking ? '#d4a017' : (vpsLoggedIn ? '#34c759' : '#e07070'),
+                    flexShrink: 0,
+                  }} />
+                  <span className="text-xs" style={{ color: '#2c5282' }}>
+                    {vpsStatusChecking ? '检查登录状态…' : (vpsLoggedIn ? '已登录 companion' : '未登录')}
+                  </span>
+                </div>
+                <p className="text-[11px] mb-2" style={{ color: '#7a9cc0' }}>
+                  连接至你的常驻 Claude Code 会话；暂不支持图片与重新生成。
+                </p>
+                <div className="flex gap-2">
+                  {!vpsLoggedIn && (
+                    <a
+                      href={`${COMPANION_LOGIN_URL}?return=${encodeURIComponent(COMPANION_RETURN_URL)}`}
+                      className="flex-1 text-center py-2 rounded-full text-xs font-medium text-white"
+                      style={{ background: 'linear-gradient(135deg, #7ab4f0, #4a90d0)', textDecoration: 'none' }}
+                    >
+                      去登录
+                    </a>
+                  )}
+                  {vpsLoggedIn && (
+                    <button
+                      onClick={handleVpsLogout}
+                      className="flex-1 py-2 rounded-full text-xs font-medium"
+                      style={{ background: 'rgba(255,100,100,0.08)', color: '#e07070', border: '1px solid rgba(255,100,100,0.2)' }}
+                    >
+                      退出登录
+                    </button>
+                  )}
+                  <button
+                    onClick={refreshVpsStatus}
+                    disabled={vpsStatusChecking}
+                    className="px-3 py-2 rounded-full text-xs"
+                    style={{ background: 'rgba(255,255,255,0.5)', color: '#4a7aaa', border: '1px solid rgba(120,160,220,0.35)' }}
+                  >
+                    刷新状态
+                  </button>
+                </div>
+              </div>
+            ) : (
+            <>
             <div>
               <label className="text-xs pl-1 mb-1 block" style={{ color: '#6a90b8' }}>Base URL</label>
               <input
@@ -629,6 +737,8 @@ export default function SessionSettings({ theme }) {
                 </div>
               )
             })()}
+            </>
+            )}
           </div>
         </GlassCard>
 

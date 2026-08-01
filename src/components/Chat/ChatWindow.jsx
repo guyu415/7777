@@ -148,8 +148,19 @@ export default function ChatWindow({ theme }) {
   }
 
   const handleSendImage = ({ imageData, imageType, imageUrl }) => {
+    if (currentSession?.providerName === 'claude-code-vps') {
+      alert('VPS Companion 暂不支持此消息类型（图片）')
+      return
+    }
     updateActiveTime()
     sendMessage('', 'image', { imageData, imageType, imageUrl })
+  }
+
+  // VPS's Claude session is stateful/persistent — it can't un-say a reply the
+  // way re-issuing a stateless API call can. Button stays visible (so it's
+  // discoverable, not mysteriously gone) but explains why instead of acting.
+  const vpsRegenerateBlocked = () => {
+    alert('VPS 常驻会话暂不支持重新生成，可复制内容后重新发送。')
   }
 
   const handleEdit = async (msg) => {
@@ -327,8 +338,8 @@ export default function ChatWindow({ theme }) {
             key={msg.id}
             message={msg}
             onLongPress={setMenuMsg}
-            onRegenerate={msg.id === lastAiId ? regenerate : null}
-            onRegenerateRound={msg.id === lastAiId ? regenerateRound : null}
+            onRegenerate={msg.id === lastAiId ? (currentSession?.providerName === 'claude-code-vps' ? vpsRegenerateBlocked : regenerate) : null}
+            onRegenerateRound={msg.id === lastAiId ? (currentSession?.providerName === 'claude-code-vps' ? vpsRegenerateBlocked : regenerateRound) : null}
             isLoading={isLoading}
             userAvatar={effectiveUserAvatar}
             aiAvatar={effectiveAiAvatar}

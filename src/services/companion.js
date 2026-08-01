@@ -1,0 +1,404 @@
+// Claude Code (VPS) transport — talks to the companion channel server over a
+// single persistent WebSocket, cookie-authenticated. This module never reads,
+// receives, or stores the raw companion token: authentication happens entirely
+// via the browser's HttpOnly cookie for companion.xiaoman.xyz, set by visiting
+// https://companion.xiaoman.xyz/login (see SessionSettings.jsx).
+//
+// Protocol reference (verified against the live companion.xiaoman.xyz server,
+// not guessed): server broadcasts { type:'turn_start'|'msg'|'turn_end'|
+// 'turn_error'|'turn_busy', turnId, ... } and, once per WS connection, a
+// { type:'history', items, openTurnId } snapshot. See channel-server.ts on the
+// VPS for the authoritative implementation.
+
+const WS_URL = 'wss://companion.xiaoman.xyz/ws'
+const STATUS_URL = 'https://companion.xiaoman.xyz/auth/status'
+const LOGOUT_URL = 'https://companion.xiaoman.xyz/auth/logout'
+
+// ---------- connection singleton (one WS per browser tab, reused across turns) ----------
+
+let ws = null
+let wsState = 'idle' // idle | connecting | open | closed
+let everOpenedThisAttempt = false
+let reconnectAttempt = 0
+let reconnectTimer = null
+let authFailed = false // definitive: stop auto-reconnecting until explicit ensureConnected() after re-login
+const listeners = new Set() // Set<(evt) => void>
+
+// ---------- delivered Wire.id dedup (connection-manager scope) ----------
+// Shared by BOTH the live wire path and history-recovery-after-reconnect path
+// for this page's whole lifetime — a message id, once delivered to some
+// generator, is never delivered again, from either source. Bounded two ways:
+// (1) each streamChatViaCompanion() call forgets its own ids once its turn
+// closes (success, error, or abort), since a closed turn's ids can never be
+// meaningfully redelivered to a future different turnId; (2) a hard cap as a
+// belt-and-suspenders backstop in case a turn's cleanup is ever skipped.
+const deliveredIds = new Set()
+const DELIVERED_IDS_CAP = 500
+
+function alreadyDelivered(id) {
+  return deliveredIds.has(id)
+}
+function markDelivered(id) {
+  deliveredIds.add(id)
+  if (deliveredIds.size > DELIVERED_IDS_CAP) {
+    const oldest = deliveredIds.values().next().value
+    deliveredIds.delete(oldest)
+  }
+}
+function forgetDelivered(ids) {
+  for (const id of ids) deliveredIds.delete(id)
+}
+
+function notify(evt) {
+  for (const fn of listeners) {
+    try {
+      fn(evt)
+    } catch {
+      // a listener throwing must not break delivery to the others
+    }
+  }
+}
+
+// The browser WebSocket API does not expose the HTTP status of a failed
+// upgrade (e.g. 401) to JS — a rejected handshake just fires onclose/onerror
+// with no reusable status code, by spec, for security reasons. So instead of
+// guessing from the close event, we ask the one endpoint that actually knows:
+// /auth/status. This is the real, verified way to distinguish "cookie invalid,
+// stop retrying" from "transient network hiccup, keep retrying".
+async function checkLoggedIn() {
+  try {
+    const r = await fetch(STATUS_URL, { credentials: 'include' })
+    if (!r.ok) return null
+    const j = await r.json()
+    return typeof j.loggedIn === 'boolean' ? j.loggedIn : null
+  } catch {
+    return null // network error — unknown, not "definitely logged out"
+  }
+}
+
+function scheduleReconnect() {
+  if (authFailed) return
+  const delay = Math.min(1000 * 2 ** reconnectAttempt, 15000)
+  reconnectAttempt += 1
+  clearTimeout(reconnectTimer)
+  reconnectTimer = setTimeout(connect, delay)
+}
+
+function connect() {
+  if (wsState === 'connecting' || wsState === 'open') return
+  wsState = 'connecting'
+  everOpenedThisAttempt = false
+
+  let socket
+  try {
+    socket = new WebSocket(WS_URL)
+  } catch (err) {
+    wsState = 'closed'
+    scheduleReconnect()
+    return
+  }
+  ws = socket
+
+  socket.onopen = () => {
+    wsState = 'open'
+    everOpenedThisAttempt = true
+    reconnectAttempt = 0
+    authFailed = false
+    notify({ kind: 'open' })
+  }
+
+  socket.onmessage = ev => {
+    let m
+    try {
+      m = JSON.parse(ev.data)
+    } catch {
+      return
+    }
+    if (m.type === 'history') {
+      notify({ kind: 'history', openTurnId: m.openTurnId, items: m.items })
+      return
+    }
+    notify({ kind: 'wire', wire: m })
+  }
+
+  socket.onclose = async ev => {
+    const openedBefore = everOpenedThisAttempt
+    wsState = 'closed'
+    ws = null
+    notify({ kind: 'close', wasClean: ev.wasClean, code: ev.code })
+
+    if (!openedBefore) {
+      // Never successfully opened — could be a rejected (unauthenticated)
+      // upgrade or a transient network/server problem. Ask /auth/status to
+      // tell the two apart instead of assuming.
+      const loggedIn = await checkLoggedIn()
+      if (loggedIn === false) {
+        authFailed = true
+        notify({ kind: 'auth_required' })
+        return
+      }
+    }
+    scheduleReconnect()
+  }
+
+  socket.onerror = () => {
+    // onclose follows onerror for WebSocket; all handling lives there.
+  }
+}
+
+/** Idempotent: opens the shared connection if it isn't already open/connecting. */
+export function ensureConnected() {
+  clearTimeout(reconnectTimer)
+  authFailed = false
+  reconnectAttempt = 0
+  if (wsState === 'idle' || wsState === 'closed') connect()
+}
+
+/** Explicit teardown — used on logout / unbinding the VPS session. */
+export function disconnect() {
+  clearTimeout(reconnectTimer)
+  authFailed = true // don't auto-reconnect until ensureConnected() is called again
+  if (ws) {
+    try {
+      ws.close()
+    } catch {
+      // ignore
+    }
+  }
+  ws = null
+  wsState = 'idle'
+}
+
+function sendRaw(obj) {
+  if (ws && wsState === 'open') {
+    ws.send(JSON.stringify(obj))
+    return true
+  }
+  return false
+}
+
+function waitUntilOpenOrFail(timeoutMs = 8000) {
+  return new Promise((resolve, reject) => {
+    if (wsState === 'open') return resolve()
+    if (authFailed) {
+      return reject(Object.assign(new Error('未登录 companion，请先登录'), { code: 'auth_required' }))
+    }
+    let done = false
+    const onEvt = evt => {
+      if (done) return
+      if (evt.kind === 'open') {
+        done = true
+        cleanup()
+        resolve()
+      } else if (evt.kind === 'auth_required') {
+        done = true
+        cleanup()
+        reject(Object.assign(new Error('未登录 companion，请先登录'), { code: 'auth_required' }))
+      }
+    }
+    const to = setTimeout(() => {
+      if (done) return
+      done = true
+      cleanup()
+      reject(Object.assign(new Error('连接 companion 超时'), { code: 'connect_timeout' }))
+    }, timeoutMs)
+    function cleanup() {
+      clearTimeout(to)
+      listeners.delete(onEvt)
+    }
+    listeners.add(onEvt)
+    ensureConnected()
+  })
+}
+
+let seq = 0
+function genId() {
+  return `eunoia-${Date.now()}-${++seq}`
+}
+
+/**
+ * Async generator matching services/claude.js's streamChat yield contract:
+ * yields { text } chunks, returns on normal completion, throws on failure.
+ * Unlike streamChat, this never yields { reasoning } — the companion protocol
+ * does not forward thinking content; an empty/absent reasoning stream is
+ * expected, not a bug.
+ *
+ * One call = one turn. Multiple `reply` calls from the same Claude turn are
+ * delivered as multiple { text } yields before the generator returns (on
+ * turn_end) — callers should accumulate them, matching how useChat.js already
+ * accumulates streamChat's text deltas.
+ *
+ * Every delivered message is deduped by its Wire.id (never by text) against
+ * the module-level `deliveredIds` set, so a reconnect-triggered history
+ * replay can never re-yield something already seen live, or vice versa.
+ */
+export async function* streamChatViaCompanion({ text, signal }) {
+  if (signal?.aborted) return
+
+  await waitUntilOpenOrFail()
+
+  const id = genId()
+  const turnId = id
+
+  const queue = []
+  let queueWake = null
+  function push(item) {
+    if (queueWake) {
+      const w = queueWake
+      queueWake = null
+      w(item)
+    } else {
+      queue.push(item)
+    }
+  }
+  function next() {
+    if (queue.length) return Promise.resolve(queue.shift())
+    return new Promise(resolve => {
+      queueWake = resolve
+    })
+  }
+
+  let finishError = null
+  let recoveredFromHistory = false
+  const thisTurnDeliveredIds = [] // for forgetDelivered() when this turn closes
+  // Every WS connection — including the very first one this generator opens —
+  // gets a `history` snapshot immediately on open, before our own turn_start
+  // could possibly have been broadcast back to us. That snapshot is NOT a
+  // recovery signal; it only becomes one if we actually observed a disconnect
+  // while this turn was in flight. Without this flag, the normal on-connect
+  // snapshot (openTurnId: null, empty items) was being misread as "turn
+  // resolved while disconnected" on every single call — a real bug, caught by
+  // the isolated single-reply Playwright test, not a test-harness artifact.
+  let sawDisconnect = false
+
+  const onEvent = evt => {
+    if (evt.kind === 'auth_required') {
+      finishError = Object.assign(new Error('未登录 companion，请先登录'), { code: 'auth_required', turnId })
+      push({ done: true })
+      return
+    }
+
+    if (evt.kind === 'close') {
+      // Don't finish the turn on a mere disconnect — reconnection + history
+      // replay (below) is how we find out what actually happened. If the
+      // process never manages to reconnect, waitUntilOpenOrFail's caller-side
+      // timeout on the *next* turn is what surfaces that, not this one.
+      sawDisconnect = true
+      return
+    }
+
+    if (evt.kind === 'history') {
+      if (recoveredFromHistory) return
+      if (!sawDisconnect) return // just the normal on-connect snapshot, not a recovery signal
+      // Reconnected mid-turn. If the server no longer considers our turn
+      // open, we missed the live turn_end/turn_error while disconnected —
+      // recover from the replayed message history instead of hanging.
+      if (evt.openTurnId === turnId) return // still open server-side, keep waiting
+      const isOurs = it => it.turnId === turnId
+      const ccReplies = evt.items.filter(it => isOurs(it) && it.from === 'cc')
+      recoveredFromHistory = true
+      if (ccReplies.length > 0) {
+        // Dedup by Wire.id, never by text — a reply that happens to repeat
+        // the same words as an earlier one must still come through.
+        for (const r of ccReplies) {
+          if (alreadyDelivered(r.id)) continue // already yielded live before the disconnect
+          markDelivered(r.id)
+          thisTurnDeliveredIds.push(r.id)
+          push({ text: r.text })
+        }
+        push({ done: true })
+      } else {
+        finishError = Object.assign(
+          new Error('连接断开期间该轮次已结束，但没有恢复到回复内容'),
+          { code: 'turn_error', turnId },
+        )
+        push({ done: true })
+      }
+      return
+    }
+
+    // evt.kind === 'wire'
+    const m = evt.wire
+    if (m.type === 'turn_busy') {
+      finishError = Object.assign(
+        new Error('companion 正在处理上一轮，请稍候再发送'),
+        { code: 'turn_busy', turnId: m.turnId },
+      )
+      push({ done: true })
+      return
+    }
+    if (m.turnId !== turnId) return
+    if (m.type === 'msg' && m.from === 'cc') {
+      if (alreadyDelivered(m.id)) return // e.g. already delivered via an earlier history recovery
+      markDelivered(m.id)
+      thisTurnDeliveredIds.push(m.id)
+      push({ text: m.text })
+    } else if (m.type === 'turn_end') {
+      push({ done: true })
+    } else if (m.type === 'turn_error') {
+      finishError = Object.assign(new Error(m.error || 'companion 轮次失败'), { code: 'turn_error', turnId })
+      push({ done: true })
+    }
+  }
+
+  listeners.add(onEvent)
+
+  let aborted = false
+  const onAbort = () => {
+    aborted = true
+    push({ done: true })
+  }
+  signal?.addEventListener('abort', onAbort)
+
+  try {
+    const sent = sendRaw({ id, text })
+    if (!sent) {
+      throw Object.assign(new Error('companion 未连接'), { code: 'not_connected', turnId })
+    }
+    while (true) {
+      const item = await next()
+      if (aborted) {
+        // Stop consuming for this turn. We do NOT know whether — or when —
+        // the remote Claude session actually finishes; there is no cancel
+        // signal in this protocol. Throwing the same AbortError shape fetch()
+        // uses lets useChat.js's existing AbortError branch handle cleanup —
+        // it's on the caller to render the honest "we stopped listening, the
+        // server may still be finishing" message, not on this module to
+        // pretend the remote turn was actually cancelled.
+        throw Object.assign(new Error('aborted'), { name: 'AbortError', code: 'aborted_local_only' })
+      }
+      if (item.done) {
+        if (finishError) throw finishError
+        return
+      }
+      yield { text: item.text }
+    }
+  } finally {
+    listeners.delete(onEvent)
+    signal?.removeEventListener('abort', onAbort)
+    // This turn is closed (success, error, or local abort) — its ids can
+    // never be meaningfully redelivered to a different, future turnId, so
+    // stop tracking them. Keeps deliveredIds bounded by "ids from turns
+    // currently in flight" rather than growing for the whole page lifetime.
+    forgetDelivered(thisTurnDeliveredIds)
+  }
+}
+
+// ---------- auth status (for SessionSettings.jsx) ----------
+
+export async function getAuthStatus() {
+  const loggedIn = await checkLoggedIn()
+  return { loggedIn: loggedIn === true }
+}
+
+export async function logout() {
+  disconnect()
+  try {
+    await fetch(LOGOUT_URL, { method: 'POST', credentials: 'include' })
+  } catch {
+    // best-effort — the cookie may already be gone/expired
+  }
+}
+
+export const COMPANION_LOGIN_URL = 'https://companion.xiaoman.xyz/login'
+export const COMPANION_RETURN_URL = 'https://chat.xiaoman.xyz'

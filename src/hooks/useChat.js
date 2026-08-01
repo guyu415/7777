@@ -1,6 +1,7 @@
 import { useCallback, useRef } from 'react'
 import { useStore, saveMessage, saveBlob, getMessages, deleteMessageFromDB } from '../store'
 import { streamChat, generateSummary } from '../services/claude'
+import { streamChatViaCompanion } from '../services/companion'
 import { listMemories, formatMemories } from '../services/memory'
 import { executeAcCommand } from '../services/ac'
 
@@ -57,6 +58,20 @@ function stripDisplayTags(content) {
 
 function genId() {
   return Date.now().toString(36) + Math.random().toString(36).slice(2)
+}
+
+// companion yields one whole chunk per `reply` tool call, not character
+// deltas. Trim ONLY the leading/trailing whitespace of each chunk (never
+// touches internal newlines or Markdown — a reply's own formatting is left
+// exactly as the model wrote it), drop chunks that are empty after trimming
+// (e.g. a stray whitespace-only reply), then join surviving chunks with a
+// paragraph break so multiple replies in one turn become separate bubbles via
+// tokenizeContent below — same effect as the model using [SPLIT] itself.
+// Exported (not just local) so it can be unit-tested without a browser.
+export function joinVpsReplyChunks(existingContent, rawChunkText) {
+  const trimmedChunk = rawChunkText.trim()
+  if (!trimmedChunk) return existingContent
+  return existingContent ? `${existingContent}\n\n${trimmedChunk}` : trimmedChunk
 }
 
 // Split content into an ordered token list, preserving original order of voice
@@ -212,6 +227,8 @@ export function useChat() {
     let fullContent = ''
     let fullReasoning = ''
     let contentStarted = false
+    // Declared here (not inside the try below) so the catch block can also see it.
+    const isVpsProvider = effectiveProviderName === 'claude-code-vps'
 
     try {
       console.log('[STREAM] streamResponse entered | model=', effectiveModel, '| useWorkerProxy=', useWorkerProxy, '| workerUrl=', workerUrl || '(empty)')
@@ -307,21 +324,38 @@ export function useChat() {
 
       const flushTimer = setInterval(flushUpdate, 80)
 
+      // Claude Code (VPS) talks to an already-running, already-persona'd Claude
+      // Code session on the VPS over a single persistent WebSocket — it is NOT
+      // a stateless per-request API call. So none of the prompt-engineering
+      // above (builtSystemPrompt: persona, memory injection, AC/music/voice
+      // tag instructions, summary, letter index) is sent to it, and it isn't
+      // re-sent the trimmed message history either — the VPS session already
+      // has its own continuous context. We only forward the newest user
+      // message's raw text. This is a real behavioral difference from the
+      // API providers, not an oversight — see PR notes for details.
+      const lastUserMsg = isVpsProvider ? [...trimmedMsgs].reverse().find(m => m.role === 'user') : null
+      const chunkSource = isVpsProvider
+        ? streamChatViaCompanion({ text: typeof lastUserMsg?.content === 'string' ? lastUserMsg.content : '', signal: controller.signal })
+        : streamChat({ apiKey: effectiveApiKey, apiBaseUrl: effectiveBaseUrl, model: effectiveModel, systemPrompt: builtSystemPrompt, messages: trimmedMsgs, workerUrl, useWorkerProxy, signal: controller.signal, disableThinking: effectiveDisableThinking, webSearch: effectiveWebSearch, providerName: effectiveProviderName })
+
       try {
-        for await (const chunk of streamChat({ apiKey: effectiveApiKey, apiBaseUrl: effectiveBaseUrl, model: effectiveModel, systemPrompt: builtSystemPrompt, messages: trimmedMsgs, workerUrl, useWorkerProxy, signal: controller.signal, disableThinking: effectiveDisableThinking, webSearch: effectiveWebSearch, providerName: effectiveProviderName })) {
+        for await (const chunk of chunkSource) {
           if (chunk.reasoning) {
             fullReasoning += chunk.reasoning
             dirty = true
           }
           if (chunk.text) {
-            if (!contentStarted) {
-              contentStarted = true
-              storedReasoning = fullReasoning
-              // Immediate update for phase transition only
-              updateMessage(assistantId, { reasoningStreaming: false })
+            const nextContent = isVpsProvider ? joinVpsReplyChunks(fullContent, chunk.text) : fullContent + chunk.text
+            if (nextContent !== fullContent) {
+              if (!contentStarted) {
+                contentStarted = true
+                storedReasoning = fullReasoning
+                // Immediate update for phase transition only
+                updateMessage(assistantId, { reasoningStreaming: false })
+              }
+              fullContent = nextContent
+              dirty = true
             }
-            fullContent += chunk.text
-            dirty = true
           }
         }
       } finally {
@@ -492,7 +526,11 @@ export function useChat() {
 
     } catch (err) {
       if (err.name === 'AbortError') {
-        const savedContent = stripDisplayTags(fullContent)
+        // For companion (VPS), stopping only tears down our own subscription —
+        // there is no cancel signal to the remote Claude session. Say so
+        // honestly rather than implying the VPS turn was actually interrupted.
+        const stopNote = isVpsProvider ? '\n\n_（已停止接收，本轮服务器可能仍在完成）_' : ''
+        const savedContent = stripDisplayTags(fullContent) + stopNote
         if (savedContent.trim()) {
           updateMessage(assistantId, { content: savedContent, streaming: false })
           await saveMessage({ ...assistantMsg, content: savedContent, streaming: false })
@@ -501,7 +539,15 @@ export function useChat() {
           deleteMessage(assistantId)
         }
       } else {
-        updateMessage(assistantId, { content: `❌ ${err.message}`, streaming: false, error: true })
+        const companionHint = {
+          auth_required: '（companion 未登录或登录已过期，请在设置中重新登录）',
+          turn_busy: '（companion 上一轮还没结束，请稍候再试）',
+          turn_error: '（companion 这一轮失败了）',
+          connect_timeout: '（连接 companion 超时，请检查网络）',
+          not_connected: '（companion 未连接）',
+        }[err.code]
+        const displayMsg = companionHint ? `${err.message} ${companionHint}` : err.message
+        updateMessage(assistantId, { content: `❌ ${displayMsg}`, streaming: false, error: true })
       }
     } finally {
       abortRef.current = null
@@ -585,7 +631,11 @@ export function useChat() {
 
   const sendMessage = useCallback(async (content, type = 'text', extra = {}) => {
     console.log('[SEND] sendMessage called | keyLen=', effectiveApiKey?.length ?? 0, '| baseUrl=', effectiveBaseUrl, '| isLoading=', isLoading)
-    if (!effectiveApiKey) {
+    const isVpsProvider = effectiveProviderName === 'claude-code-vps'
+    if (isVpsProvider && type !== 'text') {
+      throw new Error('VPS Companion 暂不支持此消息类型')
+    }
+    if (!isVpsProvider && !effectiveApiKey) {
       console.log('[API-EXIT] reason=no-api-key | sessionKey=', currentSession?.apiKey?.length ?? 0, '| providerKey=', selectedProvider?.apiKey?.length ?? 0, '| globalKey=', apiKey?.length ?? 0)
       throw new Error('请先在设置中配置 API Key')
     }
@@ -639,6 +689,13 @@ export function useChat() {
 
   const regenerateRound = useCallback(async () => {
     if (isLoading) return
+    // The VPS's Claude session is stateful and persistent — it cannot "un-say"
+    // a reply the way a stateless API call can just be re-issued. Deleting the
+    // local bubble and re-sending would look like a real regenerate but isn't
+    // one: the VPS session still remembers having said the original words.
+    if (effectiveProviderName === 'claude-code-vps') {
+      throw new Error('VPS 常驻会话暂不支持重新生成，可复制内容后重新发送。')
+    }
     // Walk back from end to find the first consecutive assistant message in the last round
     let firstIdx = messages.length - 1
     while (firstIdx > 0 && messages[firstIdx - 1].role === 'assistant') firstIdx--
@@ -649,10 +706,13 @@ export function useChat() {
     }
     deleteMessagesFrom(messages[firstIdx].id)
     await streamResponse(contextMessages)
-  }, [isLoading, messages, deleteMessagesFrom, streamResponse])
+  }, [isLoading, messages, deleteMessagesFrom, streamResponse, effectiveProviderName])
 
   const regenerate = useCallback(async (assistantMsgId) => {
     if (isLoading) return
+    if (effectiveProviderName === 'claude-code-vps') {
+      throw new Error('VPS 常驻会话暂不支持重新生成，可复制内容后重新发送。')
+    }
     const idx = messages.findIndex(m => m.id === assistantMsgId)
     if (idx < 0) return
     const contextMessages = messages.slice(0, idx)
@@ -661,7 +721,7 @@ export function useChat() {
     }
     deleteMessagesFrom(assistantMsgId)
     await streamResponse(contextMessages)
-  }, [isLoading, messages, deleteMessagesFrom, streamResponse])
+  }, [isLoading, messages, deleteMessagesFrom, streamResponse, effectiveProviderName])
 
   const deleteMsg = useCallback(async (id) => {
     await deleteMessageFromDB(id)
