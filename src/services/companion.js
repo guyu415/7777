@@ -13,6 +13,7 @@
 const WS_URL = 'wss://companion.xiaoman.xyz/ws'
 const STATUS_URL = 'https://companion.xiaoman.xyz/auth/status'
 const LOGOUT_URL = 'https://companion.xiaoman.xyz/auth/logout'
+const COMPANION_BASE = 'https://companion.xiaoman.xyz'
 
 // ---------- connection singleton (one WS per browser tab, reused across turns) ----------
 
@@ -402,3 +403,66 @@ export async function logout() {
 
 export const COMPANION_LOGIN_URL = 'https://companion.xiaoman.xyz/login'
 export const COMPANION_RETURN_URL = 'https://eunoia.xiaoman.xyz'
+
+// ---------- Auto Memory management (real files on the VPS, no local copy) ----------
+// Every call is cookie-authenticated (credentials: 'include'); this module
+// never handles the raw companion token.
+
+async function companionJson(path, init) {
+  const res = await fetch(`${COMPANION_BASE}${path}`, { credentials: 'include', ...init })
+  let body = null
+  try {
+    body = await res.json()
+  } catch {
+    // no/invalid JSON body
+  }
+  if (!res.ok) {
+    const err = new Error(body?.error || `companion request failed (${res.status})`)
+    err.status = res.status
+    throw err
+  }
+  return body
+}
+
+export async function listMemoryFiles() {
+  const data = await companionJson('/memory/list')
+  return data.files
+}
+
+export async function getMemoryFile(name) {
+  return companionJson(`/memory/get?name=${encodeURIComponent(name)}`)
+}
+
+export async function putMemoryFile(name, content) {
+  return companionJson('/memory/put', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name, content }),
+  })
+}
+
+export async function deleteMemoryFile(name) {
+  return companionJson('/memory/delete', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name }),
+  })
+}
+
+// ---------- statusLine-fed usage/model status ----------
+
+export async function getCompanionStatus() {
+  return companionJson('/status')
+}
+
+// ---------- model switch ----------
+// Official aliases only; rejected (409) server-side if a turn is in flight.
+// Resolves with the statusLine-confirmed actual model — never trust the
+// requested alias alone as proof of success.
+export async function switchCompanionModel(alias) {
+  return companionJson('/model/switch', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ model: alias }),
+  })
+}

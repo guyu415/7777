@@ -582,6 +582,13 @@ export default function SessionSettings({ theme }) {
                     刷新状态
                   </button>
                 </div>
+                <button
+                  onClick={() => setCurrentView('companionMemory')}
+                  className="w-full mt-2 py-2 rounded-full text-xs font-medium"
+                  style={{ background: 'rgba(255,255,255,0.5)', color: '#4a7aaa', border: '1px solid rgba(120,160,220,0.35)' }}
+                >
+                  🧠 VPS 本体记忆管理
+                </button>
               </div>
             ) : (
             <>

@@ -3,6 +3,7 @@ import MessageBubble from './MessageBubble'
 import FallingParticles from './FallingParticles'
 import MessageInput from './MessageInput'
 import MemoryModal from './MemoryModal'
+import VpsStatusBall from './VpsStatusBall'
 import VoiceCall from '../Voice/VoiceCall'
 import BottomNav from '../BottomNav'
 import { useChat } from '../../hooks/useChat'
@@ -286,18 +287,23 @@ export default function ChatWindow({ theme }) {
             </div>
           </div>
         </div>
-        <button
-          onClick={() => setCurrentView('sessionSettings')}
-          className="btn-whale flex items-center justify-center flex-shrink-0"
-          style={{
-            width: 56, height: 56, borderRadius: '50%',
-            background: `${primaryColor}12`,
-            border: '1.5px solid transparent',
-            overflow: 'hidden',
-          }}
-        >
-          <img src="/assets/whale.png" alt="设置" style={{ width: 70, height: 70, objectFit: 'contain', flexShrink: 0 }} />
-        </button>
+        <div className="flex items-center gap-2 flex-shrink-0">
+          {currentSession?.providerName === 'claude-code-vps' && (
+            <VpsStatusBall theme={theme} isLoading={isLoading} />
+          )}
+          <button
+            onClick={() => setCurrentView('sessionSettings')}
+            className="btn-whale flex items-center justify-center flex-shrink-0"
+            style={{
+              width: 56, height: 56, borderRadius: '50%',
+              background: `${primaryColor}12`,
+              border: '1.5px solid transparent',
+              overflow: 'hidden',
+            }}
+          >
+            <img src="/assets/whale.png" alt="设置" style={{ width: 70, height: 70, objectFit: 'contain', flexShrink: 0 }} />
+          </button>
+        </div>
       </div>
 
       {/* Wave divider */}
