@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { ChevronLeft, Eye, EyeOff, RefreshCw } from 'lucide-react'
 import { useStore, getMessages } from '../store'
-import { putAsset } from '../services/sync'
+import { putAsset, saveSettings, extractSettings } from '../services/sync'
 import { fetchModels } from '../services/claude'
 import { getAuthStatus, logout as companionLogout, COMPANION_LOGIN_URL, COMPANION_RETURN_URL } from '../services/companion'
 import { compressImage } from '../utils/image'
@@ -136,6 +136,27 @@ export default function SessionSettings({ theme }) {
   const handleVpsLogout = async () => {
     await companionLogout()
     setVpsLoggedIn(false)
+  }
+
+  // The companion /login page is a full cross-origin navigation away and
+  // back. Settings sync to cloud on a 2s debounce — navigating away right
+  // after picking the VPS provider (a completely normal thing to do next)
+  // can leave that debounce unfired, so the return trip's cloud pull
+  // overwrites the just-made provider selection with the stale cloud copy.
+  // Flush the current settings synchronously before leaving so there's
+  // nothing stale left for the pull to restore.
+  const [goingToLogin, setGoingToLogin] = useState(false)
+  const handleGoLogin = async () => {
+    setGoingToLogin(true)
+    const password = localStorage.getItem('auth.password')
+    if (password) {
+      try {
+        await saveSettings(password, extractSettings(useStore.getState()))
+      } catch (e) {
+        console.warn('[VPS-LOGIN] 登录前同步失败（继续跳转）:', e.message)
+      }
+    }
+    window.location.href = `${COMPANION_LOGIN_URL}?return=${encodeURIComponent(COMPANION_RETURN_URL)}`
   }
 
   // 头像存进 settings 随每次同步整包上传，必须压小
@@ -556,13 +577,14 @@ export default function SessionSettings({ theme }) {
                 </p>
                 <div className="flex gap-2">
                   {!vpsLoggedIn && (
-                    <a
-                      href={`${COMPANION_LOGIN_URL}?return=${encodeURIComponent(COMPANION_RETURN_URL)}`}
+                    <button
+                      onClick={handleGoLogin}
+                      disabled={goingToLogin}
                       className="flex-1 text-center py-2 rounded-full text-xs font-medium text-white"
-                      style={{ background: 'linear-gradient(135deg, #7ab4f0, #4a90d0)', textDecoration: 'none' }}
+                      style={{ background: 'linear-gradient(135deg, #7ab4f0, #4a90d0)', border: 'none', opacity: goingToLogin ? 0.6 : 1 }}
                     >
-                      去登录
-                    </a>
+                      {goingToLogin ? '同步中…' : '去登录'}
+                    </button>
                   )}
                   {vpsLoggedIn && (
                     <button
