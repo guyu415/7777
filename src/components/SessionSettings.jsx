@@ -103,7 +103,7 @@ export default function SessionSettings({ theme }) {
     if (localProviderName !== VPS_PROVIDER) return
     refreshVpsStatus()
     // Returning from the companion /login page is a full-page redirect back to
-    // chat.xiaoman.xyz — re-check on focus/visibility too in case the app
+    // eunoia.xiaoman.xyz — re-check on focus/visibility too in case the app
     // shell wasn't fully torn down and this effect didn't re-run on its own.
     const onFocus = () => refreshVpsStatus()
     window.addEventListener('focus', onFocus)

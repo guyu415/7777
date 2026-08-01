@@ -401,4 +401,4 @@ export async function logout() {
 }
 
 export const COMPANION_LOGIN_URL = 'https://companion.xiaoman.xyz/login'
-export const COMPANION_RETURN_URL = 'https://chat.xiaoman.xyz'
+export const COMPANION_RETURN_URL = 'https://eunoia.xiaoman.xyz'
