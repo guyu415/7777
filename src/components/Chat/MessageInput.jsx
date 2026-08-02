@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect, forwardRef, useImperativeHandle } from 'react'
+import { X as CloseIcon } from 'lucide-react'
 import { compressImage } from '../../utils/image'
 
 function PhoneIcon() {
@@ -89,14 +90,22 @@ function MenuItem({ icon, label, sub, onClick, disabled }) {
   )
 }
 
-const MessageInput = forwardRef(function MessageInput({ onSend, onStartCall, onSendImage, onOpenGomoku, isVpsProvider, disabled, theme, isLoading, onStop }, ref) {
+const MessageInput = forwardRef(function MessageInput({ onSend, onStartCall, onSendImage, onOpenGomoku, gomokuEnabled, disabled, theme, isLoading, onStop }, ref) {
   const [text, setText] = useState('')
   const [menuOpen, setMenuOpen] = useState(false)
+  // A picked image sits here as a draft — thumbnail + cancel, still editable
+  // alongside the text field — until Send is actually pressed. Shared by
+  // every provider that reaches this component (Claude Code VPS, Codex VPS,
+  // and plain API providers): picking an image must never fire a send by
+  // itself. On Send, if a draft is present it goes out via onSendImage with
+  // whatever text was typed as its caption (text-only when no draft, per
+  // onSendImage's own contract) — never two separate sends for one attach.
+  const [imageDraft, setImageDraft] = useState(null)
   const fileRef = useRef(null)
   const textareaRef = useRef(null)
   const menuRef = useRef(null)
   const plusBtnRef = useRef(null)
-  const canSend = text.trim().length > 0  // always sendable when text exists
+  const canSend = text.trim().length > 0 || !!imageDraft
 
   useImperativeHandle(ref, () => ({
     fill(content) {
@@ -129,26 +138,33 @@ const MessageInput = forwardRef(function MessageInput({ onSend, onStartCall, onS
   }, [menuOpen])
 
   const handleSend = () => {
-    console.log('[PAW] handleSend: canSend=', canSend, 'textLen=', text.trim().length)
+    console.log('[PAW] handleSend: canSend=', canSend, 'textLen=', text.trim().length, 'hasImageDraft=', !!imageDraft)
     if (!canSend) return
-    onSend(text.trim())
+    if (imageDraft) {
+      onSendImage({ ...imageDraft, text: text.trim() })
+      setImageDraft(null)
+    } else {
+      onSend(text.trim())
+    }
     setText('')
     if (textareaRef.current) {
       textareaRef.current.style.height = 'auto'
     }
   }
 
+  // Picking a file only ever stages a draft — never sends by itself. A
+  // second pick before Send simply replaces the pending draft.
   const handleImage = async (e) => {
     const file = e.target.files?.[0]
     if (!file) return
     e.target.value = ''
     try {
       const { dataUrl, base64, mimeType } = await compressImage(file, { maxDim: 1280, quality: 0.8 })
-      onSendImage({ imageData: base64, imageType: mimeType, imageUrl: dataUrl })
+      setImageDraft({ imageData: base64, imageType: mimeType, imageUrl: dataUrl })
     } catch (err) {
       console.warn('[IMG] 压缩失败，回退原图:', err.message)
       const reader = new FileReader()
-      reader.onload = () => onSendImage({ imageData: reader.result.split(',')[1], imageType: file.type, imageUrl: reader.result })
+      reader.onload = () => setImageDraft({ imageData: reader.result.split(',')[1], imageType: file.type, imageUrl: reader.result })
       reader.readAsDataURL(file)
     }
   }
@@ -197,15 +213,43 @@ const MessageInput = forwardRef(function MessageInput({ onSend, onStartCall, onS
         >
           <MenuItem icon={<ImageIcon />} label="图片" onClick={handleMenuImage} />
           <MenuItem icon={<PhoneIcon />} label="语音通话" onClick={handleMenuCall} />
-          {/* 对手是当前聊天里真实的 CC，落子经 ai-companion MCP 完成——只有
-              CC（VPS）会话接了这条链路，普通 API 会话没有 MCP 工具可用。 */}
+          {/* 对手是当前聊天里真实的 Claude Code 或 Codex（各自独立棋局），
+              落子由各自的常驻 VPS 会话真实决定——普通 API 会话没有对应的
+              落子通道，不可用。 */}
           <MenuItem
             icon={<GomokuIcon />}
             label="五子棋"
-            sub={isVpsProvider ? undefined : '仅CC支持'}
+            sub={gomokuEnabled ? undefined : '仅VPS会话支持'}
             onClick={handleMenuGomoku}
-            disabled={!isVpsProvider}
+            disabled={!gomokuEnabled}
           />
+        </div>
+      )}
+
+      {imageDraft && (
+        <div style={{
+          display: 'flex', alignItems: 'center', gap: 8,
+          padding: '6px 12px 0',
+        }}>
+          <div style={{ position: 'relative', flexShrink: 0 }}>
+            <img
+              src={imageDraft.imageUrl}
+              alt=""
+              style={{ width: 56, height: 56, objectFit: 'cover', borderRadius: 12, border: `1px solid ${primaryColor}40` }}
+            />
+            <button
+              onClick={() => setImageDraft(null)}
+              title="移除图片"
+              style={{
+                position: 'absolute', top: -6, right: -6, width: 20, height: 20, borderRadius: '50%',
+                background: 'rgba(0,0,0,0.55)', color: '#fff', border: 'none',
+                display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer',
+              }}
+            >
+              <CloseIcon size={12} />
+            </button>
+          </div>
+          <span style={{ fontSize: 12, color: '#8b5060' }}>已选图片，可继续输入文字一起发送</span>
         </div>
       )}
 

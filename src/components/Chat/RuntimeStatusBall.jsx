@@ -1,9 +1,11 @@
 import { useEffect, useRef, useState } from 'react'
-import { getCompanionStatus, switchCompanionModel } from '../../services/companion'
+import { getCompanionStatus, switchCompanionModel, getCodexModelStatus, switchCodexModel } from '../../services/companion'
 
 // Exact Claude Code model IDs only — no rolling aliases. Keep this list in
-// sync with MODEL_IDS in channel-server.ts on the VPS.
-const MODEL_OPTIONS = [
+// sync with MODEL_IDS in channel-server.ts on the VPS. Codex has no
+// equivalent hardcoded list — its options come from the real model/list RPC
+// (see channel-server.ts's codexListModels), never copied from this one.
+const CC_MODEL_OPTIONS = [
   { id: 'claude-opus-5', label: 'Opus 5' },
   { id: 'claude-opus-4-6', label: 'Opus 4.6' },
   { id: 'claude-sonnet-4-6', label: 'Sonnet 4.6' },
@@ -17,7 +19,7 @@ function formatResetTime(unixSeconds) {
   return d.toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false, month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })
 }
 
-function ballColor(status) {
+function ccBallColor(status) {
   const fh = status?.rate_limits?.five_hour?.used_percentage
   const wk = status?.rate_limits?.seven_day?.used_percentage
   if (fh == null && wk == null) return '#a0b8d0' // 等待首次响应
@@ -27,9 +29,25 @@ function ballColor(status) {
   return '#34c759'
 }
 
-// 生产常驻会话的模型/用量小球——真实数据来自官方 statusLine（见 VPS 上的
-// scripts/statusline-capture.sh），不是前端自己估算的。
-export default function VpsStatusBall({ theme, isLoading }) {
+function codexBallColor(status) {
+  const pct = status?.usage?.primary?.usedPercent
+  if (pct == null) return '#a0b8d0'
+  if (pct >= 80) return '#e07070'
+  if (pct >= 50) return '#d4a017'
+  return '#34c759'
+}
+
+// Shared model/usage widget for BOTH fixed VPS chat windows (Claude Code and
+// Codex) — same position (inline next to the AI name), same popup card
+// style, same switch-buttons layout. Only the DATA is runtime-specific and
+// never cross-used: `runtime='claude-code'` polls the real statusLine-fed
+// /status endpoint and Claude Code's own fixed model list; `runtime='codex'`
+// polls the real /codex/model-status endpoint (backed by Codex's own
+// model/list + account/rateLimits/read RPCs) — never copies the other
+// runtime's model name or usage numbers, and simply omits any usage section
+// that runtime has no real data for rather than faking one.
+export default function RuntimeStatusBall({ theme, isLoading, runtime }) {
+  const isCodex = runtime === 'codex'
   const primary = theme?.primary || '#4aacf0'
   const primaryDark = theme?.primaryDark || '#2196d3'
 
@@ -43,7 +61,7 @@ export default function VpsStatusBall({ theme, isLoading }) {
 
   const refresh = async () => {
     try {
-      const s = await getCompanionStatus()
+      const s = isCodex ? await getCodexModelStatus() : await getCompanionStatus()
       setStatus(s)
     } catch {
       // best-effort — leave last-known status showing rather than clearing it
@@ -51,10 +69,12 @@ export default function VpsStatusBall({ theme, isLoading }) {
   }
 
   useEffect(() => {
+    setStatus(null)
     refresh()
     const t = setInterval(refresh, POLL_MS)
     return () => clearInterval(t)
-  }, [])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [runtime])
 
   // The orb's own on-page position varies with name length/avatar/menu button
   // width, so the popup can't safely anchor to it directly and still
@@ -85,8 +105,13 @@ export default function VpsStatusBall({ theme, isLoading }) {
     setSwitching(modelId)
     setSwitchError(null)
     try {
-      const res = await switchCompanionModel(modelId)
-      setStatus(s => ({ ...(s || {}), model: res.model }))
+      if (isCodex) {
+        const res = await switchCodexModel(modelId)
+        setStatus(s => ({ ...(s || {}), model: { id: res.model, displayName: res.displayName } }))
+      } else {
+        const res = await switchCompanionModel(modelId)
+        setStatus(s => ({ ...(s || {}), model: res.model }))
+      }
       await refresh()
     } catch (e) {
       setSwitchError(e.message || '切换失败')
@@ -95,12 +120,19 @@ export default function VpsStatusBall({ theme, isLoading }) {
     }
   }
 
-  const fh = status?.rate_limits?.five_hour
-  const wk = status?.rate_limits?.seven_day
-  const cw = status?.context_window
-  const usageColor = ballColor(status)
-  // Reuse the existing status color mapping purely for the visual warning
-  // animation; status fetching and judgment remain unchanged.
+  const modelOptions = isCodex
+    ? (status?.models || []).map(m => ({ id: m.id, label: m.displayName }))
+    : CC_MODEL_OPTIONS
+  const currentModelId = isCodex ? status?.model?.id : status?.model?.id
+  const currentModelLabel = isCodex ? (status?.model?.displayName || '—') : (status?.model?.display_name || '—')
+
+  const fh = !isCodex ? status?.rate_limits?.five_hour : null
+  const wk = !isCodex ? status?.rate_limits?.seven_day : null
+  const cw = !isCodex ? status?.context_window : null
+  const codexPrimary = isCodex ? status?.usage?.primary : null
+  const codexCredits = isCodex ? status?.usage?.credits : null
+
+  const usageColor = isCodex ? codexBallColor(status) : ccBallColor(status)
   const isUsageWarning = usageColor === '#d4a017' || usageColor === '#e07070'
 
   return (
@@ -131,7 +163,7 @@ export default function VpsStatusBall({ theme, isLoading }) {
       <button
         ref={btnRef}
         onClick={toggleOpen}
-        title="VPS 用量"
+        title={isCodex ? 'Codex 用量' : 'VPS 用量'}
         style={{
           // Keep a comfortable hit target while making the visible light
           // smaller and visually lighter than the clickable area.
@@ -189,11 +221,14 @@ export default function VpsStatusBall({ theme, isLoading }) {
           }}
         >
           <div className="text-xs font-semibold mb-2" style={{ color: '#2c5282' }}>
-            当前模型：{status?.model?.display_name || '—'}
+            当前模型：{currentModelLabel}
           </div>
           <div className="flex flex-wrap gap-1.5 mb-3">
-            {MODEL_OPTIONS.map(opt => {
-              const active = status?.model?.id === opt.id
+            {modelOptions.length === 0 && (
+              <p className="text-[10px]" style={{ color: '#a0b8d0' }}>{isCodex ? '模型列表获取中，或 Codex 尚未登录' : '模型列表获取中'}</p>
+            )}
+            {modelOptions.map(opt => {
+              const active = currentModelId === opt.id
               const busy = switching === opt.id
               return (
                 <button
@@ -217,33 +252,59 @@ export default function VpsStatusBall({ theme, isLoading }) {
           {isLoading && <p className="text-[10px] mb-2" style={{ color: '#a0b8d0' }}>对话进行中，暂不能切换模型</p>}
           {switchError && <p className="text-[10px] mb-2" style={{ color: '#e07070' }}>{switchError}</p>}
 
-          <div className="text-[11px] mb-1" style={{ color: '#6a90b8' }}>上下文占用</div>
-          {cw?.used_percentage != null ? (
+          {!isCodex && (
             <>
-              <div style={{ height: 4, background: 'rgba(200,220,255,0.3)', borderRadius: 2, overflow: 'hidden', marginBottom: 8 }}>
-                <div style={{ height: '100%', width: `${cw.used_percentage}%`, background: 'linear-gradient(90deg, #9b70e0, #c084fc)' }} />
-              </div>
+              <div className="text-[11px] mb-1" style={{ color: '#6a90b8' }}>上下文占用</div>
+              {cw?.used_percentage != null ? (
+                <div style={{ height: 4, background: 'rgba(200,220,255,0.3)', borderRadius: 2, overflow: 'hidden', marginBottom: 8 }}>
+                  <div style={{ height: '100%', width: `${cw.used_percentage}%`, background: 'linear-gradient(90deg, #9b70e0, #c084fc)' }} />
+                </div>
+              ) : (
+                <p className="text-[10px] mb-2" style={{ color: '#a0b8d0' }}>等待首次响应</p>
+              )}
+
+              <div className="text-[11px] mb-1" style={{ color: '#6a90b8' }}>5 小时用量</div>
+              {fh ? (
+                <p className="text-[10px] mb-2" style={{ color: '#7a9cc0' }}>
+                  已用 {Math.round(fh.used_percentage)}% · 重置于 {formatResetTime(fh.resets_at)}
+                </p>
+              ) : (
+                <p className="text-[10px] mb-2" style={{ color: '#a0b8d0' }}>等待首次响应</p>
+              )}
+
+              <div className="text-[11px] mb-1" style={{ color: '#6a90b8' }}>每周用量</div>
+              {wk ? (
+                <p className="text-[10px]" style={{ color: '#7a9cc0' }}>
+                  已用 {Math.round(wk.used_percentage)}% · 重置于 {formatResetTime(wk.resets_at)}
+                </p>
+              ) : (
+                <p className="text-[10px]" style={{ color: '#a0b8d0' }}>等待首次响应</p>
+              )}
             </>
-          ) : (
-            <p className="text-[10px] mb-2" style={{ color: '#a0b8d0' }}>等待首次响应</p>
           )}
 
-          <div className="text-[11px] mb-1" style={{ color: '#6a90b8' }}>5 小时用量</div>
-          {fh ? (
-            <p className="text-[10px] mb-2" style={{ color: '#7a9cc0' }}>
-              已用 {Math.round(fh.used_percentage)}% · 重置于 {formatResetTime(fh.resets_at)}
-            </p>
-          ) : (
-            <p className="text-[10px] mb-2" style={{ color: '#a0b8d0' }}>等待首次响应</p>
-          )}
-
-          <div className="text-[11px] mb-1" style={{ color: '#6a90b8' }}>每周用量</div>
-          {wk ? (
-            <p className="text-[10px]" style={{ color: '#7a9cc0' }}>
-              已用 {Math.round(wk.used_percentage)}% · 重置于 {formatResetTime(wk.resets_at)}
-            </p>
-          ) : (
-            <p className="text-[10px]" style={{ color: '#a0b8d0' }}>等待首次响应</p>
+          {/* Codex's real usage shape is genuinely different (one rolling
+              window + optional credit balance, no five-hour/weekly split, no
+              context-window percentage) — rendered as its own real fields
+              rather than force-fit into Claude Code's labels above. Any
+              field Codex doesn't actually return is simply omitted, never
+              guessed. */}
+          {isCodex && (
+            codexPrimary ? (
+              <>
+                <div className="text-[11px] mb-1" style={{ color: '#6a90b8' }}>用量窗口</div>
+                <p className="text-[10px] mb-2" style={{ color: '#7a9cc0' }}>
+                  已用 {Math.round(codexPrimary.usedPercent)}%{codexPrimary.resetsAt ? ` · 重置于 ${formatResetTime(codexPrimary.resetsAt)}` : ''}
+                </p>
+                {codexCredits && (
+                  <p className="text-[10px]" style={{ color: '#7a9cc0' }}>
+                    {codexCredits.unlimited ? '额度：不限量' : (codexCredits.hasCredits ? `额度余量：${codexCredits.balance ?? '—'}` : '无额外额度')}
+                  </p>
+                )}
+              </>
+            ) : (
+              <p className="text-[10px]" style={{ color: '#a0b8d0' }}>{isCodex && !status ? '等待首次响应' : '暂无用量数据'}</p>
+            )
           )}
         </div>
       )}

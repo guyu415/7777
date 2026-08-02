@@ -2,7 +2,6 @@ import { useEffect, useState, useRef } from 'react'
 import { useStore, getCustomFont, getBlob, getMessages, saveMessage, saveBlob, deleteMessagesForSession } from './store'
 import { THEMES } from './themes'
 import ChatWindow from './components/Chat/ChatWindow'
-import CodexChatWindow from './components/Chat/CodexChatWindow'
 import GlobalSettings from './components/GlobalSettings'
 import SessionSettings from './components/SessionSettings'
 import SessionList from './components/SessionList'
@@ -615,11 +614,10 @@ export default function App() {
         style={{ boxShadow: `0 0 60px ${theme.primary}26`, zIndex: 2 }}
       >
         <div className="flex-1 overflow-hidden min-h-0">
-          {currentView === 'chat' && (
-            sessions?.find(s => s.id === currentSessionId)?.providerName === 'codex-vps'
-              ? <CodexChatWindow theme={theme} />
-              : <ChatWindow theme={theme} />
-          )}
+          {/* One shared window for every provider (Claude Code VPS, Codex
+              VPS, plain API-key) — ChatWindow.jsx itself picks the right
+              runtime adapter internally, see its own top-of-file comment. */}
+          {currentView === 'chat' && <ChatWindow theme={theme} />}
           {currentView === 'sessions' && (
             <SessionList theme={theme} onSelectSession={() => setCurrentView('chat')} />
           )}

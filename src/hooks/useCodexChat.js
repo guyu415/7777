@@ -8,6 +8,12 @@ import {
 // REST endpoints (/codex/*); it never touches useChat.js's state, IndexedDB
 // messages, or the Claude Code WS turn machinery, so the two can run fully
 // concurrently without interfering with each other.
+//
+// Returns the SAME shape useChat() does (messages/sendMessage/loadHistory/
+// isLoading/regenerate/regenerateRound/deleteMsg/editMessage/stopStreaming)
+// so the shared ChatWindow.jsx can use either hook interchangeably via one
+// small runtime switch, instead of maintaining a second full page shell —
+// see ChatWindow.jsx's own top-of-file comment.
 
 export const CODEX_STATUS_LABELS = {
   idle: '',
@@ -45,20 +51,28 @@ export function useCodexChat() {
   const [loaded, setLoaded] = useState(false)
   const [sendError, setSendError] = useState(null)
 
-  useEffect(() => {
+  const refresh = useCallback(async () => {
     ensureConnected()
+    try {
+      const s = await getCodexState()
+      setMessages((s.history || []).map(toBubble))
+      setStatus(s.status || 'idle')
+      setOpenTurnId(s.openTurnId ?? null)
+    } catch {
+      // best-effort — leave last-known state showing (e.g. companion not
+      // logged in yet); the settings page's own two-layer status readout is
+      // what surfaces that, not this hook
+    } finally {
+      setLoaded(true)
+    }
+  }, [])
+
+  useEffect(() => {
     let cancelled = false
-    getCodexState()
-      .then((s) => {
-        if (cancelled) return
-        setMessages((s.history || []).map(toBubble))
-        setStatus(s.status || 'idle')
-        setOpenTurnId(s.openTurnId ?? null)
-      })
-      .catch(() => {})
-      .finally(() => { if (!cancelled) setLoaded(true) })
+    refresh()
 
     const unsub = onCodexEvent((evt) => {
+      if (cancelled) return
       switch (evt.type) {
         // Fires once per (re)connect — this is what restores history after a
         // refresh AND resumes seeing an in-progress task's status/turnId
@@ -99,24 +113,32 @@ export function useCodexChat() {
       }
     })
     return () => { cancelled = true; unsub() }
-  }, [])
+  }, [refresh])
 
-  const sendMessage = useCallback((text) => {
-    const trimmed = (text || '').trim()
-    if (!trimmed) return
+  // Single entry point for both a plain text send and an image(+caption)
+  // send — mirrors useChat().sendMessage(content, type, extra)'s call shape
+  // so ChatWindow.jsx can invoke either hook identically, but what actually
+  // matters here is just whether extra.imageUrl is present: the backend's
+  // codexSendUserTurn already builds ONE turn/start with both a text and an
+  // image UserInput when both are given (see channel-server.ts), so a
+  // caption typed alongside a picked image is delivered as a single real
+  // Codex turn, never two separate sends.
+  // async even though the body is synchronous — ChatWindow.jsx calls
+  // useChat()'s sendMessage() and chains .catch() on the result; this must
+  // return a real Promise too so that call site works unchanged for either
+  // runtime.
+  const sendMessage = useCallback(async (content, _type = 'text', extra = {}) => {
+    const text = (content || '').trim()
+    const imageUrl = extra?.imageUrl
+    if (!text && !imageUrl) return
     setSendError(null)
-    const ok = sendCodexMessage(trimmed)
+    const ok = sendCodexMessage(text, imageUrl)
     if (!ok) setSendError('未连接，请稍后重试')
   }, [])
 
-  const sendImage = useCallback(({ imageUrl }) => {
-    if (!imageUrl) return
-    setSendError(null)
-    const ok = sendCodexMessage('', imageUrl)
-    if (!ok) setSendError('未连接，请稍后重试')
-  }, [])
+  const loadHistory = useCallback(() => { refresh() }, [refresh])
 
-  const stop = useCallback(() => {
+  const stopStreaming = useCallback(() => {
     stopCodex().catch(() => {})
   }, [])
 
@@ -124,11 +146,22 @@ export function useCodexChat() {
     await resetCodex()
   }, [])
 
+  // No per-message edit/delete/regenerate backend for Codex (only real
+  // send/stop/reset/history exist) — same honest "not supported" pattern
+  // ChatWindow.jsx already uses for the Claude Code VPS session, reused
+  // here rather than silently no-op-ing.
+  const notSupported = useCallback(() => {
+    throw new Error('Codex 常驻会话暂不支持该操作')
+  }, [])
+
   const isLoading = status === 'thinking' || status === 'working'
 
   return {
-    messages, status, statusLabel: CODEX_STATUS_LABELS[status] || '',
-    isLoading, openTurnId, loaded, sendError,
-    sendMessage, sendImage, stop, reset,
+    messages, sendMessage, loadHistory, isLoading,
+    regenerate: notSupported, regenerateRound: notSupported,
+    deleteMsg: notSupported, editMessage: notSupported,
+    stopStreaming,
+    // Codex-only extras ChatWindow.jsx reads directly (not part of useChat()'s shape)
+    status, statusLabel: CODEX_STATUS_LABELS[status] || '', openTurnId, loaded, sendError, reset,
   }
 }

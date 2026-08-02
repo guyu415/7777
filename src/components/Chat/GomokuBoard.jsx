@@ -14,24 +14,31 @@ const SpeechRecognitionAPI = window.SpeechRecognition || window.webkitSpeechReco
 // A standalone full-screen game view (fixed inset-0, own header/opponent/
 // turn/restart/undo/resign/quit controls, own in-game chat log + text input +
 // press-and-hold voice) — NOT rendered inside MessageList, NOT chat bubbles.
+// The SAME component/UI for either opponent — `runtime` ('claude-code' |
+// 'codex') is threaded through every companion.js call and the live-update
+// filter below, never a second copy of this board.
 //
 // In-game chat is entirely server-persisted on the game itself
-// (currentGame.messages in channel-server.ts, delivered via the SAME
-// gomoku_update broadcast as board state) — never the main conversation's
-// history/IndexedDB. Sending goes through POST /gomoku/chat (postGomokuChat);
-// CC's reply/send_voice calls made during that turn are routed server-side
-// straight into the game's messages log, so there is no client-side tagging
-// or dedup race to get wrong — closing this screen and reopening it (or a
-// full reload) just re-fetches the same persisted log via getGomokuState().
+// (currentGame/codexGomokuGame .messages in channel-server.ts, delivered via
+// the SAME gomoku_update broadcast as board state, tagged with `runtime` so
+// this component only ever reacts to updates for its OWN game) — never the
+// main conversation's history/IndexedDB. Sending goes through POST
+// /gomoku/chat (postGomokuChat); the opponent's reply/send_voice-equivalent
+// calls made during that turn are routed server-side straight into the
+// game's own messages log, so there is no client-side tagging or dedup race
+// to get wrong — closing this screen and reopening it (or a full reload)
+// just re-fetches the same persisted log via getGomokuState(runtime).
 //
 // Board/turn/legality/win-detection/undo-agreement/chat routing all live
 // server-side; this component only renders state and posts the user's own
 // taps/messages. The opponent's moves, decisions, and chat replies are made
-// by the real resident CC session via the gomoku_move/gomoku_undo_response/
-// reply/send_voice MCP tools and arrive here purely as live broadcasts —
-// there is no local move-picking or reply-generating logic anywhere in this
-// file.
-export default function GomokuBoard({ theme, aiName, aiAvatar, userAvatar, onClose }) {
+// by the real resident session for that runtime (Claude Code via the
+// gomoku_move/gomoku_undo_response/reply/send_voice MCP tools; Codex via its
+// own dedicated gomoku thread + [MOVE:row,col]/[UNDO:yes/no] tagged replies
+// — see channel-server.ts's codexNotifyGomokuTurn/codexNotifyGomokuChat) and
+// arrive here purely as live broadcasts — there is no local move-picking or
+// reply-generating logic anywhere in this file, for either runtime.
+export default function GomokuBoard({ theme, runtime = 'claude-code', aiName, aiAvatar, userAvatar, onClose }) {
   const [game, setGame] = useState(null)
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState(false)
@@ -61,7 +68,8 @@ export default function GomokuBoard({ theme, aiName, aiAvatar, userAvatar, onClo
 
   useEffect(() => {
     let cancelled = false
-    getGomokuState()
+    setLoading(true)
+    getGomokuState(runtime)
       .then(({ game }) => {
         if (cancelled) return
         setGame(game)
@@ -69,9 +77,12 @@ export default function GomokuBoard({ theme, aiName, aiAvatar, userAvatar, onClo
       })
       .catch(e => { if (!cancelled) setError(e.message || '加载棋局失败') })
       .finally(() => { if (!cancelled) setLoading(false) })
-    const unsub = onGomokuUpdate(g => setGame(g))
+    // Both runtimes' games arrive on this one shared subscription — only
+    // ever apply an update that's actually for THIS board's own runtime, so
+    // a Claude Code move can never flash onto the Codex board or vice versa.
+    const unsub = onGomokuUpdate((g, r) => { if (r === runtime) setGame(g) })
     return () => { cancelled = true; unsub() }
-  }, [])
+  }, [runtime])
 
   // Clears the send-in-flight state once the specific chat turn we're
   // waiting on actually finishes — not a fixed timeout, so it tracks reality
@@ -136,7 +147,7 @@ export default function GomokuBoard({ theme, aiName, aiAvatar, userAvatar, onClo
     setChatError(null)
     setSending(true)
     try {
-      const { interactionId } = await postGomokuChat(game.id, text, !!opts.voice)
+      const { interactionId } = await postGomokuChat(game.id, text, !!opts.voice, runtime)
       pendingInteractionRef.current = interactionId
     } catch (e) {
       setSending(false)
@@ -210,7 +221,7 @@ export default function GomokuBoard({ theme, aiName, aiAvatar, userAvatar, onClo
     setBusy(true)
     setError(null)
     try {
-      const { game: updated } = await makeGomokuMove(row, col)
+      const { game: updated } = await makeGomokuMove(row, col, runtime)
       setGame(updated)
     } catch (e) {
       setError(e.message || '落子失败，请重试')
@@ -224,7 +235,7 @@ export default function GomokuBoard({ theme, aiName, aiAvatar, userAvatar, onClo
     setBusy(true)
     setError(null)
     try {
-      const { game: fresh } = await newGomokuGame()
+      const { game: fresh } = await newGomokuGame(runtime)
       setGame(fresh)
       playedVoiceIdsRef.current = new Set()
     } catch (e) {
@@ -239,7 +250,7 @@ export default function GomokuBoard({ theme, aiName, aiAvatar, userAvatar, onClo
     setBusy(true)
     setError(null)
     try {
-      const { mode, game: updated } = await requestGomokuUndo()
+      const { mode, game: updated } = await requestGomokuUndo(runtime)
       if (updated) setGame(updated)
       if (mode === 'pending') setError('已请求悔棋，等待对方回应…')
     } catch (e) {
@@ -255,7 +266,7 @@ export default function GomokuBoard({ theme, aiName, aiAvatar, userAvatar, onClo
     setBusy(true)
     setError(null)
     try {
-      const { game: updated } = await resignGomokuGame()
+      const { game: updated } = await resignGomokuGame(runtime)
       setGame(updated)
     } catch (e) {
       setError(e.message || '认输失败')

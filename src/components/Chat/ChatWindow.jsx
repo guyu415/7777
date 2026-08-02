@@ -5,11 +5,12 @@ import MessageList from './MessageList'
 import FallingParticles from './FallingParticles'
 import MessageInput from './MessageInput'
 import MemoryModal from './MemoryModal'
-import VpsStatusBall from './VpsStatusBall'
+import RuntimeStatusBall from './RuntimeStatusBall'
 import VoiceCall from '../Voice/VoiceCall'
 import GomokuBoard from './GomokuBoard'
 import XinchaoPanel from './XinchaoPanel'
 import { useChat } from '../../hooks/useChat'
+import { useCodexChat } from '../../hooks/useCodexChat'
 import { useScheduledMessages } from '../../hooks/useScheduledMessages'
 import { useStore, deleteMessageFromDB, getBlob } from '../../store'
 import { putAsset } from '../../services/sync'
@@ -48,8 +49,20 @@ function Signature({ text, color, shadow }) {
   )
 }
 
+// The one shared chat window/app-shell for every provider — Claude Code
+// (VPS), Codex (VPS), and plain API-key providers alike. There is no second
+// page shell anywhere in the app for any of these: useChat()/useCodexChat()
+// are both called unconditionally (Rules of Hooks) and this component just
+// picks whichever one matches the current session's providerName, so a
+// change made here reaches every provider at once — see each hook's own
+// comment for what it owns independently (history/context/turn-state/model/
+// stop/reset), which is exactly the "runtime adapter" boundary: everything
+// below this point (header, message list, input, settings nav, voice,
+// gomoku, mobile layout) is 100% shared UI, unaware of which provider is
+// active except through the small `isVpsSession`/`isCodexSession` branches.
 export default function ChatWindow({ theme }) {
-  const { messages, sendMessage, loadHistory, isLoading, regenerate, regenerateRound, deleteMsg, editMessage, stopStreaming } = useChat()
+  const cc = useChat()
+  const codex = useCodexChat()
   const { fetchPendingMessages, updateActiveTime } = useScheduledMessages()
   // Scoped + shallow-compared selector: ChatWindow previously called useStore()
   // with no selector at all, which meant it (and its whole message-list JSX)
@@ -70,6 +83,16 @@ export default function ChatWindow({ theme }) {
   })))
 
   const currentSession = sessions?.find(s => s.id === currentSessionId)
+  const isVpsSession = currentSession?.providerName === 'claude-code-vps'
+  const isCodexSession = currentSession?.providerName === 'codex-vps'
+  // The one runtime-adapter switch this whole shared window is built around
+  // — everything below reads send/stop/reset/history/status through this
+  // single `active` reference instead of branching provider logic all over
+  // the file. cc/codex above are BOTH always called (Rules of Hooks); only
+  // one is ever actually used per render.
+  const active = isCodexSession ? codex : cc
+  const { messages, sendMessage, loadHistory, isLoading, regenerate, regenerateRound, deleteMsg, editMessage, stopStreaming } = active
+
   const effectiveAiName = currentSession?.aiName ?? globalAiName
   const effectiveAiAvatar = currentSession?.aiAvatar ?? globalAiAvatar
   const effectiveUserAvatar = currentSession?.userAvatar ?? globalUserAvatar
@@ -174,27 +197,36 @@ export default function ChatWindow({ theme }) {
     await loadHistory() // 把通话产生的消息刷进聊天列表
   }
 
-  const handleSendImage = ({ imageData, imageType, imageUrl }) => {
-    if (currentSession?.providerName === 'claude-code-vps') {
+  // Image + optional caption text as ONE send — MessageInput's own draft UI
+  // (thumbnail + cancel, still-editable text field) is what stops picking an
+  // image from firing a send by itself; this handler just forwards whatever
+  // was staged. For Codex, sendMessage('image')'s extra.imageUrl combined
+  // with a non-empty content string reaches codexSendUserTurn() as a single
+  // real turn/start carrying both a text and an image UserInput — never two
+  // separate sends. Claude Code's VPS session still has no image support at
+  // all (unchanged, pre-existing limitation, not something this task adds).
+  const handleSendImage = ({ imageData, imageType, imageUrl, text }) => {
+    if (isVpsSession) {
       alert('VPS Companion 暂不支持此消息类型（图片）')
       return
     }
     updateActiveTime()
-    sendMessage('', 'image', { imageData, imageType, imageUrl })
+    sendMessage(text || '', 'image', { imageData, imageType, imageUrl })
   }
 
-  // VPS's Claude session is stateful/persistent — it can't un-say a reply the
-  // way re-issuing a stateless API call can. Button stays visible (so it's
-  // discoverable, not mysteriously gone) but explains why instead of acting.
-  // useCallback with empty deps: this gets passed down into memoized
-  // MessageList as onRegenerate/onRegenerateRound, so it must keep the same
-  // reference across renders or it defeats that memoization every time.
-  const vpsRegenerateBlocked = useCallback(() => {
-    alert('VPS 常驻会话暂不支持重新生成，可复制内容后重新发送。')
+  // Neither VPS session (Claude Code or Codex) can "un-say" a reply the way
+  // re-issuing a stateless API call can — both are stateful, persistent
+  // sessions. Button stays visible (so it's discoverable, not mysteriously
+  // gone) but explains why instead of acting. useCallback with empty deps:
+  // this gets passed down into memoized MessageList as onRegenerate/
+  // onRegenerateRound, so it must keep the same reference across renders or
+  // it defeats that memoization every time.
+  const regenerateBlocked = useCallback(() => {
+    alert('常驻会话暂不支持重新生成，可复制内容后重新发送。')
   }, [])
 
   // Also handed down into memoized MessageList (for its empty-state "去配置"
-  // button) — same stability requirement as vpsRegenerateBlocked above.
+  // button) — same stability requirement as regenerateBlocked above.
   const goToGlobalSettings = useCallback(() => setCurrentView('globalSettings'), [setCurrentView])
 
   const handleEdit = async (msg) => {
@@ -282,9 +314,9 @@ export default function ChatWindow({ theme }) {
   for (let i = messages.length - 1; i >= 0; i--) {
     if (messages[i].role === 'assistant') { lastAiId = messages[i].id; break }
   }
-  const isVpsSession = currentSession?.providerName === 'claude-code-vps'
-  const effectiveOnRegenerate = isVpsSession ? vpsRegenerateBlocked : regenerate
-  const effectiveOnRegenerateRound = isVpsSession ? vpsRegenerateBlocked : regenerateRound
+  const isFixedVpsSession = isVpsSession || isCodexSession
+  const effectiveOnRegenerate = isFixedVpsSession ? regenerateBlocked : regenerate
+  const effectiveOnRegenerateRound = isFixedVpsSession ? regenerateBlocked : regenerateRound
 
   const primaryColor = theme?.primary || '#4aacf0'
   const primaryDarkColor = theme?.primaryDark || '#2196d3'
@@ -341,8 +373,22 @@ export default function ChatWindow({ theme }) {
               }}>
                 {effectiveAiName || currentSession?.name || '新对话'}
               </div>
-              {currentSession?.providerName === 'claude-code-vps' && (
-                <VpsStatusBall theme={theme} isLoading={isLoading} />
+              {isFixedVpsSession && (
+                <RuntimeStatusBall theme={theme} isLoading={isLoading} runtime={isCodexSession ? 'codex' : 'claude-code'} />
+              )}
+              {/* Codex's own task-status pill — reuses this exact same
+                  name-row position/style xinchao's tag and the status ball
+                  already use (never the signature row below, which stays
+                  dedicated to the user's real signature — see the Signature
+                  component just below, untouched by this). */}
+              {isCodexSession && codex.statusLabel && (
+                <span style={{
+                  fontSize: 10, color: primaryColor, background: `${primaryColor}12`,
+                  border: `1px solid ${primaryColor}30`, borderRadius: 8,
+                  padding: '1px 6px', lineHeight: 1.5, flexShrink: 0, whiteSpace: 'nowrap', marginLeft: 4,
+                }}>
+                  {codex.statusLabel}
+                </span>
               )}
               {xinchaoState?.toneLabel && (
                 <button
@@ -412,7 +458,7 @@ export default function ChatWindow({ theme }) {
           aiAvatar={effectiveAiAvatar}
           theme={theme}
           emptyAiName={effectiveAiName}
-          emptyHasApiKey={!!effectiveApiKey}
+          emptyHasApiKey={isCodexSession ? true : !!effectiveApiKey}
           onEmptyConfigureClick={goToGlobalSettings}
         />
       </div>
@@ -435,7 +481,14 @@ export default function ChatWindow({ theme }) {
             }}
             onClick={e => e.stopPropagation()}
           >
-            {menuMsg.role === 'user' && menuMsg.type === 'text' && (
+            {/* Codex has no per-message edit/delete/memory backend (only
+                real send/stop/reset/history — see useCodexChat.js) — its
+                messages live purely server-side, not in the zustand/
+                IndexedDB store these actions operate on, so acting on them
+                here would silently do nothing to what's displayed. 复制 has
+                no such backend dependency and stays available for every
+                provider. */}
+            {!isCodexSession && menuMsg.role === 'user' && menuMsg.type === 'text' && (
               <button
                 onClick={() => handleEdit(menuMsg)}
                 className="w-full flex items-center gap-3 px-5 py-3.5 text-sm hover:bg-pink-50 transition-colors"
@@ -444,7 +497,7 @@ export default function ChatWindow({ theme }) {
                 ✏️ 编辑
               </button>
             )}
-            {menuMsg.role === 'assistant' && menuMsg.type === 'text' && (
+            {!isCodexSession && menuMsg.role === 'assistant' && menuMsg.type === 'text' && (
               <button
                 onClick={() => handleEditAI(menuMsg)}
                 className="w-full flex items-center gap-3 px-5 py-3.5 text-sm hover:bg-pink-50 transition-colors"
@@ -466,7 +519,7 @@ export default function ChatWindow({ theme }) {
                 📋 复制
               </button>
             )}
-            {menuMsg.type === 'text' && menuMsg.content && (
+            {!isCodexSession && menuMsg.type === 'text' && menuMsg.content && (
               <button
                 onClick={() => { setMenuMsg(null); setMemoryMsg(menuMsg) }}
                 className="w-full flex items-center gap-3 px-5 py-3.5 text-sm hover:bg-pink-50 transition-colors"
@@ -475,7 +528,7 @@ export default function ChatWindow({ theme }) {
                 🧠 存入记忆
               </button>
             )}
-            {menuMsg.role === 'assistant' && menuMsg.type === 'voice' && (
+            {!isCodexSession && menuMsg.role === 'assistant' && menuMsg.type === 'voice' && (
               <button
                 onClick={() => handleFavoriteVoice(menuMsg)}
                 className="w-full flex items-center gap-3 px-5 py-3.5 text-sm hover:bg-yellow-50 transition-colors"
@@ -484,13 +537,15 @@ export default function ChatWindow({ theme }) {
                 ⭐ 收藏语音
               </button>
             )}
-            <button
-              onClick={() => handleDelete(menuMsg)}
-              className="w-full flex items-center gap-3 px-5 py-3.5 text-sm hover:bg-red-50 transition-colors"
-              style={{ color: '#e07070' }}
-            >
-              🗑️ 删除
-            </button>
+            {!isCodexSession && (
+              <button
+                onClick={() => handleDelete(menuMsg)}
+                className="w-full flex items-center gap-3 px-5 py-3.5 text-sm hover:bg-red-50 transition-colors"
+                style={{ color: '#e07070' }}
+              >
+                🗑️ 删除
+              </button>
+            )}
           </div>
         </div>
       )}
@@ -562,6 +617,9 @@ export default function ChatWindow({ theme }) {
           borderTop: `1px solid ${primaryColor}18`,
         }}
       >
+        {isCodexSession && codex.sendError && (
+          <div className="px-4 pt-1.5 text-xs" style={{ color: '#e07070' }}>{codex.sendError}</div>
+        )}
         <MessageInput
           ref={inputRef}
           onSend={(text) => {
@@ -572,7 +630,7 @@ export default function ChatWindow({ theme }) {
           onStartCall={handleStartCall}
           onSendImage={handleSendImage}
           onOpenGomoku={() => setShowGomoku(true)}
-          isVpsProvider={isVpsSession}
+          gomokuEnabled={isFixedVpsSession}
           disabled={isLoading}
           theme={theme}
           isLoading={isLoading}
@@ -622,9 +680,20 @@ export default function ChatWindow({ theme }) {
           board/opponent/turn/restart/quit UI, never rendered inside
           MessageList or as chat bubbles), not a route change: closing it
           just returns to this same chat, and the persisted game (if
-          unfinished) is exactly where it was left next time it's opened. */}
+          unfinished) is exactly where it was left next time it's opened.
+          `runtime` picks which opponent/board/thread this game talks to —
+          Claude Code and Codex have fully independent games (own board,
+          moves, chat log, wait-state); the UI/board component itself is the
+          exact same one either way, unchanged. */}
       {showGomoku && (
-        <GomokuBoard theme={theme} aiName={effectiveAiName} aiAvatar={effectiveAiAvatar} userAvatar={effectiveUserAvatar} onClose={() => setShowGomoku(false)} />
+        <GomokuBoard
+          theme={theme}
+          runtime={isCodexSession ? 'codex' : 'claude-code'}
+          aiName={effectiveAiName}
+          aiAvatar={effectiveAiAvatar}
+          userAvatar={effectiveUserAvatar}
+          onClose={() => setShowGomoku(false)}
+        />
       )}
 
       {showXinchaoPanel && (

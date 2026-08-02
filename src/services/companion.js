@@ -228,15 +228,18 @@ function maybeAnnounceReset(resetAt) {
 const gomokuListeners = new Set()
 /** Subscribe to live gomoku board updates (user move, AI move, new game, and
  * in-game chat — the game's `messages` log is part of the same broadcast
- * object, see channel-server.ts's appendGomokuChatMsg). Returns an unsubscribe fn. */
+ * object, see channel-server.ts's appendGomokuChatMsg). fn(game, runtime) —
+ * runtime is 'claude-code' or 'codex'; a subscriber must filter to its own
+ * runtime itself (GomokuBoard.jsx does), since both boards share this one
+ * subscription channel. Returns an unsubscribe fn. */
 export function onGomokuUpdate(fn) {
   gomokuListeners.add(fn)
   return () => gomokuListeners.delete(fn)
 }
-function announceGomoku(game) {
+function announceGomoku(game, runtime) {
   for (const fn of gomokuListeners) {
     try {
-      fn(game)
+      fn(game, runtime)
     } catch {
       // a subscriber throwing must not break delivery to the others
     }
@@ -291,39 +294,56 @@ export async function getXinchaoStatus() {
   return companionJson('/xinchao/status')
 }
 
-export async function getGomokuState() {
-  return companionJson('/gomoku/state')
+// Every call takes an explicit `runtime` ('claude-code' | 'codex') so the
+// two boards/threads/turn-tracking never share state — see channel-server.ts's
+// runtime-branched gomoku endpoints. Defaults to 'claude-code' so any
+// existing caller that doesn't pass one keeps its original behavior.
+export async function getGomokuState(runtime = 'claude-code') {
+  return companionJson(`/gomoku/state?runtime=${encodeURIComponent(runtime)}`)
 }
-export async function newGomokuGame() {
-  return companionJson('/gomoku/new', { method: 'POST' })
+export async function newGomokuGame(runtime = 'claude-code') {
+  return companionJson('/gomoku/new', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ runtime }),
+  })
 }
-export async function makeGomokuMove(row, col) {
+export async function makeGomokuMove(row, col, runtime = 'claude-code') {
   return companionJson('/gomoku/move', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ row, col }),
+    body: JSON.stringify({ row, col, runtime }),
   })
 }
 // mode:'immediate' (AI hadn't moved yet, retracted right away) or
-// mode:'pending' (AI already moved — genuinely asked over the MCP channel;
-// the actual outcome arrives later as a gomoku_update broadcast, including
-// anything CC says about it in the game's own `messages` log).
-export async function requestGomokuUndo() {
-  return companionJson('/gomoku/undo-request', { method: 'POST' })
+// mode:'pending' (AI already moved — genuinely asked for real, over the MCP
+// channel for Claude Code or a real [UNDO:yes/no]-tagged turn for Codex; the
+// actual outcome arrives later as a gomoku_update broadcast, including
+// anything the opponent says about it in the game's own `messages` log).
+export async function requestGomokuUndo(runtime = 'claude-code') {
+  return companionJson('/gomoku/undo-request', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ runtime }),
+  })
 }
-export async function resignGomokuGame() {
-  return companionJson('/gomoku/resign', { method: 'POST' })
+export async function resignGomokuGame(runtime = 'claude-code') {
+  return companionJson('/gomoku/resign', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ runtime }),
+  })
 }
 // In-game chat — text typed on the gomoku screen, or a voice press-and-hold's
 // transcript (voice:true, transcribed client-side, never a new server-side
-// STT path). CC's reply arrives via onGomokuUpdate (game.messages), not via
-// streamChatViaCompanion — this call returns as soon as the message is
-// queued, not once CC has replied.
-export async function postGomokuChat(gameId, text, voice = false) {
+// STT path). The opponent's reply arrives via onGomokuUpdate (game.messages),
+// not via streamChatViaCompanion/onCodexEvent — this call returns as soon as
+// the message is queued, not once the opponent has replied.
+export async function postGomokuChat(gameId, text, voice = false, runtime = 'claude-code') {
   return companionJson('/gomoku/chat', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ gameId, text, voice }),
+    body: JSON.stringify({ gameId, text, voice, runtime }),
   })
 }
 
@@ -356,6 +376,21 @@ function announceCodex(evt) {
 export async function getCodexState() {
   return companionJson('/codex/state')
 }
+// Lightweight, poll-friendly status for the header's model/usage widget —
+// real current model + real usage + real model catalog (via Codex's own
+// model/list RPC), never Claude Code's MODEL_IDS or crystal-orb usage data.
+// Deliberately separate from getCodexState() so a timer-driven poll never
+// has to also pull the (potentially long) chat history on every tick.
+export async function getCodexModelStatus() {
+  return companionJson('/codex/model-status')
+}
+export async function switchCodexModel(modelId) {
+  return companionJson('/codex/model/switch', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ model: modelId }),
+  })
+}
 export async function getCodexAuthStatus() {
   return companionJson('/codex/auth-status')
 }
@@ -379,7 +414,15 @@ listeners.add(evt => {
       return
     }
     if (m.type === 'gomoku_update') {
-      announceGomoku(m.game)
+      announceGomoku(m.game, m.runtime || 'claude-code')
+      return
+    }
+    // Codex gomoku has no tmux/MCP turnId space to reuse the way Claude
+    // Code's gomoku piggybacks on turn_end/turn_error for — this is its own
+    // explicit completion signal, routed into the SAME onTurnEnd() channel
+    // GomokuBoard.jsx already generically consumes (it just compares ids).
+    if (m.type === 'gomoku_turn_end') {
+      announceTurnEnd(m.interactionId)
       return
     }
     if (m.type === 'xinchao_update') {
