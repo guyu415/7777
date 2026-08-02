@@ -1,11 +1,11 @@
 import { useEffect, useRef, useState, useLayoutEffect } from 'react'
+import { Menu } from 'lucide-react'
 import MessageBubble from './MessageBubble'
 import FallingParticles from './FallingParticles'
 import MessageInput from './MessageInput'
 import MemoryModal from './MemoryModal'
 import VpsStatusBall from './VpsStatusBall'
 import VoiceCall from '../Voice/VoiceCall'
-import BottomNav from '../BottomNav'
 import { useChat } from '../../hooks/useChat'
 import { useScheduledMessages } from '../../hooks/useScheduledMessages'
 import { useStore, deleteMessageFromDB, getBlob } from '../../store'
@@ -260,6 +260,14 @@ export default function ChatWindow({ theme }) {
           zIndex: 10,
         }}>
         <div className="flex items-center gap-3 min-w-0">
+          <button
+            onClick={() => setCurrentView('sessions')}
+            title="会话列表"
+            className="w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 transition-all duration-200"
+            style={{ background: `${primaryColor}18`, color: primaryColor }}
+          >
+            <Menu size={16} />
+          </button>
           <div className="w-11 h-11 rounded-full overflow-hidden flex items-center justify-center text-xl flex-shrink-0"
             style={{
               background: `${primaryColor}33`,
@@ -489,13 +497,14 @@ export default function ChatWindow({ theme }) {
         </div>
       )}
 
-      {/* Unified input + nav — one shared glass panel, no seam */}
-      {/* iOS Home 指示条的 safe-area 会在导航下方留一条空白，收窄它让图标贴近底部
-          （安卓 inset=0 不受影响，保持原样） */}
+      {/* 输入区：聊天页不再显示底部导航栏，输入区独占底部并适配 safe-area。
+          backdropFilter 会自成一个层叠上下文，必须显式给 position+z-index，
+          否则会被消息区 zIndex:1 的定位元素盖住（"+"菜单弹层因此被压在消息区下面）。 */}
       <div
-        className="flex-shrink-0"
+        className="flex-shrink-0 safe-bottom"
         style={{
-          paddingBottom: 'max(calc(var(--safe-bottom) - 22px), 0px)',
+          position: 'relative',
+          zIndex: 5,
           background: `linear-gradient(to bottom, rgba(255,255,255,0.38), rgba(255,255,255,0.26))`,
           backdropFilter: 'blur(22px)',
           WebkitBackdropFilter: 'blur(22px)',
@@ -515,12 +524,6 @@ export default function ChatWindow({ theme }) {
           theme={theme}
           isLoading={isLoading}
           onStop={stopStreaming}
-        />
-        <BottomNav
-          currentView={currentView}
-          onChange={setCurrentView}
-          theme={theme}
-          bare
         />
       </div>
 
