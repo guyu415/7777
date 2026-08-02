@@ -44,6 +44,7 @@ export default function GomokuBoard({ theme, aiName, aiAvatar, userAvatar, onClo
   const pendingInteractionRef = useRef(null)
   const recRef = useRef(null)
   const chatLogRef = useRef(null)
+  const micBtnRef = useRef(null)
   // Ids of AI voice-kind messages already synthesized+played this session —
   // pre-seeded with whatever's already in history on mount so reopening a
   // game (or a reload) never replays old voice history, only genuinely new
@@ -89,6 +90,19 @@ export default function GomokuBoard({ theme, aiName, aiAvatar, userAvatar, onClo
   useEffect(() => {
     chatLogRef.current?.scrollTo({ top: chatLogRef.current.scrollHeight, behavior: 'smooth' })
   }, [game?.messages?.length])
+
+  // React has no synthetic onSelectStart (unlike onContextMenu/onDragStart,
+  // which DO work as JSX props) — a native listener is the only way to
+  // actually preventDefault() it, which iOS Safari needs on top of the
+  // -webkit-user-select/-webkit-touch-callout CSS to fully suppress the
+  // text-selection/copy-lookup-translate popup on a press-and-hold.
+  useEffect(() => {
+    const el = micBtnRef.current
+    if (!el) return
+    const onSelectStart = (e) => e.preventDefault()
+    el.addEventListener('selectstart', onSelectStart)
+    return () => el.removeEventListener('selectstart', onSelectStart)
+  }, [])
 
   // Auto-play newly-arrived model voice replies right here on the board
   // page — no full-screen call UI, board stays fully interactive throughout.
@@ -171,6 +185,25 @@ export default function GomokuBoard({ theme, aiName, aiAvatar, userAvatar, onClo
   const endHold = () => {
     try { recRef.current?.stop() } catch {}
   }
+
+  // iOS Safari treats a press-and-hold on ANY element as "select text /
+  // show copy-lookup-translate menu" unless both the CSS (-webkit-touch-
+  // callout, -webkit-user-select) AND the pointerdown handling actively
+  // suppress it. setPointerCapture() also means a finger drifting off the
+  // button's visual bounds mid-hold still delivers pointerup/pointercancel
+  // to this same element instead of silently going nowhere (so we
+  // deliberately don't need a pointerleave handler here).
+  const handleMicPointerDown = (e) => {
+    e.preventDefault()
+    try { window.getSelection()?.removeAllRanges() } catch {}
+    try { e.currentTarget.setPointerCapture(e.pointerId) } catch {}
+    startHold()
+  }
+  const handleMicPointerUp = (e) => {
+    try { e.currentTarget.releasePointerCapture(e.pointerId) } catch {}
+    endHold()
+  }
+  const preventDefault = (e) => e.preventDefault()
 
   const handleCellClick = async (row, col) => {
     if (!game || game.status !== 'playing' || game.turn !== 'user' || game.board[row][col] !== 0 || busy) return
@@ -384,10 +417,17 @@ export default function GomokuBoard({ theme, aiName, aiAvatar, userAvatar, onClo
 
       {/* In-game chat log — persisted with the game (game.messages), never
           the main conversation. Scrollable, sits between the board and the
-          input row. */}
+          input row. MessageBubble normally applies its own `select-none`
+          (it has a custom long-press menu elsewhere in the app) — here we
+          pass onLongPress={null} instead of building a new menu, so that
+          class would otherwise leave this text completely uncopyable. The
+          scoped override below restores normal native text selection only
+          within this log, without touching MessageBubble.jsx or any other
+          screen that still uses its own long-press menu. */}
+      <style>{`.gomoku-chat-log .select-none { -webkit-user-select: text; user-select: text; -webkit-touch-callout: default; }`}</style>
       <div className="flex-1 flex flex-col min-h-0 mx-3 mb-2 rounded-2xl overflow-hidden"
         style={{ background: 'rgba(255,255,255,0.4)', border: `1px solid ${primary}22` }}>
-        <div ref={chatLogRef} className="flex-1 overflow-y-auto px-2 pt-2" style={{ minHeight: 0 }}>
+        <div ref={chatLogRef} className="gomoku-chat-log flex-1 overflow-y-auto px-2 pt-2" style={{ minHeight: 0 }}>
           {chatBubbles.length === 0 && (
             <div className="text-center text-xs" style={{ color: '#c9a2ad', paddingTop: 8 }}>
               可以边下棋边和{opponentName}聊两句～
@@ -410,10 +450,14 @@ export default function GomokuBoard({ theme, aiName, aiAvatar, userAvatar, onClo
         </div>
         <div className="flex items-center gap-2 px-2" style={{ padding: '6px 8px' }}>
           <button
-            onPointerDown={startHold}
-            onPointerUp={endHold}
-            onPointerLeave={endHold}
+            ref={micBtnRef}
+            type="button"
+            onPointerDown={handleMicPointerDown}
+            onPointerUp={handleMicPointerUp}
             onPointerCancel={endHold}
+            onLostPointerCapture={endHold}
+            onContextMenu={preventDefault}
+            onDragStart={preventDefault}
             title="按住说话"
             disabled={sending}
             className="flex items-center justify-center flex-shrink-0"
@@ -423,9 +467,13 @@ export default function GomokuBoard({ theme, aiName, aiAvatar, userAvatar, onClo
               color: recording ? '#fff' : primary,
               opacity: sending ? 0.5 : 1,
               touchAction: 'none',
+              WebkitUserSelect: 'none',
+              userSelect: 'none',
+              WebkitTouchCallout: 'none',
+              WebkitTapHighlightColor: 'transparent',
             }}
           >
-            <Mic size={15} />
+            <Mic size={15} style={{ pointerEvents: 'none' }} />
           </button>
           <input
             value={chatInput}
