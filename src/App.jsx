@@ -470,12 +470,16 @@ export default function App() {
   // in IndexedDB (survives page reloads, unlike the in-memory dedup cache in
   // companion.js which resets per page load). Never fabricates a user
   // bubble or a sendMessage() call — this only ever appends an assistant
-  // (from:'cc') message. This is also the path a gomoku-triggered CC turn's
-  // reply/send_voice calls land through (that turn was never initiated by
-  // this tab's own streamChatViaCompanion(), so it's "spontaneous" from the
-  // frontend's point of view exactly like a real proactive message).
+  // (from:'cc') message.
+  //
+  // A gomoku-triggered CC turn's reply/send_voice calls arrive through this
+  // exact same "spontaneous" channel (that turn was never initiated by this
+  // tab's own streamChatViaCompanion()) — but those are explicitly SKIPPED
+  // here (gomokuGameId set) and handled by GomokuBoard's own listener
+  // instead, so game-related chatter never leaks into the main conversation.
   useEffect(() => {
-    const unsub = onProactiveMessage(async ({ id, text, ts, kind, voice, thinking }) => {
+    const unsub = onProactiveMessage(async ({ id, text, ts, kind, voice, thinking, gomokuGameId }) => {
+      if (gomokuGameId) return // routed to the gomoku game screen instead — see GomokuBoard.jsx
       const vpsSession = useStore.getState().sessions?.find(s => s.providerName === 'claude-code-vps')
       if (!vpsSession) return
       const existing = await getMessages(vpsSession.id)

@@ -169,7 +169,7 @@ export function onProactiveMessage(fn) {
 // everything but text, silently downgrading any voice or thinking content
 // CC sent outside of a directly-awaited turn.
 function maybeAnnounceProactive(wireMsg) {
-  const { id, text, ts, kind, voice, style, thinking } = wireMsg
+  const { id, text, ts, kind, voice, style, thinking, gomokuGameId } = wireMsg
   // Deferred to the next tick: lets any active generator's listener (which
   // runs synchronously within the same notify() call) markDelivered() first.
   // Only messages still unclaimed after that are genuinely spontaneous.
@@ -178,7 +178,7 @@ function maybeAnnounceProactive(wireMsg) {
     markDelivered(id)
     for (const fn of proactiveListeners) {
       try {
-        fn({ id, text, ts, kind, voice, style, thinking })
+        fn({ id, text, ts, kind, voice, style, thinking, gomokuGameId })
       } catch {
         // a subscriber throwing must not break delivery to the others
       }
@@ -251,6 +251,16 @@ export async function makeGomokuMove(row, col) {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ row, col }),
   })
+}
+// mode:'immediate' (AI hadn't moved yet, retracted right away) or
+// mode:'pending' (AI already moved — genuinely asked over the MCP channel;
+// the actual outcome arrives later as a gomoku_update broadcast, or a
+// gomokuGameId-tagged proactive reply if CC talks about its decision).
+export async function requestGomokuUndo() {
+  return companionJson('/gomoku/undo-request', { method: 'POST' })
+}
+export async function resignGomokuGame() {
+  return companionJson('/gomoku/resign', { method: 'POST' })
 }
 
 listeners.add(evt => {
@@ -537,7 +547,12 @@ export async function* streamChatViaCompanion({ text, signal }) {
     // never be meaningfully redelivered to a different, future turnId, so
     // stop tracking them. Keeps deliveredIds bounded by "ids from turns
     // currently in flight" rather than growing for the whole page lifetime.
-    forgetDelivered(thisTurnDeliveredIds)
+    // Deferred one macrotask so it can never race ahead of a same-batch
+    // maybeAnnounceProactive() dedup check (also a deferred setTimeout(0),
+    // scheduled earlier since the 'msg' wire event always precedes the
+    // 'turn_end' that triggers this cleanup) — otherwise a message already
+    // claimed by this generator could be wrongly re-announced as proactive.
+    setTimeout(() => forgetDelivered(thisTurnDeliveredIds), 0)
   }
 }
 

@@ -577,11 +577,13 @@ export default function ChatWindow({ theme }) {
         <VoiceCall theme={theme} audioKit={callAudioRef.current} onClose={handleCallClose} />
       )}
 
-      {/* Gomoku overlay — same chat view, no route change; closing it just
-          returns to this chat, the persisted game (if unfinished) is still
-          there next time it's opened. */}
+      {/* Gomoku — a standalone full-screen game view (fixed inset-0, own
+          board/opponent/turn/restart/quit UI, never rendered inside
+          MessageList or as chat bubbles), not a route change: closing it
+          just returns to this same chat, and the persisted game (if
+          unfinished) is exactly where it was left next time it's opened. */}
       {showGomoku && (
-        <GomokuBoard theme={theme} onClose={() => setShowGomoku(false)} />
+        <GomokuBoard theme={theme} aiName={effectiveAiName} aiAvatar={effectiveAiAvatar} userAvatar={effectiveUserAvatar} onClose={() => setShowGomoku(false)} />
       )}
     </div>
   )
