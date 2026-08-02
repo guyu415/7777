@@ -248,24 +248,29 @@ export function useChat() {
     // Shared by the mid-stream voice-interruption point and end-of-turn
     // cleanup so both leave IndexedDB and the store in the same state.
     const finalizeCurrentTextBubble = async () => {
+      const reasoningFields = fullReasoning ? { reasoning: fullReasoning, reasoningStreaming: false } : {}
       if (contentStarted && fullContent.trim()) {
         const doneContent = stripDisplayTags(fullContent)
-        updateMessage(currentTextId, { content: doneContent, streaming: false })
-        await saveMessage({ id: currentTextId, conversationId: CONVERSATION_ID, role: 'assistant', type: 'text', content: doneContent, timestamp: Date.now(), streaming: false })
+        updateMessage(currentTextId, { content: doneContent, streaming: false, ...reasoningFields })
+        await saveMessage({ id: currentTextId, conversationId: CONVERSATION_ID, role: 'assistant', type: 'text', content: doneContent, timestamp: Date.now(), streaming: false, ...reasoningFields })
         return true
       }
       if (currentTextAdded) deleteMessage(currentTextId)
       return false
     }
 
-    const deliverVpsVoice = async ({ text, voice }) => {
+    // reasoning: whatever public thinking (if any) preceded this specific
+    // voice message — attached here, not read to the user; TTS only ever
+    // synthesizes `text`, the explicit voice content CC sent.
+    const deliverVpsVoice = async ({ text, voice }, reasoning) => {
       const vid = genId()
-      addMessage({ id: vid, conversationId: CONVERSATION_ID, role: 'assistant', type: 'text', content: '', timestamp: Date.now(), streaming: false, voiceLoading: true })
+      const reasoningFields = reasoning ? { reasoning, reasoningStreaming: false } : {}
+      addMessage({ id: vid, conversationId: CONVERSATION_ID, role: 'assistant', type: 'text', content: '', timestamp: Date.now(), streaming: false, voiceLoading: true, ...reasoningFields })
       const hasTts = effectiveTtsApiKey && effectiveTtsGroupId
       if (!hasTts) {
         // "Tool unavailable": CC chose to speak but this session has no TTS
         // credentials configured — degrade to text, never silently.
-        const updates = { type: 'text', content: text, voiceText: text, voiceFailed: true, voiceLoading: false }
+        const updates = { type: 'text', content: text, voiceText: text, voiceFailed: true, voiceLoading: false, ...reasoningFields }
         updateMessage(vid, updates)
         await saveMessage({ id: vid, conversationId: CONVERSATION_ID, role: 'assistant', ...updates, timestamp: Date.now(), streaming: false })
         updateSession(CONVERSATION_ID, { lastMsgPreview: text.slice(0, 40), lastMsgTime: Date.now() })
@@ -283,13 +288,13 @@ export function useChat() {
         } catch {}
         const voiceBlobId = genId()
         await saveBlob(voiceBlobId, blob)
-        const updates = { type: 'voice', voiceBlobId, duration, content: '', voiceText: text, voiceLoading: false }
+        const updates = { type: 'voice', voiceBlobId, duration, content: '', voiceText: text, voiceLoading: false, ...reasoningFields }
         updateMessage(vid, updates)
         await saveMessage({ id: vid, conversationId: CONVERSATION_ID, role: 'assistant', ...updates, timestamp: Date.now(), streaming: false })
         updateSession(CONVERSATION_ID, { lastMsgPreview: `[语音] ${text}`.slice(0, 40), lastMsgTime: Date.now() })
       } catch (e) {
         console.error('[CC-VOICE] 合成失败:', e?.message)
-        const updates = { type: 'text', content: text, voiceText: text, voiceFailed: true, voiceLoading: false }
+        const updates = { type: 'text', content: text, voiceText: text, voiceFailed: true, voiceLoading: false, ...reasoningFields }
         updateMessage(vid, updates)
         await saveMessage({ id: vid, conversationId: CONVERSATION_ID, role: 'assistant', ...updates, timestamp: Date.now(), streaming: false })
         updateSession(CONVERSATION_ID, { lastMsgPreview: text.slice(0, 40), lastMsgTime: Date.now() })
@@ -410,19 +415,31 @@ export function useChat() {
             fullReasoning += chunk.reasoning
             dirty = true
           }
+          // VPS-only: an authoritative post-reconnect value, not a delta —
+          // see streamChatViaCompanion's doc comment. Overwrites rather than
+          // appends so a live delta already accumulated before a disconnect
+          // can't get duplicated.
+          if (chunk.reasoningReplace !== undefined) {
+            fullReasoning = chunk.reasoningReplace
+            dirty = true
+          }
           if (isVpsProvider && chunk.voice) {
             vpsUsedVoiceThisTurn = true
             // Finalize whatever text bubble was accumulating (if any) before
             // handling the voice chunk, so bubbles land in the same order CC
             // actually called reply()/send_voice() in.
             await finalizeCurrentTextBubble()
-            await deliverVpsVoice(chunk.voice)
-            // Fresh bubble for any text that arrives after this voice chunk.
+            await deliverVpsVoice(chunk.voice, fullReasoning || undefined)
+            // Fresh bubble for any text (and any reasoning preceding it)
+            // that arrives after this voice chunk — a later bubble must
+            // never inherit thinking that already belongs to this one.
             currentTextId = genId()
             currentTextAdded = false
             fullContent = ''
             contentStarted = false
             storedContent = ''
+            fullReasoning = ''
+            storedReasoning = ''
             dirty = false
             continue
           }
@@ -449,8 +466,11 @@ export function useChat() {
         flushUpdate()  // flush any remaining buffered content
       }
 
-      // Reasoning finished — attach to base msg so every save of the first bubble persists it
-      if (fullReasoning) {
+      // Reasoning finished — attach to base msg so every save of the first bubble persists it.
+      // Skipped when a voice chunk rotated bubbles this turn: finalizeCurrentTextBubble()
+      // already attached the correct (bubble-scoped, reset-on-rotation) reasoning to
+      // whichever bubble it actually belongs to; assistantId may not even be that bubble.
+      if (fullReasoning && !(isVpsProvider && vpsUsedVoiceThisTurn)) {
         assistantMsg.reasoning = fullReasoning
         updateMessage(assistantId, { reasoning: fullReasoning, reasoningStreaming: false })
       }

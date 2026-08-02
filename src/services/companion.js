@@ -306,10 +306,16 @@ function genId() {
 
 /**
  * Async generator matching services/claude.js's streamChat yield contract:
- * yields { text } chunks, returns on normal completion, throws on failure.
- * Unlike streamChat, this never yields { reasoning } — the companion protocol
- * does not forward thinking content; an empty/absent reasoning stream is
- * expected, not a bug.
+ * yields { text } chunks and, when Claude Code's own engine publicly
+ * exposed thinking/reasoning content for the in-progress turn, { reasoning }
+ * deltas too — sourced from the server's live 'thinking' wire events, which
+ * only ever forward a non-empty `thinking` block it actually found in the
+ * transcript. Never fabricated here or on the server; absent/empty
+ * reasoning is the expected case for models/turns that don't expose one,
+ * not a bug. A recovered-from-history reasoning value (after a disconnect
+ * mid-turn) arrives as { reasoningReplace } instead of { reasoning } — a
+ * full authoritative value to assign, not a delta to append, since we can't
+ * know how much of it a live delta already delivered before the disconnect.
  *
  * One call = one turn. Multiple `reply` calls from the same Claude turn are
  * delivered as multiple { text } yields before the generator returns (on
@@ -392,6 +398,10 @@ export async function* streamChatViaCompanion({ text, signal }) {
           if (alreadyDelivered(r.id)) continue // already yielded live before the disconnect
           markDelivered(r.id)
           thisTurnDeliveredIds.push(r.id)
+          // Full authoritative replace, not a delta — we can't know how much
+          // of this message's thinking a live 'thinking' wire event already
+          // delivered before the disconnect, so appending would duplicate it.
+          if (r.thinking) push({ reasoningReplace: r.thinking })
           if (r.kind === 'voice') push({ voice: { id: r.id, text: r.text, voice: r.voice, style: r.style } })
           else push({ text: r.text })
         }
@@ -427,6 +437,10 @@ export async function* streamChatViaCompanion({ text, signal }) {
       return
     }
     if (m.turnId !== turnId) return
+    if (m.type === 'thinking') {
+      if (m.delta) push({ reasoning: m.delta })
+      return
+    }
     if (m.type === 'msg' && m.from === 'cc') {
       if (alreadyDelivered(m.id)) return // e.g. already delivered via an earlier history recovery
       markDelivered(m.id)
@@ -471,7 +485,9 @@ export async function* streamChatViaCompanion({ text, signal }) {
         if (finishError) throw finishError
         return
       }
-      yield item.voice ? { voice: item.voice } : { text: item.text }
+      if (item.reasoningReplace !== undefined) yield { reasoningReplace: item.reasoningReplace }
+      else if (item.reasoning) yield { reasoning: item.reasoning }
+      else yield item.voice ? { voice: item.voice } : { text: item.text }
     }
   } finally {
     listeners.delete(onEvent)
