@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from 'react'
-import { Trash2 } from 'lucide-react'
-import { useStore, clearAllData, getAllMessages, getMessages, deleteCustomFont, saveAssetCache } from '../store'
+import { ChevronDown } from 'lucide-react'
+import { useStore, getAllMessages, getMessages, deleteCustomFont, saveAssetCache } from '../store'
 import { putAsset, deleteAsset } from '../services/sync'
 import { pushSupportState, getCurrentSubscription, subscribePush, unsubscribePush, sendTestPush } from '../services/push'
 
@@ -192,6 +192,7 @@ export default function GlobalSettings({ theme, onLogout, onForceSync }) {
     sessions,
   } = useStore()
   const [syncing, setSyncing] = useState(false)
+  const [showAdvanced, setShowAdvanced] = useState(false)
 
   const primary = theme?.primary || '#4aacf0'
   const primaryDark = theme?.primaryDark || '#2196d3'
@@ -300,49 +301,8 @@ export default function GlobalSettings({ theme, onLogout, onForceSync }) {
 
       <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4">
 
-        {/* Worker Proxy */}
-        <GlassCard icon="☁️" title="Worker 配置">
-          <p className="text-xs mb-2" style={{ color: '#7a9cc0' }}>
-            填入 scheduled-message-worker 的部署地址。启用代理后，所有 API 请求经由 Worker 转发，国内无需翻墙。
-          </p>
-          <input
-            type="url"
-            value={workerUrl}
-            onChange={e => setWorkerUrl(e.target.value)}
-            placeholder="https://chat.xiaoman.xyz"
-            style={inputStyle}
-          />
-          <div className="flex items-center justify-between mt-3">
-            <div>
-              <span className="text-sm" style={{ color: '#2c5282' }}>通过 Worker 代理 API 请求</span>
-              <p className="text-xs mt-0.5" style={{ color: '#7a9cc0' }}>前端 → Worker → 中转API，国内可用</p>
-            </div>
-            <Toggle value={useWorkerProxy} onChange={setUseWorkerProxy} primary={primary} />
-          </div>
-          <div className="flex items-center justify-between mt-3">
-            <div>
-              <span className="text-sm" style={{ color: '#2c5282' }}>全局记忆注入</span>
-              <p className="text-xs mt-0.5" style={{ color: '#7a9cc0' }}>可在会话设置中单独覆盖</p>
-            </div>
-            <Toggle value={memoryEnabled} onChange={setMemoryEnabled} primary={primary} />
-          </div>
-        </GlassCard>
-
         {/* Push notifications */}
         <NotificationCard primary={primary} />
-
-        {workerUrl && (
-          <GlassCard icon="🧠" title="记忆管理">
-            <MemoryPanel workerUrl={workerUrl} />
-          </GlassCard>
-        )}
-
-        {/* AC Control */}
-        <GlassCard icon="❄️" title="空调控制">
-          <p className="text-xs mb-2" style={{ color: '#7a9cc0' }}>AI 将根据对话自动控制空调。留空则禁用。</p>
-          <input value={acWorkerUrl} onChange={e => setAcWorkerUrl(e.target.value)}
-            placeholder="https://ac.xiaoman.xyz" style={inputStyle} />
-        </GlassCard>
 
         {/* Default theme */}
         <GlassCard icon="🎨" title="默认配色方案">
@@ -400,30 +360,8 @@ export default function GlobalSettings({ theme, onLogout, onForceSync }) {
           </div>
         </GlassCard>
 
-        {/* Export all */}
-        <GlassCard icon="📤" title="导出所有对话">
-          <p className="text-xs mb-3" style={{ color: '#7a9cc0' }}>
-            导出全部会话的聊天记录。单个会话的导出在会话设置里。
-          </p>
-          <div className="flex gap-2">
-            <button onClick={handleExportAllJSON}
-              className="flex-1 py-2.5 rounded-full text-sm font-medium text-white transition-all duration-200"
-              style={{ background: `linear-gradient(135deg, ${primary}, ${primaryDark})`, boxShadow: `0 4px 12px ${primary}40`, border: 'none' }}>
-              导出 JSON
-            </button>
-            <button onClick={handleExportAllTxt}
-              className="flex-1 py-2.5 rounded-full text-sm font-medium transition-all duration-200"
-              style={{ background: 'rgba(255,255,255,0.6)', color: '#6a90b8', border: '1px solid rgba(200,220,255,0.4)' }}>
-              导出 TXT
-            </button>
-          </div>
-        </GlassCard>
-
-        {/* Account */}
+        {/* Account (常用：退出登录) */}
         <GlassCard icon="👤" title="账号">
-          <p className="text-xs mb-3" style={{ color: '#7a9cc0' }}>
-            退出后将清除本地登录状态，云端配置保留。下次重新输入密码即可恢复。
-          </p>
           <div className="flex gap-2 flex-wrap">
             <button
               onClick={() => { if (confirm('确定退出登录？')) onLogout?.() }}
@@ -432,48 +370,113 @@ export default function GlobalSettings({ theme, onLogout, onForceSync }) {
             >
               退出登录
             </button>
-            <button
-              disabled={syncing}
-              onClick={async () => {
-                if (!confirm('将重新把本地所有会话消息上传到云端，确定？')) return
-                localStorage.removeItem('msgSyncV1')
-                setSyncing(true)
-                try { await onForceSync?.() } finally { setSyncing(false) }
-              }}
-              className="flex items-center gap-2 px-4 py-2.5 rounded-full text-sm transition-all duration-200"
-              style={{
-                background: syncing ? 'rgba(60,120,220,0.05)' : 'rgba(60,120,220,0.10)',
-                color: syncing ? '#a0b8d0' : '#4a80c0',
-                border: '1px solid rgba(60,120,220,0.2)',
-                cursor: syncing ? 'default' : 'pointer',
-              }}
-            >
-              {syncing ? '上传中...' : '强制重新同步到云端'}
-            </button>
           </div>
         </GlassCard>
 
-        {/* Danger */}
-        <GlassCard icon="⚠️" title="危险操作">
-          <button
-            onClick={async () => {
-              if (confirm('确定要清空所有聊天记录吗？此操作不可撤销。')) {
-                await clearAllData()
-                window.location.reload()
-              }
-            }}
-            className="flex items-center gap-2 px-4 py-2.5 rounded-full text-sm transition-all duration-200"
-            style={{ background: 'rgba(255,100,100,0.08)', color: '#e07070', border: '1px solid rgba(255,100,100,0.2)' }}
-          >
-            <Trash2 size={14} />
-            清空所有聊天记录
-          </button>
-        </GlassCard>
+        {/* ── 高级设置（默认折叠：低频 / 调试 / 高级配置） ── */}
+        <button
+          onClick={() => setShowAdvanced(v => !v)}
+          className="w-full flex items-center justify-between px-4 py-3 rounded-2xl text-sm font-medium transition-all"
+          style={{
+            background: 'rgba(255,255,255,0.42)',
+            border: '1px solid rgba(200,220,255,0.3)',
+            color: '#2c5282',
+          }}
+        >
+          <span>⚙️ 高级设置</span>
+          <ChevronDown size={16} style={{ transform: showAdvanced ? 'rotate(180deg)' : 'none', transition: 'transform 0.2s', color: '#7a9cc0' }} />
+        </button>
 
-        {/* Summary API key — stored only in localStorage, never synced */}
-        <div style={{ display: 'flex', justifyContent: 'center', paddingBottom: 8 }}>
-          <SummaryKeyButton />
-        </div>
+        {showAdvanced && (
+          <>
+            {/* Worker Proxy */}
+            <GlassCard icon="☁️" title="Worker 配置">
+              <input
+                type="url"
+                value={workerUrl}
+                onChange={e => setWorkerUrl(e.target.value)}
+                placeholder="https://chat.xiaoman.xyz"
+                style={inputStyle}
+              />
+              <div className="flex items-center justify-between mt-3">
+                <div>
+                  <span className="text-sm" style={{ color: '#2c5282' }}>通过 Worker 代理 API 请求</span>
+                  <p className="text-xs mt-0.5" style={{ color: '#7a9cc0' }}>前端 → Worker → 中转API，国内可用</p>
+                </div>
+                <Toggle value={useWorkerProxy} onChange={setUseWorkerProxy} primary={primary} />
+              </div>
+              <div className="flex items-center justify-between mt-3">
+                <div>
+                  <span className="text-sm" style={{ color: '#2c5282' }}>全局记忆注入</span>
+                  <p className="text-xs mt-0.5" style={{ color: '#7a9cc0' }}>可在会话设置中单独覆盖</p>
+                </div>
+                <Toggle value={memoryEnabled} onChange={setMemoryEnabled} primary={primary} />
+              </div>
+            </GlassCard>
+
+            {workerUrl && (
+              <GlassCard icon="🧠" title="记忆管理">
+                <MemoryPanel workerUrl={workerUrl} />
+              </GlassCard>
+            )}
+
+            {/* AC Control */}
+            <GlassCard icon="❄️" title="空调控制">
+              <p className="text-xs mb-2" style={{ color: '#7a9cc0' }}>AI 将根据对话自动控制空调。留空则禁用。</p>
+              <input value={acWorkerUrl} onChange={e => setAcWorkerUrl(e.target.value)}
+                placeholder="https://ac.xiaoman.xyz" style={inputStyle} />
+            </GlassCard>
+
+            {/* Export all */}
+            <GlassCard icon="📤" title="导出所有对话">
+              <p className="text-xs mb-3" style={{ color: '#7a9cc0' }}>
+                导出全部会话的聊天记录。单个会话的导出在会话设置里。
+              </p>
+              <div className="flex gap-2">
+                <button onClick={handleExportAllJSON}
+                  className="flex-1 py-2.5 rounded-full text-sm font-medium text-white transition-all duration-200"
+                  style={{ background: `linear-gradient(135deg, ${primary}, ${primaryDark})`, boxShadow: `0 4px 12px ${primary}40`, border: 'none' }}>
+                  导出 JSON
+                </button>
+                <button onClick={handleExportAllTxt}
+                  className="flex-1 py-2.5 rounded-full text-sm font-medium transition-all duration-200"
+                  style={{ background: 'rgba(255,255,255,0.6)', color: '#6a90b8', border: '1px solid rgba(200,220,255,0.4)' }}>
+                  导出 TXT
+                </button>
+              </div>
+            </GlassCard>
+
+            {/* 数据同步 */}
+            <GlassCard icon="🔄" title="数据同步">
+              <p className="text-xs mb-3" style={{ color: '#7a9cc0' }}>
+                云端同步异常时使用。将本地所有会话消息重新上传到云端。
+              </p>
+              <button
+                disabled={syncing}
+                onClick={async () => {
+                  if (!confirm('将重新把本地所有会话消息上传到云端，确定？')) return
+                  localStorage.removeItem('msgSyncV1')
+                  setSyncing(true)
+                  try { await onForceSync?.() } finally { setSyncing(false) }
+                }}
+                className="flex items-center gap-2 px-4 py-2.5 rounded-full text-sm transition-all duration-200"
+                style={{
+                  background: syncing ? 'rgba(60,120,220,0.05)' : 'rgba(60,120,220,0.10)',
+                  color: syncing ? '#a0b8d0' : '#4a80c0',
+                  border: '1px solid rgba(60,120,220,0.2)',
+                  cursor: syncing ? 'default' : 'pointer',
+                }}
+              >
+                {syncing ? '上传中...' : '强制重新同步到云端'}
+              </button>
+            </GlassCard>
+
+            {/* Summary API key — stored only in localStorage, never synced */}
+            <div style={{ display: 'flex', justifyContent: 'center', paddingBottom: 8 }}>
+              <SummaryKeyButton />
+            </div>
+          </>
+        )}
       </div>
     </div>
   )

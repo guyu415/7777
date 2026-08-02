@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { Search, Play, Pause, X } from 'lucide-react'
 import { searchSongs, getMusicStatus } from '../services/music'
 import { subscribePlayer, playSong, togglePlayer, seekPlayer } from '../services/player'
@@ -20,8 +20,19 @@ export default function MusicDisc({ theme, visible = true }) {
   const [err, setErr] = useState('')
   const [player, setPlayer] = useState({ current: null, playing: false, progress: 0, duration: 0 })
   const [status, setStatus] = useState(null) // /itunes/status 结果
+  const panelRef = useRef(null)
 
   useEffect(() => subscribePlayer(setPlayer), [])
+
+  // 点面板外自动收起，回到小唱片
+  useEffect(() => {
+    if (!open) return
+    const onOutside = (e) => {
+      if (panelRef.current && !panelRef.current.contains(e.target)) setOpen(false)
+    }
+    document.addEventListener('pointerdown', onOutside)
+    return () => document.removeEventListener('pointerdown', onOutside)
+  }, [open])
 
   // 打开面板时探一下数据源
   useEffect(() => {
@@ -70,30 +81,31 @@ export default function MusicDisc({ theme, visible = true }) {
     <div style={{ position: 'absolute', right: 10, top: 86, zIndex: 30 }}>
       <style>{`@keyframes disc-spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }`}</style>
 
-      {/* 收起态：小黑胶 */}
+      {/* 收起态：紧凑小黑胶（默认态，不遮挡聊天内容） */}
       {!open && (
         <button
           onClick={() => setOpen(true)}
           style={{
-            width: 54, height: 54, borderRadius: '50%', border: 'none', padding: 0, cursor: 'pointer',
+            width: 40, height: 40, borderRadius: '50%', border: 'none', padding: 0, cursor: 'pointer',
             background: 'radial-gradient(circle at center, #3a3a3e 0%, #1c1c20 62%, #2a2a2e 100%)',
-            boxShadow: `0 4px 16px rgba(0,0,0,0.28), 0 0 0 2px ${primary}44`,
+            boxShadow: `0 3px 10px rgba(0,0,0,0.24), 0 0 0 1.5px ${primary}44`,
             display: 'flex', alignItems: 'center', justifyContent: 'center',
             animation: 'disc-spin 8s linear infinite',
             animationPlayState: playing ? 'running' : 'paused',
+            opacity: 0.88,
           }}
         >
           {current?.cover ? (
-            <img src={current.cover} alt="" style={{ width: 34, height: 34, borderRadius: '50%', objectFit: 'cover', border: '2px solid rgba(255,255,255,0.25)' }} />
+            <img src={current.cover} alt="" style={{ width: 26, height: 26, borderRadius: '50%', objectFit: 'cover', border: '2px solid rgba(255,255,255,0.25)' }} />
           ) : (
-            <span style={{ fontSize: 20 }}>🎵</span>
+            <span style={{ fontSize: 15 }}>🎵</span>
           )}
         </button>
       )}
 
       {/* 展开态：搜歌 + 迷你播放器 */}
       {open && (
-        <div style={{
+        <div ref={panelRef} style={{
           width: 'min(300px, calc(100vw - 24px))',
           background: 'rgba(255,255,255,0.82)',
           backdropFilter: 'blur(20px)', WebkitBackdropFilter: 'blur(20px)',

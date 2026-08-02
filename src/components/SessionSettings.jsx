@@ -334,7 +334,9 @@ export default function SessionSettings({ theme }) {
     if (!currentSession) return
     setLocalName(currentSession.aiName || '')
     setLocalSignature(currentSession.signature || '')
-    setLocalSystemPrompt(currentSession.systemPrompt ?? globalSystemPrompt ?? '')
+    // 只显示本会话自己的提示词——不把全局默认悄悄灌进输入框
+    // （否则随手一个 blur 就会把全局提示词复制成本会话的独立副本）
+    setLocalSystemPrompt(currentSession.systemPrompt || '')
     setLocalAvatar(currentSession.aiAvatar || '')
     setLocalUserAvatar(currentSession.userAvatar || '')
     setLocalApiKey(currentSession.apiKey || '')
@@ -440,8 +442,8 @@ export default function SessionSettings({ theme }) {
               <input
                 value={localName}
                 onChange={e => setLocalName(e.target.value)}
-                onBlur={() => setSessionAiName(currentSessionId, localName.trim() || '小满')}
-                placeholder="小满"
+                onBlur={() => setSessionAiName(currentSessionId, localName.trim())}
+                placeholder="给 TA 起个名字（留空则显示会话名）"
                 style={inputStyle}
               />
             </div>
@@ -537,7 +539,7 @@ export default function SessionSettings({ theme }) {
                 value={localSignature}
                 onChange={e => setLocalSignature(e.target.value)}
                 onBlur={() => setSessionSignature(currentSessionId, localSignature)}
-                placeholder="小满一直在这里等你～"
+                placeholder="写一句签名（可留空）"
                 style={inputStyle}
               />
             </div>

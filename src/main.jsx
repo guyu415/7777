@@ -12,6 +12,12 @@ if ('serviceWorker' in navigator) {
   })
 }
 
+// iOS Safari 的双指缩放走私有 gesture 事件，viewport meta 拦不全，这里兜底；
+// 双击放大由 CSS touch-action: manipulation 处理，不额外拦 touchend（会误伤快速连点）
+for (const evt of ['gesturestart', 'gesturechange', 'gestureend']) {
+  document.addEventListener(evt, e => e.preventDefault(), { passive: false })
+}
+
 createRoot(document.getElementById('root')).render(
   <React.StrictMode>
     <App />

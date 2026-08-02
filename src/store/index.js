@@ -98,10 +98,10 @@ export async function getAllMessages() {
 
 const DEFAULT_SESSIONS = [{
   id: 'main',
-  name: '默认对话',
-  systemPrompt: '你是小满，一个温柔可爱的AI。你说话简洁、有趣，偶尔会用一些可爱的语气词。',
+  name: '新对话',
+  systemPrompt: '',
   createdAt: Date.now(),
-  signature: '小满一直在这里等你～',
+  signature: '',
   // per-session overrides (null = use global default)
   themeId: null,
   chatBg: null,
@@ -131,13 +131,14 @@ export const useStore = create(
       apiKey: '',
       apiBaseUrl: 'https://api.anthropic.com',
       model: 'claude-sonnet-4-6',
-      systemPrompt: '你是小满，一个温柔可爱的AI。你说话简洁、有趣，偶尔会用一些可爱的语气词。',
+      // 默认不带任何预设人设——用户没写系统提示词就保持空白
+      systemPrompt: '',
       memoryEnabled: false,
       workerUrl: 'https://chat.xiaoman.xyz',
       useWorkerProxy: false,
       userAvatar: '',
       aiAvatar: '',
-      aiName: '小满',
+      aiName: '',
 
       // Theme, background, font (global defaults)
       themeId: 'pink',
@@ -216,7 +217,7 @@ export const useStore = create(
             aiName,
             aiAvatar,
             userAvatar,
-            signature: '小满一直在这里等你～',
+            signature: '',
             themeId: null,
             chatBg: null,
             fontFamily: null,
@@ -294,7 +295,20 @@ export const useStore = create(
       setSessionSummarizedCount: (sessionId, v) => set((state) => ({ sessions: state.sessions.map(s => s.id === sessionId ? { ...s, summarizedCount: v } : s) })),
       setSummaryToast: (v) => set({ summaryToast: v }),
 
-      restoreFromCloud: (settings) => set(() => ({ ...settings })),
+      // 云端旧配置可能还带着出厂预设人设（云端 blob 不经过 zustand 的 migrate），
+      // 恢复时做和 v14 迁移相同的清理，防止清掉的默认人设从云端"复活"。
+      restoreFromCloud: (settings) => set(() => {
+        const OLD_PROMPT = '你是小满，一个温柔可爱的AI。你说话简洁、有趣，偶尔会用一些可爱的语气词。'
+        const cleaned = { ...settings }
+        if (cleaned.systemPrompt === OLD_PROMPT) cleaned.systemPrompt = ''
+        if (cleaned.aiName === '小满') cleaned.aiName = ''
+        if (Array.isArray(cleaned.sessions)) {
+          cleaned.sessions = cleaned.sessions.map(s =>
+            s.systemPrompt === OLD_PROMPT ? { ...s, systemPrompt: '' } : s
+          )
+        }
+        return cleaned
+      }),
 
       addCustomFont: (font) => set((state) => ({ customFonts: [...state.customFonts, font] })),
       removeCustomFont: (id) => set((state) => ({ customFonts: state.customFonts.filter(f => f.id !== id) })),
@@ -312,7 +326,7 @@ export const useStore = create(
     }),
     {
       name: 'pink-chat-settings',
-      version: 13,
+      version: 14,
       migrate: (persisted, version) => {
         if (version < 2) {
           const providers = [
@@ -427,6 +441,20 @@ export const useStore = create(
               summary: null,
               summarizedCount: 0,
               ...s,
+            })),
+          }
+        }
+        if (version < 14) {
+          // 清掉历史遗留的"出厂预设人设"。只清和旧默认值完全一致的字段——
+          // 用户自己改过的提示词/名字一律原样保留。
+          const OLD_PROMPT = '你是小满，一个温柔可爱的AI。你说话简洁、有趣，偶尔会用一些可爱的语气词。'
+          persisted = {
+            ...persisted,
+            systemPrompt: persisted.systemPrompt === OLD_PROMPT ? '' : persisted.systemPrompt,
+            aiName: persisted.aiName === '小满' ? '' : persisted.aiName,
+            sessions: (persisted.sessions || []).map(s => ({
+              ...s,
+              systemPrompt: s.systemPrompt === OLD_PROMPT ? '' : s.systemPrompt,
             })),
           }
         }

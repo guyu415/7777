@@ -21,16 +21,31 @@
   box-sizing: border-box;
 }
 
+html {
+  /* 禁止 iOS 横竖屏切换时自动放大文字 */
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
 html, body, #root {
   height: 100%;
   width: 100%;
   overflow: hidden;
+  /* 阻止 iOS 整页橡皮筋回弹，只让聊天区自己滚 */
+  overscroll-behavior: none;
+}
+
+/* dvh 跟随 iOS 工具栏收展的真实可视高度；不支持的浏览器落回上面的 100% */
+#root {
+  height: 100dvh;
 }
 
 body {
   font-family: var(--app-font);
   -webkit-font-smoothing: antialiased;
   color: var(--rose);
+  /* manipulation：保留滚动和点按，去掉双击放大 */
+  touch-action: manipulation;
 }
 
 ::-webkit-scrollbar { width: 3px; }

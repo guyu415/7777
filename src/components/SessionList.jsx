@@ -1,8 +1,9 @@
-import { useState } from 'react'
-import { Plus, Trash2, Edit3, Check } from 'lucide-react'
+import { useState, useEffect } from 'react'
+import { Plus, Trash2, Edit3, Check, ChevronDown } from 'lucide-react'
 import { useStore, deleteMessagesForSession } from '../store'
 import { deleteSessionMsgs } from '../services/sync'
 import DiarySection from './DiarySection'
+import { getAllLetters } from '../services/letters'
 
 function relativeTime(ts) {
   if (!ts) return ''
@@ -23,12 +24,19 @@ export default function SessionList({ theme, onSelectSession }) {
   const {
     sessions, currentSessionId, setCurrentSessionId,
     addSession, updateSession, deleteSession,
-    systemPrompt, setMessages,
+    setMessages,
     aiAvatar: globalAiAvatar,
   } = useStore()
 
   const [editingId, setEditingId] = useState(null)
   const [editName, setEditName] = useState('')
+  const [diaryOpen, setDiaryOpen] = useState(false)
+  const diaryTarget = useStore(s => s.diaryTarget)
+
+  // 从聊天里的信件卡片跳过来时（带 diaryTarget），自动展开日记面板定位到目标信
+  useEffect(() => {
+    if (diaryTarget) setDiaryOpen(true)
+  }, [diaryTarget])
 
   const primary = theme?.primary || '#4aacf0'
   const primaryDark = theme?.primaryDark || '#2196d3'
@@ -38,7 +46,8 @@ export default function SessionList({ theme, onSelectSession }) {
     const curSess = sessions?.find(s => s.id === currentSessionId)
     addSession({
       id, name: '新对话',
-      systemPrompt: curSess?.systemPrompt || systemPrompt || '',
+      // 新会话不带任何预设提示词——用户明确填写才有
+      systemPrompt: '',
       createdAt: Date.now(),
       apiKey: curSess?.apiKey || '',
       baseUrl: curSess?.baseUrl || '',
@@ -224,17 +233,25 @@ export default function SessionList({ theme, onSelectSession }) {
         })}
         </div>
 
-        {/* Divider */}
-        <div className="flex items-center gap-2 my-3">
-          <div style={{ flex: 1, height: 1, background: 'rgba(180,150,220,0.3)' }} />
-          <span style={{ fontSize: 12, fontWeight: 600, color: '#9a8ab0' }}>📔 日记</span>
-          <div style={{ flex: 1, height: 1, background: 'rgba(180,150,220,0.3)' }} />
-        </div>
+        {/* 日记：默认收起成一条紧凑入口，点击才展开成面板 */}
+        <button
+          onClick={() => setDiaryOpen(v => !v)}
+          className="w-full flex items-center justify-between px-4 py-3 mt-3 rounded-2xl text-sm font-medium transition-all"
+          style={{
+            background: 'rgba(255,255,255,0.5)',
+            border: '1.5px solid rgba(180,150,220,0.3)',
+            color: '#9a8ab0',
+          }}
+        >
+          <span>📔 日记 · {getAllLetters().length} 封</span>
+          <ChevronDown size={16} style={{ transform: diaryOpen ? 'rotate(180deg)' : 'none', transition: 'transform 0.2s' }} />
+        </button>
 
-        {/* Diary section — fixed height, internal scroll */}
-        <div style={{ height: '42vh' }}>
-          <DiarySection theme={theme} />
-        </div>
+        {diaryOpen && (
+          <div className="mt-2" style={{ height: '55vh' }}>
+            <DiarySection theme={theme} />
+          </div>
+        )}
       </div>
     </div>
   )

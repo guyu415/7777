@@ -347,7 +347,39 @@ export default function App() {
         }
       }, 2000)
     })
-    return () => { unsub(); clearTimeout(syncTimer.current) }
+
+    // 修复"改完设置马上刷新就丢"：2s 防抖窗口内刷新/关页，云端还是旧配置，
+    // 下次启动的云端拉取会用旧配置覆盖本地刚改的值。页面隐藏时立即抢发一次
+    // （keepalive 让请求在页面卸载后也能送达）。
+    const flushOnHide = (e) => {
+      if (e?.type !== 'pagehide' && document.visibilityState !== 'hidden') return
+      if (!syncReady.current) return
+      const password = localStorage.getItem('auth.password')
+      if (!password) return
+      const settings = extractSettings(useStore.getState())
+      const fingerprint = settingsFingerprint(settings)
+      if (fingerprint === lastSyncedSettings.current) return
+      clearTimeout(syncTimer.current)
+      lastSyncedSettings.current = fingerprint // 乐观标记，避免 pagehide 后重复发
+      try {
+        fetch('https://chat.xiaoman.xyz/sync/set', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ password, key: 'settings', value: settings }),
+          keepalive: true,
+        }).catch(() => {})
+      } catch {
+        // keepalive 不可用时只能靠下一次防抖同步
+      }
+    }
+    document.addEventListener('visibilitychange', flushOnHide)
+    window.addEventListener('pagehide', flushOnHide)
+    return () => {
+      unsub()
+      clearTimeout(syncTimer.current)
+      document.removeEventListener('visibilitychange', flushOnHide)
+      window.removeEventListener('pagehide', flushOnHide)
+    }
   }, [loggedIn])
 
   // ── Theme / font / bg ──────────────────────────────────────────
