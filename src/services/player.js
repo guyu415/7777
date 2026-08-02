@@ -1,4 +1,4 @@
-// 全局音乐播放器单例：MusicDisc 挂件和 AI 的 [MUSIC:...] 指令共用。
+// 全局音乐播放器单例：AI 的 [MUSIC:...] 指令使用。
 import { searchSongs, getPlayUrl } from './music'
 
 const state = { current: null, playing: false, progress: 0, duration: 0 }

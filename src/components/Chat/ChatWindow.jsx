@@ -7,6 +7,7 @@ import MessageInput from './MessageInput'
 import MemoryModal from './MemoryModal'
 import VpsStatusBall from './VpsStatusBall'
 import VoiceCall from '../Voice/VoiceCall'
+import GomokuBoard from './GomokuBoard'
 import { useChat } from '../../hooks/useChat'
 import { useScheduledMessages } from '../../hooks/useScheduledMessages'
 import { useStore, deleteMessageFromDB, getBlob } from '../../store'
@@ -80,6 +81,7 @@ export default function ChatWindow({ theme }) {
   const [editText, setEditText] = useState('')
   const [toast, setToast] = useState(null)
   const [showCall, setShowCall] = useState(false)
+  const [showGomoku, setShowGomoku] = useState(false)
   const callAudioRef = useRef(null)
 
   const selectedProvider = providers?.find(p => p.id === selectedProviderId)
@@ -528,6 +530,8 @@ export default function ChatWindow({ theme }) {
           }}
           onStartCall={handleStartCall}
           onSendImage={handleSendImage}
+          onOpenGomoku={() => setShowGomoku(true)}
+          isVpsProvider={isVpsSession}
           disabled={isLoading}
           theme={theme}
           isLoading={isLoading}
@@ -571,6 +575,13 @@ export default function ChatWindow({ theme }) {
       {/* Voice call overlay */}
       {showCall && (
         <VoiceCall theme={theme} audioKit={callAudioRef.current} onClose={handleCallClose} />
+      )}
+
+      {/* Gomoku overlay — same chat view, no route change; closing it just
+          returns to this chat, the persisted game (if unfinished) is still
+          there next time it's opened. */}
+      {showGomoku && (
+        <GomokuBoard theme={theme} onClose={() => setShowGomoku(false)} />
       )}
     </div>
   )

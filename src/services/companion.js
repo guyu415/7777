@@ -163,7 +163,13 @@ export function onProactiveMessage(fn) {
   return () => proactiveListeners.delete(fn)
 }
 
-function maybeAnnounceProactive(id, text, ts) {
+// Takes the whole wire message (not just id/text/ts) so a proactive/gomoku-
+// triggered reply carries the same kind/voice/style/thinking a normal
+// streamChatViaCompanion()-delivered one does — previously this dropped
+// everything but text, silently downgrading any voice or thinking content
+// CC sent outside of a directly-awaited turn.
+function maybeAnnounceProactive(wireMsg) {
+  const { id, text, ts, kind, voice, style, thinking } = wireMsg
   // Deferred to the next tick: lets any active generator's listener (which
   // runs synchronously within the same notify() call) markDelivered() first.
   // Only messages still unclaimed after that are genuinely spontaneous.
@@ -172,7 +178,7 @@ function maybeAnnounceProactive(id, text, ts) {
     markDelivered(id)
     for (const fn of proactiveListeners) {
       try {
-        fn({ id, text, ts })
+        fn({ id, text, ts, kind, voice, style, thinking })
       } catch {
         // a subscriber throwing must not break delivery to the others
       }
@@ -216,6 +222,37 @@ function maybeAnnounceReset(resetAt) {
   }
 }
 
+// ---------- gomoku (五子棋) ----------
+const gomokuListeners = new Set()
+/** Subscribe to live gomoku board updates (user move, AI move, new game). Returns an unsubscribe fn. */
+export function onGomokuUpdate(fn) {
+  gomokuListeners.add(fn)
+  return () => gomokuListeners.delete(fn)
+}
+function announceGomoku(game) {
+  for (const fn of gomokuListeners) {
+    try {
+      fn(game)
+    } catch {
+      // a subscriber throwing must not break delivery to the others
+    }
+  }
+}
+
+export async function getGomokuState() {
+  return companionJson('/gomoku/state')
+}
+export async function newGomokuGame() {
+  return companionJson('/gomoku/new', { method: 'POST' })
+}
+export async function makeGomokuMove(row, col) {
+  return companionJson('/gomoku/move', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ row, col }),
+  })
+}
+
 listeners.add(evt => {
   if (evt.kind === 'wire') {
     const m = evt.wire
@@ -223,13 +260,17 @@ listeners.add(evt => {
       maybeAnnounceReset(m.ts)
       return
     }
-    if (m.type === 'msg' && m.from === 'cc') maybeAnnounceProactive(m.id, m.text, m.ts)
+    if (m.type === 'gomoku_update') {
+      announceGomoku(m.game)
+      return
+    }
+    if (m.type === 'msg' && m.from === 'cc') maybeAnnounceProactive(m)
     return
   }
   if (evt.kind === 'history') {
     maybeAnnounceReset(evt.resetAt)
     for (const item of evt.items) {
-      if (item.from === 'cc') maybeAnnounceProactive(item.id, item.text, item.ts)
+      if (item.from === 'cc') maybeAnnounceProactive(item)
     }
   }
 })

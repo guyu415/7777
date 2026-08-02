@@ -89,7 +89,7 @@ function MenuItem({ icon, label, sub, onClick, disabled }) {
   )
 }
 
-const MessageInput = forwardRef(function MessageInput({ onSend, onStartCall, onSendImage, disabled, theme, isLoading, onStop }, ref) {
+const MessageInput = forwardRef(function MessageInput({ onSend, onStartCall, onSendImage, onOpenGomoku, isVpsProvider, disabled, theme, isLoading, onStop }, ref) {
   const [text, setText] = useState('')
   const [menuOpen, setMenuOpen] = useState(false)
   const fileRef = useRef(null)
@@ -163,6 +163,11 @@ const MessageInput = forwardRef(function MessageInput({ onSend, onStartCall, onS
     onStartCall?.()
   }
 
+  const handleMenuGomoku = () => {
+    setMenuOpen(false)
+    onOpenGomoku?.()
+  }
+
   const primaryColor = theme?.primary || '#ff85b3'
 
   return (
@@ -192,7 +197,15 @@ const MessageInput = forwardRef(function MessageInput({ onSend, onStartCall, onS
         >
           <MenuItem icon={<ImageIcon />} label="图片" onClick={handleMenuImage} />
           <MenuItem icon={<PhoneIcon />} label="语音通话" onClick={handleMenuCall} />
-          <MenuItem icon={<GomokuIcon />} label="五子棋" sub="稍后开放" disabled />
+          {/* 对手是当前聊天里真实的 CC，落子经 ai-companion MCP 完成——只有
+              CC（VPS）会话接了这条链路，普通 API 会话没有 MCP 工具可用。 */}
+          <MenuItem
+            icon={<GomokuIcon />}
+            label="五子棋"
+            sub={isVpsProvider ? undefined : '仅CC支持'}
+            onClick={handleMenuGomoku}
+            disabled={!isVpsProvider}
+          />
         </div>
       )}
 

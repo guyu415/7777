@@ -1,5 +1,5 @@
 import { useEffect, useState, useRef } from 'react'
-import { useStore, getCustomFont, getBlob, getMessages, saveMessage, deleteMessagesForSession } from './store'
+import { useStore, getCustomFont, getBlob, getMessages, saveMessage, saveBlob, deleteMessagesForSession } from './store'
 import { THEMES } from './themes'
 import ChatWindow from './components/Chat/ChatWindow'
 import GlobalSettings from './components/GlobalSettings'
@@ -9,11 +9,11 @@ import BottomNav from './components/BottomNav'
 import LoginPage from './components/LoginPage'
 import VoiceFavorites from './components/VoiceFavorites'
 import CompanionMemory from './components/CompanionMemory'
-import MusicDisc from './components/MusicDisc'
 import { getSettings, saveSettings, extractSettings, saveSessionMsgs, putAsset, putAssetDataUrl, loadAsset, getLetters } from './services/sync'
 import { mergeLetters } from './services/letters'
 import { compressImage, slimSettings } from './utils/image'
 import { ensureConnected as ensureCompanionConnected, getAuthStatus as getCompanionAuthStatus, onProactiveMessage, onCcReset } from './services/companion'
+import { fetchTTSAudio } from './services/tts'
 
 const FONT_MAP = {
   noto: "'Noto Sans SC', 'PingFang SC', -apple-system, sans-serif",
@@ -470,14 +470,56 @@ export default function App() {
   // in IndexedDB (survives page reloads, unlike the in-memory dedup cache in
   // companion.js which resets per page load). Never fabricates a user
   // bubble or a sendMessage() call — this only ever appends an assistant
-  // (from:'cc') message.
+  // (from:'cc') message. This is also the path a gomoku-triggered CC turn's
+  // reply/send_voice calls land through (that turn was never initiated by
+  // this tab's own streamChatViaCompanion(), so it's "spontaneous" from the
+  // frontend's point of view exactly like a real proactive message).
   useEffect(() => {
-    const unsub = onProactiveMessage(async ({ id, text, ts }) => {
+    const unsub = onProactiveMessage(async ({ id, text, ts, kind, voice, thinking }) => {
       const vpsSession = useStore.getState().sessions?.find(s => s.providerName === 'claude-code-vps')
       if (!vpsSession) return
       const existing = await getMessages(vpsSession.id)
       if (existing.some(m => m.id === id)) return
-      const msg = { id, conversationId: vpsSession.id, role: 'assistant', type: 'text', content: text, timestamp: ts, streaming: false }
+      const reasoningFields = thinking ? { reasoning: thinking, reasoningStreaming: false } : {}
+
+      if (kind === 'voice') {
+        const s = useStore.getState()
+        const ttsApiKey = vpsSession.ttsApiKey || s.ttsApiKey
+        const ttsGroupId = vpsSession.ttsGroupId || s.ttsGroupId
+        const ttsVoiceId = vpsSession.ttsVoiceId || s.ttsVoiceId
+        const ttsModel = vpsSession.ttsModel || s.ttsModel
+        const hasTts = ttsApiKey && ttsGroupId
+        if (!hasTts) {
+          const msg = { id, conversationId: vpsSession.id, role: 'assistant', type: 'text', content: text, voiceText: text, voiceFailed: true, timestamp: ts, streaming: false, ...reasoningFields }
+          await saveMessage(msg)
+          if (useStore.getState().currentSessionId === vpsSession.id) useStore.getState().addMessage(msg)
+          return
+        }
+        try {
+          const blob = await fetchTTSAudio(text, { apiKey: ttsApiKey, groupId: ttsGroupId, voiceId: voice || ttsVoiceId || 'English_Trustworthy_Man', model: ttsModel })
+          let duration = 0
+          try {
+            const ab = await blob.arrayBuffer()
+            const ac = new AudioContext()
+            const decoded = await ac.decodeAudioData(ab)
+            duration = Math.round(decoded.duration)
+            ac.close()
+          } catch {}
+          const voiceBlobId = id + '-blob'
+          await saveBlob(voiceBlobId, blob)
+          const msg = { id, conversationId: vpsSession.id, role: 'assistant', type: 'voice', voiceBlobId, duration, content: '', voiceText: text, timestamp: ts, streaming: false, ...reasoningFields }
+          await saveMessage(msg)
+          if (useStore.getState().currentSessionId === vpsSession.id) useStore.getState().addMessage(msg)
+        } catch (e) {
+          console.error('[PROACTIVE-VOICE] 合成失败:', e?.message)
+          const msg = { id, conversationId: vpsSession.id, role: 'assistant', type: 'text', content: text, voiceText: text, voiceFailed: true, timestamp: ts, streaming: false, ...reasoningFields }
+          await saveMessage(msg)
+          if (useStore.getState().currentSessionId === vpsSession.id) useStore.getState().addMessage(msg)
+        }
+        return
+      }
+
+      const msg = { id, conversationId: vpsSession.id, role: 'assistant', type: 'text', content: text, timestamp: ts, streaming: false, ...reasoningFields }
       await saveMessage(msg)
       if (useStore.getState().currentSessionId === vpsSession.id) {
         useStore.getState().addMessage(msg)
@@ -568,9 +610,6 @@ export default function App() {
         className="relative h-full w-full max-w-md mx-auto flex flex-col overflow-hidden"
         style={{ boxShadow: `0 0 60px ${theme.primary}26`, zIndex: 2 }}
       >
-        {/* 音乐碟片挂件：常驻挂载（切换页面音乐不断），只在聊天页显示 */}
-        <MusicDisc theme={theme} visible={currentView === 'chat'} />
-
         <div className="flex-1 overflow-hidden min-h-0">
           {currentView === 'chat' && <ChatWindow theme={theme} />}
           {currentView === 'sessions' && (
