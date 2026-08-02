@@ -417,7 +417,11 @@ export default function App() {
   }, [effectiveFontFamily, selectedCustomFont?.id, selectedCustomFont?.assetKey])
 
   useEffect(() => {
-    document.documentElement.style.fontSize = `${effectiveFontSize}px`
+    // Keep the app shell's rem-based geometry fixed at the browser default.
+    // The setting is for chat copy only; changing html.fontSize would resize
+    // every Tailwind spacing, icon and control dimension in the shell.
+    const size = Math.max(12, Math.min(20, Number(effectiveFontSize) || 16))
+    document.documentElement.style.setProperty('--message-font-size', `${size}px`)
   }, [effectiveFontSize])
 
   // Keep the companion WS alive whenever a VPS-bound session exists, not
@@ -490,7 +494,7 @@ export default function App() {
   }
 
   return (
-    <div className="h-full w-full" style={wrapperBgStyle}>
+    <div className="eunoia-viewport" style={wrapperBgStyle}>
       {bgIsImage && bgUrl && currentView === 'chat' && (
         <div
           className="fixed inset-0 pointer-events-none"
@@ -514,13 +518,13 @@ export default function App() {
 
       {/* App shell */}
       <div
-        className="relative h-full w-full max-w-md mx-auto flex flex-col overflow-hidden"
+        className="eunoia-shell relative h-full w-full max-w-md mx-auto flex flex-col overflow-hidden"
         style={{ boxShadow: `0 0 60px ${theme.primary}26`, zIndex: 2 }}
       >
         {/* 音乐碟片挂件：常驻挂载（切换页面音乐不断），只在聊天页显示 */}
         <MusicDisc theme={theme} visible={currentView === 'chat'} />
 
-        <div className="flex-1 overflow-hidden min-h-0">
+        <div className="eunoia-shell__view flex-1 overflow-hidden min-h-0">
           {currentView === 'chat' && <ChatWindow theme={theme} />}
           {currentView === 'sessions' && (
             <SessionList theme={theme} onSelectSession={() => setCurrentView('chat')} />

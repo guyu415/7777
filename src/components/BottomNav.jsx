@@ -9,21 +9,19 @@ export default function BottomNav({ currentView, onChange, theme, bare = false }
   const primaryDark = theme?.primaryDark || '#2196d3'
 
   const containerStyle = bare
-    ? { display: 'flex', alignItems: 'center', justifyContent: 'space-around', paddingTop: 4, paddingBottom: 4, minHeight: 88 }
+    ? undefined
     : {
-        display: 'flex', alignItems: 'center', justifyContent: 'space-around',
         background: `linear-gradient(to bottom, ${primary}08, rgba(255,255,255,0.22))`,
         backdropFilter: 'blur(22px)',
         WebkitBackdropFilter: 'blur(22px)',
         borderTop: `1px solid ${primary}14`,
-        paddingTop: 4, paddingBottom: 4,
-        minHeight: 88,
       }
 
   return (
     <div
-      className={bare ? 'flex-shrink-0' : 'flex-shrink-0 safe-bottom'}
+      className={`eunoia-bottom-nav ${bare ? 'eunoia-bottom-nav--bare' : ''}`}
       style={containerStyle}
+      aria-label="主导航"
     >
       {TABS.map((tab) => {
         const active = currentView === tab.id
@@ -43,7 +41,7 @@ export default function BottomNav({ currentView, onChange, theme, bare = false }
             }}
           >
             {/* Flower wreath IS the tab frame — fills the tab area */}
-            <div style={{ position: 'relative', width: 84, height: 84 }}>
+            <div className="eunoia-nav-art" style={{ position: 'relative' }}>
               <img
                 src={tab.img}
                 alt={tab.label}

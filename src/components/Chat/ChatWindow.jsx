@@ -245,9 +245,9 @@ export default function ChatWindow({ theme }) {
   const primaryDarkColor = theme?.primaryDark || '#2196d3'
 
   return (
-    <div className="flex flex-col h-full" style={{ background: 'transparent' }}>
+    <div className="eunoia-chat flex flex-col h-full" style={{ background: 'transparent' }}>
       {/* Header */}
-      <div className="flex items-center justify-between px-4 safe-top"
+      <div className="eunoia-chat__header flex items-center justify-between px-4 safe-top"
         style={{
           paddingTop: 'calc(var(--safe-top) + 14px)',
           paddingBottom: 12,
@@ -319,10 +319,10 @@ export default function ChatWindow({ theme }) {
       </div>
 
       {/* Messages + particle layer */}
-      <div className="flex-1 relative overflow-hidden">
+      <div className="eunoia-chat__body flex-1 relative overflow-hidden">
         {/* Falling + stacking accessory particles — clipped to this area */}
         <FallingParticles />
-      <div className="absolute inset-0 overflow-y-auto px-3 py-4" style={{ zIndex: 1 }}>
+      <div className="eunoia-chat__scroll absolute inset-0 overflow-y-auto px-3 py-4" style={{ zIndex: 1 }}>
         {messages.length === 0 && (
           <div className="flex flex-col items-center justify-center h-full text-center gap-3">
             <div className="text-5xl">🌸</div>
@@ -490,12 +490,11 @@ export default function ChatWindow({ theme }) {
       )}
 
       {/* Unified input + nav — one shared glass panel, no seam */}
-      {/* iOS Home 指示条的 safe-area 会在导航下方留一条空白，收窄它让图标贴近底部
-          （安卓 inset=0 不受影响，保持原样） */}
+      {/* BottomNav owns the home-indicator inset so this whole panel stays
+          inside the fixed shell while the message list remains the only chat scroller. */}
       <div
-        className="flex-shrink-0"
+        className="eunoia-chat__composer flex-shrink-0"
         style={{
-          paddingBottom: 'max(calc(var(--safe-bottom) - 22px), 0px)',
           background: `linear-gradient(to bottom, rgba(255,255,255,0.38), rgba(255,255,255,0.26))`,
           backdropFilter: 'blur(22px)',
           WebkitBackdropFilter: 'blur(22px)',
