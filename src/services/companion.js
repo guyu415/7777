@@ -163,13 +163,15 @@ export function onProactiveMessage(fn) {
   return () => proactiveListeners.delete(fn)
 }
 
-// Takes the whole wire message (not just id/text/ts) so a proactive/gomoku-
-// triggered reply carries the same kind/voice/style/thinking a normal
-// streamChatViaCompanion()-delivered one does — previously this dropped
-// everything but text, silently downgrading any voice or thinking content
-// CC sent outside of a directly-awaited turn.
+// Takes the whole wire message (not just id/text/ts) so a proactive reply
+// carries the same kind/voice/style/thinking a normal streamChatViaCompanion()
+// -delivered one does — previously this dropped everything but text, silently
+// downgrading any voice or thinking content CC sent outside of a
+// directly-awaited turn. Gomoku chat never reaches this path at all — it's
+// routed server-side into the game's own `messages` log (see onGomokuUpdate),
+// never broadcast as a main-chat wire `msg` in the first place.
 function maybeAnnounceProactive(wireMsg) {
-  const { id, text, ts, kind, voice, style, thinking, gomokuGameId } = wireMsg
+  const { id, text, ts, kind, voice, style, thinking } = wireMsg
   // Deferred to the next tick: lets any active generator's listener (which
   // runs synchronously within the same notify() call) markDelivered() first.
   // Only messages still unclaimed after that are genuinely spontaneous.
@@ -178,7 +180,7 @@ function maybeAnnounceProactive(wireMsg) {
     markDelivered(id)
     for (const fn of proactiveListeners) {
       try {
-        fn({ id, text, ts, kind, voice, style, thinking, gomokuGameId })
+        fn({ id, text, ts, kind, voice, style, thinking })
       } catch {
         // a subscriber throwing must not break delivery to the others
       }
@@ -224,7 +226,9 @@ function maybeAnnounceReset(resetAt) {
 
 // ---------- gomoku (五子棋) ----------
 const gomokuListeners = new Set()
-/** Subscribe to live gomoku board updates (user move, AI move, new game). Returns an unsubscribe fn. */
+/** Subscribe to live gomoku board updates (user move, AI move, new game, and
+ * in-game chat — the game's `messages` log is part of the same broadcast
+ * object, see channel-server.ts's appendGomokuChatMsg). Returns an unsubscribe fn. */
 export function onGomokuUpdate(fn) {
   gomokuListeners.add(fn)
   return () => gomokuListeners.delete(fn)
@@ -233,6 +237,27 @@ function announceGomoku(game) {
   for (const fn of gomokuListeners) {
     try {
       fn(game)
+    } catch {
+      // a subscriber throwing must not break delivery to the others
+    }
+  }
+}
+
+// Fires on every turn_end/turn_error, tagged only with the turnId — lets the
+// gomoku screen notice when the specific interactionId it's waiting on (from
+// postGomokuChat) has finished, without needing its own generator/claiming
+// machinery the way streamChatViaCompanion has. Deliberately generic (not
+// gomoku-specific server-side) since it's just "a turn ended," filtered by
+// the caller.
+const turnEndListeners = new Set()
+export function onTurnEnd(fn) {
+  turnEndListeners.add(fn)
+  return () => turnEndListeners.delete(fn)
+}
+function announceTurnEnd(turnId) {
+  for (const fn of turnEndListeners) {
+    try {
+      fn(turnId)
     } catch {
       // a subscriber throwing must not break delivery to the others
     }
@@ -254,13 +279,25 @@ export async function makeGomokuMove(row, col) {
 }
 // mode:'immediate' (AI hadn't moved yet, retracted right away) or
 // mode:'pending' (AI already moved — genuinely asked over the MCP channel;
-// the actual outcome arrives later as a gomoku_update broadcast, or a
-// gomokuGameId-tagged proactive reply if CC talks about its decision).
+// the actual outcome arrives later as a gomoku_update broadcast, including
+// anything CC says about it in the game's own `messages` log).
 export async function requestGomokuUndo() {
   return companionJson('/gomoku/undo-request', { method: 'POST' })
 }
 export async function resignGomokuGame() {
   return companionJson('/gomoku/resign', { method: 'POST' })
+}
+// In-game chat — text typed on the gomoku screen, or a voice press-and-hold's
+// transcript (voice:true, transcribed client-side, never a new server-side
+// STT path). CC's reply arrives via onGomokuUpdate (game.messages), not via
+// streamChatViaCompanion — this call returns as soon as the message is
+// queued, not once CC has replied.
+export async function postGomokuChat(gameId, text, voice = false) {
+  return companionJson('/gomoku/chat', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ gameId, text, voice }),
+  })
 }
 
 listeners.add(evt => {
@@ -273,6 +310,11 @@ listeners.add(evt => {
     if (m.type === 'gomoku_update') {
       announceGomoku(m.game)
       return
+    }
+    if (m.type === 'turn_end' || m.type === 'turn_error') {
+      announceTurnEnd(m.turnId)
+      // fall through — turn_end/turn_error also matter to any in-flight
+      // streamChatViaCompanion() generator, handled further down via `listeners`
     }
     if (m.type === 'msg' && m.from === 'cc') maybeAnnounceProactive(m)
     return

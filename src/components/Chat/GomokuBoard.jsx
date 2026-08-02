@@ -1,46 +1,54 @@
 import { useEffect, useRef, useState } from 'react'
-import { X, RotateCcw, Undo2, Flag, Phone } from 'lucide-react'
+import { X, RotateCcw, Undo2, Flag, Mic } from 'lucide-react'
 import {
   getGomokuState, newGomokuGame, makeGomokuMove, requestGomokuUndo, resignGomokuGame,
-  onGomokuUpdate, onProactiveMessage, streamChatViaCompanion,
+  onGomokuUpdate, onTurnEnd, postGomokuChat,
 } from '../../services/companion'
 import { fetchTTSAudio } from '../../services/tts'
-import { saveBlob, useStore } from '../../store'
+import { useStore } from '../../store'
 import MessageBubble from './MessageBubble'
-import VoiceCall from '../Voice/VoiceCall'
 
 const BOARD_SIZE = 15
-let seq = 0
-const genId = () => `gk-${Date.now()}-${++seq}`
+const SpeechRecognitionAPI = window.SpeechRecognition || window.webkitSpeechRecognition
 
 // A standalone full-screen game view (fixed inset-0, own header/opponent/
-// turn/restart/undo/resign/quit controls, own embedded text+voice chat) —
-// NOT rendered inside MessageList, NOT chat bubbles, and none of its chat
-// traffic ever touches the main conversation's IndexedDB/store (see the
-// gomokuGameId-tagged proactive-message routing in App.jsx, which skips
-// anything this screen owns). Closing it is not a route change — the
-// persisted game just sits there server-side until reopened.
+// turn/restart/undo/resign/quit controls, own in-game chat log + text input +
+// press-and-hold voice) — NOT rendered inside MessageList, NOT chat bubbles.
 //
-// Board/turn/legality/win-detection/undo-agreement all live server-side
-// (channel-server.ts); this component only renders state and posts the
-// user's own taps/messages. The opponent's moves and decisions are made by
-// the real resident CC session via the gomoku_move/gomoku_undo_response MCP
-// tools and arrive here purely as live broadcasts — there is no local
-// move-picking logic anywhere in this file.
+// In-game chat is entirely server-persisted on the game itself
+// (currentGame.messages in channel-server.ts, delivered via the SAME
+// gomoku_update broadcast as board state) — never the main conversation's
+// history/IndexedDB. Sending goes through POST /gomoku/chat (postGomokuChat);
+// CC's reply/send_voice calls made during that turn are routed server-side
+// straight into the game's messages log, so there is no client-side tagging
+// or dedup race to get wrong — closing this screen and reopening it (or a
+// full reload) just re-fetches the same persisted log via getGomokuState().
+//
+// Board/turn/legality/win-detection/undo-agreement/chat routing all live
+// server-side; this component only renders state and posts the user's own
+// taps/messages. The opponent's moves, decisions, and chat replies are made
+// by the real resident CC session via the gomoku_move/gomoku_undo_response/
+// reply/send_voice MCP tools and arrive here purely as live broadcasts —
+// there is no local move-picking or reply-generating logic anywhere in this
+// file.
 export default function GomokuBoard({ theme, aiName, aiAvatar, userAvatar, onClose }) {
   const [game, setGame] = useState(null)
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState(null)
 
-  // Embedded mini-chat — entirely local state, never saveMessage()'d, never
-  // touches useStore's messages. Resets when this screen unmounts.
-  const [chatMessages, setChatMessages] = useState([])
   const [chatInput, setChatInput] = useState('')
-  const [chatBusy, setChatBusy] = useState(false)
-  const [showCall, setShowCall] = useState(false)
-  const callAudioRef = useRef(null)
+  const [sending, setSending] = useState(false)
+  const [chatError, setChatError] = useState(null)
+  const [recording, setRecording] = useState(false)
+  const pendingInteractionRef = useRef(null)
+  const recRef = useRef(null)
   const chatLogRef = useRef(null)
+  // Ids of AI voice-kind messages already synthesized+played this session —
+  // pre-seeded with whatever's already in history on mount so reopening a
+  // game (or a reload) never replays old voice history, only genuinely new
+  // arrivals from here on.
+  const playedVoiceIdsRef = useRef(new Set())
 
   const s = useStore()
   const currentSession = s.sessions?.find(sess => sess.id === s.currentSessionId)
@@ -53,130 +61,111 @@ export default function GomokuBoard({ theme, aiName, aiAvatar, userAvatar, onClo
   useEffect(() => {
     let cancelled = false
     getGomokuState()
-      .then(({ game }) => { if (!cancelled) setGame(game) })
+      .then(({ game }) => {
+        if (cancelled) return
+        setGame(game)
+        for (const m of game?.messages || []) playedVoiceIdsRef.current.add(m.id)
+      })
       .catch(e => { if (!cancelled) setError(e.message || '加载棋局失败') })
       .finally(() => { if (!cancelled) setLoading(false) })
     const unsub = onGomokuUpdate(g => setGame(g))
     return () => { cancelled = true; unsub() }
   }, [])
 
-  // Catches CC's reply/send_voice calls made *around* a move/undo/resign
-  // decision (tagged gomokuGameId server-side) — these never touch the main
-  // chat; this is their only destination.
+  // Clears the send-in-flight state once the specific chat turn we're
+  // waiting on actually finishes — not a fixed timeout, so it tracks reality
+  // even if CC takes a while (or, rarely, doesn't call reply/send_voice at
+  // all for a given turn).
   useEffect(() => {
-    const unsub = onProactiveMessage(async (msg) => {
-      if (!msg.gomokuGameId || msg.gomokuGameId !== game?.id) return
-      await appendIncomingMessage(msg)
+    const unsub = onTurnEnd(turnId => {
+      if (turnId && turnId === pendingInteractionRef.current) {
+        pendingInteractionRef.current = null
+        setSending(false)
+      }
     })
     return unsub
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [game?.id])
+  }, [])
 
   useEffect(() => {
     chatLogRef.current?.scrollTo({ top: chatLogRef.current.scrollHeight, behavior: 'smooth' })
-  }, [chatMessages.length])
+  }, [game?.messages?.length])
 
-  // Shared by both the proactive listener above and the mini-chat's own
-  // streamChatViaCompanion loop below — synthesizes voice with the same
-  // fallback-to-text-on-failure/no-keys behavior used elsewhere, or just
-  // appends plain text.
-  const appendIncomingMessage = async ({ id, text, kind, voice, thinking, ts }) => {
-    const reasoningFields = thinking ? { reasoning: thinking, reasoningStreaming: false } : {}
-    if (kind === 'voice') {
-      if (!hasTts) {
-        setChatMessages(prev => [...prev, { id, role: 'assistant', type: 'text', content: text, voiceText: text, voiceFailed: true, timestamp: ts || Date.now(), streaming: false, ...reasoningFields }])
-        return
-      }
-      try {
-        const blob = await fetchTTSAudio(text, { apiKey: ttsApiKey, groupId: ttsGroupId, voiceId: voice || ttsVoiceId || 'English_Trustworthy_Man', model: ttsModel })
-        let duration = 0
-        try {
-          const ab = await blob.arrayBuffer()
-          const ac = new AudioContext()
-          const decoded = await ac.decodeAudioData(ab)
-          duration = Math.round(decoded.duration)
-          ac.close()
-        } catch {}
-        const voiceBlobId = id + '-blob'
-        await saveBlob(voiceBlobId, blob)
-        setChatMessages(prev => [...prev, { id, role: 'assistant', type: 'voice', voiceBlobId, duration, content: '', voiceText: text, timestamp: ts || Date.now(), streaming: false, ...reasoningFields }])
-      } catch (e) {
-        setChatMessages(prev => [...prev, { id, role: 'assistant', type: 'text', content: text, voiceText: text, voiceFailed: true, timestamp: ts || Date.now(), streaming: false, ...reasoningFields }])
-      }
-      return
+  // Auto-play newly-arrived AI voice replies right here on the board page —
+  // no full-screen call UI, board stays fully interactive throughout.
+  useEffect(() => {
+    const msgs = game?.messages || []
+    for (const m of msgs) {
+      if (m.from !== 'ai' || m.kind !== 'voice' || playedVoiceIdsRef.current.has(m.id)) continue
+      playedVoiceIdsRef.current.add(m.id)
+      if (!hasTts) continue
+      fetchTTSAudio(m.text, { apiKey: ttsApiKey, groupId: ttsGroupId, voiceId: m.voice || ttsVoiceId || 'English_Trustworthy_Man', model: ttsModel })
+        .then(blob => {
+          const url = URL.createObjectURL(blob)
+          const audio = new Audio(url)
+          audio.onended = () => URL.revokeObjectURL(url)
+          audio.onerror = () => URL.revokeObjectURL(url)
+          audio.play().catch(() => URL.revokeObjectURL(url))
+        })
+        .catch(() => {})
     }
-    setChatMessages(prev => [...prev, { id, role: 'assistant', type: 'text', content: text, timestamp: ts || Date.now(), streaming: false, ...reasoningFields }])
-  }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [game?.messages, hasTts])
 
-  const handleSendChat = async (rawText) => {
-    const text = rawText.trim()
-    if (!text || chatBusy) return
+  const handleSendChat = async (rawText, opts = {}) => {
+    const text = (rawText || '').trim()
+    if (!text || sending || !game) return
     setChatInput('')
-    setChatMessages(prev => [...prev, { id: genId(), role: 'user', type: 'text', content: text, timestamp: Date.now(), streaming: false }])
-    setChatBusy(true)
-
-    let currentTextId = genId()
-    let currentTextAdded = false
-    let fullContent = ''
-    let fullReasoning = ''
-
-    const finalizeText = () => {
-      if (currentTextAdded && fullContent.trim()) {
-        setChatMessages(prev => prev.map(m => m.id === currentTextId ? { ...m, content: fullContent, streaming: false } : m))
-      } else if (currentTextAdded) {
-        setChatMessages(prev => prev.filter(m => m.id !== currentTextId))
-      }
-    }
-
+    setChatError(null)
+    setSending(true)
     try {
-      for await (const chunk of streamChatViaCompanion({ text })) {
-        if (chunk.reasoningReplace !== undefined) fullReasoning = chunk.reasoningReplace
-        else if (chunk.reasoning) fullReasoning += chunk.reasoning
-
-        if (chunk.voice) {
-          finalizeText()
-          await appendIncomingMessage({ id: genId(), text: chunk.voice.text, kind: 'voice', voice: chunk.voice.voice, ts: Date.now() })
-          currentTextId = genId()
-          currentTextAdded = false
-          fullContent = ''
-          fullReasoning = ''
-          continue
-        }
-        if (chunk.text) {
-          fullContent += chunk.text
-          if (!currentTextAdded) {
-            setChatMessages(prev => [...prev, { id: currentTextId, role: 'assistant', type: 'text', content: '', timestamp: Date.now(), streaming: true }])
-            currentTextAdded = true
-          }
-          const reasoningFields = fullReasoning ? { reasoning: fullReasoning, reasoningStreaming: false } : {}
-          setChatMessages(prev => prev.map(m => m.id === currentTextId ? { ...m, content: fullContent, streaming: true, ...reasoningFields } : m))
-        }
-      }
-      finalizeText()
+      const { interactionId } = await postGomokuChat(game.id, text, !!opts.voice)
+      pendingInteractionRef.current = interactionId
     } catch (e) {
-      setChatMessages(prev => [...prev, { id: genId(), role: 'assistant', type: 'text', content: `（消息发送失败：${e.message || '未知错误'}）`, timestamp: Date.now(), streaming: false }])
-    } finally {
-      setChatBusy(false)
+      setSending(false)
+      setChatError(e.message || '发送失败，请重试')
     }
   }
 
-  const handleStartCall = () => {
-    const SILENT_WAV = 'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAIA+AAACABAAZGF0YQAAAAA='
-    const el = new Audio(SILENT_WAV)
-    el.play().catch(() => {})
-    let ctx = null
+  // Press-and-hold voice: real Web Speech API recording/STT (same mechanism
+  // useVoiceCall.js uses for its own listen()), just start-on-press/
+  // stop-on-release instead of continuous silence-detection. The transcript
+  // goes through the exact same postGomokuChat() path as typed text — no new
+  // voice-message/voice-bubble handling, no full-screen call UI, board never
+  // leaves view.
+  const startHold = () => {
+    if (recording || sending || !game) return
+    if (!SpeechRecognitionAPI) { setChatError('此浏览器不支持语音识别'); return }
+    setChatError(null)
+    let finalText = ''
+    const rec = new SpeechRecognitionAPI()
+    rec.lang = 'zh-CN'
+    rec.interimResults = false
+    rec.continuous = true
+    rec.onresult = (e) => {
+      for (let i = 0; i < e.results.length; i++) {
+        if (e.results[i].isFinal) finalText += e.results[i][0].transcript
+      }
+    }
+    rec.onerror = (e) => {
+      if (e.error === 'not-allowed' || e.error === 'service-not-allowed') setChatError('麦克风权限被拒绝，请在系统设置里允许')
+    }
+    rec.onend = () => {
+      recRef.current = null
+      setRecording(false)
+      const text = finalText.trim()
+      if (text) handleSendChat(text, { voice: true })
+    }
+    recRef.current = rec
+    setRecording(true)
     try {
-      const AC = window.AudioContext || window.webkitAudioContext
-      ctx = new AC()
-      ctx.resume().catch(() => {})
-      const buf = ctx.createBuffer(1, 1, 22050)
-      const src = ctx.createBufferSource()
-      src.buffer = buf
-      src.connect(ctx.destination)
-      src.start(0)
-    } catch {}
-    callAudioRef.current = { el, ctx }
-    setShowCall(true)
+      rec.start()
+    } catch {
+      setRecording(false)
+      recRef.current = null
+    }
+  }
+  const endHold = () => {
+    try { recRef.current?.stop() } catch {}
   }
 
   const handleCellClick = async (row, col) => {
@@ -200,6 +189,7 @@ export default function GomokuBoard({ theme, aiName, aiAvatar, userAvatar, onClo
     try {
       const { game: fresh } = await newGomokuGame()
       setGame(fresh)
+      playedVoiceIdsRef.current = new Set()
     } catch (e) {
       setError(e.message || '开始新对局失败')
     } finally {
@@ -270,6 +260,15 @@ export default function GomokuBoard({ theme, aiName, aiAvatar, userAvatar, onClo
     background: 'rgba(255,255,255,0.55)', border: `1px solid ${primary}33`, color: '#8b5060',
     opacity: disabled ? 0.45 : 1, cursor: disabled ? 'default' : 'pointer',
   })
+
+  const chatBubbles = (game?.messages || []).map(m => ({
+    id: m.id,
+    role: m.from === 'user' ? 'user' : 'assistant',
+    type: 'text',
+    content: m.text,
+    timestamp: m.ts,
+    streaming: false,
+  }))
 
   return (
     <div className="fixed inset-0 flex flex-col" style={{ zIndex: 55, background: 'linear-gradient(165deg, #fce4ec 0%, #f8bbd0 30%, #ffeef5 70%, #fff0f6 100%)' }}>
@@ -374,44 +373,57 @@ export default function GomokuBoard({ theme, aiName, aiAvatar, userAvatar, onClo
         </button>
       </div>
 
-      {/* Embedded mini-chat with the opponent — local only, never touches
-          the main conversation. */}
+      {/* In-game chat log — persisted with the game (game.messages), never
+          the main conversation. Scrollable, sits between the board and the
+          input row. */}
       <div className="flex-1 flex flex-col min-h-0 mx-3 mb-2 rounded-2xl overflow-hidden"
         style={{ background: 'rgba(255,255,255,0.4)', border: `1px solid ${primary}22` }}>
         <div ref={chatLogRef} className="flex-1 overflow-y-auto px-2 pt-2" style={{ minHeight: 0 }}>
-          {chatMessages.length === 0 && (
+          {chatBubbles.length === 0 && (
             <div className="text-center text-xs" style={{ color: '#c9a2ad', paddingTop: 8 }}>
               可以边下棋边和{opponentName}聊两句～
             </div>
           )}
-          {chatMessages.map(msg => (
+          {chatBubbles.map(msg => (
             <MessageBubble
               key={msg.id}
               message={msg}
               onLongPress={null}
               onRegenerate={null}
               onRegenerateRound={null}
-              isLoading={chatBusy}
+              isLoading={false}
               userAvatar={userAvatar}
               aiAvatar={aiAvatar}
               theme={theme}
             />
           ))}
+          {chatError && <div className="text-xs text-center" style={{ color: '#e07070', padding: '4px 0' }}>{chatError}</div>}
         </div>
         <div className="flex items-center gap-2 px-2" style={{ padding: '6px 8px' }}>
           <button
-            onClick={handleStartCall}
-            title="语音通话"
+            onPointerDown={startHold}
+            onPointerUp={endHold}
+            onPointerLeave={endHold}
+            onPointerCancel={endHold}
+            title="按住说话"
+            disabled={sending}
             className="flex items-center justify-center flex-shrink-0"
-            style={{ width: 34, height: 34, borderRadius: '50%', background: `${primary}18`, border: 'none', color: primary }}
+            style={{
+              width: 34, height: 34, borderRadius: '50%', border: 'none',
+              background: recording ? primary : `${primary}18`,
+              color: recording ? '#fff' : primary,
+              opacity: sending ? 0.5 : 1,
+              touchAction: 'none',
+            }}
           >
-            <Phone size={15} />
+            <Mic size={15} />
           </button>
           <input
             value={chatInput}
             onChange={e => setChatInput(e.target.value)}
             onKeyDown={e => { if (e.key === 'Enter') handleSendChat(chatInput) }}
-            placeholder="跟对手说点什么…"
+            placeholder={recording ? '正在听你说…' : '跟对手说点什么…'}
+            disabled={recording}
             style={{
               flex: 1, minWidth: 0, background: 'rgba(255,255,255,0.7)', border: `1px solid ${primary}33`,
               borderRadius: 16, padding: '8px 12px', fontSize: 14, color: '#8b5060', outline: 'none', fontFamily: 'inherit',
@@ -419,11 +431,11 @@ export default function GomokuBoard({ theme, aiName, aiAvatar, userAvatar, onClo
           />
           <button
             onClick={() => handleSendChat(chatInput)}
-            disabled={chatBusy || !chatInput.trim()}
+            disabled={sending || !chatInput.trim()}
             style={{
               flexShrink: 0, padding: '8px 14px', borderRadius: 16, fontSize: 13, fontWeight: 500,
               background: `linear-gradient(135deg, ${primary}, ${theme?.primaryDark || primary})`, color: '#fff', border: 'none',
-              opacity: (chatBusy || !chatInput.trim()) ? 0.5 : 1,
+              opacity: (sending || !chatInput.trim()) ? 0.5 : 1,
             }}
           >
             发送
@@ -432,10 +444,6 @@ export default function GomokuBoard({ theme, aiName, aiAvatar, userAvatar, onClo
       </div>
 
       <div style={{ paddingBottom: 'max(10px, env(safe-area-inset-bottom, 0px))' }} />
-
-      {showCall && (
-        <VoiceCall theme={theme} audioKit={callAudioRef.current} onClose={() => setShowCall(false)} />
-      )}
     </div>
   )
 }

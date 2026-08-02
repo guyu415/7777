@@ -472,14 +472,13 @@ export default function App() {
   // bubble or a sendMessage() call — this only ever appends an assistant
   // (from:'cc') message.
   //
-  // A gomoku-triggered CC turn's reply/send_voice calls arrive through this
-  // exact same "spontaneous" channel (that turn was never initiated by this
-  // tab's own streamChatViaCompanion()) — but those are explicitly SKIPPED
-  // here (gomokuGameId set) and handled by GomokuBoard's own listener
-  // instead, so game-related chatter never leaks into the main conversation.
+  // Gomoku's in-game chat (including a gomoku-triggered CC turn's own
+  // reply/send_voice calls) never reaches this listener at all — it's routed
+  // server-side into the game's own persisted `messages` log (see
+  // GomokuBoard.jsx's onGomokuUpdate subscription), not broadcast as a main
+  // chat wire `msg` in the first place, so there's nothing to skip here.
   useEffect(() => {
-    const unsub = onProactiveMessage(async ({ id, text, ts, kind, voice, thinking, gomokuGameId }) => {
-      if (gomokuGameId) return // routed to the gomoku game screen instead — see GomokuBoard.jsx
+    const unsub = onProactiveMessage(async ({ id, text, ts, kind, voice, thinking }) => {
       const vpsSession = useStore.getState().sessions?.find(s => s.providerName === 'claude-code-vps')
       if (!vpsSession) return
       const existing = await getMessages(vpsSession.id)
