@@ -1,6 +1,7 @@
-import { useEffect, useRef, useState, useLayoutEffect } from 'react'
+import { useCallback, useEffect, useRef, useState, useLayoutEffect } from 'react'
 import { Menu } from 'lucide-react'
-import MessageBubble from './MessageBubble'
+import { useShallow } from 'zustand/react/shallow'
+import MessageList from './MessageList'
 import FallingParticles from './FallingParticles'
 import MessageInput from './MessageInput'
 import MemoryModal from './MemoryModal'
@@ -47,12 +48,23 @@ function Signature({ text, color, shadow }) {
 export default function ChatWindow({ theme }) {
   const { messages, sendMessage, loadHistory, isLoading, regenerate, regenerateRound, deleteMsg, editMessage, stopStreaming } = useChat()
   const { fetchPendingMessages, updateActiveTime } = useScheduledMessages()
+  // Scoped + shallow-compared selector: ChatWindow previously called useStore()
+  // with no selector at all, which meant it (and its whole message-list JSX)
+  // re-rendered on EVERY store change anywhere in the app — including every
+  // streaming flush tick, since `messages` lives in this same store. Only
+  // resubscribe when one of these specific fields actually changes.
   const {
     currentView, setCurrentView, apiKey, aiAvatar: globalAiAvatar, aiName: globalAiName,
     userAvatar: globalUserAvatar,
     deleteMessagesFrom, workerUrl, currentSessionId, sessions, providers, selectedProviderId,
     summaryToast, setSummaryToast,
-  } = useStore()
+  } = useStore(useShallow(s => ({
+    currentView: s.currentView, setCurrentView: s.setCurrentView, apiKey: s.apiKey,
+    aiAvatar: s.aiAvatar, aiName: s.aiName, userAvatar: s.userAvatar,
+    deleteMessagesFrom: s.deleteMessagesFrom, workerUrl: s.workerUrl, currentSessionId: s.currentSessionId,
+    sessions: s.sessions, providers: s.providers, selectedProviderId: s.selectedProviderId,
+    summaryToast: s.summaryToast, setSummaryToast: s.setSummaryToast,
+  })))
 
   const currentSession = sessions?.find(s => s.id === currentSessionId)
   const effectiveAiName = currentSession?.aiName ?? globalAiName
@@ -61,7 +73,6 @@ export default function ChatWindow({ theme }) {
   const effectiveSignature = currentSession?.signature ?? '在线'
   const effectiveWebSearch = currentSession?.webSearch ?? false
 
-  const bottomRef = useRef(null)
   const inputRef = useRef(null)
   const [menuMsg, setMenuMsg] = useState(null)
   const [memoryMsg, setMemoryMsg] = useState(null)
@@ -100,13 +111,10 @@ export default function ChatWindow({ theme }) {
     return () => document.removeEventListener('visibilitychange', onVisible)
   }, [fetchPendingMessages, loadHistory])
 
-  const lastScrollTimeRef = useRef(0)
-  useEffect(() => {
-    const now = Date.now()
-    if (now - lastScrollTimeRef.current < 150) return
-    lastScrollTimeRef.current = now
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [messages.length, messages[messages.length - 1]?.content?.length])
+  // Auto-follow-to-bottom (only when the user is already near the bottom)
+  // and initial/session-switch scroll positioning both now live inside
+  // MessageList, next to the virtualizer that actually owns the scroll
+  // container — see its own comments for why.
 
   // Draft preservation: save on unmount/session-change, restore on mount/session-change
   useEffect(() => {
@@ -160,9 +168,16 @@ export default function ChatWindow({ theme }) {
   // VPS's Claude session is stateful/persistent — it can't un-say a reply the
   // way re-issuing a stateless API call can. Button stays visible (so it's
   // discoverable, not mysteriously gone) but explains why instead of acting.
-  const vpsRegenerateBlocked = () => {
+  // useCallback with empty deps: this gets passed down into memoized
+  // MessageList as onRegenerate/onRegenerateRound, so it must keep the same
+  // reference across renders or it defeats that memoization every time.
+  const vpsRegenerateBlocked = useCallback(() => {
     alert('VPS 常驻会话暂不支持重新生成，可复制内容后重新发送。')
-  }
+  }, [])
+
+  // Also handed down into memoized MessageList (for its empty-state "去配置"
+  // button) — same stability requirement as vpsRegenerateBlocked above.
+  const goToGlobalSettings = useCallback(() => setCurrentView('globalSettings'), [setCurrentView])
 
   const handleEdit = async (msg) => {
     setMenuMsg(null)
@@ -238,8 +253,20 @@ export default function ChatWindow({ theme }) {
     }
   }
 
-  // Find the last assistant message id (the only one that gets a regenerate button)
-  const lastAiId = messages.reduceRight((acc, m) => acc ?? (m.role === 'assistant' ? m.id : null), null)
+  // Find the last assistant message id (the only one that gets a regenerate
+  // button). Walks backward and stops at the first match — the last
+  // assistant message is almost always within a step or two of the end, so
+  // this is effectively O(1) in practice. `reduceRight` looks similar but
+  // has no early exit: it unconditionally visits every element, which is a
+  // real O(n) scan re-run on every ChatWindow render — costly at thousands
+  // of messages, and ChatWindow re-renders often (every streaming tick).
+  let lastAiId = null
+  for (let i = messages.length - 1; i >= 0; i--) {
+    if (messages[i].role === 'assistant') { lastAiId = messages[i].id; break }
+  }
+  const isVpsSession = currentSession?.providerName === 'claude-code-vps'
+  const effectiveOnRegenerate = isVpsSession ? vpsRegenerateBlocked : regenerate
+  const effectiveOnRegenerateRound = isVpsSession ? vpsRegenerateBlocked : regenerateRound
 
   const primaryColor = theme?.primary || '#4aacf0'
   const primaryDarkColor = theme?.primaryDark || '#2196d3'
@@ -330,40 +357,21 @@ export default function ChatWindow({ theme }) {
       <div className="flex-1 relative overflow-hidden">
         {/* Falling + stacking accessory particles — clipped to this area */}
         <FallingParticles />
-      <div className="absolute inset-0 overflow-y-auto px-3 py-4" style={{ zIndex: 1 }}>
-        {messages.length === 0 && (
-          <div className="flex flex-col items-center justify-center h-full text-center gap-3">
-            <div className="text-5xl">🌸</div>
-            <div className="font-medium" style={{ color: '#c47a8a' }}>{effectiveAiName ? `你好，我是${effectiveAiName}！` : '你好！'}</div>
-            <div className="text-sm max-w-[200px]" style={{ color: '#d4a0b0' }}>
-              {effectiveApiKey ? '说点什么开始聊天吧～' : '请先在设置中配置 API Key'}
-            </div>
-            {!effectiveApiKey && (
-              <button
-                onClick={() => setCurrentView('globalSettings')}
-                className="mt-2 px-6 py-2.5 rounded-full text-sm font-medium text-white transition-all duration-300"
-                style={{ background: `linear-gradient(135deg, ${theme?.primary || '#4aacf0'}, ${theme?.primaryDark || '#2196d3'})`, boxShadow: `0 4px 16px ${theme?.primary || '#4aacf0'}66` }}
-              >
-                去配置 <img src="/assets/whale.png" alt="" style={{ width: 20, height: 20, objectFit: 'contain', verticalAlign: 'middle', display: 'inline-block' }} />
-              </button>
-            )}
-          </div>
-        )}
-        {messages.map(msg => (
-          <MessageBubble
-            key={msg.id}
-            message={msg}
-            onLongPress={setMenuMsg}
-            onRegenerate={msg.id === lastAiId ? (currentSession?.providerName === 'claude-code-vps' ? vpsRegenerateBlocked : regenerate) : null}
-            onRegenerateRound={msg.id === lastAiId ? (currentSession?.providerName === 'claude-code-vps' ? vpsRegenerateBlocked : regenerateRound) : null}
-            isLoading={isLoading}
-            userAvatar={effectiveUserAvatar}
-            aiAvatar={effectiveAiAvatar}
-            theme={theme}
-          />
-        ))}
-        <div ref={bottomRef} />
-      </div>
+        <MessageList
+          messages={messages}
+          sessionId={currentSessionId}
+          onLongPress={setMenuMsg}
+          lastAiId={lastAiId}
+          onRegenerate={effectiveOnRegenerate}
+          onRegenerateRound={effectiveOnRegenerateRound}
+          isLoading={isLoading}
+          userAvatar={effectiveUserAvatar}
+          aiAvatar={effectiveAiAvatar}
+          theme={theme}
+          emptyAiName={effectiveAiName}
+          emptyHasApiKey={!!effectiveApiKey}
+          onEmptyConfigureClick={goToGlobalSettings}
+        />
       </div>
 
       {/* Long-press message menu */}

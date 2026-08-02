@@ -1,4 +1,5 @@
 import { useCallback, useRef } from 'react'
+import { useShallow } from 'zustand/react/shallow'
 import { useStore, saveMessage, saveBlob, getMessages, deleteMessageFromDB } from '../store'
 import { streamChat, generateSummary } from '../services/claude'
 import { streamChatViaCompanion } from '../services/companion'
@@ -94,6 +95,13 @@ function tokenizeContent(content) {
   return tokens
 }
 
+// Previously useChat() called useStore() with no selector, subscribing to
+// the ENTIRE store — meaning literally any state change anywhere in the app
+// (a setting toggled in a different view, another session renamed, etc, not
+// just this session's own messages) re-ran this whole hook and recreated
+// every callback it returns. Scoping + shallow-comparing to just the fields
+// actually used here means useChat() (and everything downstream of it, like
+// MessageList) only reacts to changes that are actually relevant.
 export function useChat() {
   const {
     apiKey, apiBaseUrl, model, systemPrompt,
@@ -105,7 +113,17 @@ export function useChat() {
     currentSessionId, sessions, updateSession,
     providers, selectedProviderId,
     setSummaryToast,
-  } = useStore()
+  } = useStore(useShallow(s => ({
+    apiKey: s.apiKey, apiBaseUrl: s.apiBaseUrl, model: s.model, systemPrompt: s.systemPrompt,
+    memoryEnabled: s.memoryEnabled, workerUrl: s.workerUrl, useWorkerProxy: s.useWorkerProxy, acWorkerUrl: s.acWorkerUrl,
+    ttsApiKey: s.ttsApiKey, ttsGroupId: s.ttsGroupId, ttsVoiceId: s.ttsVoiceId, aiVoiceEnabled: s.aiVoiceEnabled, aiVoiceFrequency: s.aiVoiceFrequency,
+    messages: s.messages, addMessage: s.addMessage, updateMessage: s.updateMessage, setMessages: s.setMessages,
+    isLoading: s.isLoading, setIsLoading: s.setIsLoading, setStreamingMessageId: s.setStreamingMessageId,
+    deleteMessage: s.deleteMessage, deleteMessagesFrom: s.deleteMessagesFrom,
+    currentSessionId: s.currentSessionId, sessions: s.sessions, updateSession: s.updateSession,
+    providers: s.providers, selectedProviderId: s.selectedProviderId,
+    setSummaryToast: s.setSummaryToast,
+  })))
 
   const CONVERSATION_ID = currentSessionId || 'main'
 
@@ -806,6 +824,13 @@ export function useChat() {
     await streamResponse([...messages, userMsg])
   }, [CONVERSATION_ID, effectiveApiKey, effectiveBaseUrl, isLoading, messages, addMessage, streamResponse, updateSession, currentSession, selectedProvider, apiKey])
 
+  // Deliberately NOT depending on `messages` — that array's reference changes
+  // on every streaming tick (80ms), and these callbacks are handed down to
+  // every message bubble. Reading the live array via getState() at call time
+  // (same pattern editMessage below already uses) keeps regenerate/
+  // regenerateRound referentially stable across a whole stream, which is
+  // what actually lets MessageList's memoization skip re-rendering the rest
+  // of a long history while one message is generating.
   const regenerateRound = useCallback(async () => {
     if (isLoading) return
     // The VPS's Claude session is stateful and persistent — it cannot "un-say"
@@ -815,32 +840,34 @@ export function useChat() {
     if (effectiveProviderName === 'claude-code-vps') {
       throw new Error('VPS 常驻会话暂不支持重新生成，可复制内容后重新发送。')
     }
+    const liveMessages = useStore.getState().messages
     // Walk back from end to find the first consecutive assistant message in the last round
-    let firstIdx = messages.length - 1
-    while (firstIdx > 0 && messages[firstIdx - 1].role === 'assistant') firstIdx--
-    if (firstIdx < 0 || !messages[firstIdx] || messages[firstIdx].role !== 'assistant') return
-    const contextMessages = messages.slice(0, firstIdx)
-    for (const m of messages.slice(firstIdx)) {
+    let firstIdx = liveMessages.length - 1
+    while (firstIdx > 0 && liveMessages[firstIdx - 1].role === 'assistant') firstIdx--
+    if (firstIdx < 0 || !liveMessages[firstIdx] || liveMessages[firstIdx].role !== 'assistant') return
+    const contextMessages = liveMessages.slice(0, firstIdx)
+    for (const m of liveMessages.slice(firstIdx)) {
       await deleteMessageFromDB(m.id)
     }
-    deleteMessagesFrom(messages[firstIdx].id)
+    deleteMessagesFrom(liveMessages[firstIdx].id)
     await streamResponse(contextMessages)
-  }, [isLoading, messages, deleteMessagesFrom, streamResponse, effectiveProviderName])
+  }, [isLoading, deleteMessagesFrom, streamResponse, effectiveProviderName])
 
   const regenerate = useCallback(async (assistantMsgId) => {
     if (isLoading) return
     if (effectiveProviderName === 'claude-code-vps') {
       throw new Error('VPS 常驻会话暂不支持重新生成，可复制内容后重新发送。')
     }
-    const idx = messages.findIndex(m => m.id === assistantMsgId)
+    const liveMessages = useStore.getState().messages
+    const idx = liveMessages.findIndex(m => m.id === assistantMsgId)
     if (idx < 0) return
-    const contextMessages = messages.slice(0, idx)
-    for (const m of messages.slice(idx)) {
+    const contextMessages = liveMessages.slice(0, idx)
+    for (const m of liveMessages.slice(idx)) {
       await deleteMessageFromDB(m.id)
     }
     deleteMessagesFrom(assistantMsgId)
     await streamResponse(contextMessages)
-  }, [isLoading, messages, deleteMessagesFrom, streamResponse, effectiveProviderName])
+  }, [isLoading, deleteMessagesFrom, streamResponse, effectiveProviderName])
 
   const deleteMsg = useCallback(async (id) => {
     await deleteMessageFromDB(id)
