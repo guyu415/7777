@@ -81,21 +81,80 @@ export default function VpsStatusBall({ theme, isLoading }) {
   const fh = status?.rate_limits?.five_hour
   const wk = status?.rate_limits?.seven_day
   const cw = status?.context_window
+  const usageColor = ballColor(status)
+  // Reuse the existing status color mapping purely for the visual warning
+  // animation; status fetching and judgment remain unchanged.
+  const isUsageWarning = usageColor === '#d4a017' || usageColor === '#e07070'
 
   return (
-    <div style={{ position: 'relative' }} ref={panelRef}>
+    <div
+      ref={panelRef}
+      style={{
+        // Anchor to the shrink-wrapped name row so the orb follows the name
+        // without reserving a row/column or changing the header height.
+        position: 'absolute',
+        top: 'calc(50% - 4px)',
+        // The 34px hit area is centered on the 23px image, putting the
+        // visible orb about 6px after the name while keeping the target large.
+        left: 'calc(100% - 2px)',
+        width: 34,
+        height: 34,
+        transform: 'translateY(-50%)',
+        zIndex: 12,
+      }}
+    >
+      <style>{`
+        @keyframes vps-usage-orb-breathe {
+          0%, 100% { transform: scale(1); }
+          50% { transform: scale(1.04); }
+        }
+      `}</style>
       <button
         onClick={() => { setOpen(v => !v); if (!open) refresh() }}
         title="VPS 用量"
         style={{
-          width: 22, height: 22, borderRadius: '50%', border: '2px solid rgba(255,255,255,0.7)',
-          background: ballColor(status), boxShadow: '0 1px 4px rgba(0,0,0,0.15)', cursor: 'pointer', flexShrink: 0,
+          // Keep a comfortable hit target while making the visible light
+          // smaller and visually lighter than the clickable area.
+          width: 34,
+          height: 34,
+          padding: 0,
+          margin: 0,
+          border: 0,
+          borderRadius: '50%',
+          background: 'transparent',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          cursor: 'pointer',
+          WebkitTapHighlightColor: 'transparent',
         }}
-      />
+      >
+        <img
+          src="/assets/crystal-usage-orb.png"
+          alt=""
+          aria-hidden="true"
+          draggable={false}
+          style={{
+            display: 'block',
+            width: 23,
+            height: 23,
+            objectFit: 'contain',
+            flexShrink: 0,
+            opacity: 0.96,
+            transformOrigin: 'center',
+            animation: isUsageWarning ? 'vps-usage-orb-breathe 6s ease-in-out infinite' : 'none',
+            filter: [
+              `drop-shadow(0 0 1px ${usageColor}aa)`,
+              `drop-shadow(0 0 5px ${usageColor}55)`,
+              `drop-shadow(0 0 10px ${usageColor}22)`,
+            ].join(' '),
+          }}
+        />
+      </button>
       {open && (
         <div
           style={{
-            position: 'absolute', top: 30, right: 0, zIndex: 30, width: 240,
+            position: 'absolute', top: 38, left: 0, zIndex: 30, width: 240,
             background: 'rgba(255,255,255,0.97)', backdropFilter: 'blur(20px)', borderRadius: 16,
             boxShadow: '0 8px 30px rgba(0,0,0,0.18)', padding: 14,
           }}
