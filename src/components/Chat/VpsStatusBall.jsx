@@ -81,21 +81,62 @@ export default function VpsStatusBall({ theme, isLoading }) {
   const fh = status?.rate_limits?.five_hour
   const wk = status?.rate_limits?.seven_day
   const cw = status?.context_window
+  const usageColor = ballColor(status)
 
   return (
-    <div style={{ position: 'relative' }} ref={panelRef}>
+    <div
+      ref={panelRef}
+      style={{
+        // The light lives beside the settings control, but must not reserve a
+        // flex slot of its own or change the profile row's height.
+        position: 'absolute',
+        top: '50%',
+        right: 'calc(100% + 2px)',
+        width: 34,
+        height: 34,
+        transform: 'translateY(-50%)',
+        zIndex: 12,
+      }}
+    >
       <button
         onClick={() => { setOpen(v => !v); if (!open) refresh() }}
         title="VPS 用量"
         style={{
-          width: 22, height: 22, borderRadius: '50%', border: '2px solid rgba(255,255,255,0.7)',
-          background: ballColor(status), boxShadow: '0 1px 4px rgba(0,0,0,0.15)', cursor: 'pointer', flexShrink: 0,
+          // Keep a comfortable hit target while making the visible light
+          // smaller and visually lighter than the clickable area.
+          width: 34,
+          height: 34,
+          padding: 8,
+          margin: 0,
+          border: 0,
+          borderRadius: '50%',
+          background: 'transparent',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          cursor: 'pointer',
+          WebkitTapHighlightColor: 'transparent',
         }}
-      />
+      >
+        <img
+          src="/assets/crystal-usage-orb.png"
+          alt=""
+          aria-hidden="true"
+          draggable={false}
+          style={{
+            display: 'block',
+            width: 24,
+            height: 24,
+            objectFit: 'contain',
+            opacity: 0.96,
+            filter: `drop-shadow(0 0 4px ${usageColor}55)`,
+          }}
+        />
+      </button>
       {open && (
         <div
           style={{
-            position: 'absolute', top: 30, right: 0, zIndex: 30, width: 240,
+            position: 'absolute', top: 38, right: 0, zIndex: 30, width: 240,
             background: 'rgba(255,255,255,0.97)', backdropFilter: 'blur(20px)', borderRadius: 16,
             boxShadow: '0 8px 30px rgba(0,0,0,0.18)', padding: 14,
           }}
