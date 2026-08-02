@@ -20,7 +20,11 @@ const inputStyle = {
   fontSize: 'inherit',
 }
 
-function GlassCard({ icon, title, children }) {
+// collapsible: when set, the icon+title header itself becomes the toggle
+// (chevron on the right) and `children` only renders while `open` — content
+// expands directly below this same header row/card ("本栏下"), not in a
+// separate outer card.
+function GlassCard({ icon, title, children, collapsible = false, open = true, onToggle }) {
   return (
     <div style={{
       background: 'rgba(255,255,255,0.42)',
@@ -31,11 +35,20 @@ function GlassCard({ icon, title, children }) {
       border: '1px solid rgba(200,220,255,0.3)',
       boxShadow: '0 4px 20px rgba(74,172,240,0.06)',
     }}>
-      <div className="flex items-center gap-2 mb-3">
-        <span>{icon}</span>
-        <span className="font-medium text-sm" style={{ color: '#2c5282' }}>{title}</span>
+      <div
+        className="flex items-center justify-between"
+        style={{ marginBottom: (!collapsible || open) ? 12 : 0, cursor: collapsible ? 'pointer' : 'default' }}
+        onClick={collapsible ? onToggle : undefined}
+      >
+        <div className="flex items-center gap-2">
+          <span>{icon}</span>
+          <span className="font-medium text-sm" style={{ color: '#2c5282' }}>{title}</span>
+        </div>
+        {collapsible && (
+          <ChevronDown size={16} style={{ transform: open ? 'rotate(180deg)' : 'none', transition: 'transform 0.2s', color: '#7a9cc0' }} />
+        )}
       </div>
-      {children}
+      {(!collapsible || open) && children}
     </div>
   )
 }
@@ -93,6 +106,14 @@ export default function SessionSettings({ theme }) {
   // Common-vs-advanced settings split (normal sessions only — a CC window
   // never shows systemPrompt/summary/memory at all, so there's nothing to fold).
   const [showAdvanced, setShowAdvanced] = useState(false)
+
+  // API 配置 / AI 语音 both collapse by default — these are dense, rarely-
+  // touched-after-first-setup forms, and this page previously dumped both
+  // fully expanded on every visit. API 配置 is only ever collapsible for a
+  // normal session (a CC window's version of this card is just a compact
+  // login/status block, always shown); AI 语音 collapses in both modes.
+  const [showApiConfig, setShowApiConfig] = useState(false)
+  const [showVoiceConfig, setShowVoiceConfig] = useState(false)
 
   // "清空当前对话" — real backend reset for CC, local-only clear for normal
   // sessions. Never optimistic: for CC, the visible messages only disappear
@@ -618,7 +639,12 @@ export default function SessionSettings({ theme }) {
         </GlassCard>
 
         {/* API Config */}
-        <GlassCard icon="🔑" title="API 配置">
+        <GlassCard
+          icon="🔑" title="API 配置"
+          collapsible={!isVpsWindow}
+          open={isVpsWindow || showApiConfig}
+          onToggle={() => setShowApiConfig(v => !v)}
+        >
           <div className="space-y-2">
             <div>
               <label className="text-xs pl-1 mb-1 block" style={{ color: '#6a90b8' }}>模型供应商</label>
@@ -873,7 +899,12 @@ export default function SessionSettings({ theme }) {
         </GlassCard>
 
         {/* TTS Config */}
-        <GlassCard icon="🎙️" title="AI 语音">
+        <GlassCard
+          icon="🎙️" title="AI 语音"
+          collapsible
+          open={showVoiceConfig}
+          onToggle={() => setShowVoiceConfig(v => !v)}
+        >
           <div className="space-y-3">
             {/* TTS config source */}
             <div>
