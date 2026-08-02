@@ -324,15 +324,36 @@ export default function ChatWindow({ theme }) {
               : '🌸'}
           </div>
           <div className="min-w-0">
-            <div style={{ position: 'relative', display: 'inline-flex', alignItems: 'center', maxWidth: '100%' }}>
+            {/* Name — crystal usage orb — mood, fixed left-to-right order, all
+                normal (non-absolute) flex children so they share one row and
+                vertically center together for free. The name is the only
+                flexible/shrinkable element (ellipsis-truncates first) so the
+                orb and mood tag never get squeezed, and this row is entirely
+                separate from the signature row below, so the signature is
+                never affected by anything here. */}
+            <div className="flex items-center" style={{ maxWidth: '100%', minWidth: 0 }}>
               <div className="font-semibold text-sm" style={{
                 color: primaryColor,
                 textShadow: `0 0 8px ${primaryColor}cc, 0 0 18px ${primaryColor}80`,
+                overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0,
               }}>
                 {effectiveAiName || currentSession?.name || '新对话'}
               </div>
               {currentSession?.providerName === 'claude-code-vps' && (
                 <VpsStatusBall theme={theme} isLoading={isLoading} />
+              )}
+              {xinchaoState?.toneLabel && (
+                <button
+                  onClick={() => setShowXinchaoPanel(true)}
+                  title="心潮状态"
+                  style={{
+                    fontSize: 10, color: primaryColor, background: `${primaryColor}12`,
+                    border: `1px solid ${primaryColor}30`, borderRadius: 8,
+                    padding: '1px 6px', lineHeight: 1.5, flexShrink: 0, whiteSpace: 'nowrap', marginLeft: 4,
+                  }}
+                >
+                  {xinchaoState.toneLabel}
+                </button>
               )}
             </div>
             <div className="flex items-center gap-1.5">
@@ -343,19 +364,6 @@ export default function ChatWindow({ theme }) {
                   border: '1px solid rgba(74,172,240,0.3)', borderRadius: 8,
                   padding: '1px 6px', lineHeight: 1.5, flexShrink: 0,
                 }}>🌐 已联网</span>
-              )}
-              {xinchaoState && (
-                <button
-                  onClick={() => setShowXinchaoPanel(true)}
-                  title="心潮状态"
-                  style={{
-                    fontSize: 10, color: primaryColor, background: `${primaryColor}12`,
-                    border: `1px solid ${primaryColor}30`, borderRadius: 8,
-                    padding: '1px 6px', lineHeight: 1.5, flexShrink: 0, whiteSpace: 'nowrap',
-                  }}
-                >
-                  {xinchaoState.toneLabel}{xinchaoState.topDrive?.shortLabel ? ` · ${xinchaoState.topDrive.shortLabel}` : ''}
-                </button>
               )}
             </div>
           </div>

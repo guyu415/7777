@@ -37,7 +37,9 @@ export default function VpsStatusBall({ theme, isLoading }) {
   const [open, setOpen] = useState(false)
   const [switching, setSwitching] = useState(null) // model id currently switching to
   const [switchError, setSwitchError] = useState(null)
+  const [popupTop, setPopupTop] = useState(0)
   const panelRef = useRef(null)
+  const btnRef = useRef(null)
 
   const refresh = async () => {
     try {
@@ -53,6 +55,21 @@ export default function VpsStatusBall({ theme, isLoading }) {
     const t = setInterval(refresh, POLL_MS)
     return () => clearInterval(t)
   }, [])
+
+  // The orb's own on-page position varies with name length/avatar/menu button
+  // width, so the popup can't safely anchor to it directly and still
+  // guarantee it never runs off either edge of the screen — anchoring it to
+  // the viewport's right edge instead (position:fixed, right:12px) does,
+  // regardless of where the orb itself happens to sit. top is captured once
+  // per open (the header itself doesn't scroll independently).
+  const toggleOpen = () => {
+    if (!open) {
+      const rect = btnRef.current?.getBoundingClientRect()
+      if (rect) setPopupTop(rect.bottom + 6)
+      refresh()
+    }
+    setOpen(v => !v)
+  }
 
   useEffect(() => {
     if (!open) return
@@ -90,16 +107,18 @@ export default function VpsStatusBall({ theme, isLoading }) {
     <div
       ref={panelRef}
       style={{
-        // Anchor to the shrink-wrapped name row so the orb follows the name
-        // without reserving a row/column or changing the header height.
-        position: 'absolute',
-        top: 'calc(50% - 4px)',
-        // The 34px hit area is centered on the 23px image, putting the
-        // visible orb about 6px after the name while keeping the target large.
-        left: 'calc(100% - 2px)',
+        // A normal (non-absolute) inline flex item now — sits in-line right
+        // after the name, in real layout flow, so it's vertically centered
+        // against the name text for free via the parent row's alignItems,
+        // with no manual top-offset needed. Still a 34px hit target with a
+        // smaller 21px visible glyph inside it.
+        position: 'relative',
+        display: 'inline-flex',
+        alignItems: 'center',
+        justifyContent: 'center',
         width: 34,
         height: 34,
-        transform: 'translateY(-50%)',
+        flexShrink: 0,
         zIndex: 12,
       }}
     >
@@ -110,7 +129,8 @@ export default function VpsStatusBall({ theme, isLoading }) {
         }
       `}</style>
       <button
-        onClick={() => { setOpen(v => !v); if (!open) refresh() }}
+        ref={btnRef}
+        onClick={toggleOpen}
         title="VPS 用量"
         style={{
           // Keep a comfortable hit target while making the visible light
@@ -136,8 +156,8 @@ export default function VpsStatusBall({ theme, isLoading }) {
           draggable={false}
           style={{
             display: 'block',
-            width: 23,
-            height: 23,
+            width: 21,
+            height: 21,
             objectFit: 'contain',
             flexShrink: 0,
             opacity: 0.96,
@@ -154,7 +174,8 @@ export default function VpsStatusBall({ theme, isLoading }) {
       {open && (
         <div
           style={{
-            position: 'absolute', top: 38, left: 0, zIndex: 30, width: 240,
+            position: 'fixed', top: popupTop, right: 12, zIndex: 30, width: 240,
+            maxWidth: 'calc(100vw - 24px)',
             background: 'rgba(255,255,255,0.97)', backdropFilter: 'blur(20px)', borderRadius: 16,
             boxShadow: '0 8px 30px rgba(0,0,0,0.18)', padding: 14,
           }}
@@ -202,7 +223,7 @@ export default function VpsStatusBall({ theme, isLoading }) {
           <div className="text-[11px] mb-1" style={{ color: '#6a90b8' }}>5 小时用量</div>
           {fh ? (
             <p className="text-[10px] mb-2" style={{ color: '#7a9cc0' }}>
-              已用 {fh.used_percentage}% · 重置于 {formatResetTime(fh.resets_at)}
+              已用 {Math.round(fh.used_percentage)}% · 重置于 {formatResetTime(fh.resets_at)}
             </p>
           ) : (
             <p className="text-[10px] mb-2" style={{ color: '#a0b8d0' }}>等待首次响应</p>
@@ -211,7 +232,7 @@ export default function VpsStatusBall({ theme, isLoading }) {
           <div className="text-[11px] mb-1" style={{ color: '#6a90b8' }}>每周用量</div>
           {wk ? (
             <p className="text-[10px]" style={{ color: '#7a9cc0' }}>
-              已用 {wk.used_percentage}% · 重置于 {formatResetTime(wk.resets_at)}
+              已用 {Math.round(wk.used_percentage)}% · 重置于 {formatResetTime(wk.resets_at)}
             </p>
           ) : (
             <p className="text-[10px]" style={{ color: '#a0b8d0' }}>等待首次响应</p>
