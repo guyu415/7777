@@ -8,10 +8,12 @@ import MemoryModal from './MemoryModal'
 import VpsStatusBall from './VpsStatusBall'
 import VoiceCall from '../Voice/VoiceCall'
 import GomokuBoard from './GomokuBoard'
+import XinchaoPanel from './XinchaoPanel'
 import { useChat } from '../../hooks/useChat'
 import { useScheduledMessages } from '../../hooks/useScheduledMessages'
 import { useStore, deleteMessageFromDB, getBlob } from '../../store'
 import { putAsset } from '../../services/sync'
+import { getXinchaoStatus, onXinchaoUpdate } from '../../services/companion'
 
 const SYNC_BASE = 'https://chat.xiaoman.xyz'
 const FAV_LIST_KEY = 'user:xiaoman2.26:voice_fav_list'
@@ -82,10 +84,24 @@ export default function ChatWindow({ theme }) {
   const [toast, setToast] = useState(null)
   const [showCall, setShowCall] = useState(false)
   const [showGomoku, setShowGomoku] = useState(false)
+  const [xinchaoState, setXinchaoState] = useState(null)
+  const [showXinchaoPanel, setShowXinchaoPanel] = useState(false)
   const callAudioRef = useRef(null)
 
   const selectedProvider = providers?.find(p => p.id === selectedProviderId)
   const effectiveApiKey = selectedProvider?.apiKey || apiKey
+
+  // 心潮状态 — only the fixed VPS/CC session has this integration. One-shot
+  // fetch to seed the tag immediately (the WS may already have been open
+  // before this component mounted, so it won't repeat its one-time push),
+  // then purely reactive from there — no polling.
+  useEffect(() => {
+    if (currentSession?.providerName !== 'claude-code-vps') return
+    let cancelled = false
+    getXinchaoStatus().then(s => { if (!cancelled && s?.available !== false) setXinchaoState(s) }).catch(() => {})
+    const unsub = onXinchaoUpdate(state => setXinchaoState(state))
+    return () => { cancelled = true; unsub() }
+  }, [currentSession?.providerName])
 
   const showToast = (msg = '✨ 已记住~') => {
     setToast(msg)
@@ -322,6 +338,19 @@ export default function ChatWindow({ theme }) {
                   border: '1px solid rgba(74,172,240,0.3)', borderRadius: 8,
                   padding: '1px 6px', lineHeight: 1.5, flexShrink: 0,
                 }}>🌐 已联网</span>
+              )}
+              {xinchaoState && (
+                <button
+                  onClick={() => setShowXinchaoPanel(true)}
+                  title="心潮状态"
+                  style={{
+                    fontSize: 10, color: primaryColor, background: `${primaryColor}12`,
+                    border: `1px solid ${primaryColor}30`, borderRadius: 8,
+                    padding: '1px 6px', lineHeight: 1.5, flexShrink: 0, whiteSpace: 'nowrap',
+                  }}
+                >
+                  {xinchaoState.toneLabel}{xinchaoState.topDrive?.shortLabel ? ` · ${xinchaoState.topDrive.shortLabel}` : ''}
+                </button>
               )}
             </div>
           </div>
@@ -584,6 +613,10 @@ export default function ChatWindow({ theme }) {
           unfinished) is exactly where it was left next time it's opened. */}
       {showGomoku && (
         <GomokuBoard theme={theme} aiName={effectiveAiName} aiAvatar={effectiveAiAvatar} userAvatar={effectiveUserAvatar} onClose={() => setShowGomoku(false)} />
+      )}
+
+      {showXinchaoPanel && (
+        <XinchaoPanel theme={theme} state={xinchaoState} onClose={() => setShowXinchaoPanel(false)} />
       )}
     </div>
   )

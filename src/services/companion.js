@@ -264,6 +264,33 @@ function announceTurnEnd(turnId) {
   }
 }
 
+// ---------- 心潮 (xinchao) ----------
+// Purely reactive — no polling. The server pushes a fresh xinchao_update on
+// WS open, and again whenever a turn ends (see channel-server.ts). This just
+// forwards whatever it broadcasts; already-sanitized (no drive numbers,
+// tokens, or session ids) by the server before it ever reaches here.
+const xinchaoListeners = new Set()
+export function onXinchaoUpdate(fn) {
+  xinchaoListeners.add(fn)
+  return () => xinchaoListeners.delete(fn)
+}
+function announceXinchao(state) {
+  for (const fn of xinchaoListeners) {
+    try {
+      fn(state)
+    } catch {
+      // a subscriber throwing must not break delivery to the others
+    }
+  }
+}
+// One-shot — for seeding initial state on mount (e.g. the WS was already
+// open before this component mounted, so the "sent once on open" broadcast
+// already fired and won't repeat). Not polling: call it once, then rely on
+// onXinchaoUpdate for everything after.
+export async function getXinchaoStatus() {
+  return companionJson('/xinchao/status')
+}
+
 export async function getGomokuState() {
   return companionJson('/gomoku/state')
 }
@@ -309,6 +336,10 @@ listeners.add(evt => {
     }
     if (m.type === 'gomoku_update') {
       announceGomoku(m.game)
+      return
+    }
+    if (m.type === 'xinchao_update') {
+      announceXinchao(m.state)
       return
     }
     if (m.type === 'turn_end' || m.type === 'turn_error') {
