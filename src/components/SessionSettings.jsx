@@ -3,10 +3,11 @@ import { ChevronLeft, ChevronDown, Eye, EyeOff, RefreshCw } from 'lucide-react'
 import { useStore, getMessages, deleteMessagesForSession } from '../store'
 import { putAsset, saveSettings, extractSettings, deleteSessionMsgs } from '../services/sync'
 import { fetchModels } from '../services/claude'
-import { getAuthStatus, logout as companionLogout, COMPANION_LOGIN_URL, COMPANION_RETURN_URL, getProactiveSettings, setProactiveSettings, resetCcConversation } from '../services/companion'
+import { getAuthStatus, logout as companionLogout, COMPANION_LOGIN_URL, COMPANION_RETURN_URL, getProactiveSettings, setProactiveSettings, resetCcConversation, getCodexAuthStatus, resetCodex } from '../services/companion'
 import { compressImage } from '../utils/image'
 
 const VPS_PROVIDER = 'claude-code-vps'
+const CODEX_PROVIDER = 'codex-vps'
 
 const inputStyle = {
   width: '100%',
@@ -103,6 +104,33 @@ export default function SessionSettings({ theme }) {
   const otherVpsSession = sessions?.find(s => s.id !== currentSessionId && s.providerName === VPS_PROVIDER)
   const isVpsWindow = localProviderName === VPS_PROVIDER
 
+  // Codex (VPS) — a fully separate runtime from Claude Code above (see
+  // channel-server.ts's codex_* section); same single-session-binding
+  // pattern, but login itself only ever happens directly on the VPS
+  // (`codex login`) — never via a browser redirect, so there is no "去登录"
+  // action here, only a real status readout.
+  const [codexLoggedIn, setCodexLoggedIn] = useState(false)
+  const [codexStatusChecking, setCodexStatusChecking] = useState(false)
+  const otherCodexSession = sessions?.find(s => s.id !== currentSessionId && s.providerName === CODEX_PROVIDER)
+  const isCodexWindow = localProviderName === CODEX_PROVIDER
+
+  const refreshCodexStatus = async () => {
+    setCodexStatusChecking(true)
+    try {
+      const { loggedIn } = await getCodexAuthStatus()
+      setCodexLoggedIn(loggedIn)
+    } catch {
+      setCodexLoggedIn(false)
+    } finally {
+      setCodexStatusChecking(false)
+    }
+  }
+
+  useEffect(() => {
+    if (localProviderName !== CODEX_PROVIDER) return
+    refreshCodexStatus()
+  }, [localProviderName, currentSessionId])
+
   // Common-vs-advanced settings split (normal sessions only — a CC window
   // never shows systemPrompt/summary/memory at all, so there's nothing to fold).
   const [showAdvanced, setShowAdvanced] = useState(false)
@@ -187,6 +215,16 @@ export default function SessionSettings({ theme }) {
       )
       if (!ok) return // leave everything untouched, do not silently switch
       setSessionProviderName(otherVpsSession.id, '')
+    }
+    if (value === CODEX_PROVIDER && otherCodexSession) {
+      const ok = window.confirm(
+        `Codex（VPS）同一时间只能绑定一个会话。\n` +
+        `当前已绑定在「${otherCodexSession.name || otherCodexSession.id}」。\n\n` +
+        `是否要把绑定转移到当前会话「${currentSession?.name || currentSessionId}」？\n` +
+        `（原会话不会被删除，聊天记录等设置都保留原样，只是解除 Codex 绑定）`
+      )
+      if (!ok) return
+      setSessionProviderName(otherCodexSession.id, '')
     }
     setLocalProviderName(value)
     setSessionProviderName(currentSessionId, value)
@@ -447,6 +485,26 @@ export default function SessionSettings({ theme }) {
   // IndexedDB) and in the cloud (KV), leaving every other session untouched.
   const handleClearConversation = async () => {
     if (clearBusy) return
+    if (isCodexWindow) {
+      const ok = window.confirm(
+        '确定要清空当前对话吗？\n\n' +
+        '将同时清空当前页面消息、服务器记录，并重置 Codex 当前上下文，不影响 Claude Code。'
+      )
+      if (!ok) return
+      setClearBusy(true)
+      setClearError(null)
+      try {
+        await resetCodex()
+        // Codex's own codex_reset broadcast (handled inside useCodexChat)
+        // clears the visible messages once the server confirms it, same
+        // "never optimistic" discipline as Claude Code's reset above.
+      } catch (e) {
+        setClearError(e.message || '清空失败，请稍后重试')
+      } finally {
+        setClearBusy(false)
+      }
+      return
+    }
     if (isVpsWindow) {
       const ok = window.confirm(
         '确定要清空当前对话吗？\n\n' +
@@ -641,8 +699,8 @@ export default function SessionSettings({ theme }) {
         {/* API Config */}
         <GlassCard
           icon="🔑" title="API 配置"
-          collapsible={!isVpsWindow}
-          open={isVpsWindow || showApiConfig}
+          collapsible={!isVpsWindow && !isCodexWindow}
+          open={isVpsWindow || isCodexWindow || showApiConfig}
           onToggle={() => setShowApiConfig(v => !v)}
         >
           <div className="space-y-2">
@@ -658,9 +716,42 @@ export default function SessionSettings({ theme }) {
                 <option value="claude">Claude（AiHubMix 等中转）</option>
                 <option value="deepseek">DeepSeek</option>
                 <option value={VPS_PROVIDER}>Claude Code（VPS）</option>
+                <option value={CODEX_PROVIDER}>Codex（VPS）</option>
               </select>
             </div>
-            {localProviderName === VPS_PROVIDER ? (
+            {localProviderName === CODEX_PROVIDER ? (
+              <div style={{
+                background: 'rgba(120,160,220,0.08)', borderRadius: 14, padding: 12,
+                border: '1px solid rgba(120,160,220,0.2)',
+              }}>
+                <div className="flex items-center gap-2 mb-2">
+                  <span style={{
+                    width: 8, height: 8, borderRadius: '50%',
+                    background: codexStatusChecking ? '#d4a017' : (codexLoggedIn ? '#34c759' : '#e07070'),
+                    flexShrink: 0,
+                  }} />
+                  <span className="text-xs" style={{ color: '#2c5282' }}>
+                    {codexStatusChecking ? '检查登录状态…' : (codexLoggedIn ? '已登录 Codex' : '未登录')}
+                  </span>
+                </div>
+                <p className="text-[11px] mb-2" style={{ color: '#7a9cc0' }}>
+                  连接至 VPS 上常驻运行的真实 Codex；与 Claude Code 完全独立的会话、历史与上下文。
+                </p>
+                {!codexLoggedIn && (
+                  <p className="text-[11px] mb-2" style={{ color: '#d4a017' }}>
+                    登录只能在 VPS 上完成（终端运行 codex login），浏览器端不会接触任何密钥。
+                  </p>
+                )}
+                <button
+                  onClick={refreshCodexStatus}
+                  disabled={codexStatusChecking}
+                  className="w-full px-3 py-2 rounded-full text-xs"
+                  style={{ background: 'rgba(255,255,255,0.5)', color: '#4a7aaa', border: '1px solid rgba(120,160,220,0.35)' }}
+                >
+                  刷新状态
+                </button>
+              </div>
+            ) : localProviderName === VPS_PROVIDER ? (
               <div style={{
                 background: 'rgba(74,172,240,0.08)', borderRadius: 14, padding: 12,
                 border: '1px solid rgba(74,172,240,0.2)',
@@ -1059,11 +1150,13 @@ export default function SessionSettings({ theme }) {
           </div>
         </GlassCard>
 
-        {/* 清空当前对话 — common/visible for both normal and CC windows */}
+        {/* 清空当前对话 — common/visible for normal, CC, and Codex windows */}
         <GlassCard icon="⚠️" title="清空当前对话">
           <p className="text-xs mb-3" style={{ color: '#7a9cc0' }}>
             {isVpsWindow
               ? '将同时清空当前页面消息和 Claude Code 当前上下文；不会删除长期记忆、登录及模型设置。'
+              : isCodexWindow
+              ? '将同时清空当前页面消息、服务器记录，并重置 Codex 当前上下文；不影响 Claude Code。'
               : '清空这一个会话的所有消息，不影响其他会话。'}
           </p>
           <button
@@ -1085,9 +1178,10 @@ export default function SessionSettings({ theme }) {
         </GlassCard>
 
         {/* 高级设置 — normal sessions only: systemPrompt/summary/memory folded
-            away by default. A CC window never shows these at all (none of
-            them apply — see the module-level VPS_PROVIDER branch above). */}
-        {!isVpsWindow && (
+            away by default. A CC or Codex window never shows these at all
+            (none of them apply — see the module-level provider branches
+            above). */}
+        {!isVpsWindow && !isCodexWindow && (
           <>
             <button
               onClick={() => setShowAdvanced(v => !v)}

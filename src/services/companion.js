@@ -327,6 +327,50 @@ export async function postGomokuChat(gameId, text, voice = false) {
   })
 }
 
+// ---------- Codex (codex-vps) ----------
+// A fully separate runtime from Claude Code. Reuses this SAME WebSocket
+// connection (per the isolation design), but every wire message has its own
+// `codex_*` type — never Claude Code's plain `msg`/`turn_start`/`turn_end` —
+// so the two can never be confused with each other. sendCodexMessage tags
+// its own outgoing send with runtime:'codex' so channel-server.ts routes it
+// to Codex's entirely separate turn-state/history, never Claude Code's.
+const codexListeners = new Set()
+/** Subscribe to every codex_* wire event (codex_msg/codex_status/
+ * codex_turn_end/codex_turn_busy/codex_reset_busy/codex_reset), plus a
+ * synthetic 'codex_history_snapshot' fired once per (re)connect from the
+ * WS 'history' message's own codex fields. Returns an unsubscribe fn. */
+export function onCodexEvent(fn) {
+  codexListeners.add(fn)
+  return () => codexListeners.delete(fn)
+}
+function announceCodex(evt) {
+  for (const fn of codexListeners) {
+    try {
+      fn(evt)
+    } catch {
+      // a subscriber throwing must not break delivery to the others
+    }
+  }
+}
+
+export async function getCodexState() {
+  return companionJson('/codex/state')
+}
+export async function getCodexAuthStatus() {
+  return companionJson('/codex/auth-status')
+}
+export async function stopCodex() {
+  return companionJson('/codex/stop', { method: 'POST' })
+}
+export async function resetCodex() {
+  return companionJson('/codex/reset', { method: 'POST' })
+}
+let codexSeq = 0
+export function sendCodexMessage(text, imageUrl) {
+  const id = `codex-eunoia-${Date.now()}-${++codexSeq}`
+  return sendRaw({ runtime: 'codex', id, text, ...(imageUrl ? { imageUrl } : {}) })
+}
+
 listeners.add(evt => {
   if (evt.kind === 'wire') {
     const m = evt.wire
@@ -342,6 +386,11 @@ listeners.add(evt => {
       announceXinchao(m.state)
       return
     }
+    if (m.type === 'codex_msg' || m.type === 'codex_status' || m.type === 'codex_turn_end'
+      || m.type === 'codex_turn_busy' || m.type === 'codex_reset_busy' || m.type === 'codex_reset') {
+      announceCodex(m)
+      return
+    }
     if (m.type === 'turn_end' || m.type === 'turn_error') {
       announceTurnEnd(m.turnId)
       // fall through — turn_end/turn_error also matter to any in-flight
@@ -355,6 +404,12 @@ listeners.add(evt => {
     for (const item of evt.items) {
       if (item.from === 'cc') maybeAnnounceProactive(item)
     }
+    announceCodex({
+      type: 'codex_history_snapshot',
+      codexHistory: evt.codexHistory || [],
+      codexOpenTurnId: evt.codexOpenTurnId ?? null,
+      codexStatus: evt.codexStatus || 'idle',
+    })
   }
 })
 
