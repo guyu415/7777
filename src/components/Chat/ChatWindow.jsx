@@ -326,16 +326,18 @@ export default function ChatWindow({ theme }) {
           <div className="min-w-0">
             {/* Name — crystal usage orb — mood, fixed left-to-right order, all
                 normal (non-absolute) flex children so they share one row and
-                vertically center together for free. The name is the only
-                flexible/shrinkable element (ellipsis-truncates first) so the
-                orb and mood tag never get squeezed, and this row is entirely
+                vertically center together for free. This row is entirely
                 separate from the signature row below, so the signature is
-                never affected by anything here. */}
+                never affected by anything here.
+                No overflow/ellipsis clipping on the name itself — that was
+                cutting off its own text-shadow glow into a visible square
+                block. The name has no background of its own; it's just
+                colored text with a glow that's allowed to spread outward
+                freely. */}
             <div className="flex items-center" style={{ maxWidth: '100%', minWidth: 0 }}>
               <div className="font-semibold text-sm" style={{
                 color: primaryColor,
                 textShadow: `0 0 8px ${primaryColor}cc, 0 0 18px ${primaryColor}80`,
-                overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0,
               }}>
                 {effectiveAiName || currentSession?.name || '新对话'}
               </div>

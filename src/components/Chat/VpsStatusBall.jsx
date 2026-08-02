@@ -123,9 +123,9 @@ export default function VpsStatusBall({ theme, isLoading }) {
       }}
     >
       <style>{`
-        @keyframes vps-usage-orb-breathe {
-          0%, 100% { transform: scale(1); }
-          50% { transform: scale(1.04); }
+        @keyframes vps-usage-ring-breathe {
+          0%, 100% { transform: scale(1); opacity: 1; }
+          50% { transform: scale(1.08); opacity: 0.85; }
         }
       `}</style>
       <button
@@ -149,27 +149,35 @@ export default function VpsStatusBall({ theme, isLoading }) {
           WebkitTapHighlightColor: 'transparent',
         }}
       >
-        <img
-          src="/assets/crystal-usage-orb.png"
-          alt=""
-          aria-hidden="true"
-          draggable={false}
-          style={{
-            display: 'block',
-            width: 21,
-            height: 21,
-            objectFit: 'contain',
-            flexShrink: 0,
-            opacity: 0.96,
-            transformOrigin: 'center',
-            animation: isUsageWarning ? 'vps-usage-orb-breathe 6s ease-in-out infinite' : 'none',
-            filter: [
-              `drop-shadow(0 0 1px ${usageColor}aa)`,
-              `drop-shadow(0 0 5px ${usageColor}55)`,
-              `drop-shadow(0 0 10px ${usageColor}22)`,
-            ].join(' '),
-          }}
-        />
+        {/* Status is carried by this ring + tight glow, not by a drop-shadow
+            on the image itself (which used to visually inflate the ball
+            into something bigger than intended). ~19px halo around a 16px
+            ball — clearly smaller than the surrounding name text. The glow
+            is two small box-shadow layers (a crisp near ring, a fainter
+            wider one) rather than one big blur, so it reads as a status dot
+            at a glance without turning into a neon blob. */}
+        <div style={{ position: 'relative', width: 19, height: 19, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+          <div style={{
+            position: 'absolute', inset: 0, borderRadius: '50%',
+            border: `1px solid ${usageColor}A6`,
+            boxShadow: `0 0 2px ${usageColor}80, 0 0 4px ${usageColor}30`,
+            animation: isUsageWarning ? 'vps-usage-ring-breathe 6s ease-in-out infinite' : 'none',
+          }} />
+          <img
+            src="/assets/crystal-usage-orb.png"
+            alt=""
+            aria-hidden="true"
+            draggable={false}
+            style={{
+              display: 'block',
+              width: 16,
+              height: 16,
+              objectFit: 'contain',
+              flexShrink: 0,
+              opacity: 0.96,
+            }}
+          />
+        </div>
       </button>
       {open && (
         <div
