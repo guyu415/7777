@@ -85,6 +85,7 @@ export default function ChatWindow({ theme }) {
   const currentSession = sessions?.find(s => s.id === currentSessionId)
   const isVpsSession = currentSession?.providerName === 'claude-code-vps'
   const isCodexSession = currentSession?.providerName === 'codex-vps'
+  const isFixedVpsSession = isVpsSession || isCodexSession
   // The one runtime-adapter switch this whole shared window is built around
   // — everything below reads send/stop/reset/history/status through this
   // single `active` reference instead of branching provider logic all over
@@ -114,17 +115,25 @@ export default function ChatWindow({ theme }) {
   const selectedProvider = providers?.find(p => p.id === selectedProviderId)
   const effectiveApiKey = selectedProvider?.apiKey || apiKey
 
-  // 心潮状态 — only the fixed VPS/CC session has this integration. One-shot
-  // fetch to seed the tag immediately (the WS may already have been open
-  // before this component mounted, so it won't repeat its one-time push),
-  // then purely reactive from there — no polling.
+  // 心潮状态 — both fixed VPS sessions (Claude Code and Codex) have this
+  // integration, each with its OWN real session/tone overlay on the xinchao
+  // side (see channel-server.ts's XINCHAO_CC_SESSION_ID/
+  // XINCHAO_CODEX_SESSION_ID) — never the same state, never CC's reading
+  // relabeled as Codex's or vice versa. One-shot fetch to seed the tag
+  // immediately (the WS may already have been open before this component
+  // mounted, so it won't repeat its one-time push), then purely reactive
+  // from there — no polling. Switching sessions re-fetches for the NEW
+  // session's own runtime and the onXinchaoUpdate filter below only ever
+  // applies an update matching that same runtime, so switching between a CC
+  // and a Codex window can never show a stale/wrong-runtime tag.
+  const xinchaoRuntime = isCodexSession ? 'codex' : 'claude-code'
   useEffect(() => {
-    if (currentSession?.providerName !== 'claude-code-vps') return
+    if (!isFixedVpsSession) { setXinchaoState(null); return }
     let cancelled = false
-    getXinchaoStatus().then(s => { if (!cancelled && s?.available !== false) setXinchaoState(s) }).catch(() => {})
-    const unsub = onXinchaoUpdate(state => setXinchaoState(state))
+    getXinchaoStatus(xinchaoRuntime).then(s => { if (!cancelled && s?.available !== false) setXinchaoState(s) }).catch(() => {})
+    const unsub = onXinchaoUpdate((state, r) => { if (r === xinchaoRuntime) setXinchaoState(state) })
     return () => { cancelled = true; unsub() }
-  }, [currentSession?.providerName])
+  }, [isFixedVpsSession, xinchaoRuntime])
 
   const showToast = (msg = '✨ 已记住~') => {
     setToast(msg)
@@ -314,7 +323,6 @@ export default function ChatWindow({ theme }) {
   for (let i = messages.length - 1; i >= 0; i--) {
     if (messages[i].role === 'assistant') { lastAiId = messages[i].id; break }
   }
-  const isFixedVpsSession = isVpsSession || isCodexSession
   const effectiveOnRegenerate = isFixedVpsSession ? regenerateBlocked : regenerate
   const effectiveOnRegenerateRound = isFixedVpsSession ? regenerateBlocked : regenerateRound
 
@@ -485,9 +493,11 @@ export default function ChatWindow({ theme }) {
                 real send/stop/reset/history — see useCodexChat.js) — its
                 messages live purely server-side, not in the zustand/
                 IndexedDB store these actions operate on, so acting on them
-                here would silently do nothing to what's displayed. 复制 has
-                no such backend dependency and stays available for every
-                provider. */}
+                here would silently do nothing to what's displayed. 复制 and
+                收藏语音 (below) have no such dependency — they only ever
+                touch message.content / message.voiceBlobId, which Codex's
+                own bubbles genuinely have — so both stay available for
+                every provider. */}
             {!isCodexSession && menuMsg.role === 'user' && menuMsg.type === 'text' && (
               <button
                 onClick={() => handleEdit(menuMsg)}
@@ -528,7 +538,12 @@ export default function ChatWindow({ theme }) {
                 🧠 存入记忆
               </button>
             )}
-            {!isCodexSession && menuMsg.role === 'assistant' && menuMsg.type === 'voice' && (
+            {/* Codex's own real voice bubbles (see useCodexChat.js's
+                resolveCodexVoiceMsg) use the exact same IndexedDB blob store
+                as Claude Code's — handleFavoriteVoice below already just
+                reads message.voiceBlobId generically, so this works
+                identically for either runtime with no Codex-specific code. */}
+            {menuMsg.role === 'assistant' && menuMsg.type === 'voice' && (
               <button
                 onClick={() => handleFavoriteVoice(menuMsg)}
                 className="w-full flex items-center gap-3 px-5 py-3.5 text-sm hover:bg-yellow-50 transition-colors"

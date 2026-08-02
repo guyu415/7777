@@ -76,6 +76,16 @@ export default function RuntimeStatusBall({ theme, isLoading, runtime }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [runtime])
 
+  // Refresh right when a turn actually finishes (isLoading true → false),
+  // not just on the next up-to-25s poll tick — this is what makes "完成一
+  // 轮对话后用量刷新" actually feel immediate rather than eventually-consistent.
+  const wasLoadingRef = useRef(false)
+  useEffect(() => {
+    if (wasLoadingRef.current && !isLoading) refresh()
+    wasLoadingRef.current = isLoading
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isLoading])
+
   // The orb's own on-page position varies with name length/avatar/menu button
   // width, so the popup can't safely anchor to it directly and still
   // guarantee it never runs off either edge of the screen — anchoring it to
@@ -131,6 +141,12 @@ export default function RuntimeStatusBall({ theme, isLoading, runtime }) {
   const cw = !isCodex ? status?.context_window : null
   const codexPrimary = isCodex ? status?.usage?.primary : null
   const codexCredits = isCodex ? status?.usage?.credits : null
+  // Present ONLY when the backend has a real, specific reason usage can't be
+  // shown (e.g. Codex not logged in) — see /codex/model-status's own
+  // comment. Distinct from "usage is simply null" (still legitimately
+  // waiting for the first real response), which must never be relabeled as
+  // an error.
+  const codexUsageUnavailable = isCodex ? status?.usageUnavailable : null
 
   const usageColor = isCodex ? codexBallColor(status) : ccBallColor(status)
   const isUsageWarning = usageColor === '#d4a017' || usageColor === '#e07070'
@@ -302,8 +318,10 @@ export default function RuntimeStatusBall({ theme, isLoading, runtime }) {
                   </p>
                 )}
               </>
+            ) : codexUsageUnavailable ? (
+              <p className="text-[10px]" style={{ color: '#e07070' }}>用量获取失败：{codexUsageUnavailable}</p>
             ) : (
-              <p className="text-[10px]" style={{ color: '#a0b8d0' }}>{isCodex && !status ? '等待首次响应' : '暂无用量数据'}</p>
+              <p className="text-[10px]" style={{ color: '#a0b8d0' }}>{!status ? '等待首次响应' : '暂无用量数据'}</p>
             )
           )}
         </div>

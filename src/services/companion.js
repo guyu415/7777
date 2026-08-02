@@ -272,15 +272,21 @@ function announceTurnEnd(turnId) {
 // WS open, and again whenever a turn ends (see channel-server.ts). This just
 // forwards whatever it broadcasts; already-sanitized (no drive numbers,
 // tokens, or session ids) by the server before it ever reaches here.
+// Claude Code and Codex each have their OWN real xinchao session/tone
+// overlay (see channel-server.ts's XINCHAO_CC_SESSION_ID/
+// XINCHAO_CODEX_SESSION_ID) — every update carries its own `runtime` tag;
+// fn(state, runtime) — a subscriber must filter to its own runtime itself
+// (ChatWindow.jsx does), since both share this one subscription channel,
+// exactly like onGomokuUpdate below.
 const xinchaoListeners = new Set()
 export function onXinchaoUpdate(fn) {
   xinchaoListeners.add(fn)
   return () => xinchaoListeners.delete(fn)
 }
-function announceXinchao(state) {
+function announceXinchao(state, runtime) {
   for (const fn of xinchaoListeners) {
     try {
-      fn(state)
+      fn(state, runtime)
     } catch {
       // a subscriber throwing must not break delivery to the others
     }
@@ -289,9 +295,10 @@ function announceXinchao(state) {
 // One-shot — for seeding initial state on mount (e.g. the WS was already
 // open before this component mounted, so the "sent once on open" broadcast
 // already fired and won't repeat). Not polling: call it once, then rely on
-// onXinchaoUpdate for everything after.
-export async function getXinchaoStatus() {
-  return companionJson('/xinchao/status')
+// onXinchaoUpdate for everything after. runtime defaults to 'claude-code'
+// for backward compatibility with any existing caller that doesn't pass one.
+export async function getXinchaoStatus(runtime = 'claude-code') {
+  return companionJson(`/xinchao/status?runtime=${encodeURIComponent(runtime)}`)
 }
 
 // Every call takes an explicit `runtime` ('claude-code' | 'codex') so the
@@ -426,7 +433,7 @@ listeners.add(evt => {
       return
     }
     if (m.type === 'xinchao_update') {
-      announceXinchao(m.state)
+      announceXinchao(m.state, m.runtime || 'claude-code')
       return
     }
     if (m.type === 'codex_msg' || m.type === 'codex_status' || m.type === 'codex_turn_end'
