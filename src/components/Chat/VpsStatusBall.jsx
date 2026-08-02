@@ -1,11 +1,13 @@
 import { useEffect, useRef, useState } from 'react'
 import { getCompanionStatus, switchCompanionModel } from '../../services/companion'
 
+// Exact Claude Code model IDs only — no rolling aliases. Keep this list in
+// sync with MODEL_IDS in channel-server.ts on the VPS.
 const MODEL_OPTIONS = [
-  { alias: 'sonnet', label: 'Sonnet' },
-  { alias: 'opus', label: 'Opus' },
-  { alias: 'fable', label: 'Fable' },
-  { alias: 'haiku', label: 'Haiku' },
+  { id: 'claude-opus-5', label: 'Opus 5' },
+  { id: 'claude-opus-4-6', label: 'Opus 4.6' },
+  { id: 'claude-sonnet-4-6', label: 'Sonnet 4.6' },
+  { id: 'claude-opus-4-7', label: 'Opus 4.7' },
 ]
 const POLL_MS = 25000
 
@@ -33,7 +35,7 @@ export default function VpsStatusBall({ theme, isLoading }) {
 
   const [status, setStatus] = useState(null)
   const [open, setOpen] = useState(false)
-  const [switching, setSwitching] = useState(null) // alias currently switching to
+  const [switching, setSwitching] = useState(null) // model id currently switching to
   const [switchError, setSwitchError] = useState(null)
   const panelRef = useRef(null)
 
@@ -61,12 +63,12 @@ export default function VpsStatusBall({ theme, isLoading }) {
     return () => document.removeEventListener('mousedown', onClickOutside)
   }, [open])
 
-  const doSwitch = async (alias) => {
+  const doSwitch = async (modelId) => {
     if (isLoading || switching) return
-    setSwitching(alias)
+    setSwitching(modelId)
     setSwitchError(null)
     try {
-      const res = await switchCompanionModel(alias)
+      const res = await switchCompanionModel(modelId)
       setStatus(s => ({ ...(s || {}), model: res.model }))
       await refresh()
     } catch (e) {
@@ -103,12 +105,12 @@ export default function VpsStatusBall({ theme, isLoading }) {
           </div>
           <div className="flex flex-wrap gap-1.5 mb-3">
             {MODEL_OPTIONS.map(opt => {
-              const active = status?.model?.display_name?.toLowerCase().includes(opt.alias)
-              const busy = switching === opt.alias
+              const active = status?.model?.id === opt.id
+              const busy = switching === opt.id
               return (
                 <button
-                  key={opt.alias}
-                  onClick={() => doSwitch(opt.alias)}
+                  key={opt.id}
+                  onClick={() => doSwitch(opt.id)}
                   disabled={isLoading || !!switching || active}
                   className="px-2.5 py-1 rounded-full text-[11px] font-medium"
                   style={{

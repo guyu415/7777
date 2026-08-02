@@ -502,14 +502,14 @@ export async function getCompanionStatus() {
 }
 
 // ---------- model switch ----------
-// Official aliases only; rejected (409) server-side if a turn is in flight.
-// Resolves with the statusLine-confirmed actual model — never trust the
-// requested alias alone as proof of success.
-export async function switchCompanionModel(alias) {
+// A fixed allowlist of exact model IDs only; rejected (409) server-side if a
+// turn is in flight. Resolves with the statusLine-confirmed actual model —
+// never trust the requested id alone as proof of success.
+export async function switchCompanionModel(modelId) {
   return companionJson('/model/switch', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ model: alias }),
+    body: JSON.stringify({ model: modelId }),
   })
 }
 
