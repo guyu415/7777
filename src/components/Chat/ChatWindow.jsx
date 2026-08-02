@@ -308,11 +308,16 @@ export default function ChatWindow({ theme }) {
               : '🌸'}
           </div>
           <div className="min-w-0">
-            <div className="font-semibold text-sm" style={{
-              color: primaryColor,
-              textShadow: `0 0 8px ${primaryColor}cc, 0 0 18px ${primaryColor}80`,
-            }}>
-              {effectiveAiName || currentSession?.name || '新对话'}
+            <div style={{ position: 'relative', display: 'inline-flex', alignItems: 'center', maxWidth: '100%' }}>
+              <div className="font-semibold text-sm" style={{
+                color: primaryColor,
+                textShadow: `0 0 8px ${primaryColor}cc, 0 0 18px ${primaryColor}80`,
+              }}>
+                {effectiveAiName || currentSession?.name || '新对话'}
+              </div>
+              {currentSession?.providerName === 'claude-code-vps' && (
+                <VpsStatusBall theme={theme} isLoading={isLoading} />
+              )}
             </div>
             <div className="flex items-center gap-1.5">
               <Signature text={effectiveSignature || '在线'} color={primaryColor} shadow={`0 0 6px ${primaryColor}aa, 0 0 14px ${primaryColor}60`} />
@@ -327,9 +332,6 @@ export default function ChatWindow({ theme }) {
           </div>
         </div>
         <div className="flex items-center gap-2 flex-shrink-0" style={{ position: 'relative', zIndex: 10 }}>
-          {currentSession?.providerName === 'claude-code-vps' && (
-            <VpsStatusBall theme={theme} isLoading={isLoading} />
-          )}
           <button
             onClick={() => setCurrentView('sessionSettings')}
             className="btn-whale flex items-center justify-center flex-shrink-0"

@@ -82,22 +82,33 @@ export default function VpsStatusBall({ theme, isLoading }) {
   const wk = status?.rate_limits?.seven_day
   const cw = status?.context_window
   const usageColor = ballColor(status)
+  // Reuse the existing status color mapping purely for the visual warning
+  // animation; status fetching and judgment remain unchanged.
+  const isUsageWarning = usageColor === '#d4a017' || usageColor === '#e07070'
 
   return (
     <div
       ref={panelRef}
       style={{
-        // The light lives beside the settings control, but must not reserve a
-        // flex slot of its own or change the profile row's height.
+        // Anchor to the shrink-wrapped name row so the orb follows the name
+        // without reserving a row/column or changing the header height.
         position: 'absolute',
-        top: '50%',
-        right: 'calc(100% + 2px)',
+        top: 'calc(50% - 4px)',
+        // The 34px hit area is centered on the 23px image, putting the
+        // visible orb about 6px after the name while keeping the target large.
+        left: 'calc(100% - 2px)',
         width: 34,
         height: 34,
         transform: 'translateY(-50%)',
         zIndex: 12,
       }}
     >
+      <style>{`
+        @keyframes vps-usage-orb-breathe {
+          0%, 100% { transform: scale(1); }
+          50% { transform: scale(1.04); }
+        }
+      `}</style>
       <button
         onClick={() => { setOpen(v => !v); if (!open) refresh() }}
         title="VPS 用量"
@@ -106,7 +117,7 @@ export default function VpsStatusBall({ theme, isLoading }) {
           // smaller and visually lighter than the clickable area.
           width: 34,
           height: 34,
-          padding: 8,
+          padding: 0,
           margin: 0,
           border: 0,
           borderRadius: '50%',
@@ -125,18 +136,25 @@ export default function VpsStatusBall({ theme, isLoading }) {
           draggable={false}
           style={{
             display: 'block',
-            width: 24,
-            height: 24,
+            width: 23,
+            height: 23,
             objectFit: 'contain',
+            flexShrink: 0,
             opacity: 0.96,
-            filter: `drop-shadow(0 0 4px ${usageColor}55)`,
+            transformOrigin: 'center',
+            animation: isUsageWarning ? 'vps-usage-orb-breathe 6s ease-in-out infinite' : 'none',
+            filter: [
+              `drop-shadow(0 0 1px ${usageColor}aa)`,
+              `drop-shadow(0 0 5px ${usageColor}55)`,
+              `drop-shadow(0 0 10px ${usageColor}22)`,
+            ].join(' '),
           }}
         />
       </button>
       {open && (
         <div
           style={{
-            position: 'absolute', top: 38, right: 0, zIndex: 30, width: 240,
+            position: 'absolute', top: 38, left: 0, zIndex: 30, width: 240,
             background: 'rgba(255,255,255,0.97)', backdropFilter: 'blur(20px)', borderRadius: 16,
             boxShadow: '0 8px 30px rgba(0,0,0,0.18)', padding: 14,
           }}
