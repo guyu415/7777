@@ -167,14 +167,16 @@ const MessageInput = forwardRef(function MessageInput({ onSend, onStartCall, onS
 
   return (
     <div style={{ flexShrink: 0, position: 'relative' }}>
-      {/* "+" 折叠菜单：绝对定位在输入区上方，不占用布局空间 */}
+      {/* "+" 折叠菜单：绝对定位在输入区上方，不占用布局空间。
+          right 偏移对齐"+"按钮（现在排在发送按钮左侧），要跳过发送按钮的
+          宽度(56)+间距(8)+行右内边距(12) */}
       {menuOpen && (
         <div
           ref={menuRef}
           style={{
             position: 'absolute',
             bottom: '100%',
-            right: 12,
+            right: 76,
             marginBottom: 8,
             display: 'flex',
             gap: 6,
@@ -232,6 +234,21 @@ const MessageInput = forwardRef(function MessageInput({ onSend, onStartCall, onS
 
         <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={handleImage} />
 
+        {/* "+"/"×" 始终在发送按钮左侧——切换只改变展开状态和图标（+ 旋转 45°
+            即成 ×），绝不与发送按钮换位置。 */}
+        <button
+          ref={plusBtnRef}
+          onClick={() => setMenuOpen(v => !v)}
+          title="更多"
+          style={{
+            ...btnBase,
+            transform: menuOpen ? 'rotate(45deg)' : 'rotate(0deg)',
+            background: menuOpen ? `${primaryColor}30` : 'rgba(255,182,209,0.25)',
+          }}
+        >
+          <PlusIcon />
+        </button>
+
         {isLoading ? (
           <button
             onClick={onStop}
@@ -268,19 +285,6 @@ const MessageInput = forwardRef(function MessageInput({ onSend, onStartCall, onS
             <img src="/assets/paw.png" alt="发送" style={{ width: 48, height: 48, objectFit: 'contain' }} />
           </button>
         )}
-
-        <button
-          ref={plusBtnRef}
-          onClick={() => setMenuOpen(v => !v)}
-          title="更多"
-          style={{
-            ...btnBase,
-            transform: menuOpen ? 'rotate(45deg)' : 'rotate(0deg)',
-            background: menuOpen ? `${primaryColor}30` : 'rgba(255,182,209,0.25)',
-          }}
-        >
-          <PlusIcon />
-        </button>
       </div>
     </div>
   )
