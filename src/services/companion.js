@@ -116,7 +116,7 @@ function connect() {
       return
     }
     if (m.type === 'history') {
-      notify({ kind: 'history', openTurnId: m.openTurnId, items: m.items })
+      notify({ kind: 'history', openTurnId: m.openTurnId, items: m.items, resetAt: m.resetAt })
       return
     }
     notify({ kind: 'wire', wire: m })
@@ -180,13 +180,54 @@ function maybeAnnounceProactive(id, text, ts) {
   }, 0)
 }
 
+// ---------- CC context reset (real /clear, not a UI-only wipe) ----------
+// The server broadcasts a live `reset` wire event the instant a reset
+// succeeds. But a tab that's closed, backgrounded, or simply not connected
+// at that moment would never see it — so the server also stamps every
+// `history` snapshot (sent on every connect/reconnect) with the same
+// `resetAt` timestamp. Comparing that against the last one *this browser*
+// has seen — persisted in localStorage, so it survives page reloads and is
+// shared across tabs of the same origin — lets a late/reconnecting tab
+// detect a reset it missed just as reliably as a tab that was live for it.
+const RESET_MARKER_KEY = 'companion.cc.lastResetAt'
+let lastKnownResetAt = Number(localStorage.getItem(RESET_MARKER_KEY) || 0) || 0
+
+const ccResetListeners = new Set()
+/** Subscribe to CC context resets (live broadcast or detected on reconnect). Returns an unsubscribe fn. */
+export function onCcReset(fn) {
+  ccResetListeners.add(fn)
+  return () => ccResetListeners.delete(fn)
+}
+
+function maybeAnnounceReset(resetAt) {
+  if (!resetAt || resetAt <= lastKnownResetAt) return
+  lastKnownResetAt = resetAt
+  try {
+    localStorage.setItem(RESET_MARKER_KEY, String(resetAt))
+  } catch {
+    // best-effort persistence — an in-memory-only marker still protects this tab for its own lifetime
+  }
+  for (const fn of ccResetListeners) {
+    try {
+      fn({ resetAt })
+    } catch {
+      // a subscriber throwing must not break delivery to the others
+    }
+  }
+}
+
 listeners.add(evt => {
   if (evt.kind === 'wire') {
     const m = evt.wire
+    if (m.type === 'reset') {
+      maybeAnnounceReset(m.ts)
+      return
+    }
     if (m.type === 'msg' && m.from === 'cc') maybeAnnounceProactive(m.id, m.text, m.ts)
     return
   }
   if (evt.kind === 'history') {
+    maybeAnnounceReset(evt.resetAt)
     for (const item of evt.items) {
       if (item.from === 'cc') maybeAnnounceProactive(item.id, item.text, item.ts)
     }
@@ -351,7 +392,8 @@ export async function* streamChatViaCompanion({ text, signal }) {
           if (alreadyDelivered(r.id)) continue // already yielded live before the disconnect
           markDelivered(r.id)
           thisTurnDeliveredIds.push(r.id)
-          push({ text: r.text })
+          if (r.kind === 'voice') push({ voice: { id: r.id, text: r.text, voice: r.voice, style: r.style } })
+          else push({ text: r.text })
         }
         push({ done: true })
       } else {
@@ -374,12 +416,23 @@ export async function* streamChatViaCompanion({ text, signal }) {
       push({ done: true })
       return
     }
+    if (m.type === 'reset_busy') {
+      // Sent only to a client that tried to send while a context reset was
+      // in flight — this turn never actually started server-side.
+      finishError = Object.assign(
+        new Error('正在清空对话，请稍候再试'),
+        { code: 'reset_in_progress', turnId },
+      )
+      push({ done: true })
+      return
+    }
     if (m.turnId !== turnId) return
     if (m.type === 'msg' && m.from === 'cc') {
       if (alreadyDelivered(m.id)) return // e.g. already delivered via an earlier history recovery
       markDelivered(m.id)
       thisTurnDeliveredIds.push(m.id)
-      push({ text: m.text })
+      if (m.kind === 'voice') push({ voice: { id: m.id, text: m.text, voice: m.voice, style: m.style } })
+      else push({ text: m.text })
     } else if (m.type === 'turn_end') {
       push({ done: true })
     } else if (m.type === 'turn_error') {
@@ -418,7 +471,7 @@ export async function* streamChatViaCompanion({ text, signal }) {
         if (finishError) throw finishError
         return
       }
-      yield { text: item.text }
+      yield item.voice ? { voice: item.voice } : { text: item.text }
     }
   } finally {
     listeners.delete(onEvent)
@@ -528,4 +581,17 @@ export async function setProactiveSettings(enabled) {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ enabled }),
   })
+}
+
+// ---------- CC context reset ----------
+// Genuinely resets the VPS Claude Code session's own conversation context
+// (not just this page's view of it) and clears the server's shared message
+// history. On success, every connected tab — including this one — receives
+// the resulting `reset` broadcast (see onCcReset above) and clears its own
+// local copy; this call does not touch the frontend's store/IndexedDB
+// itself. Rejected (409) if a turn is in flight or already in progress on
+// the server; safe to call again (idempotent — a reset already running is
+// joined, not restarted).
+export async function resetCcConversation() {
+  return companionJson('/cc/reset', { method: 'POST' })
 }

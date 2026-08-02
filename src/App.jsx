@@ -1,5 +1,5 @@
 import { useEffect, useState, useRef } from 'react'
-import { useStore, getCustomFont, getBlob, getMessages, saveMessage } from './store'
+import { useStore, getCustomFont, getBlob, getMessages, saveMessage, deleteMessagesForSession } from './store'
 import { THEMES } from './themes'
 import ChatWindow from './components/Chat/ChatWindow'
 import GlobalSettings from './components/GlobalSettings'
@@ -13,7 +13,7 @@ import MusicDisc from './components/MusicDisc'
 import { getSettings, saveSettings, extractSettings, saveSessionMsgs, putAsset, putAssetDataUrl, loadAsset, getLetters } from './services/sync'
 import { mergeLetters } from './services/letters'
 import { compressImage, slimSettings } from './utils/image'
-import { ensureConnected as ensureCompanionConnected, getAuthStatus as getCompanionAuthStatus, onProactiveMessage } from './services/companion'
+import { ensureConnected as ensureCompanionConnected, getAuthStatus as getCompanionAuthStatus, onProactiveMessage, onCcReset } from './services/companion'
 
 const FONT_MAP = {
   noto: "'Noto Sans SC', 'PingFang SC', -apple-system, sans-serif",
@@ -481,6 +481,25 @@ export default function App() {
       await saveMessage(msg)
       if (useStore.getState().currentSessionId === vpsSession.id) {
         useStore.getState().addMessage(msg)
+      }
+    })
+    return unsub
+  }, [])
+
+  // CC context reset: the server clears its own history and genuinely
+  // resets the VPS Claude Code session's context via /cc/reset; this side
+  // just needs to make the local copy match. Fires for the tab that
+  // triggered the reset (live broadcast), every other open tab (live
+  // broadcast), and any tab that reconnects/reloads afterward and only
+  // then discovers it happened (resetAt comparison — see onCcReset in
+  // companion.js). Only ever touches the single VPS-bound session.
+  useEffect(() => {
+    const unsub = onCcReset(async () => {
+      const vpsSession = useStore.getState().sessions?.find(s => s.providerName === 'claude-code-vps')
+      if (!vpsSession) return
+      await deleteMessagesForSession(vpsSession.id)
+      if (useStore.getState().currentSessionId === vpsSession.id) {
+        useStore.getState().setMessages([])
       }
     })
     return unsub

@@ -230,6 +230,72 @@ export function useChat() {
     // Declared here (not inside the try below) so the catch block can also see it.
     const isVpsProvider = effectiveProviderName === 'claude-code-vps'
 
+    // VPS-only: reply() chunks accumulate into one bubble at a time, exactly
+    // as before. A send_voice() chunk closes out whatever text bubble was
+    // accumulating — preserving true arrival order, since chunks are handled
+    // one at a time as they land live over the WS, never reconstructed after
+    // the fact — turns it into its own real voice bubble via the same TTS
+    // pipeline used for API-provider [VOICE] tags, then any text after it
+    // starts a fresh bubble. currentTextId starts as the bubble already
+    // added above, so a voice-free turn is byte-for-byte unchanged.
+    let currentTextId = assistantId
+    let currentTextAdded = true // assistantId was already added() above
+    let vpsUsedVoiceThisTurn = false
+
+    // Finalizes whatever text has accumulated into currentTextId — persists
+    // it to IndexedDB if it has real content, or drops the empty typing-
+    // indicator placeholder if a voice chunk arrived before any text did.
+    // Shared by the mid-stream voice-interruption point and end-of-turn
+    // cleanup so both leave IndexedDB and the store in the same state.
+    const finalizeCurrentTextBubble = async () => {
+      if (contentStarted && fullContent.trim()) {
+        const doneContent = stripDisplayTags(fullContent)
+        updateMessage(currentTextId, { content: doneContent, streaming: false })
+        await saveMessage({ id: currentTextId, conversationId: CONVERSATION_ID, role: 'assistant', type: 'text', content: doneContent, timestamp: Date.now(), streaming: false })
+        return true
+      }
+      if (currentTextAdded) deleteMessage(currentTextId)
+      return false
+    }
+
+    const deliverVpsVoice = async ({ text, voice }) => {
+      const vid = genId()
+      addMessage({ id: vid, conversationId: CONVERSATION_ID, role: 'assistant', type: 'text', content: '', timestamp: Date.now(), streaming: false, voiceLoading: true })
+      const hasTts = effectiveTtsApiKey && effectiveTtsGroupId
+      if (!hasTts) {
+        // "Tool unavailable": CC chose to speak but this session has no TTS
+        // credentials configured — degrade to text, never silently.
+        const updates = { type: 'text', content: text, voiceText: text, voiceFailed: true, voiceLoading: false }
+        updateMessage(vid, updates)
+        await saveMessage({ id: vid, conversationId: CONVERSATION_ID, role: 'assistant', ...updates, timestamp: Date.now(), streaming: false })
+        updateSession(CONVERSATION_ID, { lastMsgPreview: text.slice(0, 40), lastMsgTime: Date.now() })
+        return
+      }
+      try {
+        const blob = await fetchTTSAudio(text, { apiKey: effectiveTtsApiKey, groupId: effectiveTtsGroupId, voiceId: voice || effectiveTtsVoiceId || 'English_Trustworthy_Man', model: effectiveTtsModel })
+        let duration = 0
+        try {
+          const ab = await blob.arrayBuffer()
+          const ac = new AudioContext()
+          const decoded = await ac.decodeAudioData(ab)
+          duration = Math.round(decoded.duration)
+          ac.close()
+        } catch {}
+        const voiceBlobId = genId()
+        await saveBlob(voiceBlobId, blob)
+        const updates = { type: 'voice', voiceBlobId, duration, content: '', voiceText: text, voiceLoading: false }
+        updateMessage(vid, updates)
+        await saveMessage({ id: vid, conversationId: CONVERSATION_ID, role: 'assistant', ...updates, timestamp: Date.now(), streaming: false })
+        updateSession(CONVERSATION_ID, { lastMsgPreview: `[语音] ${text}`.slice(0, 40), lastMsgTime: Date.now() })
+      } catch (e) {
+        console.error('[CC-VOICE] 合成失败:', e?.message)
+        const updates = { type: 'text', content: text, voiceText: text, voiceFailed: true, voiceLoading: false }
+        updateMessage(vid, updates)
+        await saveMessage({ id: vid, conversationId: CONVERSATION_ID, role: 'assistant', ...updates, timestamp: Date.now(), streaming: false })
+        updateSession(CONVERSATION_ID, { lastMsgPreview: text.slice(0, 40), lastMsgTime: Date.now() })
+      }
+    }
+
     try {
       console.log('[STREAM] streamResponse entered | model=', effectiveModel, '| useWorkerProxy=', useWorkerProxy, '| workerUrl=', workerUrl || '(empty)')
       const _now = new Date()
@@ -319,7 +385,7 @@ export function useChat() {
           updates.content = stripDisplayTags(fullContent)
           storedContent = fullContent
         }
-        if (Object.keys(updates).length) updateMessage(assistantId, updates)
+        if (Object.keys(updates).length) updateMessage(currentTextId, updates)
       }
 
       const flushTimer = setInterval(flushUpdate, 80)
@@ -344,14 +410,34 @@ export function useChat() {
             fullReasoning += chunk.reasoning
             dirty = true
           }
+          if (isVpsProvider && chunk.voice) {
+            vpsUsedVoiceThisTurn = true
+            // Finalize whatever text bubble was accumulating (if any) before
+            // handling the voice chunk, so bubbles land in the same order CC
+            // actually called reply()/send_voice() in.
+            await finalizeCurrentTextBubble()
+            await deliverVpsVoice(chunk.voice)
+            // Fresh bubble for any text that arrives after this voice chunk.
+            currentTextId = genId()
+            currentTextAdded = false
+            fullContent = ''
+            contentStarted = false
+            storedContent = ''
+            dirty = false
+            continue
+          }
           if (chunk.text) {
             const nextContent = isVpsProvider ? joinVpsReplyChunks(fullContent, chunk.text) : fullContent + chunk.text
             if (nextContent !== fullContent) {
               if (!contentStarted) {
                 contentStarted = true
                 storedReasoning = fullReasoning
+                if (isVpsProvider && !currentTextAdded) {
+                  addMessage({ id: currentTextId, conversationId: CONVERSATION_ID, role: 'assistant', type: 'text', content: '', timestamp: Date.now(), streaming: true })
+                  currentTextAdded = true
+                }
                 // Immediate update for phase transition only
-                updateMessage(assistantId, { reasoningStreaming: false })
+                updateMessage(currentTextId, { reasoningStreaming: false })
               }
               fullContent = nextContent
               dirty = true
@@ -367,6 +453,18 @@ export function useChat() {
       if (fullReasoning) {
         assistantMsg.reasoning = fullReasoning
         updateMessage(assistantId, { reasoning: fullReasoning, reasoningStreaming: false })
+      }
+
+      // VPS + at least one send_voice this turn: the shared post-stream
+      // pipeline below (LETTER/AC/MUSIC extraction, [VOICE]-tag tokenizing)
+      // was never taught to CC and operates on a single fixed bubble id —
+      // voice bubbles were already delivered live in the loop above via
+      // deliverVpsVoice(), in true arrival order. Just finalize whatever
+      // trailing text bubble was still open when the turn ended, then stop.
+      if (isVpsProvider && vpsUsedVoiceThisTurn) {
+        await finalizeCurrentTextBubble()
+        updateSession(CONVERSATION_ID, { lastMsgTime: Date.now() })
+        return
       }
 
       // --- Post-stream processing ---
@@ -545,6 +643,7 @@ export function useChat() {
           turn_error: '（companion 这一轮失败了）',
           connect_timeout: '（连接 companion 超时，请检查网络）',
           not_connected: '（companion 未连接）',
+          reset_in_progress: '（正在清空对话，请稍候再试）',
         }[err.code]
         const displayMsg = companionHint ? `${err.message} ${companionHint}` : err.message
         updateMessage(assistantId, { content: `❌ ${displayMsg}`, streaming: false, error: true })

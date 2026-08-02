@@ -1,9 +1,9 @@
 import { useState, useEffect, useRef } from 'react'
-import { ChevronLeft, Eye, EyeOff, RefreshCw } from 'lucide-react'
-import { useStore, getMessages } from '../store'
-import { putAsset, saveSettings, extractSettings } from '../services/sync'
+import { ChevronLeft, ChevronDown, Eye, EyeOff, RefreshCw } from 'lucide-react'
+import { useStore, getMessages, deleteMessagesForSession } from '../store'
+import { putAsset, saveSettings, extractSettings, deleteSessionMsgs } from '../services/sync'
 import { fetchModels } from '../services/claude'
-import { getAuthStatus, logout as companionLogout, COMPANION_LOGIN_URL, COMPANION_RETURN_URL, getProactiveSettings, setProactiveSettings } from '../services/companion'
+import { getAuthStatus, logout as companionLogout, COMPANION_LOGIN_URL, COMPANION_RETURN_URL, getProactiveSettings, setProactiveSettings, resetCcConversation } from '../services/companion'
 import { compressImage } from '../utils/image'
 
 const VPS_PROVIDER = 'claude-code-vps'
@@ -88,6 +88,18 @@ export default function SessionSettings({ theme }) {
   const [vpsLoggedIn, setVpsLoggedIn] = useState(false)
   const [vpsStatusChecking, setVpsStatusChecking] = useState(false)
   const otherVpsSession = sessions?.find(s => s.id !== currentSessionId && s.providerName === VPS_PROVIDER)
+  const isVpsWindow = localProviderName === VPS_PROVIDER
+
+  // Common-vs-advanced settings split (normal sessions only — a CC window
+  // never shows systemPrompt/summary/memory at all, so there's nothing to fold).
+  const [showAdvanced, setShowAdvanced] = useState(false)
+
+  // "清空当前对话" — real backend reset for CC, local-only clear for normal
+  // sessions. Never optimistic: for CC, the visible messages only disappear
+  // once the server confirms the reset actually happened (via the onCcReset
+  // broadcast wired in App.jsx), never before.
+  const [clearBusy, setClearBusy] = useState(false)
+  const [clearError, setClearError] = useState(null)
 
   const refreshVpsStatus = async () => {
     setVpsStatusChecking(true)
@@ -402,6 +414,65 @@ export default function SessionSettings({ theme }) {
     URL.revokeObjectURL(url)
   }
 
+  // CC: a real backend reset — clears companion's server-side history AND
+  // genuinely resets the VPS Claude Code session's own context via /clear
+  // (see channel-server.ts resetCcContext). The visible page only clears
+  // once the server confirms success, via the onCcReset broadcast every
+  // connected tab receives (wired in App.jsx) — never before, and never if
+  // the backend call fails. Explicitly preserves companion's login cookie,
+  // current model, usage data, and VPS Auto Memory files.
+  //
+  // Normal session: clears only this session's messages, locally (store +
+  // IndexedDB) and in the cloud (KV), leaving every other session untouched.
+  const handleClearConversation = async () => {
+    if (clearBusy) return
+    if (isVpsWindow) {
+      const ok = window.confirm(
+        '确定要清空当前对话吗？\n\n' +
+        '将同时清空当前页面消息和 Claude Code 当前上下文，' +
+        '但不会删除长期记忆、登录及模型设置。'
+      )
+      if (!ok) return
+      setClearBusy(true)
+      setClearError(null)
+      try {
+        await resetCcConversation()
+        // Do NOT clear local messages here — that happens only once the
+        // server's reset broadcast actually arrives (App.jsx's onCcReset),
+        // so a failed or still-in-flight reset never shows a false "cleared".
+      } catch (e) {
+        setClearError(e.message || '清空失败，请稍后重试')
+      } finally {
+        setClearBusy(false)
+      }
+      return
+    }
+
+    const ok = window.confirm('确定要清空当前对话的所有消息吗？此操作不可撤销，只影响这一个会话，不影响其他会话。')
+    if (!ok) return
+    setClearBusy(true)
+    setClearError(null)
+    try {
+      await deleteMessagesForSession(currentSessionId)
+      useStore.getState().setMessages([])
+      updateSession(currentSessionId, { lastMsgPreview: '', lastMsgTime: null })
+      const password = localStorage.getItem('auth.password')
+      if (password) {
+        try {
+          await deleteSessionMsgs(password, currentSessionId)
+        } catch (e) {
+          // Local clear already succeeded; cloud copy will just look stale
+          // until the next real sync — not left showing a false "cleared".
+          console.warn('[CLEAR] 云端清理失败（本地已清空）:', e.message)
+        }
+      }
+    } catch (e) {
+      setClearError(e.message || '清空失败，请稍后重试')
+    } finally {
+      setClearBusy(false)
+    }
+  }
+
   return (
     <div className="flex flex-col h-full" style={{ background: 'transparent' }}>
       {/* Header */}
@@ -544,28 +615,6 @@ export default function SessionSettings({ theme }) {
               />
             </div>
           </div>
-        </GlassCard>
-
-        {/* System Prompt */}
-        <GlassCard icon="💬" title="系统提示词">
-          <textarea
-            value={localSystemPrompt}
-            onChange={e => setLocalSystemPrompt(e.target.value)}
-            onBlur={() => setSessionSystemPrompt(currentSessionId, localSystemPrompt)}
-            rows={5}
-            placeholder="输入此会话的系统提示词…"
-            style={{ ...inputStyle, resize: 'vertical', lineHeight: 1.6 }}
-          />
-          <button
-            onClick={() => {
-              setLocalSystemPrompt(globalSystemPrompt || '')
-              setSessionSystemPrompt(currentSessionId, globalSystemPrompt || '')
-            }}
-            className="mt-2 text-xs"
-            style={{ color: '#7a9cc0', background: 'none', border: 'none', cursor: 'pointer', padding: '2px 4px' }}
-          >
-            ↩ 恢复全局默认
-          </button>
         </GlassCard>
 
         {/* API Config */}
@@ -823,58 +872,6 @@ export default function SessionSettings({ theme }) {
           </div>
         </GlassCard>
 
-        {/* Summary */}
-        <GlassCard icon="🧠" title="记忆摘要">
-          <div className="space-y-2">
-            <p className="text-[11px] px-1" style={{ color: '#a0b8d0' }}>
-              对话累积满 150 条后生成首次摘要，之后每新增 70 条更新。摘要会注入到每轮上下文供模型参考。可手动编辑或清空。
-            </p>
-            <textarea
-              value={currentSession?.summary || ''}
-              onChange={e => setSessionSummary(currentSessionId, e.target.value || null)}
-              rows={5}
-              placeholder="暂无摘要，对话满150条后自动生成…"
-              style={{ ...inputStyle, resize: 'none', lineHeight: '1.6', fontSize: 13 }}
-            />
-            <button
-              onClick={() => { setSessionSummary(currentSessionId, null); setSessionSummarizedCount(currentSessionId, 0) }}
-              style={{
-                background: 'none', border: '1px solid rgba(160,180,200,0.4)', borderRadius: 10,
-                padding: '4px 14px', fontSize: 12, color: '#7a9cc0', cursor: 'pointer',
-              }}
-            >
-              清空摘要（下次触发重新生成）
-            </button>
-            {(() => {
-              const len = messages.length
-              const summarizedCount = currentSession?.summarizedCount ?? 0
-              const pct1 = Math.min(len, 80) / 80 * 100
-              const n = Math.max(0, Math.min(len - summarizedCount - 80, 70))
-              const pct2 = n / 70 * 100
-              const hasDsKey = !!localStorage.getItem('summary.deepseek.key')
-              return (
-                <div className="space-y-2 pt-1">
-                  <div>
-                    <div style={{ height: 4, background: 'rgba(200,220,255,0.3)', borderRadius: 2, overflow: 'hidden' }}>
-                      <div style={{ height: '100%', width: `${pct1}%`, background: 'linear-gradient(90deg, #9b70e0, #c084fc)', borderRadius: 2 }} />
-                    </div>
-                    <p className="text-[10px] mt-0.5 pl-0.5" style={{ color: '#a0b8d0' }}>当前上下文 {len} / 80 条</p>
-                  </div>
-                  <div>
-                    <div style={{ height: 4, background: 'rgba(200,220,255,0.3)', borderRadius: 2, overflow: 'hidden' }}>
-                      <div style={{ height: '100%', width: `${pct2}%`, background: 'linear-gradient(90deg, #9b70e0, #c084fc)', borderRadius: 2 }} />
-                    </div>
-                    <p className="text-[10px] mt-0.5 pl-0.5" style={{ color: '#a0b8d0' }}>自上次摘要后新增 {n} / 70 条</p>
-                  </div>
-                  {!hasDsKey && (
-                    <p className="text-[10px] px-1" style={{ color: '#d4a017' }}>⚠️ 未配置摘要模型 key，进度满后不会自动摘要</p>
-                  )}
-                </div>
-              )
-            })()}
-          </div>
-        </GlassCard>
-
         {/* TTS Config */}
         <GlassCard icon="🎙️" title="AI 语音">
           <div className="space-y-3">
@@ -1031,27 +1028,146 @@ export default function SessionSettings({ theme }) {
           </div>
         </GlassCard>
 
-        {/* Memory */}
-        <GlassCard icon="🧠" title="记忆注入">
+        {/* 清空当前对话 — common/visible for both normal and CC windows */}
+        <GlassCard icon="⚠️" title="清空当前对话">
           <p className="text-xs mb-3" style={{ color: '#7a9cc0' }}>
-            覆盖全局记忆开关。当前全局：{globalMemoryEnabled ? '已开启' : '已关闭'}
+            {isVpsWindow
+              ? '将同时清空当前页面消息和 Claude Code 当前上下文；不会删除长期记忆、登录及模型设置。'
+              : '清空这一个会话的所有消息，不影响其他会话。'}
           </p>
-          <div className="flex flex-wrap gap-2">
-            {[
-              { label: '跟随全局', value: null },
-              { label: '本会话开启', value: true },
-              { label: '本会话关闭', value: false },
-            ].map(opt => (
-              <button
-                key={String(opt.value)}
-                onClick={() => setSessionMemoryEnabled(currentSessionId, opt.value)}
-                style={chipStyle(memoryOverride === opt.value)}
-              >
-                {opt.label}
-              </button>
-            ))}
-          </div>
+          <button
+            onClick={handleClearConversation}
+            disabled={clearBusy || (isVpsWindow && !vpsLoggedIn)}
+            className="flex items-center gap-2 px-4 py-2.5 rounded-full text-sm transition-all duration-200"
+            style={{
+              background: 'rgba(255,100,100,0.08)', color: clearBusy ? '#e0a0a0' : '#e07070',
+              border: '1px solid rgba(255,100,100,0.2)',
+              cursor: (clearBusy || (isVpsWindow && !vpsLoggedIn)) ? 'default' : 'pointer',
+              opacity: (isVpsWindow && !vpsLoggedIn) ? 0.5 : 1,
+            }}
+          >
+            {clearBusy ? '清空中…' : '清空当前对话'}
+          </button>
+          {clearError && (
+            <p className="text-[11px] mt-2" style={{ color: '#e07070' }}>{clearError}</p>
+          )}
         </GlassCard>
+
+        {/* 高级设置 — normal sessions only: systemPrompt/summary/memory folded
+            away by default. A CC window never shows these at all (none of
+            them apply — see the module-level VPS_PROVIDER branch above). */}
+        {!isVpsWindow && (
+          <>
+            <button
+              onClick={() => setShowAdvanced(v => !v)}
+              className="w-full flex items-center justify-between px-4 py-3 rounded-2xl text-sm font-medium transition-all"
+              style={{ background: 'rgba(255,255,255,0.42)', border: '1px solid rgba(200,220,255,0.3)', color: '#2c5282' }}
+            >
+              <span>⚙️ 高级设置</span>
+              <ChevronDown size={16} style={{ transform: showAdvanced ? 'rotate(180deg)' : 'none', transition: 'transform 0.2s', color: '#7a9cc0' }} />
+            </button>
+
+            {showAdvanced && (
+              <>
+                {/* System Prompt */}
+                <GlassCard icon="💬" title="系统提示词">
+                  <textarea
+                    value={localSystemPrompt}
+                    onChange={e => setLocalSystemPrompt(e.target.value)}
+                    onBlur={() => setSessionSystemPrompt(currentSessionId, localSystemPrompt)}
+                    rows={5}
+                    placeholder="输入此会话的系统提示词…"
+                    style={{ ...inputStyle, resize: 'vertical', lineHeight: 1.6 }}
+                  />
+                  <button
+                    onClick={() => {
+                      setLocalSystemPrompt(globalSystemPrompt || '')
+                      setSessionSystemPrompt(currentSessionId, globalSystemPrompt || '')
+                    }}
+                    className="mt-2 text-xs"
+                    style={{ color: '#7a9cc0', background: 'none', border: 'none', cursor: 'pointer', padding: '2px 4px' }}
+                  >
+                    ↩ 恢复全局默认
+                  </button>
+                </GlassCard>
+
+                {/* Summary */}
+                <GlassCard icon="🧠" title="记忆摘要">
+                  <div className="space-y-2">
+                    <p className="text-[11px] px-1" style={{ color: '#a0b8d0' }}>
+                      对话累积满 150 条后生成首次摘要，之后每新增 70 条更新。摘要会注入到每轮上下文供模型参考。可手动编辑或清空。
+                    </p>
+                    <textarea
+                      value={currentSession?.summary || ''}
+                      onChange={e => setSessionSummary(currentSessionId, e.target.value || null)}
+                      rows={5}
+                      placeholder="暂无摘要，对话满150条后自动生成…"
+                      style={{ ...inputStyle, resize: 'none', lineHeight: '1.6', fontSize: 13 }}
+                    />
+                    <button
+                      onClick={() => { setSessionSummary(currentSessionId, null); setSessionSummarizedCount(currentSessionId, 0) }}
+                      style={{
+                        background: 'none', border: '1px solid rgba(160,180,200,0.4)', borderRadius: 10,
+                        padding: '4px 14px', fontSize: 12, color: '#7a9cc0', cursor: 'pointer',
+                      }}
+                    >
+                      清空摘要（下次触发重新生成）
+                    </button>
+                    {(() => {
+                      const len = messages.length
+                      const summarizedCount = currentSession?.summarizedCount ?? 0
+                      const pct1 = Math.min(len, 80) / 80 * 100
+                      const n = Math.max(0, Math.min(len - summarizedCount - 80, 70))
+                      const pct2 = n / 70 * 100
+                      const hasDsKey = !!localStorage.getItem('summary.deepseek.key')
+                      return (
+                        <div className="space-y-2 pt-1">
+                          <div>
+                            <div style={{ height: 4, background: 'rgba(200,220,255,0.3)', borderRadius: 2, overflow: 'hidden' }}>
+                              <div style={{ height: '100%', width: `${pct1}%`, background: 'linear-gradient(90deg, #9b70e0, #c084fc)', borderRadius: 2 }} />
+                            </div>
+                            <p className="text-[10px] mt-0.5 pl-0.5" style={{ color: '#a0b8d0' }}>当前上下文 {len} / 80 条</p>
+                          </div>
+                          <div>
+                            <div style={{ height: 4, background: 'rgba(200,220,255,0.3)', borderRadius: 2, overflow: 'hidden' }}>
+                              <div style={{ height: '100%', width: `${pct2}%`, background: 'linear-gradient(90deg, #9b70e0, #c084fc)', borderRadius: 2 }} />
+                            </div>
+                            <p className="text-[10px] mt-0.5 pl-0.5" style={{ color: '#a0b8d0' }}>自上次摘要后新增 {n} / 70 条</p>
+                          </div>
+                          {!hasDsKey && (
+                            <p className="text-[10px] px-1" style={{ color: '#d4a017' }}>⚠️ 未配置摘要模型 key，进度满后不会自动摘要</p>
+                          )}
+                        </div>
+                      )
+                    })()}
+                  </div>
+                </GlassCard>
+
+                {/* Memory */}
+                <GlassCard icon="🧠" title="记忆注入">
+                  <p className="text-xs mb-3" style={{ color: '#7a9cc0' }}>
+                    覆盖全局记忆开关。当前全局：{globalMemoryEnabled ? '已开启' : '已关闭'}
+                  </p>
+                  <div className="flex flex-wrap gap-2">
+                    {[
+                      { label: '跟随全局', value: null },
+                      { label: '本会话开启', value: true },
+                      { label: '本会话关闭', value: false },
+                    ].map(opt => (
+                      <button
+                        key={String(opt.value)}
+                        onClick={() => setSessionMemoryEnabled(currentSessionId, opt.value)}
+                        style={chipStyle(memoryOverride === opt.value)}
+                      >
+                        {opt.label}
+                      </button>
+                    ))}
+                  </div>
+                </GlassCard>
+              </>
+            )}
+          </>
+        )}
 
         {/* Export */}
         <GlassCard icon="📤" title="导出本对话">
