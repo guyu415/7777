@@ -106,9 +106,16 @@ export default function SessionSettings({ theme }) {
 
   // Codex (VPS) — a fully separate runtime from Claude Code above (see
   // channel-server.ts's codex_* section); same single-session-binding
-  // pattern, but login itself only ever happens directly on the VPS
-  // (`codex login`) — never via a browser redirect, so there is no "去登录"
-  // action here, only a real status readout.
+  // pattern, but there are genuinely TWO auth layers stacked here:
+  //   1. browser <-> companion: the same cookie/login as Claude Code's VPS
+  //      block below (vpsLoggedIn/handleGoLogin/refreshVpsStatus, shared).
+  //   2. companion <-> VPS Codex OAuth: `codex login` run once on the VPS
+  //      itself — never a browser redirect, so there is no "去登录" action
+  //      for this layer, only a real status readout.
+  // /codex/auth-status sits behind the server's authGate (401 without the
+  // companion cookie), so it must never be queried until layer 1 is known
+  // good — otherwise a plain 401 gets misread as "Codex not logged in" when
+  // the real problem is "browser not logged into companion at all".
   const [codexLoggedIn, setCodexLoggedIn] = useState(false)
   const [codexStatusChecking, setCodexStatusChecking] = useState(false)
   const otherCodexSession = sessions?.find(s => s.id !== currentSessionId && s.providerName === CODEX_PROVIDER)
@@ -126,10 +133,14 @@ export default function SessionSettings({ theme }) {
     }
   }
 
+  // Layer 2: only ever ask the VPS Codex-OAuth question once layer 1
+  // (companion cookie) is confirmed good — this is what stops a plain 401
+  // from being misread as "Codex not logged in" (see comment above).
   useEffect(() => {
     if (localProviderName !== CODEX_PROVIDER) return
+    if (!vpsLoggedIn) { setCodexLoggedIn(false); return }
     refreshCodexStatus()
-  }, [localProviderName, currentSessionId])
+  }, [localProviderName, currentSessionId, vpsLoggedIn])
 
   // Common-vs-advanced settings split (normal sessions only — a CC window
   // never shows systemPrompt/summary/memory at all, so there's nothing to fold).
@@ -185,13 +196,18 @@ export default function SessionSettings({ theme }) {
     }
   }
 
+  // companion login status (layer 1) — shared by both the Claude Code VPS
+  // block and the Codex block below, since it's the exact same browser
+  // cookie/login entry point (COMPANION_LOGIN_URL) for either provider.
   useEffect(() => {
-    if (localProviderName !== VPS_PROVIDER) return
+    if (localProviderName !== VPS_PROVIDER && localProviderName !== CODEX_PROVIDER) return
     refreshVpsStatus()
-    refreshProactiveSettings()
+    if (localProviderName === VPS_PROVIDER) refreshProactiveSettings()
     // Returning from the companion /login page is a full-page redirect back to
     // eunoia.xiaoman.xyz — re-check on focus/visibility too in case the app
     // shell wasn't fully torn down and this effect didn't re-run on its own.
+    // This is also what makes "登录返回后自动刷新两层状态" work for Codex:
+    // vpsLoggedIn flipping true here re-triggers the layer-2 effect above.
     const onFocus = () => refreshVpsStatus()
     window.addEventListener('focus', onFocus)
     document.addEventListener('visibilitychange', onFocus)
@@ -724,32 +740,61 @@ export default function SessionSettings({ theme }) {
                 background: 'rgba(120,160,220,0.08)', borderRadius: 14, padding: 12,
                 border: '1px solid rgba(120,160,220,0.2)',
               }}>
-                <div className="flex items-center gap-2 mb-2">
+                {/* Layer 1: browser <-> companion — same cookie/login as Claude
+                    Code's VPS block below. Shown first and separately, since
+                    the layer-2 (Codex OAuth) readout below is meaningless
+                    (and never even queried) until this one is true. */}
+                <div className="flex items-center gap-2 mb-1.5">
                   <span style={{
                     width: 8, height: 8, borderRadius: '50%',
-                    background: codexStatusChecking ? '#d4a017' : (codexLoggedIn ? '#34c759' : '#e07070'),
+                    background: vpsStatusChecking ? '#d4a017' : (vpsLoggedIn ? '#34c759' : '#e07070'),
                     flexShrink: 0,
                   }} />
                   <span className="text-xs" style={{ color: '#2c5282' }}>
-                    {codexStatusChecking ? '检查登录状态…' : (codexLoggedIn ? '已登录 Codex' : '未登录')}
+                    {vpsStatusChecking ? '检查 companion 登录状态…' : (vpsLoggedIn ? '已登录 companion' : '未连接 companion')}
+                  </span>
+                </div>
+                {/* Layer 2: companion <-> VPS Codex OAuth (`codex login`,
+                    terminal-only) — a fully distinct status, never merged
+                    with layer 1 above. */}
+                <div className="flex items-center gap-2 mb-2">
+                  <span style={{
+                    width: 8, height: 8, borderRadius: '50%',
+                    background: !vpsLoggedIn ? 'rgba(160,180,200,0.5)' : (codexStatusChecking ? '#d4a017' : (codexLoggedIn ? '#34c759' : '#e07070')),
+                    flexShrink: 0,
+                  }} />
+                  <span className="text-xs" style={{ color: '#2c5282' }}>
+                    {!vpsLoggedIn ? '需先登录 companion' : (codexStatusChecking ? '检查 VPS Codex 登录状态…' : (codexLoggedIn ? '已登录 Codex' : 'VPS Codex 未登录'))}
                   </span>
                 </div>
                 <p className="text-[11px] mb-2" style={{ color: '#7a9cc0' }}>
                   连接至 VPS 上常驻运行的真实 Codex；与 Claude Code 完全独立的会话、历史与上下文。
                 </p>
-                {!codexLoggedIn && (
+                {vpsLoggedIn && !codexLoggedIn && (
                   <p className="text-[11px] mb-2" style={{ color: '#d4a017' }}>
-                    登录只能在 VPS 上完成（终端运行 codex login），浏览器端不会接触任何密钥。
+                    Codex 登录只能在 VPS 上完成（终端运行 codex login），浏览器端不会接触任何密钥。
                   </p>
                 )}
-                <button
-                  onClick={refreshCodexStatus}
-                  disabled={codexStatusChecking}
-                  className="w-full px-3 py-2 rounded-full text-xs"
-                  style={{ background: 'rgba(255,255,255,0.5)', color: '#4a7aaa', border: '1px solid rgba(120,160,220,0.35)' }}
-                >
-                  刷新状态
-                </button>
+                <div className="flex gap-2">
+                  {!vpsLoggedIn && (
+                    <button
+                      onClick={handleGoLogin}
+                      disabled={goingToLogin}
+                      className="flex-1 text-center py-2 rounded-full text-xs font-medium text-white"
+                      style={{ background: 'linear-gradient(135deg, #7ab4f0, #4a90d0)', border: 'none', opacity: goingToLogin ? 0.6 : 1 }}
+                    >
+                      {goingToLogin ? '同步中…' : '去登录'}
+                    </button>
+                  )}
+                  <button
+                    onClick={vpsLoggedIn ? refreshCodexStatus : refreshVpsStatus}
+                    disabled={vpsLoggedIn ? codexStatusChecking : vpsStatusChecking}
+                    className="flex-1 px-3 py-2 rounded-full text-xs"
+                    style={{ background: 'rgba(255,255,255,0.5)', color: '#4a7aaa', border: '1px solid rgba(120,160,220,0.35)' }}
+                  >
+                    刷新状态
+                  </button>
+                </div>
               </div>
             ) : localProviderName === VPS_PROVIDER ? (
               <div style={{
