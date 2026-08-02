@@ -14,6 +14,7 @@
   --tail-user: rgba(255, 133, 179, 0.45);
   --tail-ai: rgba(200, 235, 210, 0.6);
   --app-font: 'Noto Sans SC', 'PingFang SC', -apple-system, sans-serif;
+  --message-font-size: 16px;
 }
 
 * {
@@ -21,16 +22,70 @@
   box-sizing: border-box;
 }
 
-html, body, #root {
+html {
   height: 100%;
   width: 100%;
   overflow: hidden;
+  font-size: 16px;
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
 }
 
 body {
+  width: 100%;
+  height: 100dvh;
+  min-height: 100dvh;
+  max-height: 100dvh;
+  margin: 0;
+  overflow: hidden;
+  overscroll-behavior: none;
   font-family: var(--app-font);
   -webkit-font-smoothing: antialiased;
   color: var(--rose);
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
+#root {
+  width: 100%;
+  height: 100dvh;
+  min-height: 100dvh;
+  max-height: 100dvh;
+  overflow: hidden;
+  isolation: isolate;
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
+button,
+input,
+textarea,
+select {
+  font: inherit;
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
+button {
+  touch-action: manipulation;
+}
+
+input,
+textarea,
+select {
+  max-width: 100%;
+}
+
+/* Keep editable controls at iOS's no-auto-zoom threshold. The chat composer
+   intentionally stays larger for readability. */
+input:not([type='range']):not([type='checkbox']):not([type='radio']),
+textarea,
+select {
+  font-size: max(16px, 1em) !important;
+}
+
+.eunoia-chat__composer textarea {
+  font-size: 18px !important;
 }
 
 ::-webkit-scrollbar { width: 3px; }
@@ -39,6 +94,114 @@ body {
 
 .safe-bottom { padding-bottom: var(--safe-bottom); }
 .safe-top { padding-top: var(--safe-top); }
+
+/* Stable iPhone/PWA viewport. Every page is a fixed shell; only an explicit
+   inner scroller may move. This keeps the header, composer and bottom nav out
+   of the document scroll chain when Safari's bars or the keyboard change. */
+.eunoia-viewport {
+  position: relative;
+  width: 100%;
+  height: 100dvh;
+  min-height: 100dvh;
+  max-height: 100dvh;
+  overflow: hidden;
+  overscroll-behavior: none;
+  isolation: isolate;
+}
+
+.eunoia-shell {
+  width: 100%;
+  max-width: 448px;
+  height: 100%;
+  min-height: 0;
+  max-height: 100%;
+  overflow: hidden;
+}
+
+.eunoia-shell__view {
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.eunoia-chat {
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.eunoia-chat__header,
+.eunoia-chat__composer {
+  flex: 0 0 auto;
+  min-width: 0;
+  position: relative;
+}
+
+.eunoia-chat__header {
+  overflow: hidden;
+}
+
+.eunoia-chat__body {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  position: relative;
+  overflow: hidden;
+}
+
+.eunoia-chat__scroll {
+  min-width: 0;
+  min-height: 0;
+  overflow-x: hidden;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: thin;
+}
+
+.eunoia-bottom-nav {
+  display: flex;
+  align-items: center;
+  justify-content: space-around;
+  width: 100%;
+  min-height: 88px;
+  flex: 0 0 auto;
+  padding: 4px 6px max(4px, var(--safe-bottom));
+  overflow: hidden;
+}
+
+.eunoia-bottom-nav--bare {
+  background: transparent;
+  border-top: 0;
+}
+
+.eunoia-nav-art {
+  width: clamp(64px, 22vw, 84px);
+  height: clamp(64px, 22vw, 84px);
+  flex: 0 0 auto;
+}
+
+.eunoia-message-column {
+  min-width: 0;
+  max-width: min(72vw, calc(100% - 88px));
+}
+
+.eunoia-message-content {
+  display: inline;
+  max-width: 100%;
+  font-size: var(--message-font-size, 16px);
+  line-height: 1.625;
+  overflow-wrap: anywhere;
+}
+
+@supports not (height: 100dvh) {
+  body,
+  #root,
+  .eunoia-viewport {
+    height: 100vh;
+    min-height: 100vh;
+    max-height: 100vh;
+  }
+}
 
 /* Glass morphism utility */
 .glass {

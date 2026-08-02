@@ -148,7 +148,7 @@ function MessageBubble({ message, onLongPress, onRegenerate, onRegenerateRound, 
     <div className={clsx('flex items-end gap-2 mb-4 animate-fade-up', isUser ? 'flex-row-reverse' : 'flex-row')}>
       {avatarEl}
 
-      <div className={clsx('relative max-w-[72vw] flex flex-col', isUser ? 'items-end' : 'items-start')}>
+      <div className={clsx('eunoia-message-column relative flex flex-col', isUser ? 'items-end' : 'items-start')}>
         {/* Collapsible reasoning / thinking chain (AI only) */}
         {!isUser && (message.reasoning || message.reasoningStreaming) && (
           <div className="mb-1.5 w-full">
@@ -240,7 +240,7 @@ function MessageBubble({ message, onLongPress, onRegenerate, onRegenerateRound, 
             {message.streaming && !message.content ? (
               <TypingIndicator />
             ) : (
-              <span className="whitespace-pre-wrap break-words">{hasLetter(message.content) ? renderContentNodes(message.content) : (isUser ? message.content : renderWithActions(message.content))}
+              <span className="eunoia-message-content whitespace-pre-wrap break-words">{hasLetter(message.content) ? renderContentNodes(message.content) : (isUser ? message.content : renderWithActions(message.content))}
                 {onRegenerate && !message.streaming && (
                   <span className="inline-flex gap-1 ml-2" style={{ verticalAlign: 'middle' }}>
                     <button
