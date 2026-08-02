@@ -90,12 +90,16 @@ export default function GomokuBoard({ theme, aiName, aiAvatar, userAvatar, onClo
     chatLogRef.current?.scrollTo({ top: chatLogRef.current.scrollHeight, behavior: 'smooth' })
   }, [game?.messages?.length])
 
-  // Auto-play newly-arrived AI voice replies right here on the board page —
-  // no full-screen call UI, board stays fully interactive throughout.
+  // Auto-play newly-arrived model voice replies right here on the board
+  // page — no full-screen call UI, board stays fully interactive throughout.
+  // Every message rendered here comes straight from game.messages, which the
+  // backend only ever populates from a real reply/send_voice tool call
+  // (from:'user') or the model's own genuine tool-call text (from:'model') —
+  // never a template/fallback string.
   useEffect(() => {
     const msgs = game?.messages || []
     for (const m of msgs) {
-      if (m.from !== 'ai' || m.kind !== 'voice' || playedVoiceIdsRef.current.has(m.id)) continue
+      if (m.from !== 'model' || m.kind !== 'voice' || playedVoiceIdsRef.current.has(m.id)) continue
       playedVoiceIdsRef.current.add(m.id)
       if (!hasTts) continue
       fetchTTSAudio(m.text, { apiKey: ttsApiKey, groupId: ttsGroupId, voiceId: m.voice || ttsVoiceId || 'English_Trustworthy_Man', model: ttsModel })
@@ -261,9 +265,14 @@ export default function GomokuBoard({ theme, aiName, aiAvatar, userAvatar, onClo
     opacity: disabled ? 0.45 : 1, cursor: disabled ? 'default' : 'pointer',
   })
 
+  // Every entry here is either the user's own submitted text (from:'user')
+  // or the model's own real tool-call text (from:'model') — see
+  // channel-server.ts's appendGomokuChatMsg call sites. Board/turn status
+  // ("轮到你"/"对方思考中"/"你赢了", rendered separately above as turnText)
+  // is never mixed into this list.
   const chatBubbles = (game?.messages || []).map(m => ({
     id: m.id,
-    role: m.from === 'user' ? 'user' : 'assistant',
+    role: m.from === 'model' ? 'assistant' : 'user',
     type: 'text',
     content: m.text,
     timestamp: m.ts,
