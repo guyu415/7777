@@ -18,6 +18,13 @@ import {
 // 顺序发言全部说完后，自由发言两条消息之间留的反应时间——不是越短越好：
 // 太短会变成 AI 瞬间刷屏，太长会让讨论显得死气沉沉。见本文件"自由讨论"一节。
 const FREE_SPEECH_DELAY_MS = 8000
+// CC 正常实测首轮通常在 6–13 秒内返回。超过 30 秒基本不是“还在想”，而是
+// 隔离 tmux 会话又卡在输入/渲染状态里了；与其让用户等满后端 110 秒并手动
+// 跳过，这里主动销毁这一名角色的临时会话，并用完整本局上下文重建一次。
+const CC_STALL_TIMEOUT_MS = 30000
+const CC_RETRY_TIMEOUT_MS = 45000
+
+const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 
 // 剧本杀房间。
 //
@@ -98,7 +105,74 @@ export default function MysteryGameRoom({ theme, chatId, chat, onClose }) {
   // 按顺序发言和自由发言共用这同一条调用逻辑，只是 prompt 构造函数
   // （buildTurnPrompt / buildFreeSpeechPrompt）和调用完之后怎么提交
   // （appendSpeech+推进轮次 / appendFreeSpeech+消耗自由发言额度）不一样。
+  const runCcTurnWithRecovery = async (charId, seat, systemPrompt, turnPrompt, signal, onPreview) => {
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const attemptAbort = new AbortController()
+      const forwardAbort = () => attemptAbort.abort()
+      if (signal?.aborted) attemptAbort.abort()
+      else signal?.addEventListener('abort', forwardAbort, { once: true })
+
+      let stalled = false
+      let empty = false
+      const timeout = setTimeout(() => {
+        stalled = true
+        attemptAbort.abort()
+      }, attempt === 0 ? CC_STALL_TIMEOUT_MS : CC_RETRY_TIMEOUT_MS)
+
+      try {
+        const text = await runMysteryTurn(
+          chatId,
+          charId,
+          seat.memberId,
+          seat.model || '',
+          systemPrompt,
+          turnPrompt,
+          attemptAbort.signal,
+        )
+        empty = !String(text || '').trim()
+        if (!empty) return text
+        throw new Error('CC 返回了空内容')
+      } catch (error) {
+        if (signal?.aborted) throw error
+
+        const status = Number(error?.status || 0)
+        const message = String(error?.message || '')
+        const recoverable = stalled || empty || status === 409 || status >= 500
+          || /busy|timeout|timed out|处理中|上一轮|空内容/i.test(message)
+        if (!recoverable || attempt > 0) {
+          if (stalled) throw new Error('CC 自动重连后仍没有回应，请重试')
+          throw error
+        }
+
+        onPreview?.('CC 卡住了，正在自动重连…')
+        // abort 只停止浏览器继续等；真正卡住的 Claude Code 进程仍可能留在原
+        // tmux pane 中。cleanup 会杀掉这一名角色的隔离会话，下一次调用再按
+        // systemPrompt + 完整公开记录重建，不会影响 CC 单聊或其他游戏角色。
+        let cleanupError = null
+        for (let cleanupAttempt = 0; cleanupAttempt < 3; cleanupAttempt += 1) {
+          try {
+            await cleanupMysteryGame(chatId, [charId])
+            cleanupError = null
+            break
+          } catch (cleanupFailure) {
+            cleanupError = cleanupFailure
+            await wait(350 * (cleanupAttempt + 1))
+          }
+        }
+        if (cleanupError) throw cleanupError
+        await wait(350)
+      } finally {
+        clearTimeout(timeout)
+        signal?.removeEventListener('abort', forwardAbort)
+      }
+    }
+    throw new Error('CC 没有回应')
+  }
+
   const callCharacterModel = async (charId, seat, systemPrompt, turnPrompt, signal, onPreview) => {
+    if (seat.memberId === 'claude-code') {
+      return runCcTurnWithRecovery(charId, seat, systemPrompt, turnPrompt, signal, onPreview)
+    }
     if (isVpsMemberId(seat.memberId)) {
       return await runMysteryTurn(chatId, charId, seat.memberId, seat.model || '', systemPrompt, turnPrompt, signal)
     }
@@ -291,11 +365,20 @@ export default function MysteryGameRoom({ theme, chatId, chat, onClose }) {
   // 不阻塞这个角色的下一次发言。
   const skipActor = () => {
     if (!actor || !chapter) return
+    const skippedCharId = actor.charId
+    const skippedSeat = actor.seat
     activeCallRef.current?.abort.abort()
     activeCallRef.current = null
-    failedRef.current.add(`${chapter.id}:${actor.charId}`)
-    commit((g) => appendSpeech(g, actor.charId, `（${getCharacter(script, actor.charId)?.name}沉默着，没有说话。）`))
+    failedRef.current.add(`${chapter.id}:${skippedCharId}`)
+    commit((g) => appendSpeech(g, skippedCharId, `（${getCharacter(script, skippedCharId)?.name}沉默着，没有说话。）`))
     setAiState(null)
+    // 用户会点跳过，通常正是因为这一个 CC 隔离会话已经卡死。旧逻辑只 abort
+    // 浏览器请求，却把坏掉的 tmux 会话留给下一轮继续复用，于是表现成“刚修好
+    // 又突然不说话”。跳过 CC 时同时销毁这一个临时角色会话；不碰 CC 本体单聊、
+    // 其他角色或其他模型。
+    if (skippedSeat?.memberId === 'claude-code') {
+      cleanupMysteryGame(chatId, [skippedCharId]).catch(() => {})
+    }
   }
   const goNextChapter = () => {
     failedRef.current.clear()
