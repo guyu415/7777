@@ -124,6 +124,122 @@ export function appendSpeech(state, charId, text, { markTurn = true } = {}) {
   return next
 }
 
+// ---------------------------------------------------------------- 自由发言
+//
+// 按顺序发言（上面 nextActor/isChapterComplete 那一套）完全不受影响——这一
+// 节只是在"剧情章节"（stage:'story'）的顺序发言全部说完之后，追加一段可选
+// 的自由讨论：每个 AI 座位最多再发言 FREE_SPEECH_LIMIT 次，用户可以随时插
+// 话，不强制每个人说满。投票/揭晓章不进入自由讨论——那两章需要干净的单次
+// 表态，维持原样。
+export const FREE_SPEECH_LIMIT = 3
+// 单条自由发言的硬性字数上限——提示词里已经要求模型自己控制在 50 字以内，
+// 但模型不一定总是听话，这里再兜底截断一次，保证"最多 50 字"是个保证而不是
+// 请求。只截自由发言，按顺序发言（80–200 字那条铁律）完全不受影响。
+export const FREE_SPEECH_MAX_CHARS = 50
+
+function truncateFreeSpeech(text) {
+  const trimmed = String(text || '').trim()
+  return trimmed.length > FREE_SPEECH_MAX_CHARS ? `${trimmed.slice(0, FREE_SPEECH_MAX_CHARS)}…` : trimmed
+}
+
+function isFreeDiscussionChapter(chapter) {
+  return chapter?.stage === 'story'
+}
+
+// 顺序发言刚说完时调用一次：给这一章的每个 AI 座位发一份"自由发言"额度。
+// 不是 story 章节就原样返回（等于没有自由讨论这回事）。
+export function enterFreeDiscussion(state) {
+  const chapter = currentChapter(state)
+  if (!isFreeDiscussionChapter(chapter)) return state
+  if (state.freeDiscussion?.chapterId === chapter.id) return state // 已经在这一章的自由讨论里了
+  const remaining = {}
+  for (const [charId, seat] of Object.entries(state.seats)) {
+    if (seat.kind === SEAT_AI) remaining[charId] = FREE_SPEECH_LIMIT
+  }
+  return { ...state, freeDiscussion: { chapterId: chapter.id, remaining, paused: false, lastSpeaker: null } }
+}
+
+export function isInFreeDiscussion(state) {
+  const chapter = currentChapter(state)
+  return !!(state.freeDiscussion && state.freeDiscussion.chapterId === chapter?.id)
+}
+
+export function isFreeDiscussionPaused(state) {
+  return !!state.freeDiscussion?.paused
+}
+
+export function setFreeDiscussionPaused(state, paused) {
+  if (!state.freeDiscussion) return state
+  return { ...state, freeDiscussion: { ...state.freeDiscussion, paused } }
+}
+
+// 下一个该自动发言的 AI 角色——在还有额度的 AI 座位间轮流，暂停时返回 null。
+// 额度是上限不是任务：谁的额度先用完就跳过谁，全部用完就没有下一个了（不
+// 强迫每个人都说满 3 次）。
+export function nextFreeActor(state) {
+  if (!isInFreeDiscussion(state) || state.freeDiscussion.paused) return null
+  const script = getScript(state.scriptId)
+  const remaining = state.freeDiscussion.remaining
+  const order = script.characters.map((c) => c.id).filter((id) => (remaining[id] || 0) > 0)
+  if (!order.length) return null
+  const lastIdx = order.indexOf(state.freeDiscussion.lastSpeaker)
+  return lastIdx === -1 ? order[0] : order[(lastIdx + 1) % order.length]
+}
+
+export function isFreeDiscussionExhausted(state) {
+  if (!isInFreeDiscussion(state)) return true
+  return Object.values(state.freeDiscussion.remaining).every((n) => n <= 0)
+}
+
+// 记一次 AI 的自由发言：进公开日志，但不占"按顺序发言"的名额（markTurn:
+// false），消耗这个角色自己的自由发言额度。
+export function appendFreeSpeech(state, charId, text) {
+  const next = appendSpeech(state, charId, truncateFreeSpeech(text), { markTurn: false })
+  const remaining = { ...next.freeDiscussion.remaining, [charId]: Math.max(0, (next.freeDiscussion.remaining[charId] || 0) - 1) }
+  return { ...next, freeDiscussion: { ...next.freeDiscussion, remaining, lastSpeaker: charId } }
+}
+
+// 这个角色这一次自由发言尝试失败了（调用出错）——不伪造一句话替它说，
+// 也不无限重试同一个人：直接消耗掉这一次额度、跳到下一位，最多再重试
+// FREE_SPEECH_LIMIT 次就自然不再排到它。
+export function skipFreeSpeechTurn(state, charId) {
+  if (!state.freeDiscussion) return state
+  const remaining = { ...state.freeDiscussion.remaining, [charId]: Math.max(0, (state.freeDiscussion.remaining[charId] || 0) - 1) }
+  return { ...state, freeDiscussion: { ...state.freeDiscussion, remaining, lastSpeaker: charId } }
+}
+
+// 用户在自由讨论期间随时插话——同样不占名额、不消耗任何人的额度，只是把
+// 这句话加进公开上下文，供下一位 AI 的自由发言 prompt 读到。
+export function appendUserFreeMessage(state, charId, text) {
+  return appendSpeech(state, charId, text, { markTurn: false })
+}
+
+// 自由讨论专用 prompt——和 buildTurnPrompt 共享同一份"公开发言记录 + 自己的
+// 私密线索"上下文（复用 publicTranscript/ownClues，秘密隔离规则完全一致），
+// 只是任务换成"随便聊，别写小作文"，并且明确限长（第 2 条硬要求：≤50 字）。
+export function buildFreeSpeechPrompt(state, charId) {
+  const script = getScript(state.scriptId)
+  const c = getCharacter(script, charId)
+  const chapter = currentChapter(state)
+  const clues = ownClues(state, charId)
+  const parts = [
+    `【${chapter.title} · 自由讨论】`,
+    '正式的发言顺序已经走完了，现在是饭桌上那种随意搭话的自由讨论时间。',
+    '',
+    '【到目前为止，大家公开说过的话（含刚才的自由讨论）】',
+    publicTranscript(state) || '（还没有人开口）',
+    '',
+  ]
+  if (clues.length) {
+    parts.push('【只有你一个人知道的线索】', clues.map((t) => `· ${t}`).join('\n'), '')
+  }
+  parts.push(
+    `现在轮到你（${c.name}）随口接一句——追问别人、回应别人刚说的话、或者顺嘴吐槽一句都行。`,
+    '严格控制在 50 个汉字以内，一两句大白话，不要写小作文，不要分点，不要重复你自己之前说过的内容。',
+  )
+  return parts.join('\n')
+}
+
 // 投票章专用：发言 + 记票（targetId 可以为 null = 弃权）。
 export function appendVote(state, charId, text, targetId) {
   const next = appendSpeech(state, charId, text)
@@ -133,8 +249,11 @@ export function appendVote(state, charId, text, targetId) {
 export function advanceChapter(state) {
   const script = getScript(state.scriptId)
   const nextIndex = state.chapterIndex + 1
-  if (nextIndex >= script.chapters.length) return { ...state, finished: true }
-  let next = openChapter(state, nextIndex)
+  // 上一章的自由讨论状态（额度/暂停/轮到谁）只属于那一章，翻页就清掉，新章节
+  // 如果也是剧情章会在顺序发言说完后由 enterFreeDiscussion 重新开一份。
+  const { freeDiscussion: _oldFree, ...withoutFreeDiscussion } = state
+  if (nextIndex >= script.chapters.length) return { ...withoutFreeDiscussion, finished: true }
+  let next = openChapter(withoutFreeDiscussion, nextIndex)
   // 揭晓章：进章时先公布票型，再公布真相——之后所有人的最后一句话才有意义。
   if (getChapter(script, nextIndex)?.stage === 'reveal') next = revealTruth(next)
   return next

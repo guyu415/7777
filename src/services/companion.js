@@ -1092,11 +1092,18 @@ export async function getMysteryCcModels() {
 // returns its reply text. Throws (never fabricates a reply) on any failure
 // — missing config, timeout, model error — same "never fake success"
 // contract every other real-model call in this app already follows.
-export async function runMysteryTurn(gameId, charId, runtime, model, systemPrompt, instruction) {
+// signal (optional AbortController.signal): lets the caller genuinely cancel
+// a still-pending request — used by MysteryGameRoom's "跳过" button so
+// skipping a slow CC/Codex turn doesn't just tell the UI to move on while
+// the network request (and the underlying VPS-side wait) keeps running in
+// the background, which is what used to let a stale reply for an abandoned
+// turn silently reappear later.
+export async function runMysteryTurn(gameId, charId, runtime, model, systemPrompt, instruction, signal) {
   const data = await companionJson('/mystery/turn', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ gameId, charId, runtime, model, systemPrompt, instruction }),
+    signal,
   })
   return data.text
 }

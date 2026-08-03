@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { ArrowLeft, ChevronRight, ScrollText, Send, Trash2 } from 'lucide-react'
+import { ArrowLeft, ChevronRight, Pause, Play, ScrollText, Send, Trash2 } from 'lucide-react'
 import { useStore } from '../../../store'
 import { streamChat } from '../../../services/claude'
 import { runMysteryTurn, getMysteryCcModels, getCodexModelStatus, cleanupMysteryGame } from '../../../services/companion'
@@ -11,7 +11,13 @@ import {
   createGame, currentChapter, nextActor, isChapterComplete, appendSpeech, appendVote,
   advanceChapter, tallyVotes, endings, visibleLog, buildCharacterSystemPrompt, buildTurnPrompt,
   parseVote, npcLine, npcVote,
+  FREE_SPEECH_LIMIT, enterFreeDiscussion, isInFreeDiscussion, isFreeDiscussionPaused, setFreeDiscussionPaused,
+  nextFreeActor, appendFreeSpeech, appendUserFreeMessage, skipFreeSpeechTurn, buildFreeSpeechPrompt,
 } from './mysteryEngine'
+
+// 顺序发言全部说完后，自由发言两条消息之间留的反应时间——不是越短越好：
+// 太短会变成 AI 瞬间刷屏，太长会让讨论显得死气沉沉。见本文件"自由讨论"一节。
+const FREE_SPEECH_DELAY_MS = 8000
 
 // 剧本杀房间。
 //
@@ -39,13 +45,26 @@ export default function MysteryGameRoom({ theme, chatId, chat, onClose }) {
   const game = useStore((s) => s.mysteryGames?.[chatId]) || null
   const clearMysteryGame = useStore((s) => s.clearMysteryGame)
 
-  const [aiState, setAiState] = useState(null) // { charId, status:'thinking'|'error', preview?, message? }
+  const [aiState, setAiState] = useState(null) // { charId, status:'thinking'|'error', preview?, message?, free? }
   const [draft, setDraft] = useState('')
   const [voteTarget, setVoteTarget] = useState('')
   const [showCard, setShowCard] = useState(false)
   const logRef = useRef(null)
   const runningRef = useRef(new Set())
   const failedRef = useRef(new Set())
+  // 自由讨论专用的调度状态——和上面按顺序发言的 runningRef/failedRef 分开，
+  // 因为自由发言允许同一个角色在同一章里被多次调用，不能用"一章一次"的
+  // dedupe key。freeRunningRef 保证同一时刻最多只有一个自由发言调用在飞；
+  // freeTimerRef 是两条自由发言之间那 8 秒反应时间的定时器，用户一开始打字
+  // 或点了暂停就会被清掉。
+  const freeRunningRef = useRef(false)
+  const freeTimerRef = useRef(null)
+  // 当前这一次真实模型调用的"跳过就真的作废"标记——跳过按钮既会真的中断
+  // 网络请求（AbortController），也会把这个 call 对象标成 abandoned；即使
+  // 请求已经发出去、VPS 那边还在处理、abort 抢跑不及时，只要最终结算时看到
+  // abandoned 就绝不提交结果，也不会重复消耗自由发言额度——不会有"跳过之后
+  // 过一会儿又冒出一条回复"这种幽灵回复。
+  const activeCallRef = useRef(null)
 
   const script = game ? getScript(game.scriptId) : null
   const chapter = game ? currentChapter(game) : null
@@ -76,62 +95,100 @@ export default function MysteryGameRoom({ theme, chatId, chat, onClose }) {
   //     runMysteryTurn 和后端 channel-server.ts 的"Mystery game"一节）——
   //     一次 HTTP 请求换一整段回复，没有逐字流式预览，但这是它们自己的真
   //     模型在说话，而且绝不触碰它们各自真正的单聊/群聊记忆。
-  // 两条路径给的 systemPrompt/turnPrompt 完全一样（buildCharacterSystemPrompt
-  // / buildTurnPrompt），只由 charId 决定，别人的秘密/真相在这两个函数里都
-  // 拿不到——见 mysteryEngine.js 顶部的隔离说明。
+  // 按顺序发言和自由发言共用这同一条调用逻辑，只是 prompt 构造函数
+  // （buildTurnPrompt / buildFreeSpeechPrompt）和调用完之后怎么提交
+  // （appendSpeech+推进轮次 / appendFreeSpeech+消耗自由发言额度）不一样。
+  const callCharacterModel = async (charId, seat, systemPrompt, turnPrompt, signal, onPreview) => {
+    if (isVpsMemberId(seat.memberId)) {
+      return await runMysteryTurn(chatId, charId, seat.memberId, seat.model || '', systemPrompt, turnPrompt, signal)
+    }
+    const info = resolveGroupMemberInfo(seat.memberId, sessions)
+    const cfg = resolveApiMemberConfig(info.session, {
+      providers, selectedProviderId, apiKey: globalApiKey, apiBaseUrl: globalApiBaseUrl, model: globalModel,
+    })
+    if (!cfg.apiKey) {
+      throw new Error(`${info.name} 没有可用的 API Key（本会话、当前供应商、全局默认都没设置）`)
+    }
+    let full = ''
+    for await (const part of streamChat({
+      apiKey: cfg.apiKey,
+      apiBaseUrl: cfg.baseUrl,
+      // 本局单独选的模型（见开局面板）优先于该会话平时用的模型——只对
+      // 这一局这一个角色生效，从不写回会话本身的配置。
+      model: seat.model || cfg.model,
+      systemPrompt,
+      messages: [{ role: 'user', type: 'text', content: turnPrompt }],
+      workerUrl,
+      useWorkerProxy,
+      providerName: cfg.providerName,
+      disableThinking: cfg.disableThinking,
+      signal,
+    })) {
+      if (part.text) {
+        full += part.text
+        onPreview?.(full)
+      }
+    }
+    return full
+  }
+
   const runAiTurn = async (charId, seat) => {
     const key = `${chapter.id}:${charId}`
     if (runningRef.current.has(key)) return
     runningRef.current.add(key)
+    // call 是"这一次具体调用"的身份——不是用 key，因为 key 在跳过之后马上
+    // 就会被清掉/复用；只有持有这个具体 call 对象引用的人，才有资格判断
+    // "我是不是已经被跳过了"。跳过时 activeCallRef 会换成别的 call（或
+    // null），这里判断的是"当我完成时，我还是不是 activeCallRef 指向的
+    // 那一个"——只要不是了，就说明用户已经点过跳过，安静地什么都不做。
+    const call = { abort: new AbortController() }
+    activeCallRef.current = call
     setAiState({ charId, status: 'thinking', preview: '' })
     try {
       const cur = useStore.getState().mysteryGames?.[chatId]
       const systemPrompt = buildCharacterSystemPrompt(cur.scriptId, charId)
       const turnPrompt = buildTurnPrompt(cur, charId)
-      let text
-      if (isVpsMemberId(seat.memberId)) {
-        text = await runMysteryTurn(chatId, charId, seat.memberId, seat.model || '', systemPrompt, turnPrompt)
-      } else {
-        const info = resolveGroupMemberInfo(seat.memberId, sessions)
-        const cfg = resolveApiMemberConfig(info.session, {
-          providers, selectedProviderId, apiKey: globalApiKey, apiBaseUrl: globalApiBaseUrl, model: globalModel,
-        })
-        if (!cfg.apiKey) {
-          throw new Error(`${info.name} 没有可用的 API Key（本会话、当前供应商、全局默认都没设置）`)
-        }
-        let full = ''
-        for await (const part of streamChat({
-          apiKey: cfg.apiKey,
-          apiBaseUrl: cfg.baseUrl,
-          // 本局单独选的模型（见开局面板）优先于该会话平时用的模型——只对
-          // 这一局这一个角色生效，从不写回会话本身的配置。
-          model: seat.model || cfg.model,
-          systemPrompt,
-          messages: [{ role: 'user', type: 'text', content: turnPrompt }],
-          workerUrl,
-          useWorkerProxy,
-          providerName: cfg.providerName,
-          disableThinking: cfg.disableThinking,
-        })) {
-          if (part.text) {
-            full += part.text
-            setAiState({ charId, status: 'thinking', preview: full })
-          }
-        }
-        text = full
-      }
-      text = (text || '').trim()
+      const text = ((await callCharacterModel(charId, seat, systemPrompt, turnPrompt, call.abort.signal, (preview) => setAiState({ charId, status: 'thinking', preview }))) || '').trim()
+      if (activeCallRef.current !== call) return // 已经被跳过，这条迟到的回复不提交
       if (!text) throw new Error('模型返回了空内容')
       commit((g) => (currentChapter(g)?.stage === 'vote'
         ? appendVote(g, charId, text, parseVote(g.scriptId, text))
         : appendSpeech(g, charId, text)))
       setAiState(null)
     } catch (e) {
+      if (activeCallRef.current !== call) return // 已经被跳过——不需要再显示错误状态
       // 失败不算"这个角色选择沉默"——不推进轮次，交给用户重试或跳过。
       failedRef.current.add(key)
       setAiState({ charId, status: 'error', message: e?.message || '调用失败' })
     } finally {
       runningRef.current.delete(key)
+      if (activeCallRef.current === call) activeCallRef.current = null
+    }
+  }
+
+  // 自由讨论里的一次自动发言——同一个角色这一章可能被调用好几次，所以不用
+  // runningRef/failedRef 那套"一章一次"的 dedupe，改用 freeRunningRef 这个
+  // 单一的"当前是否有自由发言在飞"标志，天然串行（下一条要等这一条真正
+  // 提交完才会被 8 秒定时器排上）。失败不弹错误 UI 挡住自动流程——安静地
+  // 消耗掉这一次额度，跳到下一位，避免同一个坏掉的成员反复卡住整个自由讨论。
+  const runFreeTurn = async (charId, seat) => {
+    freeRunningRef.current = true
+    const call = { abort: new AbortController() }
+    activeCallRef.current = call
+    setAiState({ charId, status: 'thinking', preview: '', free: true })
+    try {
+      const cur = useStore.getState().mysteryGames?.[chatId]
+      const systemPrompt = buildCharacterSystemPrompt(cur.scriptId, charId)
+      const turnPrompt = buildFreeSpeechPrompt(cur, charId)
+      const text = ((await callCharacterModel(charId, seat, systemPrompt, turnPrompt, call.abort.signal, (preview) => setAiState({ charId, status: 'thinking', preview, free: true }))) || '').trim()
+      if (activeCallRef.current !== call) return // 已经被跳过：不提交、不重复消耗额度
+      commit((g) => (text ? appendFreeSpeech(g, charId, text) : skipFreeSpeechTurn(g, charId)))
+    } catch {
+      if (activeCallRef.current !== call) return
+      commit((g) => skipFreeSpeechTurn(g, charId))
+    } finally {
+      if (activeCallRef.current === call) { activeCallRef.current = null; setAiState(null) }
+      freeRunningRef.current = false
     }
   }
 
@@ -153,15 +210,51 @@ export default function MysteryGameRoom({ theme, chatId, chat, onClose }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [game, actor?.charId, chapter?.id])
 
+  // 按顺序发言全部说完、且这一章是剧情章（stage:'story'）时，自动进入自由
+  // 讨论——不需要用户点任何东西。投票/揭晓章保持原样，直接走"进入下一章"。
+  useEffect(() => {
+    if (!game || game.finished || !chapter) return
+    if (chapter.stage === 'story' && isChapterComplete(game) && !isInFreeDiscussion(game)) {
+      commit((g) => enterFreeDiscussion(g))
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [game, chapter?.id])
+
+  // 自由讨论的自动驱动：每次日志变化（有人刚说完）、暂停状态变化、或刚进入
+  // 自由讨论时，都重新算一次"接下来该谁说"，留 8 秒反应时间再真的去调用。
+  // 用户开始打字（见输入框 onChange）或点了暂停，都会让这里的条件不再满足，
+  // 定时器在 effect 清理时被取消——绝不会在用户打字的时候还在后台刷消息。
+  useEffect(() => {
+    clearTimeout(freeTimerRef.current)
+    if (!game || game.finished) return
+    if (!isInFreeDiscussion(game) || isFreeDiscussionPaused(game)) return
+    if (freeRunningRef.current) return
+    const nextCharId = nextFreeActor(game)
+    if (!nextCharId) return // 大家额度都用完了，自然结束，不强求说满
+    freeTimerRef.current = setTimeout(() => {
+      const cur = useStore.getState().mysteryGames?.[chatId]
+      if (!cur || !isInFreeDiscussion(cur) || isFreeDiscussionPaused(cur) || freeRunningRef.current) return
+      runFreeTurn(nextCharId, cur.seats[nextCharId])
+    }, FREE_SPEECH_DELAY_MS)
+    return () => clearTimeout(freeTimerRef.current)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [game?.log?.length, game?.freeDiscussion?.chapterId, game?.freeDiscussion?.paused])
+
   // ---------------------------------------------------------- 用户操作
   const submitUserTurn = () => {
     const text = draft.trim()
     if (!text || !myCharId) return
     const isMyTurn = actor?.charId === myCharId
+    const cur = useStore.getState().mysteryGames?.[chatId]
     if (chapter?.stage === 'vote' && isMyTurn) {
       if (!voteTarget) return
       commit((g) => appendVote(g, myCharId, `我指认：${getCharacter(script, voteTarget)?.name}\n${text}`, voteTarget))
       setVoteTarget('')
+    } else if (cur && isInFreeDiscussion(cur)) {
+      // 自由讨论期间发的话：加进上下文，同时解除因为"用户在打字"而暂停的
+      // 状态——发送即代表这一段插话已经结束，AI 应该带着这句话继续聊，并
+      // 重新留出一段完整的反应时间（见上面那个自动驱动的 effect）。
+      commit((g) => setFreeDiscussionPaused(appendUserFreeMessage(g, myCharId, text), false))
     } else {
       // 不是自己回合时也能插话，但不占轮次（markTurn:false）——
       // 真人本来就会在别人说话中间搭腔。
@@ -170,13 +263,37 @@ export default function MysteryGameRoom({ theme, chatId, chat, onClose }) {
     setDraft('')
   }
 
+  // 自由讨论期间，用户一开始打字就立刻暂停后续 AI 发言和倒计时——不能在
+  // 用户还在打字的时候继续刷 AI 消息。清空输入框不会自动恢复，只有真正发送
+  // 或手动点"继续讨论"才会恢复，避免打到一半手滑清空又被打断的观感。
+  const handleDraftChange = (value) => {
+    setDraft(value)
+    if (!value.trim()) return
+    const cur = useStore.getState().mysteryGames?.[chatId]
+    if (cur && isInFreeDiscussion(cur) && !isFreeDiscussionPaused(cur)) {
+      commit((g) => setFreeDiscussionPaused(g, true))
+    }
+  }
+  const toggleFreeDiscussionPause = () => {
+    commit((g) => setFreeDiscussionPaused(g, !isFreeDiscussionPaused(g)))
+  }
+
   const retryAi = () => {
     if (!aiState || !chapter) return
     failedRef.current.delete(`${chapter.id}:${aiState.charId}`)
     setAiState(null)
   }
+  // 跳过必须真的作废当前请求——不只是让 UI 往下走。真正 abort 掉网络请求
+  // （AbortController），并且把 activeCallRef 清空/换掉，这样即使 VPS 那边
+  // 已经在处理、abort 没能立刻掐断，等它最终结算时也会发现自己已经不是
+  // activeCallRef 指向的那个 call 了，安静地什么都不做——不会在跳过之后
+  // 过一会儿又冒出一条回复，也不会占着 runningRef/freeRunningRef 的锁不放
+  // （abort 让那个 await 尽快真正 reject/resolve，finally 里会立刻释放锁），
+  // 不阻塞这个角色的下一次发言。
   const skipActor = () => {
     if (!actor || !chapter) return
+    activeCallRef.current?.abort.abort()
+    activeCallRef.current = null
     failedRef.current.add(`${chapter.id}:${actor.charId}`)
     commit((g) => appendSpeech(g, actor.charId, `（${getCharacter(script, actor.charId)?.name}沉默着，没有说话。）`))
     setAiState(null)
@@ -251,7 +368,7 @@ export default function MysteryGameRoom({ theme, chatId, chat, onClose }) {
 
         {aiState?.status === 'thinking' && (
           <div className="my-2 px-3 py-2 rounded-2xl text-[13px]" style={{ background: 'rgba(255,255,255,0.07)', color: '#e7dade', whiteSpace: 'pre-wrap' }}>
-            <div className="text-[10px] mb-1" style={{ color: '#c79fae' }}>{getCharacter(script, aiState.charId)?.name} 正在斟酌…</div>
+            <div className="text-[10px] mb-1" style={{ color: '#c79fae' }}>{getCharacter(script, aiState.charId)?.name} {aiState.free ? '正在接话…' : '正在斟酌…'}</div>
             {aiState.preview || '…'}
           </div>
         )}
@@ -287,13 +404,48 @@ export default function MysteryGameRoom({ theme, chatId, chat, onClose }) {
         {game.finished ? (
           <div className="text-center text-[11.5px] py-2" style={{ color: '#c79fae' }}>本局已结束。想再来一次，点右上角结束本局后重新开本。</div>
         ) : isChapterComplete(game) ? (
-          <button
-            onClick={goNextChapter}
-            className="w-full flex items-center justify-center gap-1.5"
-            style={{ border: 'none', borderRadius: 18, padding: '12px', color: '#fff', background: `linear-gradient(135deg, ${primary}, ${primaryDark})`, fontFamily: 'inherit', fontWeight: 700, fontSize: 14 }}
-          >
-            {game.chapterIndex >= script.chapters.length - 1 ? '落幕' : '进入下一章'} <ChevronRight size={16} />
-          </button>
+          <>
+            {isInFreeDiscussion(game) && (
+              <div className="flex items-center justify-between mb-1.5">
+                <span className="text-[10.5px]" style={{ color: '#b79aa5' }}>
+                  {isFreeDiscussionPaused(game) ? '自由讨论已暂停' : '自由讨论中…AI 会陆续接话'}
+                </span>
+                <button
+                  onClick={toggleFreeDiscussionPause}
+                  className="flex items-center gap-1"
+                  style={{ background: 'none', border: 'none', color: '#a98d99', fontSize: 10.5, textDecoration: 'underline', padding: 0 }}
+                >
+                  {isFreeDiscussionPaused(game) ? <><Play size={11} /> 继续讨论</> : <><Pause size={11} /> 暂停讨论</>}
+                </button>
+              </div>
+            )}
+            {isInFreeDiscussion(game) && myCharId && (
+              <div className="flex items-center gap-2 mb-2">
+                <input
+                  value={draft}
+                  onChange={(e) => handleDraftChange(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === 'Enter') submitUserTurn() }}
+                  placeholder="随时插一句话（会打断 AI 自动接话）…"
+                  style={{ flex: 1, minWidth: 0, background: 'rgba(255,255,255,0.1)', border: '1px solid rgba(255,255,255,0.14)', borderRadius: 20, padding: '10px 14px', fontSize: 14, color: '#f2e9ec', outline: 'none', fontFamily: 'inherit' }}
+                />
+                <button
+                  onClick={submitUserTurn}
+                  disabled={!draft.trim()}
+                  className="flex items-center justify-center flex-shrink-0"
+                  style={{ width: 40, height: 40, borderRadius: '50%', border: 'none', background: `linear-gradient(135deg, ${primary}, ${primaryDark})`, color: '#fff', opacity: draft.trim() ? 1 : 0.45 }}
+                >
+                  <Send size={16} />
+                </button>
+              </div>
+            )}
+            <button
+              onClick={goNextChapter}
+              className="w-full flex items-center justify-center gap-1.5"
+              style={{ border: 'none', borderRadius: 18, padding: '12px', color: '#fff', background: `linear-gradient(135deg, ${primary}, ${primaryDark})`, fontFamily: 'inherit', fontWeight: 700, fontSize: 14 }}
+            >
+              {game.chapterIndex >= script.chapters.length - 1 ? '落幕' : '进入下一章'} <ChevronRight size={16} />
+            </button>
+          </>
         ) : (
           <>
             <div className="flex items-center justify-between mb-1.5">

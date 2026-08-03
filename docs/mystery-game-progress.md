@@ -254,10 +254,104 @@ claude-code/codex 玩家的对局能正常开局、**刷新后每个角色的座
 
 ---
 
-## 5. 已知边界（写清楚，别当 bug 重修）
+## 7. 第三阶段：自由发言节奏 + CC 发言异常缓慢根因排查（2026-08-03）
 
-- AI 玩家只能是 `api` 类群成员；VPS runtime 本版不可选（原因见 1.1）。
-- 主持人不是 AI，是本地脚本；不消耗额度。
-- 一个群聊同时只有一局剧本杀；「结束本局」会清掉该群的存档。
-- 游戏发言存在前端 store，不进群聊后端的消息流——刻意如此，
-  避免把角色私密语境混进群聊后端历史。
+### 7.1 自由发言节奏
+
+按顺序发言（一人一次、顺序固定）完全没动。新增的是：**剧情章（stage:
+'story'）顺序发言全部说完后，自动进入一段自由讨论**，投票/揭晓章不受影响、
+直接照旧走"进入下一章"。
+
+- 引擎新增（`mysteryEngine.js`）：`enterFreeDiscussion`/`nextFreeActor`/
+  `appendFreeSpeech`/`appendUserFreeMessage`/`skipFreeSpeechTurn`/
+  `buildFreeSpeechPrompt`，外加 `FREE_SPEECH_LIMIT=3`（每个 AI 座位这一章
+  最多自由发言 3 次，上限不是任务，额度用完自然停，不强求说满）和
+  `FREE_SPEECH_MAX_CHARS=50`（真正的硬截断，不只是让模型自己控制）。
+  `freeDiscussion` 状态（`remaining`/`paused`/`lastSpeaker`）随存档一起
+  持久化，翻页（`advanceChapter`）时清掉，NPC/用户角色不占用额度。
+- 房间组件（`MysteryGameRoom.jsx`）：一个 8 秒的 `setTimeout`
+  （`FREE_SPEECH_DELAY_MS`）在每条自由发言之后自动排下一位，不需要逐条
+  批准；用户输入框一旦非空就立刻 `setFreeDiscussionPaused(true)` 并清掉
+  定时器，发送后解除暂停并重新计时；额外的手动"暂停讨论/继续讨论"按钮
+  只是同一个 paused 标志的另一个开关，不会变成必须逐条点击的流程；
+  "进入下一章"按钮在自由讨论期间也一直可点，用户随时能提前结束。
+- 验证：引擎级 24 项全过（额度/轮流/暂停/50 字截断/秘密隔离/投票章不进入
+  自由讨论）；真实浏览器端到端 12 项全过，包括**真实测到两条自由发言之间
+  确实有约 8 秒间隔、用户打字立即暂停且超时也不会偷偷继续、发送后重新计时
+  再继续**。
+
+### 7.2 CC 发言异常缓慢——两个真实根因（不是猜的，都是现场复现确认的）
+
+**根因一：`--setting-sources 'user'` 带进了 companion 账号自己的
+`alwaysThinkingEnabled:true` + `effortLevel:"high"`。** 这两个设置是为常驻
+大脑自己的真实关系对话调的，剧本杀这种短对白角色扮演完全不需要，而且现场
+截图确认了状态栏显示 `● high · /effort`——每一局剧本杀的每一次发言都在
+不知不觉里跑"深度思考"模式。**修复**：`--setting-sources` 改成空字符串
+（不加载任何 user/project/local 设置），额外显式加 `--effort low` 双重
+保证。
+
+**根因二（更关键，真正的"长期没反应"）：长指令被 Claude Code 自己的输入框
+当成"粘贴"，需要第二次 Enter 才会真的提交。** `tmux send-keys -l` 是把整段
+文字当一次性字符突发写进去的，短测试消息（几十字）从来没触发过，但真实
+游戏跑到中段、`buildTurnPrompt` 里累积的公开发言记录变长之后（现场用一段
+~1800 字符的真实中局 prompt 复现），输入框会把这一整段折叠显示成
+"[Pasted text #1 +N lines]"，只发一次 Enter 根本没有提交——模型那一轮压根
+没开始处理，只是安安静静地"没反应"，正好对应"轮到它时长期没有反应，用户
+等不下去才手动跳过"这个症状。现场确认过修复方式：再发一次 Enter 就立刻
+提交。**修复**：`mysteryCcSendTurn` 现在每次轮询都检查 pane 里是否还挂着
+"[Pasted text"，挂着就再发一次 Enter（最多重试 5 次），确认干净以后才继续
+按原来的完成标记逻辑等待。
+
+**排查过程中顺手炸出的第三个 bug（同一个根因的另一种表现）：** 用真实的
+中局 prompt 连续测试时发现，即使成功提交了，完成检测偶尔也会整整卡满
+110 秒超时，或者提取出空字符串——根因是 Claude Code 的 ink 界面是
+alternate-screen 模式，`tmux capture-pane -S` 能抓到的历史大致只有"一屏
+高度"，而不是无限滚动记录；tmux 会话原本只给了 `-y 24`（24 行），几轮对话
+之后旧的完成标记就会被"挤出"可截取范围，导致"数标记数量变化"这套判断逻辑
+在数量刚好没变化（挤掉一条、新增一条）时误判为"还没结束"，甚至把回复内容
+本该有的"●"开头行也一起挤没了（对应空字符串那个症状）。**修复**：把 tmux
+会话的高度从 24 改成 3000——一整局游戏的所有对话都稳稳装得下，不会再挤。
+
+**这两个真实根因的验证**：用同一段真实中局 prompt（约 1800 字符）连续测试
+5 次 CC 发言，全部成功，总耗时分别是 12.3s / 10.0s / 8.3s / 6.5s / 9.1s
+（对照修复前：同样的 prompt 曾经真实录得 33 秒一次回复，以及至少两次
+完全卡满 110 秒超时/提取失败）——诊断日志里能看到 `mystery_cc_pending_
+paste_detected` 在 5 次里有 3 次真的触发了（证明这个 bug 不是偶发，是
+常见路径），修复后全部自动恢复、不需要人工介入。
+
+**Codex 侧核对**：Codex 走的是它自己 app-server 的真实 `thread/start`/
+`turn/start` 协议，不经过任何终端截屏，天然不会有上面两个问题；核对了
+`mysteryCodexPendingByThread` 的单飞保护本来就已经在等——不需要改。
+
+**跳过必须真正作废请求（第 6 条要求）**：`MysteryGameRoom.jsx` 新增
+`activeCallRef`——每次真实调用都有自己的 `AbortController`，点"跳过"会
+真的 abort 网络请求、并把这次调用标记成"已作废"；即使 VPS 那边来不及在
+abort 那一刻就收尾，等它最终结算时也会发现自己已经不是当前调用了，安静地
+什么都不做（不提交内容、不重复消耗自由发言额度）。后端 `mysteryCcSendTurn`
+也接了同一个 abort signal，每次轮询检查一次，跳过之后会在一次轮询周期内
+（远小于 110 秒超时）就释放这个角色的忙碌锁，不阻塞它下一次发言——现场
+验证过：abort 后等 1.5 秒，同一个角色的下一次调用正常拿到真实回复。
+
+诊断日志（`mystery_cc_session_start/ready`、`mystery_cc_turn_sent`、
+`mystery_cc_pending_paste_detected`、`mystery_cc_first_content`、
+`mystery_cc_turn_complete/timeout`、`mystery_turn_received/done/error`）
+留在了正式代码里（不是一次性脚本）——量很小，只在关键节点各打一条，
+后续真的又变慢时能直接从日志里看出卡在哪一步，不用再重新排查一遍。
+
+### 7.3 涉及文件（这一阶段）
+- `src/components/GroupChat/games/mysteryEngine.js` —— 自由发言引擎逻辑。
+- `src/components/GroupChat/games/MysteryGameRoom.jsx` —— 自由讨论 UI/自动
+  驱动 + AbortController 真取消。
+- `/opt/ai-companion/channel-server.ts`（VPS 上，不在这个 git 仓库里）——
+  `--setting-sources`/`--effort` 修复、粘贴确认重试、tmux 高度、诊断日志、
+  abort signal 透传、`mysteryCcBusy` 单飞保护。
+
+### 7.4 已知边界
+- AI 玩家只能是群聊里真实存在的成员（`api` 会话 / claude-code / codex）；
+  主持人不是 AI，是本地脚本，不消耗额度。
+- 一个群聊同时只有一局剧本杀；「结束本局」会清掉该群的存档，也会清理 VPS
+  上对应角色的隔离线程/会话。
+- 游戏发言存在前端 store，不进群聊后端的消息流——刻意如此，避免把角色
+  私密语境混进群聊后端历史。
+- CC 隔离线程并发上限 4 个（保护共享 VPS 内存），超限会收到清晰错误而不是
+  静默排队。
