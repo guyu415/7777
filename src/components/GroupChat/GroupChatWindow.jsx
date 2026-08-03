@@ -145,6 +145,16 @@ export default function GroupChatWindow({ theme, chatId, onClose }) {
   const sessions = useStore((s) => s.sessions)
   const workerUrl = useStore((s) => s.workerUrl)
   const useWorkerProxy = useStore((s) => s.useWorkerProxy)
+  // Same 3-tier apiKey/baseUrl/model fallback the real single-chat send path
+  // uses (see groupApiMember.js's resolveApiMemberConfig) — read here so an
+  // 'api'-kind member configured at the provider/global level (not
+  // per-session) still resolves correctly instead of looking like "no
+  // config" forever.
+  const providers = useStore((s) => s.providers)
+  const selectedProviderId = useStore((s) => s.selectedProviderId)
+  const globalApiKey = useStore((s) => s.apiKey)
+  const globalApiBaseUrl = useStore((s) => s.apiBaseUrl)
+  const globalModel = useStore((s) => s.model)
   // THIS group chat's own user avatar — keyed by chatId, never the global/
   // per-session userAvatar (see store's own comment for why). A group with
   // no entry here just falls back to the neutral 🐣 placeholder in
@@ -168,11 +178,27 @@ export default function GroupChatWindow({ theme, chatId, onClose }) {
   const [showMenuSheet, setShowMenuSheet] = useState(false)
   const [showMemberDrawer, setShowMemberDrawer] = useState(false)
   const [showBgDrawer, setShowBgDrawer] = useState(false)
+  const [mentionFeedback, setMentionFeedback] = useState('')
+  const [startingTopic, setStartingTopic] = useState(false)
+  const [topicStarted, setTopicStarted] = useState(false)
+  // Per-pending-task, THIS-browser-only state ('thinking' while a real
+  // streamChat call for an 'api' member is in flight; 'missing_config' /
+  // 'error' when it couldn't even be attempted or genuinely failed — never
+  // silently treated as "the AI stayed quiet", see groupApiMember.js's own
+  // comment). Ephemeral — never persisted, doesn't need to be: it's purely
+  // "is my own tab currently working on this," recomputed from scratch
+  // every time this component mounts.
+  const [clientTaskState, setClientTaskState] = useState({})
   const logRef = useRef(null)
-  // Tracks pendingClientTurn ids already being fulfilled so a re-render (or
-  // a redundant group_update broadcast) never fires the same real
-  // streamChat completion twice for the same turn.
+  const dividerRef = useRef(null)
+  const lastDividerIdRef = useRef(null)
+  // Tracks pendingClientTurn ids currently in flight in THIS tab, so a
+  // re-render (or a redundant group_update broadcast) never fires the same
+  // real streamChat completion twice for the same turn.
   const fulfillingRef = useRef(new Set())
+  // Tracks pendingClientTurn ids that already failed once in THIS tab —
+  // never auto-retried; only the explicit "重试" button clears this.
+  const failedRef = useRef(new Set())
 
   useEffect(() => {
     let cancelled = false
@@ -186,28 +212,69 @@ export default function GroupChatWindow({ theme, chatId, onClose }) {
   }, [chatId])
 
   useEffect(() => {
+    const messages = chat?.messages || []
+    const lastDivider = [...messages].reverse().find((m) => m.kind === 'topic_divider')
+    if (lastDivider && lastDivider.id !== lastDividerIdRef.current) {
+      lastDividerIdRef.current = lastDivider.id
+      // A brand-new topic divider just appeared — scroll to IT, not to the
+      // bottom, so the user actually sees the "新话题" separator land.
+      requestAnimationFrame(() => dividerRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' }))
+      return
+    }
     logRef.current?.scrollTo({ top: logRef.current.scrollHeight, behavior: 'smooth' })
   }, [chat?.messages?.length])
 
-  // Fulfills any 'api'-kind member's pending turn whose session lives in
-  // THIS browser (see fulfillApiMemberTurn's own comment for why the
-  // backend can't do this itself). If no matching local session/apiKey
-  // exists — or this tab is simply closed — the pending turn just stays
-  // put, no timeout, exactly per the "只有主动跳过/移除/结束话题才取消"
-  // requirement this was built for.
+  // Attempts (or re-attempts, on manual retry) ONE 'api'-kind member's
+  // pending turn in THIS tab — the group chat page itself is the executing
+  // client, real single-chat window doesn't need to be open (see this
+  // file's own top comment). A missing-config or genuinely failed attempt
+  // is tracked locally and surfaced with a retry entry; it is NEVER
+  // reported to the backend as 'pass' (that would wrongly look like the AI
+  // chose to stay quiet, and would let the round move on as if this member
+  // had a real turn) — see groupApiMember.js's own comment.
+  const attemptFulfill = (p, session) => {
+    fulfillingRef.current.add(p.id)
+    setClientTaskState((prev) => ({ ...prev, [p.id]: { status: 'thinking' } }))
+    fulfillApiMemberTurn(chatId, p.memberId, p, session, {
+      providers, selectedProviderId, apiKey: globalApiKey, apiBaseUrl: globalApiBaseUrl, model: globalModel,
+      workerUrl, useWorkerProxy,
+    })
+      .catch((e) => {
+        failedRef.current.add(p.id)
+        setClientTaskState((prev) => ({ ...prev, [p.id]: { status: e?.code === 'missing_config' ? 'missing_config' : 'error', message: e?.message || '调用失败' } }))
+      })
+      .finally(() => fulfillingRef.current.delete(p.id))
+  }
+
+  // Auto-claims any 'api'-kind member's pending turn belonging to THIS
+  // group the moment it appears (on load, on reconnect, or mid-session) —
+  // exactly once per task (gated by fulfillingRef + failedRef so neither a
+  // re-render nor a redundant broadcast double-fires it).
   useEffect(() => {
     const pending = chat?.pendingClientTurns || []
+    const stillPendingIds = new Set(pending.map((p) => p.id))
+    setClientTaskState((prev) => {
+      let changed = false
+      const next = { ...prev }
+      for (const id of Object.keys(next)) {
+        if (!stillPendingIds.has(id)) { delete next[id]; changed = true }
+      }
+      return changed ? next : prev
+    })
     for (const p of pending) {
       if (isVpsMemberId(p.memberId)) continue // never reached for vps members anyway
-      if (fulfillingRef.current.has(p.id)) continue
+      if (fulfillingRef.current.has(p.id) || failedRef.current.has(p.id)) continue
       const info = resolveGroupMemberInfo(p.memberId, sessions)
-      if (!info.session || !info.session.apiKey) continue
-      fulfillingRef.current.add(p.id)
-      fulfillApiMemberTurn(chatId, p.memberId, p, info.session, { workerUrl, useWorkerProxy })
-        .catch((e) => console.warn('[GROUP-API-MEMBER] 提交失败:', e?.message || e))
-        .finally(() => fulfillingRef.current.delete(p.id))
+      attemptFulfill(p, info.session)
     }
-  }, [chat?.pendingClientTurns, sessions, chatId, workerUrl, useWorkerProxy])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [chat?.pendingClientTurns, sessions, chatId, workerUrl, useWorkerProxy, providers, selectedProviderId, globalApiKey, globalApiBaseUrl, globalModel])
+
+  const handleRetryClientTask = (p) => {
+    failedRef.current.delete(p.id)
+    const info = resolveGroupMemberInfo(p.memberId, sessions)
+    attemptFulfill(p, info.session)
+  }
 
   const memberInfo = (id) => resolveGroupMemberInfo(id, sessions)
 
@@ -221,11 +288,22 @@ export default function GroupChatWindow({ theme, chatId, onClose }) {
     setSending(true)
     setError(null)
     const mentions = [...mentionSel]
+    // The selected members' names go into the actual sent text (e.g.
+    // "@Codex 该你了"), never just a side-channel id array — the user must
+    // see exactly what was said, same as they typed it.
+    const mentionPrefix = mentions.length ? mentions.map((id) => `@${memberInfo(id).name}`).join(' ') + ' ' : ''
+    const finalText = mentionPrefix + trimmed
     setText('')
     setMentionSel([])
     try {
-      const result = await sendGroupMessage(chatId, trimmed, mentions)
-      if (!result?.ok) setError('发送失败，请重试')
+      const result = await sendGroupMessage(chatId, finalText, mentions)
+      if (!result?.ok) {
+        setError('发送失败，请重试')
+      } else if (mentions.length) {
+        const names = mentions.map((id) => memberInfo(id).name).join('、')
+        setMentionFeedback(`已提醒 ${names} 发言`)
+        setTimeout(() => setMentionFeedback(''), 1800)
+      }
     } catch (e) {
       setError(e.message || '发送失败，请重试')
     } finally {
@@ -234,9 +312,20 @@ export default function GroupChatWindow({ theme, chatId, onClose }) {
   }
 
   const handleNewTopic = async () => {
-    if (!chat) return
+    if (!chat || startingTopic) return
     if (!window.confirm('开始新话题？所有成员的发言额度会重置，待审批的候选会清空。')) return
-    try { await startGroupNewTopic(chatId) } catch {}
+    setStartingTopic(true)
+    try {
+      const result = await startGroupNewTopic(chatId)
+      if (result?.ok) {
+        setTopicStarted(true)
+        setTimeout(() => setTopicStarted(false), 1600)
+      }
+    } catch {
+      // no-op — a real failure just leaves the current topic in place
+    } finally {
+      setStartingTopic(false)
+    }
   }
 
   const handleApprove = async (candidateId) => {
@@ -246,7 +335,11 @@ export default function GroupChatWindow({ theme, chatId, onClose }) {
     try { await rejectGroupCandidate(chatId, candidateId) } catch {}
   }
   const handleSkipPending = async (memberId) => {
-    try { await submitGroupClientTurn(chatId, memberId, 'pass') } catch {}
+    const p = chat?.pendingClientTurns?.find((t) => t.memberId === memberId)
+    if (!p) return
+    failedRef.current.delete(p.id)
+    const scope = { requestId: p.id, channelType: p.channelType || 'group', conversationId: p.conversationId || '', groupId: chatId, topicId: p.topicId }
+    try { await submitGroupClientTurn(chatId, memberId, scope, 'pass') } catch {}
   }
 
   const handleAvatarUpload = async (e) => {
@@ -282,8 +375,14 @@ export default function GroupChatWindow({ theme, chatId, onClose }) {
             <button onClick={() => setShowMenuSheet(true)} title="群聊菜单" className="flex items-center justify-center" style={{ width: 30, height: 30, borderRadius: '50%', background: `${primary}18`, border: 'none', color: primary }}>
               <Settings size={14} />
             </button>
-            <button onClick={handleNewTopic} title="开始新话题" className="flex items-center gap-1 px-2.5 py-1.5 rounded-full text-xs" style={{ background: `${primary}18`, border: 'none', color: primary }}>
-              <RotateCcw size={12} /> 新话题
+            <button
+              onClick={handleNewTopic}
+              disabled={startingTopic}
+              title="开始新话题"
+              className="flex items-center gap-1 px-2.5 py-1.5 rounded-full text-xs"
+              style={{ background: topicStarted ? `linear-gradient(135deg, ${primary}, ${primaryDark})` : `${primary}18`, border: 'none', color: topicStarted ? '#fff' : primary, opacity: startingTopic ? 0.6 : 1 }}
+            >
+              <RotateCcw size={12} /> {topicStarted ? '已开启' : startingTopic ? '开启中…' : '新话题'}
             </button>
           </div>
         </div>
@@ -293,16 +392,25 @@ export default function GroupChatWindow({ theme, chatId, onClose }) {
             const info = memberInfo(id)
             const credits = chat.freeRemaining[id] ?? 0
             const pending = chat.pendingClientTurns?.find((t) => t.memberId === id)
+            const taskState = pending ? clientTaskState[pending.id] : null
             return (
               <div key={id} className="flex items-center gap-1.5 flex-shrink-0" style={{ color: primary }}>
                 <MemberAvatar info={info} size={30} fallback="🌸" />
                 <div className="flex flex-col">
                   <span className="text-xs font-medium" style={{ color: '#6a3f56', lineHeight: 1.2 }}>{info.name}</span>
                   {pending ? (
-                    <span className="text-[9px] flex items-center gap-1" style={{ color: '#c48a9a' }}>
-                      等待客户端响应…
-                      <button onClick={() => handleSkipPending(id)} className="underline" style={{ background: 'none', border: 'none', color: primary, padding: 0, fontSize: 9 }}>跳过</button>
-                    </span>
+                    taskState?.status === 'missing_config' || taskState?.status === 'error' ? (
+                      <span className="text-[9px] flex items-center gap-1" style={{ color: '#e07070' }}>
+                        {taskState.status === 'missing_config' ? 'API 配置缺失' : '调用失败'}
+                        <button onClick={() => handleRetryClientTask(pending)} className="underline" style={{ background: 'none', border: 'none', color: primary, padding: 0, fontSize: 9 }}>重试</button>
+                        <button onClick={() => handleSkipPending(id)} className="underline" style={{ background: 'none', border: 'none', color: '#b98a96', padding: 0, fontSize: 9 }}>跳过</button>
+                      </span>
+                    ) : (
+                      <span className="text-[9px] flex items-center gap-1" style={{ color: '#c48a9a' }}>
+                        {taskState?.status === 'thinking' ? '思考中…' : '等待客户端响应…'}
+                        <button onClick={() => handleSkipPending(id)} className="underline" style={{ background: 'none', border: 'none', color: primary, padding: 0, fontSize: 9 }}>跳过</button>
+                      </span>
+                    )
                   ) : (
                     <span className="text-[9px]" style={{ color: '#c48a9a' }}>剩余 {credits} 次自由发言</span>
                   )}
@@ -319,6 +427,16 @@ export default function GroupChatWindow({ theme, chatId, onClose }) {
           <div className="text-center text-xs" style={{ color: '#c9a2ad', paddingTop: 20 }}>群聊已创建，说点什么开始吧～</div>
         )}
         {chat.messages.map((m) => {
+          if (m.kind === 'topic_divider') {
+            const isLast = m.id === lastDividerIdRef.current
+            return (
+              <div key={m.id} ref={isLast ? dividerRef : undefined} className="flex items-center gap-2 my-3" style={{ padding: '0 8px' }}>
+                <div className="flex-1" style={{ height: 1, background: `${primary}35` }} />
+                <span className="text-[10.5px] flex-shrink-0" style={{ color: '#8b5060', fontWeight: 500 }}>{m.text}</span>
+                <div className="flex-1" style={{ height: 1, background: `${primary}35` }} />
+              </div>
+            )
+          }
           if (m.from === 'system') {
             return <div key={m.id} className="text-center text-[10.5px] my-2" style={{ color: '#c9a2ad' }}>{m.text}</div>
           }
@@ -408,6 +526,7 @@ export default function GroupChatWindow({ theme, chatId, onClose }) {
         })}
       </div>
 
+      {mentionFeedback && <div className="px-3 text-xs flex-shrink-0" style={{ color: primary, paddingBottom: 4 }}>✓ {mentionFeedback}</div>}
       {error && <div className="px-3 text-xs flex-shrink-0" style={{ color: '#e07070', paddingBottom: 4 }}>{error}</div>}
 
       {/* Input */}

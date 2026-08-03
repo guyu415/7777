@@ -446,12 +446,17 @@ export async function removeGroupMember(id, memberId) {
 }
 // Fulfills an 'api'-kind member's pending client turn (see
 // src/utils/groupApiMember.js) — action is 'speak' | 'request' | 'pass',
-// matching CC's group_speak/group_request_to_speak/group_pass tools.
-export async function submitGroupClientTurn(id, memberId, action, extra = {}) {
+// matching CC's group_speak/group_request_to_speak/group_pass tools. scope
+// carries requestId/channelType/conversationId/groupId/topicId, exactly
+// what the pending task was created with — channel-server.ts rejects the
+// submit outright if any of these no longer match the current pending
+// entry (see groupClientTurnSubmit), so a stale/late response can never be
+// misapplied.
+export async function submitGroupClientTurn(id, memberId, scope, action, extra = {}) {
   return companionJson('/group/client-turn/submit', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ id, memberId, action, ...extra }),
+    body: JSON.stringify({ id, memberId, ...scope, action, ...extra }),
   })
 }
 
