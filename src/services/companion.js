@@ -603,7 +603,7 @@ export async function getCodexState() {
 // Deliberately separate from getCodexState() so a timer-driven poll never
 // has to also pull the (potentially long) chat history on every tick.
 export async function getCodexModelStatus() {
-  return companionJson('/codex/model-status')
+  return companionJson(`/codex/model-status?_=${Date.now()}`, { cache: 'no-store' })
 }
 export async function switchCodexModel(modelId) {
   return companionJson('/codex/model/switch', {
@@ -1027,7 +1027,7 @@ export async function deleteMemoryFile(name) {
 // ---------- statusLine-fed usage/model status ----------
 
 export async function getCompanionStatus() {
-  return companionJson('/status')
+  return companionJson(`/status?_=${Date.now()}`, { cache: 'no-store' })
 }
 
 // ---------- model switch ----------
