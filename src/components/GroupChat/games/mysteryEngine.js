@@ -23,8 +23,11 @@ function newId(prefix) {
 
 // ---------------------------------------------------------------- 建局
 
-// seats: { [charId]: { kind: 'user'|'ai'|'npc', memberId?: string } }
+// seats: { [charId]: { kind: 'user'|'ai'|'npc', memberId?: string, model?: string } }
 // 没有出现在 seats 里的角色一律按 NPC 处理，所以"1 个真人 + 0 个 AI"也能开局。
+// model 只对 kind==='ai' 的座位有意义——是"这一局、这一个角色"专用的模型选择
+// （见 MysteryGameRoom.jsx 的开局面板），存进存档后刷新续玩保持不变；引擎本身
+// 不校验 model 是否真实存在，那是 UI 在选择时就该保证的。
 export function createGame(scriptId, seats) {
   const script = getScript(scriptId)
   if (!script) throw new Error(`剧本不存在：${scriptId}`)
@@ -32,7 +35,7 @@ export function createGame(scriptId, seats) {
   for (const c of script.characters) {
     const s = seats?.[c.id]
     normalized[c.id] = s && (s.kind === SEAT_USER || s.kind === SEAT_AI)
-      ? { kind: s.kind, memberId: s.memberId || null }
+      ? { kind: s.kind, memberId: s.memberId || null, model: s.kind === SEAT_AI ? (s.model || '') : undefined }
       : { kind: SEAT_NPC, memberId: null }
   }
   const state = {

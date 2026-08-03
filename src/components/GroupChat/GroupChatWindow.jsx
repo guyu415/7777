@@ -4,7 +4,7 @@ import { useStore } from '../../store'
 import { compressImage } from '../../utils/image'
 import {
   getGroupChatState, sendGroupMessage, startGroupNewTopic, approveGroupCandidate, rejectGroupCandidate,
-  submitGroupClientTurn, onGroupUpdate, clearGroupMessages, deleteGroupChat,
+  submitGroupClientTurn, onGroupUpdate, clearGroupMessages, deleteGroupChat, cleanupMysteryGame,
 } from '../../services/companion'
 import { resolveGroupMemberInfo, isVpsMemberId } from '../../utils/groupMembers'
 import { fulfillApiMemberTurn } from '../../utils/groupApiMember'
@@ -176,6 +176,11 @@ export default function GroupChatWindow({ theme, chatId, onClose }) {
   const myBg = groupChatBg?.[chatId]
   const removeGroupUserAvatar = useStore((s) => s.removeGroupUserAvatar)
   const removeGroupChatBg = useStore((s) => s.removeGroupChatBg)
+  // 这个群聊自己的剧本杀存档（如果有的话）——群聊被整个删除时一并清掉，
+  // 免得留一条再也打不开的孤儿存档；VPS 上为 claude-code/codex 单独开的
+  // 隔离线程/会话也一并请求清理（见 MysteryGameRoom.jsx 的 endGame 同款逻辑）。
+  const mysteryGame = useStore((s) => s.mysteryGames?.[chatId])
+  const clearMysteryGame = useStore((s) => s.clearMysteryGame)
 
   const [chat, setChat] = useState(null)
   const [loading, setLoading] = useState(true)
@@ -395,6 +400,13 @@ export default function GroupChatWindow({ theme, chatId, onClose }) {
       if (result?.ok) {
         removeGroupUserAvatar(chatId)
         removeGroupChatBg(chatId)
+        if (mysteryGame) {
+          const vpsCharIds = Object.entries(mysteryGame.seats)
+            .filter(([, seat]) => seat.kind === 'ai' && isVpsMemberId(seat.memberId))
+            .map(([charId]) => charId)
+          clearMysteryGame(chatId)
+          if (vpsCharIds.length) cleanupMysteryGame(chatId, vpsCharIds).catch(() => {})
+        }
         onClose()
       }
     } finally {

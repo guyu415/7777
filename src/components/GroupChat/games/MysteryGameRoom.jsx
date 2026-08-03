@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { ArrowLeft, ChevronRight, ScrollText, Send, Trash2 } from 'lucide-react'
 import { useStore } from '../../../store'
 import { streamChat } from '../../../services/claude'
+import { runMysteryTurn, getMysteryCcModels, getCodexModelStatus, cleanupMysteryGame } from '../../../services/companion'
 import { resolveGroupMemberInfo, isVpsMemberId } from '../../../utils/groupMembers'
 import { resolveApiMemberConfig } from '../../../utils/groupApiMember'
 import { MYSTERY_SCRIPTS, getScript, getCharacter } from './scripts'
@@ -66,43 +67,60 @@ export default function MysteryGameRoom({ theme, chatId, chat, onClose }) {
   }, [game?.log?.length, aiState?.preview])
 
   // ---------------------------------------------------------- 真实 AI 调用
+  //
+  // 两条真实路径，走到同一个提交点：
+  //   - 'api' 类成员：和群聊里 api 成员发言完全同一条路（groupApiMember.js），
+  //     用该会话自己的 apiKey/baseUrl 直接 streamChat，可以看到逐字预览。
+  //   - claude-code / codex：不再是"不可选"，而是真的调用 VPS 上为这一局、
+  //     这一个角色单独开的隔离线程/会话（见 companion.js 的
+  //     runMysteryTurn 和后端 channel-server.ts 的"Mystery game"一节）——
+  //     一次 HTTP 请求换一整段回复，没有逐字流式预览，但这是它们自己的真
+  //     模型在说话，而且绝不触碰它们各自真正的单聊/群聊记忆。
+  // 两条路径给的 systemPrompt/turnPrompt 完全一样（buildCharacterSystemPrompt
+  // / buildTurnPrompt），只由 charId 决定，别人的秘密/真相在这两个函数里都
+  // 拿不到——见 mysteryEngine.js 顶部的隔离说明。
   const runAiTurn = async (charId, seat) => {
     const key = `${chapter.id}:${charId}`
     if (runningRef.current.has(key)) return
     runningRef.current.add(key)
     setAiState({ charId, status: 'thinking', preview: '' })
     try {
-      const info = resolveGroupMemberInfo(seat.memberId, sessions)
-      const cfg = resolveApiMemberConfig(info.session, {
-        providers, selectedProviderId, apiKey: globalApiKey, apiBaseUrl: globalApiBaseUrl, model: globalModel,
-      })
-      if (!cfg.apiKey) {
-        throw new Error(`${info.name} 没有可用的 API Key（本会话、当前供应商、全局默认都没设置）`)
-      }
       const cur = useStore.getState().mysteryGames?.[chatId]
-      // 角色 prompt 只由 charId 决定，别人的秘密/真相在这里拿不到——
-      // 见 mysteryEngine.js 顶部的隔离说明。刻意不注入该会话自己的人设/摘要：
-      // 今晚它就是这个角色，混进"女朋友人设"只会让两套设定打架。
       const systemPrompt = buildCharacterSystemPrompt(cur.scriptId, charId)
       const turnPrompt = buildTurnPrompt(cur, charId)
-      let full = ''
-      for await (const part of streamChat({
-        apiKey: cfg.apiKey,
-        apiBaseUrl: cfg.baseUrl,
-        model: cfg.model,
-        systemPrompt,
-        messages: [{ role: 'user', type: 'text', content: turnPrompt }],
-        workerUrl,
-        useWorkerProxy,
-        providerName: cfg.providerName,
-        disableThinking: cfg.disableThinking,
-      })) {
-        if (part.text) {
-          full += part.text
-          setAiState({ charId, status: 'thinking', preview: full })
+      let text
+      if (isVpsMemberId(seat.memberId)) {
+        text = await runMysteryTurn(chatId, charId, seat.memberId, seat.model || '', systemPrompt, turnPrompt)
+      } else {
+        const info = resolveGroupMemberInfo(seat.memberId, sessions)
+        const cfg = resolveApiMemberConfig(info.session, {
+          providers, selectedProviderId, apiKey: globalApiKey, apiBaseUrl: globalApiBaseUrl, model: globalModel,
+        })
+        if (!cfg.apiKey) {
+          throw new Error(`${info.name} 没有可用的 API Key（本会话、当前供应商、全局默认都没设置）`)
         }
+        let full = ''
+        for await (const part of streamChat({
+          apiKey: cfg.apiKey,
+          apiBaseUrl: cfg.baseUrl,
+          // 本局单独选的模型（见开局面板）优先于该会话平时用的模型——只对
+          // 这一局这一个角色生效，从不写回会话本身的配置。
+          model: seat.model || cfg.model,
+          systemPrompt,
+          messages: [{ role: 'user', type: 'text', content: turnPrompt }],
+          workerUrl,
+          useWorkerProxy,
+          providerName: cfg.providerName,
+          disableThinking: cfg.disableThinking,
+        })) {
+          if (part.text) {
+            full += part.text
+            setAiState({ charId, status: 'thinking', preview: full })
+          }
+        }
+        text = full
       }
-      const text = full.trim()
+      text = (text || '').trim()
       if (!text) throw new Error('模型返回了空内容')
       commit((g) => (currentChapter(g)?.stage === 'vote'
         ? appendVote(g, charId, text, parseVote(g.scriptId, text))
@@ -168,9 +186,17 @@ export default function MysteryGameRoom({ theme, chatId, chat, onClose }) {
     setAiState(null)
     commit((g) => advanceChapter(g))
   }
+  // 结束本局：先清本地存档（用户立刻看到"没有进行中的游戏"），再尽力清理
+  // VPS 上为 claude-code/codex 这一局单独开的隔离线程/会话——两步不互相依赖，
+  // 后端清理即使失败也不影响本地存档已经清空这件事本身（不重复弹错，静默
+  // 失败即可，反正同一个 gameId 不会再被用到了）。
   const endGame = () => {
-    if (!window.confirm('结束本局？这个群聊的剧本杀存档会被清空，无法恢复。')) return
+    if (!game || !window.confirm('结束本局？这个群聊的剧本杀存档会被清空，无法恢复。')) return
+    const vpsCharIds = Object.entries(game.seats)
+      .filter(([, seat]) => seat.kind === SEAT_AI && isVpsMemberId(seat.memberId))
+      .map(([charId]) => charId)
     clearMysteryGame(chatId)
+    if (vpsCharIds.length) cleanupMysteryGame(chatId, vpsCharIds).catch(() => {})
   }
 
   // ---------------------------------------------------------- 渲染
@@ -417,21 +443,66 @@ function Section({ title, body, accent }) {
   )
 }
 
-// 开局面板：选本 → 选角。没被分到人的角色自动变 NPC，所以一个人也开得了本。
+const DEFAULT_CC_MODEL = 'claude-sonnet-4-6'
+
+// 开局面板：选本 → 选角 → （每个 AI 玩家）选这一局用哪个模型。
+// 没被分到人的角色自动变 NPC，所以一个人也开得了本。
+//
+// AI 玩家候选现在包含三种：普通 api 会话成员、claude-code、codex——三者都
+// 走同一条"这一局、这一个角色专用的隔离线程/会话"（见 companion.js 的
+// runMysteryTurn 和后端 channel-server.ts），claude-code/codex 不再需要
+// "不可选"这条限制。每种候选的"本局模型"来源不同：
+//   - claude-code：固定几个真实存在的 Claude Code 模型 ID（GET
+//     /mystery/cc-models，和 VPS 自己 /model 命令认的那份列表一致）。
+//   - codex：Codex 自己的真实模型目录（GET /codex/model-status 的
+//     models，同一份数据源头，Codex 页面自己切换模型用的也是它）。
+//   - api 会话：该会话所属供应商在设置里配置的真实模型列表（providers 里
+//     那份 models 数组），不是瞎编的。
 function SetupPanel({ theme, chat, chatId, sessions }) {
   const primary = theme?.primary || '#ff85b3'
   const primaryDark = theme?.primaryDark || '#ff6b9d'
   const setMysteryGame = useStore((s) => s.setMysteryGame)
+  const providers = useStore((s) => s.providers)
+  const selectedProviderId = useStore((s) => s.selectedProviderId)
+  const globalApiKey = useStore((s) => s.apiKey)
+  const globalApiBaseUrl = useStore((s) => s.apiBaseUrl)
+  const globalModel = useStore((s) => s.model)
   const [scriptId, setScriptId] = useState(MYSTERY_SCRIPTS[0].id)
   const [seats, setSeats] = useState({})
   const [error, setError] = useState('')
+  const [ccModels, setCcModels] = useState([DEFAULT_CC_MODEL])
+  const [codexModels, setCodexModels] = useState([])
   const script = getScript(scriptId)
 
-  // AI 玩家候选 = 这个群里的 api 类成员。两个 VPS runtime（claude-code/codex）
-  // 是一条长期会话，没有无状态单次调用入口，塞角色秘密进去既污染它们自己的
-  // 记忆也保证不了隔离——所以本版列出来但不可选，理由写在界面上。
+  useEffect(() => {
+    let cancelled = false
+    getMysteryCcModels().then((models) => { if (!cancelled && models?.length) setCcModels(models) }).catch(() => {})
+    getCodexModelStatus().then((data) => { if (!cancelled && data?.models?.length) setCodexModels(data.models) }).catch(() => {})
+    return () => { cancelled = true }
+  }, [])
+
   const candidates = (chat?.members || []).filter((id) => !isVpsMemberId(id)).map((id) => ({ id, ...resolveGroupMemberInfo(id, sessions) }))
-  const vpsMembers = (chat?.members || []).filter(isVpsMemberId).map((id) => ({ id, ...resolveGroupMemberInfo(id, sessions) }))
+  const vpsCandidates = (chat?.members || []).filter(isVpsMemberId).map((id) => ({ id, ...resolveGroupMemberInfo(id, sessions) }))
+
+  // 某个候选被选为 AI 玩家时，"本局默认模型"应该是什么——只是个初始值，
+  // 用户可以在模型下拉里立刻改掉。
+  const defaultModelFor = (memberId) => {
+    if (memberId === 'claude-code') return ccModels[0] || DEFAULT_CC_MODEL
+    if (memberId === 'codex') return codexModels[0]?.id || ''
+    const info = resolveGroupMemberInfo(memberId, sessions)
+    const cfg = resolveApiMemberConfig(info.session, { providers, selectedProviderId, apiKey: globalApiKey, apiBaseUrl: globalApiBaseUrl, model: globalModel })
+    return cfg.model || ''
+  }
+  // 某个候选可选的模型列表——三种来源，见本函数上方注释。
+  const modelOptionsFor = (memberId) => {
+    if (memberId === 'claude-code') return ccModels.map((id) => ({ id, label: id }))
+    if (memberId === 'codex') return codexModels.map((m) => ({ id: m.id, label: m.displayName || m.id }))
+    const info = resolveGroupMemberInfo(memberId, sessions)
+    const cfg = resolveApiMemberConfig(info.session, { providers, selectedProviderId, apiKey: globalApiKey, apiBaseUrl: globalApiBaseUrl, model: globalModel })
+    const provider = providers?.find((p) => p.baseUrl === cfg.baseUrl)
+    const list = provider?.models?.length ? provider.models : (cfg.model ? [cfg.model] : [])
+    return list.map((id) => ({ id, label: id }))
+  }
 
   const setSeat = (charId, value) => {
     setError('')
@@ -441,9 +512,12 @@ function SetupPanel({ theme, chat, chatId, sessions }) {
       else if (value === SEAT_USER) {
         for (const k of Object.keys(next)) if (next[k].kind === SEAT_USER) delete next[k]
         next[charId] = { kind: SEAT_USER }
-      } else next[charId] = { kind: SEAT_AI, memberId: value }
+      } else next[charId] = { kind: SEAT_AI, memberId: value, model: defaultModelFor(value) }
       return next
     })
+  }
+  const setSeatModel = (charId, model) => {
+    setSeats((prev) => (prev[charId] ? { ...prev, [charId]: { ...prev[charId], model } } : prev))
   }
 
   const start = () => {
@@ -456,6 +530,7 @@ function SetupPanel({ theme, chat, chatId, sessions }) {
 
   const aiCount = Object.values(seats).filter((s) => s.kind === SEAT_AI).length
   const npcCount = script.characters.length - Object.keys(seats).length
+  const allCandidates = [...vpsCandidates, ...candidates]
 
   return (
     <main className="flex-1 overflow-y-auto px-4 py-4" style={{ minHeight: 0 }}>
@@ -485,30 +560,39 @@ function SetupPanel({ theme, chat, chatId, sessions }) {
       {script.characters.map((c) => {
         const seat = seats[c.id]
         const value = !seat ? '' : seat.kind === SEAT_USER ? SEAT_USER : seat.memberId
+        const modelOptions = seat?.kind === SEAT_AI ? modelOptionsFor(seat.memberId) : []
         return (
           <div key={c.id} className="mb-2 px-3 py-2.5 rounded-2xl" style={{ background: 'rgba(255,255,255,0.06)' }}>
             <div style={{ fontSize: 13, fontWeight: 600, color: '#f0e4e9' }}>{c.emoji} {c.name}</div>
             <div className="text-[10.5px] mt-0.5 mb-2" style={{ color: '#a892a0' }}>{c.title}</div>
             <select
+              data-testid={`seat-${c.id}`}
               value={value}
               onChange={(e) => setSeat(c.id, e.target.value)}
               style={{ width: '100%', background: 'rgba(0,0,0,0.28)', color: '#f0e4e9', border: '1px solid rgba(255,255,255,0.14)', borderRadius: 12, padding: '8px 10px', fontSize: 12.5, fontFamily: 'inherit', outline: 'none' }}
             >
               <option value="">交给主持人（NPC）</option>
               <option value={SEAT_USER}>我来演</option>
-              {candidates.map((m) => <option key={m.id} value={m.id}>{m.name}（AI 玩家）</option>)}
+              {allCandidates.map((m) => <option key={m.id} value={m.id}>{m.name}（AI 玩家）</option>)}
             </select>
+            {seat?.kind === SEAT_AI && (
+              <select
+                data-testid={`model-${c.id}`}
+                value={seat.model || ''}
+                onChange={(e) => setSeatModel(c.id, e.target.value)}
+                disabled={!modelOptions.length}
+                style={{ width: '100%', marginTop: 6, background: 'rgba(0,0,0,0.22)', color: '#d9c6cd', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 12, padding: '7px 10px', fontSize: 11.5, fontFamily: 'inherit', outline: 'none' }}
+              >
+                {modelOptions.length === 0 && <option value="">（暂时读不到这个候选的模型列表）</option>}
+                {modelOptions.map((m) => <option key={m.id} value={m.id}>本局模型：{m.label}</option>)}
+              </select>
+            )}
           </div>
         )
       })}
 
-      {vpsMembers.length > 0 && (
-        <div className="text-[10px] mt-1 mb-2" style={{ color: '#8f7d86', lineHeight: 1.7 }}>
-          {vpsMembers.map((m) => m.name).join('、')} 本版不能当 AI 玩家：它们在 VPS 上是一条长期会话，没有单独一次性调用的入口，把角色秘密塞进去会污染它们自己的记忆，也保证不了秘密隔离。
-        </div>
-      )}
-      {candidates.length === 0 && (
-        <div className="text-[10.5px] mb-2" style={{ color: '#e0a5b0' }}>这个群里还没有可当 AI 玩家的成员（需要普通 API 会话成员）。你可以先自己演一个角色，其余交给主持人。</div>
+      {candidates.length === 0 && vpsCandidates.length === 0 && (
+        <div className="text-[10.5px] mb-2" style={{ color: '#e0a5b0' }}>这个群里还没有可当 AI 玩家的成员。你可以先自己演一个角色，其余交给主持人。</div>
       )}
       {error && <div className="text-[11px] mb-2" style={{ color: '#f0a5a5' }}>{error}</div>}
 

@@ -1071,3 +1071,44 @@ export async function setProactiveSettings(enabled) {
 export async function resetCcConversation() {
   return companionJson('/cc/reset', { method: 'POST' })
 }
+
+// ---------- Mystery game (剧本杀) — isolated CC/Codex character turns ----------
+// Every call is scoped by (gameId, charId) — the VPS spins up (and keeps
+// alive for the life of that game) a genuinely separate CC tmux session /
+// Codex thread per character, never touching either runtime's own single-
+// chat or group-chat conversation. See channel-server.ts's own "Mystery
+// game" section for the full design. This module never sees a character's
+// OTHER secrets or the script's truth — MysteryGameRoom only ever builds and
+// sends the ONE character's own system prompt + turn instruction.
+
+// Fixed Claude Code model allowlist for this game (mirrors the VPS's own
+// MODEL_IDS) — fetched rather than hardcoded here so the two never drift.
+export async function getMysteryCcModels() {
+  const data = await companionJson('/mystery/cc-models')
+  return data.models
+}
+
+// Runs exactly one real turn on that character's own isolated thread and
+// returns its reply text. Throws (never fabricates a reply) on any failure
+// — missing config, timeout, model error — same "never fake success"
+// contract every other real-model call in this app already follows.
+export async function runMysteryTurn(gameId, charId, runtime, model, systemPrompt, instruction) {
+  const data = await companionJson('/mystery/turn', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ gameId, charId, runtime, model, systemPrompt, instruction }),
+  })
+  return data.text
+}
+
+// Tears down every real CC tmux session / Codex thread this game ever
+// created for the given character ids — called when the user ends or
+// deletes the game's local archive. Idempotent (safe even for characters
+// that were NPCs or never actually got a turn).
+export async function cleanupMysteryGame(gameId, charIds) {
+  return companionJson('/mystery/cleanup', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ gameId, charIds }),
+  })
+}

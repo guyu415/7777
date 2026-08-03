@@ -137,9 +137,120 @@ AI 玩家缺 API Key 时**如实报错**并给重试/跳过，不伪装成"选�
 `npm run build` 通过（1646 modules，14.7s）。验证脚本放在会话临时目录，未入库。
 
 ### 待办 / 以后可做（本次不做）
-- [ ] VPS runtime（claude-code / codex）作为 AI 玩家：需后端提供无状态单次调用接口。
 - [ ] 第二个剧本、第二个游戏（扑克）——入口已预留，加数据即可。
 - [ ] 语音/朗读、角色立绘等表现层增强。
+
+---
+
+## 6. 第二阶段：CC / Codex 作为真正的 AI 玩家（2026-08-03）
+
+上一阶段把 claude-code/codex 列为"不可选"，理由是它们只有一条长期会话、没有
+无状态单次调用入口。这一阶段把那个入口做出来了——**不是在前端妥协，是在
+VPS 的 channel-server.ts 里给这两个 runtime 各自加了一条"这一局、这一个
+角色专用"的真实隔离线程/会话**，同时保证：不读 CC/Codex 自己的单聊或群聊
+历史、不碰 Auto Memory、只知道这一个角色自己的秘密/任务/线索、游戏内的
+角色记忆和剧情上下文在这条隔离线程里真实保留（不是每次重新灌全部上下文
+假装有记忆）。
+
+### 6.1 后端设计（/opt/ai-companion/channel-server.ts，不在这个 git 仓库里，
+直接部署在 VPS 上——见下方"涉及文件"里专门标出的一条）
+
+**Claude Code**：CC 本身只有一条常驻 tmux/MCP 会话，没有"开一条新线程"这个
+概念，所以这里是**每个 (gameId, charId) 单独起一个全新的 `claude` 进程**，
+在自己的 detached tmux 会话里：
+- `--system-prompt` **整体替换**默认系统提示——CC 自己的人设/记忆一个字都
+  不会混进来；
+- `--tools ""` 完全关掉所有工具（不能读写文件、不能跑 Bash）——这也是保证
+  Auto Memory 结构上不可能被这条隔离线程写入的根本原因，不是靠提示词自觉；
+- `--strict-mcp-config` + 一个空的 mcp 配置——CC 真正的 MCP 工具在这里一个
+  都连不上；
+- 复用同一个共享的、预先信任过一次的 scratch 目录（因为 `--tools ""` 已经
+  保证没有任何东西会读写那个目录，共享是安全的，也省得每个角色都单独弹一次
+  "是否信任这个目录"）；预先信任的做法是直接往 companion 用户自己的
+  `~/.claude.json` 的 `projects.<path>.hasTrustDialogAccepted` 写一次
+  `true`——和这台机器上常驻大脑自己预接受权限提示用的是同一个机制。
+- tmux 会话对这一局的生命周期是**常驻的**（角色在章节之间真的记得自己说过
+  什么——直接实测过：问它"我第一句话说了什么"，逐字答对），只有明确结束本局
+  /删除存档时才杀掉；有并发上限（同时最多 4 个 CC 剧本杀进程），保护这台本来
+  就吃紧的 VPS 内存。
+- 由于这类会话没有 MCP 工具通道，回复是**直接从真实终端屏幕上解析出来的**
+  （数"✻ ... for Ns"这条完成标记出现的次数，取最新一段"●"开头的内容）；
+  多行指令发送前会压成单行（tmux 没有安全的办法把带真换行的文本粘贴进这个
+  UI 而不被当成提前按了 Enter——实测验证过，粘贴带换行的文本会被拆成好几条
+  提前发送的消息）。
+
+**Codex**：本来就有真正的"线程"概念（`thread/start`/`thread/resume`），
+群聊功能自己就已经在用"每个群一条独立线程"这个模式——这里只是照搬同一个
+形状，改成"每个角色一条独立线程"，角色系统提示通过 `developerInstructions`
+在建线程时传入。
+
+两条路径统一收在一个入口 `mysteryRunTurn`，通过 `POST /mystery/turn` 暴露；
+模型选择是纯粹的单次调用参数（CC 是进程启动参数，Codex 是 turn/start 的
+`model` 覆盖），从不写回 `codexSelectedModel`或大脑自己 tmux 里的 `/model`
+——这一局选的模型绝不会影响任何一个 runtime 真正的单聊/群聊模型设置。
+
+`POST /mystery/cleanup` 杀掉某局某些角色的 CC tmux 会话、删掉持久化的
+Codex 线程 id 映射——结束本局或删除群聊时调用，幂等（角色从没被叫起来过
+也能安全调用）。
+
+### 6.2 前端改动
+- `src/services/companion.js`：`getMysteryCcModels`/`runMysteryTurn`/
+  `cleanupMysteryGame`——和这个文件里其他真实模型调用一样，失败直接抛
+  错，从不伪造成功。
+- `src/components/GroupChat/games/mysteryEngine.js`：`createGame` 的座位
+  结构从 `{kind, memberId}` 扩成 `{kind, memberId, model}`——`model` 只在
+  `kind==='ai'` 时有意义，随存档一起持久化，刷新不丢。
+- `src/components/GroupChat/games/MysteryGameRoom.jsx`：
+  - `runAiTurn` 按 `isVpsMemberId(seat.memberId)` 分两条真实路径——api 成员
+    走原来的 streamChat（现在也会带上这一局选的 `seat.model` 覆盖，不影响
+    会话自己平时用的模型）；claude-code/codex 走新的 `runMysteryTurn`。
+  - 开局面板解除了 claude-code/codex 的"不可选"限制，任何 AI 座位（api /
+    claude-code / codex）现在都多一层"本局用哪个模型"的下拉：claude-code 用
+    固定几个真实模型 ID（`/mystery/cc-models`，和 VPS `/model` 命令认的
+    那份完全一致）；codex 用它自己真实的模型目录（复用已有的
+    `/codex/model-status`）；api 会话用它所属供应商配置里真实的模型列表。
+  - 结束本局 / 删除这个群聊时，都会对这局里被分配给 claude-code/codex 的
+    角色调用一次 `cleanupMysteryGame`。
+
+### 6.3 验证记录（2026-08-03，第二阶段）
+
+**后端真实端到端（直接 curl 生产环境，不是 mock）**：
+- CC 角色收到"有人问你今天过得怎么样"，只答自己的内容，未经询问从不主动
+  透露秘密（藏了一颗草莓糖）；直接问"口袋里藏了什么"才如实交代——秘密隔离
+  在真实模型行为层面确认。
+- 同一局里第二个 CC 角色（不同秘密：怕黑）被问"口袋里藏了什么"时完全不知道
+  candy 这回事——跨角色隔离确认。
+- 第二次调用同一个角色（同一 tmux 会话）明显更快（复用而非重新起进程），
+  且能在上下文里正确使用之前说过的内容——真实的局内记忆持续性确认。
+- Codex 角色同样验证：秘密不主动透露、被直接问到时如实回答、第二次调用
+  复用同一线程明显更快。
+- `/mystery/cleanup` 调用后 `tmux list-sessions` 确认 CC 会话已消失、
+  `state/mystery-codex-threads.json` 确认对应线程 id 已被删除。
+- 全程 `curl /status` 确认大脑自己的真实模型（`claude-sonnet-5`）从未被
+  这些调用改动；`/group/list` 确认群聊功能未受影响；重启常驻大脑（部署
+  这次改动的必经步骤）后 `/health` 恢复、群聊/群成员数据从持久化文件正确
+  恢复。
+
+**前端**：`npm run build` 通过；引擎级 37 项回归全过（model 字段加入后无
+影响）；真实浏览器挂载真实组件，10 项新增检查全过——Claude Code/Codex 出现
+在选角下拉、"不可选"提示已移除、选中后出现模型下拉且能真实切换、含
+claude-code/codex 玩家的对局能正常开局、**刷新后每个角色的座位分配和本局
+模型选择原样保留**。（模型列表接口在离线测试环境里做了路由级 mock，因为
+真实网络请求需要生产环境的 CORS/登录态；后端返回的真实模型列表已经在上面
+的 curl 测试里直接验证过。）
+
+### 6.4 已知边界（写清楚，别当 bug 重修）
+- CC 隔离线程是**每个 (game, character) 一个真实 OS 进程**，同时并发上限
+  4 个——这是为了保护共享 VPS 的内存，不是随便设的数字；如果同时有很多局
+  游戏都用 CC 当玩家，超限的会收到"太多剧本杀 Claude Code 会话同时进行"
+  错误，重试即可，不会静默失败或卡死。
+- CC 这条链路没有逐字流式预览（Codex/api 成员也没有，只有 api 成员本来就
+  有的 streamChat 才有）——一次 HTTP 请求换一整段回复，等待期间界面显示
+  "思考中"。
+- 这条隔离线程会在 channel-server.ts 每次重启后丢失"进程还活着"的内存态，
+  但 CC 会话靠 tmux 会话名是确定性的（能用 `tmux has-session` 找回来，
+  只要 tmux 服务本身没死）、Codex 线程 id 持久化在文件里——两者都能在重启
+  后自然恢复，不需要额外迁移代码。
 
 ---
 
