@@ -177,6 +177,12 @@ export const useStore = create(
       // one already isn't persisted either, see partialize below — the app
       // always opens back to the plain chat view, same as before).
       currentGroupChatId: null,
+      // Each group chat's OWN user avatar, keyed by group chat id — never
+      // the global/per-session `userAvatar` above, and never an AI avatar
+      // fallback. Persisted (see partialize below) so it survives a reload;
+      // a group with no entry here just shows the neutral 🐣 placeholder,
+      // same as any single-chat session with no custom user avatar set.
+      groupUserAvatars: {},
 
       setApiKey: (key) => set({ apiKey: key }),
       setApiBaseUrl: (url) => set({ apiBaseUrl: url }),
@@ -264,6 +270,9 @@ export const useStore = create(
       })),
       setSessionUserAvatar: (sessionId, url) => set((state) => ({
         sessions: state.sessions.map(s => s.id === sessionId ? { ...s, userAvatar: url } : s)
+      })),
+      setGroupUserAvatar: (groupId, url) => set((state) => ({
+        groupUserAvatars: { ...state.groupUserAvatars, [groupId]: url }
       })),
       setSessionSignature: (sessionId, sig) => set((state) => ({
         sessions: state.sessions.map(s => s.id === sessionId ? { ...s, signature: sig } : s)
@@ -494,6 +503,7 @@ export const useStore = create(
         aiVoiceEnabled: state.aiVoiceEnabled,
         aiVoiceFrequency: state.aiVoiceFrequency,
         acWorkerUrl: state.acWorkerUrl,
+        groupUserAvatars: state.groupUserAvatars,
       }),
     }
   )
