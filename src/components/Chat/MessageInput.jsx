@@ -44,6 +44,16 @@ function FocusIcon() {
   )
 }
 
+function SocialBrowserIcon() {
+  return (
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="12" cy="12" r="9"/>
+      <line x1="3" y1="12" x2="21" y2="12"/>
+      <path d="M12 3a14 14 0 0 1 0 18 14 14 0 0 1 0-18"/>
+    </svg>
+  )
+}
+
 function PlusIcon() {
   return (
     <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -205,6 +215,15 @@ const MessageInput = forwardRef(function MessageInput({ onSend, onStartCall, onS
   const handleMenuFocus = () => {
     setMenuOpen(false)
     onOpenFocus?.()
+  }
+
+  // 云社媒浏览器入口——第一版只是人工进入 https://browser.xiaoman.xyz 的
+  // 通道（VPS 上常驻的真实 headed Chrome，见 ai-social-browser 部署），不
+  // 重做一套浏览器画面，也不在这里绑定任何 AI/自动化操作。新标签页打开，
+  // 不影响当前聊天页面状态。
+  const handleMenuSocialBrowser = () => {
+    setMenuOpen(false)
+    window.open('https://browser.xiaoman.xyz', '_blank', 'noopener,noreferrer')
   }
 
   const primaryColor = theme?.primary || '#ff85b3'
@@ -372,6 +391,7 @@ const MessageInput = forwardRef(function MessageInput({ onSend, onStartCall, onS
             disabled={!gomokuEnabled}
           />
           <MenuItem icon={<FocusIcon />} label="专注" onClick={handleMenuFocus} />
+          <MenuItem icon={<SocialBrowserIcon />} label="社媒浏览器" onClick={handleMenuSocialBrowser} />
         </div>
       </div>
     </div>
