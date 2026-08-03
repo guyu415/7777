@@ -413,6 +413,27 @@ export async function startGroupNewTopic(id) {
     body: JSON.stringify({ id }),
   })
 }
+// Wipes this group's own messages/candidates/mention grants/pending client
+// turns and starts a genuinely blank new topic with quotas reset — never
+// touches members, avatars, background, or any member's own single-chat
+// memory (see channel-server.ts's groupClearMessages).
+export async function clearGroupMessages(id) {
+  return companionJson('/group/clear-messages', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ id }),
+  })
+}
+// Deletes THIS group chat entirely (messages/topic/members/pending tasks) —
+// never a member's own single-chat window/memory/avatar/API config (see
+// channel-server.ts's groupDeleteChat).
+export async function deleteGroupChat(id) {
+  return companionJson('/group/delete', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ id }),
+  })
+}
 export async function approveGroupCandidate(id, candidateId) {
   return companionJson('/group/candidate/approve', {
     method: 'POST',

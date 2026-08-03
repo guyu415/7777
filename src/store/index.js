@@ -283,6 +283,17 @@ export const useStore = create(
       setGroupChatBg: (groupId, bg) => set((state) => ({
         groupChatBg: { ...state.groupChatBg, [groupId]: bg }
       })),
+      // Real removal (not just clearing to a falsy value) — used when a
+      // group chat is deleted, so no orphaned per-group avatar/background
+      // entry lingers in the store for an id that no longer exists.
+      removeGroupUserAvatar: (groupId) => set((state) => {
+        const { [groupId]: _removed, ...rest } = state.groupUserAvatars
+        return { groupUserAvatars: rest }
+      }),
+      removeGroupChatBg: (groupId) => set((state) => {
+        const { [groupId]: _removed, ...rest } = state.groupChatBg
+        return { groupChatBg: rest }
+      }),
       setSessionSignature: (sessionId, sig) => set((state) => ({
         sessions: state.sessions.map(s => s.id === sessionId ? { ...s, signature: sig } : s)
       })),

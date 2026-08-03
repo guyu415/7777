@@ -1,15 +1,16 @@
 import { useEffect, useRef, useState } from 'react'
-import { Menu, RotateCcw, Send, Check, X as XIcon, Settings, Users, Image as ImageIcon } from 'lucide-react'
+import { Menu, RotateCcw, Send, Check, X as XIcon, Settings, Users, Image as ImageIcon, Sliders } from 'lucide-react'
 import { useStore } from '../../store'
 import { compressImage } from '../../utils/image'
 import {
   getGroupChatState, sendGroupMessage, startGroupNewTopic, approveGroupCandidate, rejectGroupCandidate,
-  submitGroupClientTurn, onGroupUpdate,
+  submitGroupClientTurn, onGroupUpdate, clearGroupMessages, deleteGroupChat,
 } from '../../services/companion'
 import { resolveGroupMemberInfo, isVpsMemberId } from '../../utils/groupMembers'
 import { fulfillApiMemberTurn } from '../../utils/groupApiMember'
 import GroupMemberDrawer from './GroupMemberDrawer'
 import GroupBackgroundDrawer from './GroupBackgroundDrawer'
+import GroupSettingsDrawer from './GroupSettingsDrawer'
 import GroupChatBackground from './GroupChatBackground'
 
 // fallback is context-specific ('🐣' for the user, '🌸' for an AI member —
@@ -91,12 +92,13 @@ function GroupUserAvatarModal({ theme, avatar, onUpload, onReset, onClose }) {
 // fans out to the three group-chat-only settings entries. Each of its own
 // destinations (member drawer / background drawer / avatar modal) is itself
 // its own bottom sheet or compact modal; this sheet is just the launcher.
-function GroupMenuSheet({ theme, onPickAvatar, onPickMembers, onPickBg, onClose }) {
+function GroupMenuSheet({ theme, onPickAvatar, onPickMembers, onPickBg, onPickSettings, onClose }) {
   const primary = theme?.primary || '#ff85b3'
   const rows = [
     { key: 'avatar', label: '我的头像', icon: <Settings size={16} />, onClick: onPickAvatar },
     { key: 'members', label: '群成员', icon: <Users size={16} />, onClick: onPickMembers },
     { key: 'bg', label: '聊天背景', icon: <ImageIcon size={16} />, onClick: onPickBg },
+    { key: 'settings', label: '群聊设置', icon: <Sliders size={16} />, onClick: onPickSettings },
   ]
   return (
     <div className="fixed inset-0 flex items-end" style={{ zIndex: 66, background: 'rgba(0,0,0,0.28)', backdropFilter: 'blur(4px)' }} onClick={onClose}>
@@ -167,6 +169,8 @@ export default function GroupChatWindow({ theme, chatId, onClose }) {
   const groupChatBg = useStore((s) => s.groupChatBg)
   const setGroupChatBg = useStore((s) => s.setGroupChatBg)
   const myBg = groupChatBg?.[chatId]
+  const removeGroupUserAvatar = useStore((s) => s.removeGroupUserAvatar)
+  const removeGroupChatBg = useStore((s) => s.removeGroupChatBg)
 
   const [chat, setChat] = useState(null)
   const [loading, setLoading] = useState(true)
@@ -178,6 +182,8 @@ export default function GroupChatWindow({ theme, chatId, onClose }) {
   const [showMenuSheet, setShowMenuSheet] = useState(false)
   const [showMemberDrawer, setShowMemberDrawer] = useState(false)
   const [showBgDrawer, setShowBgDrawer] = useState(false)
+  const [showSettingsDrawer, setShowSettingsDrawer] = useState(false)
+  const [settingsBusy, setSettingsBusy] = useState(false)
   const [mentionFeedback, setMentionFeedback] = useState('')
   const [startingTopic, setStartingTopic] = useState(false)
   const [topicStarted, setTopicStarted] = useState(false)
@@ -338,7 +344,7 @@ export default function GroupChatWindow({ theme, chatId, onClose }) {
     const p = chat?.pendingClientTurns?.find((t) => t.memberId === memberId)
     if (!p) return
     failedRef.current.delete(p.id)
-    const scope = { requestId: p.id, channelType: p.channelType || 'group', conversationId: p.conversationId || '', groupId: chatId, topicId: p.topicId }
+    const scope = { requestId: p.id, turnId: p.id, channelType: p.channelType || 'group', conversationId: p.conversationId || '', groupId: chatId, topicId: p.topicId }
     try { await submitGroupClientTurn(chatId, memberId, scope, 'pass') } catch {}
   }
 
@@ -352,6 +358,41 @@ export default function GroupChatWindow({ theme, chatId, onClose }) {
   const handleAvatarReset = () => setGroupUserAvatar(chatId, '')
   const handleBgUpload = (bg) => setGroupChatBg(chatId, bg)
   const handleBgReset = () => setGroupChatBg(chatId, null)
+
+  // Wipes this group's own messages/candidates/mention grants/pending
+  // client turns server-side and starts a blank new topic with quotas
+  // reset — members/avatars/background/settings and every member's own
+  // single-chat memory are all untouched (see channel-server.ts's
+  // groupClearMessages, which has no access to single-chat data at all).
+  const handleClearMessages = async () => {
+    setSettingsBusy(true)
+    try {
+      const result = await clearGroupMessages(chatId)
+      if (result?.ok) setChat(result.chat)
+    } finally {
+      setSettingsBusy(false)
+    }
+  }
+
+  // Deletes THIS group entirely and returns to the group list — never
+  // touches any member's own single-chat window/memory/avatar/API config,
+  // which live in the frontend's `sessions` store and are never reached by
+  // groupDeleteChat. Also cleans up this group's own client-side avatar/
+  // background entries so nothing orphaned lingers for an id that no
+  // longer exists.
+  const handleDeleteGroup = async () => {
+    setSettingsBusy(true)
+    try {
+      const result = await deleteGroupChat(chatId)
+      if (result?.ok) {
+        removeGroupUserAvatar(chatId)
+        removeGroupChatBg(chatId)
+        onClose()
+      }
+    } finally {
+      setSettingsBusy(false)
+    }
+  }
 
   if (loading) {
     return <div className="flex items-center justify-center h-full text-sm" style={{ color: '#8b5060' }}>加载中…</div>
@@ -397,22 +438,22 @@ export default function GroupChatWindow({ theme, chatId, onClose }) {
               <div key={id} className="flex items-center gap-1.5 flex-shrink-0" style={{ color: primary }}>
                 <MemberAvatar info={info} size={30} fallback="🌸" />
                 <div className="flex flex-col">
-                  <span className="text-xs font-medium" style={{ color: '#6a3f56', lineHeight: 1.2 }}>{info.name}</span>
+                  <span className="text-xs font-semibold" style={{ color: '#2e1c26', lineHeight: 1.2 }}>{info.name}</span>
                   {pending ? (
                     taskState?.status === 'missing_config' || taskState?.status === 'error' ? (
-                      <span className="text-[9px] flex items-center gap-1" style={{ color: '#e07070' }}>
+                      <span className="text-[10px] font-medium flex items-center gap-1" style={{ color: '#8a1f1f' }}>
                         {taskState.status === 'missing_config' ? 'API 配置缺失' : '调用失败'}
-                        <button onClick={() => handleRetryClientTask(pending)} className="underline" style={{ background: 'none', border: 'none', color: primary, padding: 0, fontSize: 9 }}>重试</button>
-                        <button onClick={() => handleSkipPending(id)} className="underline" style={{ background: 'none', border: 'none', color: '#b98a96', padding: 0, fontSize: 9 }}>跳过</button>
+                        <button onClick={() => handleRetryClientTask(pending)} className="underline font-semibold" style={{ background: 'none', border: 'none', color: '#2e1c26', padding: 0, fontSize: 10 }}>重试</button>
+                        <button onClick={() => handleSkipPending(id)} className="underline font-semibold" style={{ background: 'none', border: 'none', color: '#2e1c26', padding: 0, fontSize: 10 }}>跳过</button>
                       </span>
                     ) : (
-                      <span className="text-[9px] flex items-center gap-1" style={{ color: '#c48a9a' }}>
+                      <span className="text-[10px] font-medium flex items-center gap-1" style={{ color: '#2e1c26' }}>
                         {taskState?.status === 'thinking' ? '思考中…' : '等待客户端响应…'}
-                        <button onClick={() => handleSkipPending(id)} className="underline" style={{ background: 'none', border: 'none', color: primary, padding: 0, fontSize: 9 }}>跳过</button>
+                        <button onClick={() => handleSkipPending(id)} className="underline font-semibold" style={{ background: 'none', border: 'none', color: '#2e1c26', padding: 0, fontSize: 10 }}>跳过</button>
                       </span>
                     )
                   ) : (
-                    <span className="text-[9px]" style={{ color: '#c48a9a' }}>剩余 {credits} 次自由发言</span>
+                    <span className="text-[10px] font-medium" style={{ color: '#2e1c26' }}>剩余 {credits} 次自由发言</span>
                   )}
                 </div>
               </div>
@@ -565,6 +606,7 @@ export default function GroupChatWindow({ theme, chatId, onClose }) {
           onPickAvatar={() => { setShowMenuSheet(false); setShowAvatarModal(true) }}
           onPickMembers={() => { setShowMenuSheet(false); setShowMemberDrawer(true) }}
           onPickBg={() => { setShowMenuSheet(false); setShowBgDrawer(true) }}
+          onPickSettings={() => { setShowMenuSheet(false); setShowSettingsDrawer(true) }}
           onClose={() => setShowMenuSheet(false)}
         />
       )}
@@ -582,6 +624,15 @@ export default function GroupChatWindow({ theme, chatId, onClose }) {
           onUpload={handleBgUpload}
           onReset={handleBgReset}
           onClose={() => setShowBgDrawer(false)}
+        />
+      )}
+      {showSettingsDrawer && (
+        <GroupSettingsDrawer
+          theme={theme}
+          busy={settingsBusy}
+          onClearMessages={handleClearMessages}
+          onDeleteGroup={handleDeleteGroup}
+          onClose={() => setShowSettingsDrawer(false)}
         />
       )}
     </div>
