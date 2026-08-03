@@ -189,6 +189,12 @@ export const useStore = create(
       // GroupChatWindow.jsx). Never the single-chat chatBg — independent
       // per group, never affects any single-chat window or other group.
       groupChatBg: {},
+      // 每个群聊自己的剧本杀存档，按群聊 id 分开：{ [chatId]: GameState }。
+      // GameState 是 mysteryEngine.js 产出的普通对象（选本、座位、章节、
+      // 发言日志、票型），所以持久化就是原样存进 localStorage —— 关掉页面、
+      // 刷新、换标签页回来都能接着玩。一个群聊同时只有一局；"结束本局"
+      // 走 clearMysteryGame 把这条删掉。
+      mysteryGames: {},
 
       setApiKey: (key) => set({ apiKey: key }),
       setApiBaseUrl: (url) => set({ apiBaseUrl: url }),
@@ -293,6 +299,15 @@ export const useStore = create(
       removeGroupChatBg: (groupId) => set((state) => {
         const { [groupId]: _removed, ...rest } = state.groupChatBg
         return { groupChatBg: rest }
+      }),
+      // 整局覆盖式写入：引擎是纯函数，每次推进都返回一个全新的 GameState，
+      // 这里直接换掉那一格，不做增量合并（省得两套真相源）。
+      setMysteryGame: (groupId, game) => set((state) => ({
+        mysteryGames: { ...state.mysteryGames, [groupId]: game }
+      })),
+      clearMysteryGame: (groupId) => set((state) => {
+        const { [groupId]: _removed, ...rest } = state.mysteryGames
+        return { mysteryGames: rest }
       }),
       setSessionSignature: (sessionId, sig) => set((state) => ({
         sessions: state.sessions.map(s => s.id === sessionId ? { ...s, signature: sig } : s)
@@ -525,6 +540,7 @@ export const useStore = create(
         acWorkerUrl: state.acWorkerUrl,
         groupUserAvatars: state.groupUserAvatars,
         groupChatBg: state.groupChatBg,
+        mysteryGames: state.mysteryGames,
       }),
     }
   )

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { Menu, RotateCcw, Send, Check, X as XIcon, Settings, Users, Image as ImageIcon, Sliders } from 'lucide-react'
+import { Menu, RotateCcw, Send, Check, X as XIcon, Settings, Users, Image as ImageIcon, Sliders, Dices } from 'lucide-react'
 import { useStore } from '../../store'
 import { compressImage } from '../../utils/image'
 import {
@@ -12,6 +12,8 @@ import GroupMemberDrawer from './GroupMemberDrawer'
 import GroupBackgroundDrawer from './GroupBackgroundDrawer'
 import GroupSettingsDrawer from './GroupSettingsDrawer'
 import GroupChatBackground from './GroupChatBackground'
+import GameHubSheet from './games/GameHubSheet'
+import MysteryGameRoom from './games/MysteryGameRoom'
 
 // fallback is context-specific ('🐣' for the user, '🌸' for an AI member —
 // same neutral placeholders the rest of the app already uses, e.g.
@@ -92,12 +94,15 @@ function GroupUserAvatarModal({ theme, avatar, onUpload, onReset, onClose }) {
 // fans out to the three group-chat-only settings entries. Each of its own
 // destinations (member drawer / background drawer / avatar modal) is itself
 // its own bottom sheet or compact modal; this sheet is just the launcher.
-function GroupMenuSheet({ theme, onPickAvatar, onPickMembers, onPickBg, onPickSettings, onClose }) {
+function GroupMenuSheet({ theme, onPickAvatar, onPickMembers, onPickBg, onPickGames, onPickSettings, onClose }) {
   const primary = theme?.primary || '#ff85b3'
   const rows = [
     { key: 'avatar', label: '我的头像', icon: <Settings size={16} />, onClick: onPickAvatar },
     { key: 'members', label: '群成员', icon: <Users size={16} />, onClick: onPickMembers },
     { key: 'bg', label: '聊天背景', icon: <ImageIcon size={16} />, onClick: onPickBg },
+    // 小游戏总入口——以后加扑克等桌游都挂在这一个入口下（见 games/gameRegistry.js），
+    // 不会再往这个菜单里堆新行。
+    { key: 'games', label: '小游戏', icon: <Dices size={16} />, onClick: onPickGames },
     { key: 'settings', label: '群聊设置', icon: <Sliders size={16} />, onClick: onPickSettings },
   ]
   return (
@@ -183,6 +188,9 @@ export default function GroupChatWindow({ theme, chatId, onClose }) {
   const [showMemberDrawer, setShowMemberDrawer] = useState(false)
   const [showBgDrawer, setShowBgDrawer] = useState(false)
   const [showSettingsDrawer, setShowSettingsDrawer] = useState(false)
+  // 小游戏：'hub' 是游戏列表弹层，'mystery' 是剧本杀房间。房间自己从 store 里
+  // 读这个群聊的存档（mysteryGames[chatId]），所以关掉再打开就是续玩。
+  const [gameView, setGameView] = useState(null)
   const [settingsBusy, setSettingsBusy] = useState(false)
   const [mentionFeedback, setMentionFeedback] = useState('')
   const [startingTopic, setStartingTopic] = useState(false)
@@ -606,6 +614,7 @@ export default function GroupChatWindow({ theme, chatId, onClose }) {
           onPickAvatar={() => { setShowMenuSheet(false); setShowAvatarModal(true) }}
           onPickMembers={() => { setShowMenuSheet(false); setShowMemberDrawer(true) }}
           onPickBg={() => { setShowMenuSheet(false); setShowBgDrawer(true) }}
+          onPickGames={() => { setShowMenuSheet(false); setGameView('hub') }}
           onPickSettings={() => { setShowMenuSheet(false); setShowSettingsDrawer(true) }}
           onClose={() => setShowMenuSheet(false)}
         />
@@ -634,6 +643,12 @@ export default function GroupChatWindow({ theme, chatId, onClose }) {
           onDeleteGroup={handleDeleteGroup}
           onClose={() => setShowSettingsDrawer(false)}
         />
+      )}
+      {gameView === 'hub' && (
+        <GameHubSheet theme={theme} onPick={(id) => setGameView(id)} onClose={() => setGameView(null)} />
+      )}
+      {gameView === 'mystery' && (
+        <MysteryGameRoom theme={theme} chatId={chatId} chat={chat} onClose={() => setGameView(null)} />
       )}
     </div>
   )
