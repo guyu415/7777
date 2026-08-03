@@ -183,6 +183,12 @@ export const useStore = create(
       // a group with no entry here just shows the neutral 🐣 placeholder,
       // same as any single-chat session with no custom user avatar set.
       groupUserAvatars: {},
+      // Each group chat's OWN chat background, keyed by group chat id —
+      // { type: 'image', value: dataUrl } for a custom uploaded background,
+      // or absent/undefined for the default sage frosted-glass look (see
+      // GroupChatWindow.jsx). Never the single-chat chatBg — independent
+      // per group, never affects any single-chat window or other group.
+      groupChatBg: {},
 
       setApiKey: (key) => set({ apiKey: key }),
       setApiBaseUrl: (url) => set({ apiBaseUrl: url }),
@@ -273,6 +279,9 @@ export const useStore = create(
       })),
       setGroupUserAvatar: (groupId, url) => set((state) => ({
         groupUserAvatars: { ...state.groupUserAvatars, [groupId]: url }
+      })),
+      setGroupChatBg: (groupId, bg) => set((state) => ({
+        groupChatBg: { ...state.groupChatBg, [groupId]: bg }
       })),
       setSessionSignature: (sessionId, sig) => set((state) => ({
         sessions: state.sessions.map(s => s.id === sessionId ? { ...s, signature: sig } : s)
@@ -504,6 +513,7 @@ export const useStore = create(
         aiVoiceFrequency: state.aiVoiceFrequency,
         acWorkerUrl: state.acWorkerUrl,
         groupUserAvatars: state.groupUserAvatars,
+        groupChatBg: state.groupChatBg,
       }),
     }
   )

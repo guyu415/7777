@@ -1,12 +1,16 @@
 import { useEffect, useRef, useState } from 'react'
-import { Menu, RotateCcw, Send, Check, X as XIcon, Settings } from 'lucide-react'
+import { Menu, RotateCcw, Send, Check, X as XIcon, Settings, Users, Image as ImageIcon } from 'lucide-react'
 import { useStore } from '../../store'
 import { compressImage } from '../../utils/image'
 import {
   getGroupChatState, sendGroupMessage, startGroupNewTopic, approveGroupCandidate, rejectGroupCandidate,
-  onGroupUpdate,
+  submitGroupClientTurn, onGroupUpdate,
 } from '../../services/companion'
-import { resolveGroupMemberInfo, GROUP_RUNTIME_LABEL } from '../../utils/groupMembers'
+import { resolveGroupMemberInfo, isVpsMemberId } from '../../utils/groupMembers'
+import { fulfillApiMemberTurn } from '../../utils/groupApiMember'
+import GroupMemberDrawer from './GroupMemberDrawer'
+import GroupBackgroundDrawer from './GroupBackgroundDrawer'
+import GroupChatBackground from './GroupChatBackground'
 
 // fallback is context-specific ('🐣' for the user, '🌸' for an AI member —
 // same neutral placeholders the rest of the app already uses, e.g.
@@ -42,8 +46,8 @@ async function readAvatarFile(file) {
 }
 
 // Compact modal for THIS group chat's own user avatar only — never touches
-// any session's or AI's avatar. Opened either from the header's settings
-// button or by tapping the user's own avatar next to their message.
+// any session's or AI's avatar. Opened from the "群聊菜单" sheet or by
+// tapping the user's own avatar next to their message.
 function GroupUserAvatarModal({ theme, avatar, onUpload, onReset, onClose }) {
   const primary = theme?.primary || '#ff85b3'
   const primaryDark = theme?.primaryDark || '#ff6b9d'
@@ -83,15 +87,64 @@ function GroupUserAvatarModal({ theme, avatar, onUpload, onReset, onClose }) {
   )
 }
 
+// Small bottom action sheet — WeChat-style, never a top-popped panel — that
+// fans out to the three group-chat-only settings entries. Each of its own
+// destinations (member drawer / background drawer / avatar modal) is itself
+// its own bottom sheet or compact modal; this sheet is just the launcher.
+function GroupMenuSheet({ theme, onPickAvatar, onPickMembers, onPickBg, onClose }) {
+  const primary = theme?.primary || '#ff85b3'
+  const rows = [
+    { key: 'avatar', label: '我的头像', icon: <Settings size={16} />, onClick: onPickAvatar },
+    { key: 'members', label: '群成员', icon: <Users size={16} />, onClick: onPickMembers },
+    { key: 'bg', label: '聊天背景', icon: <ImageIcon size={16} />, onClick: onPickBg },
+  ]
+  return (
+    <div className="fixed inset-0 flex items-end" style={{ zIndex: 66, background: 'rgba(0,0,0,0.28)', backdropFilter: 'blur(4px)' }} onClick={onClose}>
+      <div
+        onClick={(e) => e.stopPropagation()}
+        className="w-full"
+        style={{
+          background: 'rgba(255,255,255,0.97)', backdropFilter: 'blur(20px)',
+          borderTopLeftRadius: 24, borderTopRightRadius: 24,
+          boxShadow: `0 -8px 32px ${primary}30`,
+          paddingTop: 8,
+          paddingBottom: 'max(14px, env(safe-area-inset-bottom, 0px))',
+        }}
+      >
+        {rows.map((r) => (
+          <button
+            key={r.key}
+            onClick={r.onClick}
+            className="w-full flex items-center gap-3 px-5"
+            style={{ padding: '13px 20px', color: '#5a3548', border: 'none', background: 'transparent', borderBottom: '1px solid rgba(0,0,0,0.04)' }}
+          >
+            <span style={{ color: primary }}>{r.icon}</span>
+            <span className="text-sm">{r.label}</span>
+          </button>
+        ))}
+        <button onClick={onClose} className="w-full text-center text-xs" style={{ padding: '12px 0 4px', color: '#b98a96', border: 'none', background: 'transparent' }}>
+          取消
+        </button>
+      </div>
+    </div>
+  )
+}
+
 // A real, independently persisted session (never mixed into any member's
 // own single-chat history — see channel-server.ts's Group chat section).
 // All orchestration (free-speech quota, candidate approval, @ mention
-// grants, round-robin bounding) lives server-side; this component only
-// renders state and posts the user's own message/approval actions.
+// grants, round-robin bounding, member add/remove) lives server-side; this
+// component only renders state and posts the user's own message/approval/
+// membership actions. The one piece of REAL work this component does do is
+// fulfilling an 'api'-kind member's pending client turn (see the effect
+// below) — that member has no backend credentials, so the browser holding
+// its session is the only place that can actually call its model.
 export default function GroupChatWindow({ theme, chatId, onClose }) {
   const primary = theme?.primary || '#ff85b3'
   const primaryDark = theme?.primaryDark || '#ff6b9d'
   const sessions = useStore((s) => s.sessions)
+  const workerUrl = useStore((s) => s.workerUrl)
+  const useWorkerProxy = useStore((s) => s.useWorkerProxy)
   // THIS group chat's own user avatar — keyed by chatId, never the global/
   // per-session userAvatar (see store's own comment for why). A group with
   // no entry here just falls back to the neutral 🐣 placeholder in
@@ -99,6 +152,11 @@ export default function GroupChatWindow({ theme, chatId, onClose }) {
   const groupUserAvatars = useStore((s) => s.groupUserAvatars)
   const setGroupUserAvatar = useStore((s) => s.setGroupUserAvatar)
   const myAvatar = groupUserAvatars?.[chatId] || ''
+  // THIS group chat's own background — keyed by chatId, independent of
+  // single-chat/global chatBg and of every other group chat.
+  const groupChatBg = useStore((s) => s.groupChatBg)
+  const setGroupChatBg = useStore((s) => s.setGroupChatBg)
+  const myBg = groupChatBg?.[chatId]
 
   const [chat, setChat] = useState(null)
   const [loading, setLoading] = useState(true)
@@ -107,7 +165,14 @@ export default function GroupChatWindow({ theme, chatId, onClose }) {
   const [mentionSel, setMentionSel] = useState([])
   const [sending, setSending] = useState(false)
   const [showAvatarModal, setShowAvatarModal] = useState(false)
+  const [showMenuSheet, setShowMenuSheet] = useState(false)
+  const [showMemberDrawer, setShowMemberDrawer] = useState(false)
+  const [showBgDrawer, setShowBgDrawer] = useState(false)
   const logRef = useRef(null)
+  // Tracks pendingClientTurn ids already being fulfilled so a re-render (or
+  // a redundant group_update broadcast) never fires the same real
+  // streamChat completion twice for the same turn.
+  const fulfillingRef = useRef(new Set())
 
   useEffect(() => {
     let cancelled = false
@@ -124,10 +189,30 @@ export default function GroupChatWindow({ theme, chatId, onClose }) {
     logRef.current?.scrollTo({ top: logRef.current.scrollHeight, behavior: 'smooth' })
   }, [chat?.messages?.length])
 
-  const memberInfo = (runtime) => resolveGroupMemberInfo(runtime, sessions)
+  // Fulfills any 'api'-kind member's pending turn whose session lives in
+  // THIS browser (see fulfillApiMemberTurn's own comment for why the
+  // backend can't do this itself). If no matching local session/apiKey
+  // exists — or this tab is simply closed — the pending turn just stays
+  // put, no timeout, exactly per the "只有主动跳过/移除/结束话题才取消"
+  // requirement this was built for.
+  useEffect(() => {
+    const pending = chat?.pendingClientTurns || []
+    for (const p of pending) {
+      if (isVpsMemberId(p.memberId)) continue // never reached for vps members anyway
+      if (fulfillingRef.current.has(p.id)) continue
+      const info = resolveGroupMemberInfo(p.memberId, sessions)
+      if (!info.session || !info.session.apiKey) continue
+      fulfillingRef.current.add(p.id)
+      fulfillApiMemberTurn(chatId, p.memberId, p, info.session, { workerUrl, useWorkerProxy })
+        .catch((e) => console.warn('[GROUP-API-MEMBER] 提交失败:', e?.message || e))
+        .finally(() => fulfillingRef.current.delete(p.id))
+    }
+  }, [chat?.pendingClientTurns, sessions, chatId, workerUrl, useWorkerProxy])
 
-  const toggleMention = (runtime) => {
-    setMentionSel((prev) => prev.includes(runtime) ? prev.filter((r) => r !== runtime) : [...prev, runtime])
+  const memberInfo = (id) => resolveGroupMemberInfo(id, sessions)
+
+  const toggleMention = (id) => {
+    setMentionSel((prev) => prev.includes(id) ? prev.filter((r) => r !== id) : [...prev, id])
   }
 
   const handleSend = async () => {
@@ -160,6 +245,9 @@ export default function GroupChatWindow({ theme, chatId, onClose }) {
   const handleReject = async (candidateId) => {
     try { await rejectGroupCandidate(chatId, candidateId) } catch {}
   }
+  const handleSkipPending = async (memberId) => {
+    try { await submitGroupClientTurn(chatId, memberId, 'pass') } catch {}
+  }
 
   const handleAvatarUpload = async (e) => {
     const file = e.target.files?.[0]
@@ -169,6 +257,8 @@ export default function GroupChatWindow({ theme, chatId, onClose }) {
     setGroupUserAvatar(chatId, dataUrl)
   }
   const handleAvatarReset = () => setGroupUserAvatar(chatId, '')
+  const handleBgUpload = (bg) => setGroupChatBg(chatId, bg)
+  const handleBgReset = () => setGroupChatBg(chatId, null)
 
   if (loading) {
     return <div className="flex items-center justify-center h-full text-sm" style={{ color: '#8b5060' }}>加载中…</div>
@@ -178,7 +268,9 @@ export default function GroupChatWindow({ theme, chatId, onClose }) {
   }
 
   return (
-    <div className="fixed inset-0 flex flex-col" style={{ zIndex: 40, background: 'linear-gradient(165deg, #fce4ec 0%, #f8bbd0 30%, #ffeef5 70%, #fff0f6 100%)' }}>
+    <div className="fixed inset-0" style={{ zIndex: 40 }}>
+      <GroupChatBackground bg={myBg} />
+      <div className="relative flex flex-col h-full" style={{ zIndex: 1 }}>
       {/* Header */}
       <div className="flex-shrink-0" style={{ paddingTop: 'calc(env(safe-area-inset-top, 0px) + 10px)' }}>
         <div className="flex items-center justify-between px-3">
@@ -187,7 +279,7 @@ export default function GroupChatWindow({ theme, chatId, onClose }) {
           </button>
           <span className="font-semibold text-sm truncate" style={{ color: '#8b5060', maxWidth: '45%' }}>{chat.name}</span>
           <div className="flex items-center gap-1.5 flex-shrink-0">
-            <button onClick={() => setShowAvatarModal(true)} title="我的头像" className="flex items-center justify-center" style={{ width: 30, height: 30, borderRadius: '50%', background: `${primary}18`, border: 'none', color: primary }}>
+            <button onClick={() => setShowMenuSheet(true)} title="群聊菜单" className="flex items-center justify-center" style={{ width: 30, height: 30, borderRadius: '50%', background: `${primary}18`, border: 'none', color: primary }}>
               <Settings size={14} />
             </button>
             <button onClick={handleNewTopic} title="开始新话题" className="flex items-center gap-1 px-2.5 py-1.5 rounded-full text-xs" style={{ background: `${primary}18`, border: 'none', color: primary }}>
@@ -197,15 +289,23 @@ export default function GroupChatWindow({ theme, chatId, onClose }) {
         </div>
         {/* Member bar — compact, horizontal, never overflows the viewport */}
         <div className="flex items-center gap-3 px-3 overflow-x-auto" style={{ paddingTop: 8, paddingBottom: 8 }}>
-          {chat.members.map((runtime) => {
-            const info = memberInfo(runtime)
-            const credits = chat.freeRemaining[runtime] ?? 0
+          {chat.members.map((id) => {
+            const info = memberInfo(id)
+            const credits = chat.freeRemaining[id] ?? 0
+            const pending = chat.pendingClientTurns?.find((t) => t.memberId === id)
             return (
-              <div key={runtime} className="flex items-center gap-1.5 flex-shrink-0" style={{ color: primary }}>
+              <div key={id} className="flex items-center gap-1.5 flex-shrink-0" style={{ color: primary }}>
                 <MemberAvatar info={info} size={30} fallback="🌸" />
                 <div className="flex flex-col">
                   <span className="text-xs font-medium" style={{ color: '#6a3f56', lineHeight: 1.2 }}>{info.name}</span>
-                  <span className="text-[9px]" style={{ color: '#c48a9a' }}>剩余 {credits} 次自由发言</span>
+                  {pending ? (
+                    <span className="text-[9px] flex items-center gap-1" style={{ color: '#c48a9a' }}>
+                      等待客户端响应…
+                      <button onClick={() => handleSkipPending(id)} className="underline" style={{ background: 'none', border: 'none', color: primary, padding: 0, fontSize: 9 }}>跳过</button>
+                    </span>
+                  ) : (
+                    <span className="text-[9px]" style={{ color: '#c48a9a' }}>剩余 {credits} 次自由发言</span>
+                  )}
                 </div>
               </div>
             )
@@ -258,7 +358,7 @@ export default function GroupChatWindow({ theme, chatId, onClose }) {
       {chat.candidates.length > 0 && (
         <div className="flex-shrink-0 px-3" style={{ paddingBottom: 6 }}>
           {chat.candidates.map((c) => {
-            const info = memberInfo(c.runtime)
+            const info = memberInfo(c.memberId)
             return (
               <div key={c.id} className="flex items-center gap-2 px-3 py-2 mb-1.5 rounded-2xl" style={{ background: 'rgba(255,255,255,0.7)', border: `1px dashed ${primary}45` }}>
                 <MemberAvatar info={info} size={26} />
@@ -288,13 +388,13 @@ export default function GroupChatWindow({ theme, chatId, onClose }) {
       {/* @ mention toggles — compact row above the input, never overflows */}
       <div className="flex-shrink-0 flex items-center gap-2 px-3 overflow-x-auto" style={{ paddingBottom: 4 }}>
         <span className="text-[10px] flex-shrink-0" style={{ color: '#b98a96' }}>@提及：</span>
-        {chat.members.map((runtime) => {
-          const active = mentionSel.includes(runtime)
-          const info = memberInfo(runtime)
+        {chat.members.map((id) => {
+          const active = mentionSel.includes(id)
+          const info = memberInfo(id)
           return (
             <button
-              key={runtime}
-              onClick={() => toggleMention(runtime)}
+              key={id}
+              onClick={() => toggleMention(id)}
               className="flex-shrink-0 px-2.5 py-1 rounded-full text-[11px]"
               style={{
                 background: active ? `linear-gradient(135deg, ${primary}, ${primaryDark})` : 'rgba(255,255,255,0.6)',
@@ -329,6 +429,7 @@ export default function GroupChatWindow({ theme, chatId, onClose }) {
           <Send size={16} />
         </button>
       </div>
+      </div>
 
       {showAvatarModal && (
         <GroupUserAvatarModal
@@ -337,6 +438,31 @@ export default function GroupChatWindow({ theme, chatId, onClose }) {
           onUpload={handleAvatarUpload}
           onReset={handleAvatarReset}
           onClose={() => setShowAvatarModal(false)}
+        />
+      )}
+      {showMenuSheet && (
+        <GroupMenuSheet
+          theme={theme}
+          onPickAvatar={() => { setShowMenuSheet(false); setShowAvatarModal(true) }}
+          onPickMembers={() => { setShowMenuSheet(false); setShowMemberDrawer(true) }}
+          onPickBg={() => { setShowMenuSheet(false); setShowBgDrawer(true) }}
+          onClose={() => setShowMenuSheet(false)}
+        />
+      )}
+      {showMemberDrawer && (
+        <GroupMemberDrawer
+          theme={theme}
+          chat={chat}
+          onClose={() => setShowMemberDrawer(false)}
+        />
+      )}
+      {showBgDrawer && (
+        <GroupBackgroundDrawer
+          theme={theme}
+          bg={myBg}
+          onUpload={handleBgUpload}
+          onReset={handleBgReset}
+          onClose={() => setShowBgDrawer(false)}
         />
       )}
     </div>

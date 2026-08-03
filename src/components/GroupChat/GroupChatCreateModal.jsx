@@ -2,27 +2,30 @@ import { useState } from 'react'
 import { X } from 'lucide-react'
 import { useStore } from '../../store'
 import { createGroupChat } from '../../services/companion'
-import { GROUP_SUPPORTED_RUNTIMES, resolveGroupMemberInfo } from '../../utils/groupMembers'
+import { listInvitableMembers } from '../../utils/groupMembers'
 
-// Member picker — only ever offers REAL, currently backend-integrated
-// runtimes (Claude Code / Codex). Never a placeholder/fake entry for a
-// future member (DSP/GLM/...): those get added here only once they have a
-// real groupInvoke<Runtime> implementation server-side, per the explicit
-// "不要为未来成员先造假窗口或假回复" requirement.
+// Member picker — reads every real existing conversation window (the two
+// VPS runtimes plus any other regular API-configured single-chat session),
+// never a hardcoded 2-runtime limit. Each candidate carries its own real
+// spec (see groupMembers.js's memberSpecForSession) so the backend can
+// invoke it for real — vps runtimes via the existing resident processes,
+// api sessions via the browser's own streamChat using that session's own
+// live model/API config (never duplicated here).
 export default function GroupChatCreateModal({ theme, onClose, onCreated }) {
   const primary = theme?.primary || '#ff85b3'
   const primaryDark = theme?.primaryDark || '#ff6b9d'
   const sessions = useStore((s) => s.sessions)
+  const candidates = listInvitableMembers(sessions)
   const [selected, setSelected] = useState([])
   const [name, setName] = useState('')
   const [creating, setCreating] = useState(false)
   const [error, setError] = useState(null)
 
-  const toggle = (runtime) => {
+  const toggle = (id) => {
     setSelected((prev) => {
-      if (prev.includes(runtime)) return prev.filter((r) => r !== runtime)
+      if (prev.includes(id)) return prev.filter((r) => r !== id)
       if (prev.length >= 4) return prev
-      return [...prev, runtime]
+      return [...prev, id]
     })
   }
 
@@ -31,7 +34,8 @@ export default function GroupChatCreateModal({ theme, onClose, onCreated }) {
     setCreating(true)
     setError(null)
     try {
-      const result = await createGroupChat(name.trim(), selected)
+      const specs = candidates.filter((c) => selected.includes(c.id)).map((c) => c.spec)
+      const result = await createGroupChat(name.trim(), specs)
       if (!result?.ok) { setError(result?.reason === 'need_2_to_4_members' ? '请选择 2-4 位成员' : '创建失败，请重试'); return }
       onCreated(result.chat)
     } catch (e) {
@@ -78,13 +82,12 @@ export default function GroupChatCreateModal({ theme, onClose, onCreated }) {
 
         <label className="text-xs pl-1 mb-2 block" style={{ color: '#7a9cc0' }}>选择成员（2-4 位）</label>
         <div className="flex flex-col gap-2 mb-4">
-          {GROUP_SUPPORTED_RUNTIMES.map((runtime) => {
-            const info = resolveGroupMemberInfo(runtime, sessions)
-            const active = selected.includes(runtime)
+          {candidates.map((c) => {
+            const active = selected.includes(c.id)
             return (
               <button
-                key={runtime}
-                onClick={() => toggle(runtime)}
+                key={c.id}
+                onClick={() => toggle(c.id)}
                 className="flex items-center gap-3 px-3 py-2 rounded-2xl text-left"
                 style={{
                   background: active ? `linear-gradient(135deg, ${primary}20, ${primaryDark}12)` : 'rgba(255,255,255,0.55)',
@@ -92,9 +95,9 @@ export default function GroupChatCreateModal({ theme, onClose, onCreated }) {
                 }}
               >
                 <div className="w-9 h-9 rounded-full overflow-hidden flex items-center justify-center text-base flex-shrink-0" style={{ background: `${primary}18` }}>
-                  {info.avatar ? <img src={info.avatar} alt="" className="w-full h-full object-cover" /> : '🤖'}
+                  {c.avatar ? <img src={c.avatar} alt="" className="w-full h-full object-cover" /> : '🌸'}
                 </div>
-                <span className="text-sm font-medium flex-1" style={{ color: '#2c5282' }}>{info.name}</span>
+                <span className="text-sm font-medium flex-1" style={{ color: '#2c5282' }}>{c.name}</span>
                 <div style={{
                   width: 18, height: 18, borderRadius: '50%', flexShrink: 0,
                   border: active ? 'none' : `1.5px solid ${primary}50`,

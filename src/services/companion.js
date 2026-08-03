@@ -427,6 +427,33 @@ export async function rejectGroupCandidate(id, candidateId) {
     body: JSON.stringify({ id, candidateId }),
   })
 }
+// member: { kind:'vps', runtime } | { kind:'api', sessionId, name } — see
+// src/utils/groupMembers.js's memberSpecForSession, the only place this
+// shape is built from a real session.
+export async function inviteGroupMember(id, member) {
+  return companionJson('/group/invite', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ id, member }),
+  })
+}
+export async function removeGroupMember(id, memberId) {
+  return companionJson('/group/remove', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ id, memberId }),
+  })
+}
+// Fulfills an 'api'-kind member's pending client turn (see
+// src/utils/groupApiMember.js) — action is 'speak' | 'request' | 'pass',
+// matching CC's group_speak/group_request_to_speak/group_pass tools.
+export async function submitGroupClientTurn(id, memberId, action, extra = {}) {
+  return companionJson('/group/client-turn/submit', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ id, memberId, action, ...extra }),
+  })
+}
 
 // ---------- 心潮 (xinchao) ----------
 // Purely reactive — no polling. The server pushes a fresh xinchao_update on
