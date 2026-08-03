@@ -1,9 +1,12 @@
 import { useState, useEffect } from 'react'
-import { Plus, Trash2, Edit3, Check, ChevronDown } from 'lucide-react'
+import { Plus, Trash2, Edit3, Check, ChevronDown, Users } from 'lucide-react'
 import { useStore, deleteMessagesForSession } from '../store'
 import { deleteSessionMsgs } from '../services/sync'
 import DiarySection from './DiarySection'
 import { getAllLetters } from '../services/letters'
+import { listGroupChats, onGroupUpdate } from '../services/companion'
+import { resolveGroupMemberInfo } from '../utils/groupMembers'
+import GroupChatCreateModal from './GroupChat/GroupChatCreateModal'
 
 function relativeTime(ts) {
   if (!ts) return ''
@@ -20,7 +23,7 @@ function genId() {
   return Date.now().toString(36) + Math.random().toString(36).slice(2)
 }
 
-export default function SessionList({ theme, onSelectSession }) {
+export default function SessionList({ theme, onSelectSession, onOpenGroupChat }) {
   const {
     sessions, currentSessionId, setCurrentSessionId,
     addSession, updateSession, deleteSession,
@@ -32,6 +35,30 @@ export default function SessionList({ theme, onSelectSession }) {
   const [editName, setEditName] = useState('')
   const [diaryOpen, setDiaryOpen] = useState(false)
   const diaryTarget = useStore(s => s.diaryTarget)
+
+  // Group chats — real, independent server-side sessions (see
+  // channel-server.ts's Group chat section), never mixed into the plain
+  // sessions[] list above. Fetched fresh on mount + kept live via the same
+  // group_update broadcast GroupChatWindow itself subscribes to, so the
+  // preview/updatedAt here stays current without polling.
+  const [groupChats, setGroupChats] = useState([])
+  const [showCreateGroup, setShowCreateGroup] = useState(false)
+
+  useEffect(() => {
+    let cancelled = false
+    listGroupChats().then((chats) => { if (!cancelled) setGroupChats(chats) }).catch(() => {})
+    const unsub = onGroupUpdate((chat) => {
+      setGroupChats((prev) => {
+        const idx = prev.findIndex((c) => c.id === chat.id)
+        const entry = { id: chat.id, name: chat.name, members: chat.members, updatedAt: chat.updatedAt, lastMessage: chat.messages[chat.messages.length - 1]?.text ?? '' }
+        if (idx === -1) return [entry, ...prev]
+        const next = [...prev]
+        next[idx] = entry
+        return next
+      })
+    })
+    return () => { cancelled = true; unsub() }
+  }, [])
 
   // 从聊天里的信件卡片跳过来时（带 diaryTarget），自动展开日记面板定位到目标信
   useEffect(() => {
@@ -232,6 +259,57 @@ export default function SessionList({ theme, onSelectSession }) {
           )
         })}
         </div>
+
+        {/* 群聊 — 独立于上面的单聊会话列表，真实的多 AI 群聊（见
+            GroupChatWindow.jsx），从不与任何成员的单聊历史混在一起。 */}
+        <div className="flex items-center justify-between mt-4 mb-2 px-1">
+          <span className="text-xs font-medium" style={{ color: '#7a9cc0' }}>群聊</span>
+          <button
+            onClick={() => setShowCreateGroup(true)}
+            className="flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-medium text-white"
+            style={{ background: `linear-gradient(135deg, ${primary}, ${primaryDark})` }}
+          >
+            <Plus size={11} /> 创建群聊
+          </button>
+        </div>
+        {groupChats.length === 0 ? (
+          <div className="text-xs px-1 pb-2" style={{ color: '#a0b8d0' }}>还没有群聊，创建一个试试～</div>
+        ) : (
+          <div className="space-y-2 mb-1">
+            {groupChats.map((chat) => (
+              <div
+                key={chat.id}
+                onClick={() => onOpenGroupChat?.(chat.id)}
+                className="flex items-center gap-3 px-4 py-2.5 rounded-2xl cursor-pointer"
+                style={{ background: 'rgba(255,255,255,0.55)', border: '1.5px solid rgba(200,220,255,0.3)' }}
+              >
+                <div className="flex items-center flex-shrink-0" style={{ width: 36 }}>
+                  <div className="w-7 h-7 rounded-full flex items-center justify-center text-xs" style={{ background: `${primary}20`, color: primary }}>
+                    <Users size={13} />
+                  </div>
+                </div>
+                <div className="flex-1 min-w-0">
+                  <div className="text-sm font-semibold truncate" style={{ color: '#2c5282' }}>{chat.name}</div>
+                  <div className="text-xs truncate mt-0.5" style={{ color: '#7a9cc0' }}>
+                    {chat.lastMessage || chat.members.map((m) => resolveGroupMemberInfo(m, sessions).name).join(' / ')}
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {showCreateGroup && (
+          <GroupChatCreateModal
+            theme={theme}
+            onClose={() => setShowCreateGroup(false)}
+            onCreated={(chat) => {
+              setShowCreateGroup(false)
+              setGroupChats((prev) => [{ id: chat.id, name: chat.name, members: chat.members, updatedAt: chat.updatedAt, lastMessage: '' }, ...prev])
+              onOpenGroupChat?.(chat.id)
+            }}
+          />
+        )}
 
         {/* 日记：默认收起成一条紧凑入口，点击才展开成面板 */}
         <button

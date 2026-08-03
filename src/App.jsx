@@ -2,6 +2,7 @@ import { useEffect, useState, useRef } from 'react'
 import { useStore, getCustomFont, getBlob, getMessages, saveMessage, saveBlob, deleteMessagesForSession } from './store'
 import { THEMES } from './themes'
 import ChatWindow from './components/Chat/ChatWindow'
+import GroupChatWindow from './components/GroupChat/GroupChatWindow'
 import GlobalSettings from './components/GlobalSettings'
 import SessionSettings from './components/SessionSettings'
 import SessionList from './components/SessionList'
@@ -34,6 +35,7 @@ function settingsFingerprint(settings) {
 export default function App() {
   const {
     currentView, setCurrentView,
+    currentGroupChatId, setCurrentGroupChatId,
     themeId: globalThemeId,
     chatBg: globalChatBg,
     fontFamily: globalFontFamily,
@@ -618,8 +620,15 @@ export default function App() {
               VPS, plain API-key) — ChatWindow.jsx itself picks the right
               runtime adapter internally, see its own top-of-file comment. */}
           {currentView === 'chat' && <ChatWindow theme={theme} />}
+          {currentView === 'groupChat' && currentGroupChatId && (
+            <GroupChatWindow theme={theme} chatId={currentGroupChatId} onClose={() => setCurrentView('sessions')} />
+          )}
           {currentView === 'sessions' && (
-            <SessionList theme={theme} onSelectSession={() => setCurrentView('chat')} />
+            <SessionList
+              theme={theme}
+              onSelectSession={() => setCurrentView('chat')}
+              onOpenGroupChat={(id) => { setCurrentGroupChatId(id); setCurrentView('groupChat') }}
+            />
           )}
           {currentView === 'globalSettings' && <GlobalSettings theme={theme} onLogout={handleLogout} onForceSync={handleForceSync} />}
           {currentView === 'sessionSettings' && <SessionSettings theme={theme} />}
@@ -627,7 +636,7 @@ export default function App() {
           {currentView === 'companionMemory' && <CompanionMemory theme={theme} onBack={() => setCurrentView('sessionSettings')} />}
         </div>
 
-        {currentView !== 'sessionSettings' && currentView !== 'voiceFavorites' && currentView !== 'chat' && currentView !== 'companionMemory' && (
+        {currentView !== 'sessionSettings' && currentView !== 'voiceFavorites' && currentView !== 'chat' && currentView !== 'companionMemory' && currentView !== 'groupChat' && (
           <BottomNav currentView={currentView} onChange={setCurrentView} theme={theme} />
         )}
       </div>

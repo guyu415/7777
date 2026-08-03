@@ -366,6 +366,68 @@ export async function apiManagerExtendFocus(sessionId, minutes) {
   })
 }
 
+// ---------- Group chat (多AI群聊) ----------
+// Each group chat is its own independent persisted session (see
+// channel-server.ts's "Group chat" section) — never mixed into either
+// member's single-chat history. fn(chat) receives the FULL updated chat
+// object every time (same "send the whole thing, no diffing" pattern
+// onGomokuUpdate/onFocusUpdate already use) — a subscriber filters to the
+// group id it cares about itself.
+const groupListeners = new Set()
+export function onGroupUpdate(fn) {
+  groupListeners.add(fn)
+  return () => groupListeners.delete(fn)
+}
+function announceGroupUpdate(chat) {
+  for (const fn of groupListeners) {
+    try { fn(chat) } catch { /* one subscriber's throw must not break the others */ }
+  }
+}
+
+export async function listGroupChats() {
+  const { chats } = await companionJson('/group/list')
+  return chats
+}
+export async function createGroupChat(name, members) {
+  return companionJson('/group/create', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name, members }),
+  })
+}
+export async function getGroupChatState(id) {
+  const { chat } = await companionJson(`/group/state?id=${encodeURIComponent(id)}`)
+  return chat
+}
+export async function sendGroupMessage(id, text, mentions = []) {
+  return companionJson('/group/message', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ id, text, mentions }),
+  })
+}
+export async function startGroupNewTopic(id) {
+  return companionJson('/group/new-topic', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ id }),
+  })
+}
+export async function approveGroupCandidate(id, candidateId) {
+  return companionJson('/group/candidate/approve', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ id, candidateId }),
+  })
+}
+export async function rejectGroupCandidate(id, candidateId) {
+  return companionJson('/group/candidate/reject', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ id, candidateId }),
+  })
+}
+
 // ---------- 心潮 (xinchao) ----------
 // Purely reactive — no polling. The server pushes a fresh xinchao_update on
 // WS open, and again whenever a turn ends (see channel-server.ts). This just
@@ -541,6 +603,10 @@ listeners.add(evt => {
     }
     if (m.type === 'focus_finished') {
       announceFocusFinished({ reason: m.reason, manager: m.manager, actualMs: m.actualMs })
+      return
+    }
+    if (m.type === 'group_update') {
+      announceGroupUpdate(m.chat)
       return
     }
     if (m.type === 'codex_msg' || m.type === 'codex_status' || m.type === 'codex_notice' || m.type === 'codex_turn_end'

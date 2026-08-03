@@ -171,6 +171,12 @@ export const useStore = create(
       summaryToast: null,
       diaryTarget: null,
       messages: [],
+      // Which group chat (多AI群聊) is currently open, when currentView is
+      // 'groupChat' — a real server-side id (see channel-server.ts's Group
+      // chat section), never persisted alongside currentView itself (that
+      // one already isn't persisted either, see partialize below — the app
+      // always opens back to the plain chat view, same as before).
+      currentGroupChatId: null,
 
       setApiKey: (key) => set({ apiKey: key }),
       setApiBaseUrl: (url) => set({ apiBaseUrl: url }),
@@ -193,6 +199,7 @@ export const useStore = create(
       setAiVoiceFrequency: (v) => set({ aiVoiceFrequency: v }),
       setAcWorkerUrl: (v) => set({ acWorkerUrl: v }),
       setCurrentView: (view) => set({ currentView: view }),
+      setCurrentGroupChatId: (id) => set({ currentGroupChatId: id }),
       setDiaryTarget: (id) => set({ diaryTarget: id }),
       setIsLoading: (v) => set({ isLoading: v }),
       setStreamingMessageId: (id) => set({ streamingMessageId: id }),
