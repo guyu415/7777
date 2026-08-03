@@ -39,6 +39,10 @@ export function createGame(scriptId, seats) {
       : { kind: SEAT_NPC, memberId: null }
   }
   const state = {
+    // 每次开局必须有自己的运行 ID。不能拿群聊 chatId 当游戏 ID：同一个群里
+    // 结束后立刻重开时，旧局 cleanup 可能晚到一步，把新局刚创建的 CC/Codex
+    // 隔离会话杀掉；或者新局直接复用上一局角色线程，出现“这不是正确轮次”。
+    runId: newId('game'),
     scriptId,
     seats: normalized,
     chapterIndex: 0,
