@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { getCompanionStatus, switchCompanionModel, getCodexModelStatus, switchCodexModel } from '../../services/companion'
+import { useStore } from '../../store'
 
 // Exact Claude Code model IDs only — no rolling aliases. Keep this list in
 // sync with MODEL_IDS in channel-server.ts on the VPS. Codex has no
@@ -11,6 +12,7 @@ const CC_MODEL_OPTIONS = [
   { id: 'claude-sonnet-4-6', label: 'Sonnet 4.6' },
   { id: 'claude-opus-4-7', label: 'Opus 4.7' },
 ]
+const ccModelOption = (id) => CC_MODEL_OPTIONS.find(option => option.id === id)
 const POLL_MS = 25000
 
 function formatResetTime(unixSeconds) {
@@ -50,6 +52,13 @@ export default function RuntimeStatusBall({ theme, isLoading, runtime }) {
   const isCodex = runtime === 'codex'
   const primary = theme?.primary || '#4aacf0'
   const primaryDark = theme?.primaryDark || '#2196d3'
+  const currentSessionId = useStore(s => s.currentSessionId)
+  const updateSession = useStore(s => s.updateSession)
+  const savedCcModelId = useStore(s => {
+    if (runtime === 'codex') return null
+    const modelId = s.sessions?.find(session => session.id === s.currentSessionId)?.model
+    return ccModelOption(modelId) ? modelId : null
+  })
 
   const [status, setStatus] = useState(null)
   const [open, setOpen] = useState(false)
@@ -62,6 +71,15 @@ export default function RuntimeStatusBall({ theme, isLoading, runtime }) {
   const refresh = async () => {
     try {
       const s = isCodex ? await getCodexModelStatus() : await getCompanionStatus()
+      // Claude Code lives on the VPS, but the model choice belongs to this
+      // fixed chat window too. Re-apply the last confirmed choice if the VPS
+      // starts/reconnects on another model, instead of briefly presenting its
+      // default (previously Sonnet 5) as the user's selection every visit.
+      if (!isCodex && savedCcModelId && s?.model?.id !== savedCcModelId && !isLoading) {
+        const switched = await switchCompanionModel(savedCcModelId)
+        setStatus({ ...s, model: switched.model })
+        return
+      }
       setStatus(s)
     } catch {
       // best-effort — leave last-known status showing rather than clearing it
@@ -69,12 +87,13 @@ export default function RuntimeStatusBall({ theme, isLoading, runtime }) {
   }
 
   useEffect(() => {
-    setStatus(null)
+    const saved = ccModelOption(savedCcModelId)
+    setStatus(saved ? { model: { id: saved.id, display_name: saved.label } } : null)
     refresh()
     const t = setInterval(refresh, POLL_MS)
     return () => clearInterval(t)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [runtime])
+  }, [runtime, savedCcModelId])
 
   // Refresh right when a turn actually finishes (isLoading true → false),
   // not just on the next up-to-25s poll tick — this is what makes "完成一
@@ -121,6 +140,8 @@ export default function RuntimeStatusBall({ theme, isLoading, runtime }) {
       } else {
         const res = await switchCompanionModel(modelId)
         setStatus(s => ({ ...(s || {}), model: res.model }))
+        const confirmedId = ccModelOption(res.model?.id)?.id
+        if (confirmedId) updateSession(currentSessionId, { model: confirmedId })
       }
       await refresh()
     } catch (e) {

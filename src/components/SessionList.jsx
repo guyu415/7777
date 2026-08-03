@@ -112,12 +112,12 @@ export default function SessionList({ theme, onSelectSession, onOpenGroupChat })
   const startEdit = (e, session) => {
     e.stopPropagation()
     setEditingId(session.id)
-    setEditName(session.name)
+    setEditName(session.aiName || session.name || '')
   }
 
   const saveEdit = (e, id) => {
     e.stopPropagation()
-    if (editName.trim()) updateSession(id, { name: editName.trim() })
+    if (editName.trim()) updateSession(id, { aiName: editName.trim() })
     setEditingId(null)
   }
 
@@ -200,7 +200,7 @@ export default function SessionList({ theme, onSelectSession, onOpenGroupChat })
                     />
                   ) : (
                     <div className="text-sm font-semibold truncate" style={{ color: active ? primaryDark : '#2c5282' }}>
-                      {session.name}
+                      {session.aiName || session.name || '未命名对话'}
                     </div>
                   )}
 
