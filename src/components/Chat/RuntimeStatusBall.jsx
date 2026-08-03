@@ -344,7 +344,7 @@ export default function RuntimeStatusBall({ theme, isLoading, runtime }) {
               <div className="text-[11px] mb-1" style={{ color: '#6a90b8' }}>5 小时用量</div>
               {fh ? (
                 <p className="text-[10px] mb-2" style={{ color: '#7a9cc0' }}>
-                  {fh.expired ? '已用 0% · 已重置，等待新数据' : `已用 ${Math.round(fh.used_percentage)}% · 重置于 ${formatResetTime(fh.resets_at)}`}
+                  {fh.expired ? '已用 0%' : `已用 ${Math.round(fh.used_percentage)}% · 重置于 ${formatResetTime(fh.resets_at)}`}
                 </p>
               ) : (
                 <p className="text-[10px] mb-2" style={{ color: '#a0b8d0' }}>等待首次响应</p>
@@ -353,7 +353,7 @@ export default function RuntimeStatusBall({ theme, isLoading, runtime }) {
               <div className="text-[11px] mb-1" style={{ color: '#6a90b8' }}>每周用量</div>
               {wk ? (
                 <p className="text-[10px]" style={{ color: '#7a9cc0' }}>
-                  {wk.expired ? '已用 0% · 已重置，等待新数据' : `已用 ${Math.round(wk.used_percentage)}% · 重置于 ${formatResetTime(wk.resets_at)}`}
+                  {wk.expired ? '已用 0%' : `已用 ${Math.round(wk.used_percentage)}% · 重置于 ${formatResetTime(wk.resets_at)}`}
                 </p>
               ) : (
                 <p className="text-[10px]" style={{ color: '#a0b8d0' }}>等待首次响应</p>
@@ -373,7 +373,7 @@ export default function RuntimeStatusBall({ theme, isLoading, runtime }) {
                 <div className="text-[11px] mb-1" style={{ color: '#6a90b8' }}>用量窗口</div>
                 <p className="text-[10px] mb-2" style={{ color: '#7a9cc0' }}>
                   {codexPrimary.expired
-                    ? '已用 0% · 已重置，等待新数据'
+                    ? '已用 0%'
                     : `已用 ${Math.round(codexPrimary.usedPercent)}%${codexPrimary.resetsAt ? ` · 重置于 ${formatResetTime(codexPrimary.resetsAt)}` : ''}`}
                 </p>
                 {codexCredits && (
