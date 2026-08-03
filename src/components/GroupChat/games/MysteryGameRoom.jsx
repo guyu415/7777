@@ -26,6 +26,10 @@ const CC_RETRY_TIMEOUT_MS = 45000
 
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 
+// 新存档直接使用 createGame 生成的 runId；正在玩的旧存档没有 runId 时，用
+// startedAt 补出一个稳定且只属于这一局的 ID，避免升级后被迫清档重开。
+const resolveRunId = (state, chatId) => state?.runId || `legacy-${chatId}-${state?.startedAt || 'unknown'}`
+
 // 剧本杀房间。
 //
 // 整局逻辑都在 mysteryEngine.js（纯函数），这里只做三件事：
@@ -105,7 +109,7 @@ export default function MysteryGameRoom({ theme, chatId, chat, onClose }) {
   // 按顺序发言和自由发言共用这同一条调用逻辑，只是 prompt 构造函数
   // （buildTurnPrompt / buildFreeSpeechPrompt）和调用完之后怎么提交
   // （appendSpeech+推进轮次 / appendFreeSpeech+消耗自由发言额度）不一样。
-  const runCcTurnWithRecovery = async (charId, seat, systemPrompt, turnPrompt, signal, onPreview) => {
+  const runCcTurnWithRecovery = async (runId, charId, seat, systemPrompt, turnPrompt, signal, onPreview) => {
     for (let attempt = 0; attempt < 2; attempt += 1) {
       const attemptAbort = new AbortController()
       const forwardAbort = () => attemptAbort.abort()
@@ -121,7 +125,7 @@ export default function MysteryGameRoom({ theme, chatId, chat, onClose }) {
 
       try {
         const text = await runMysteryTurn(
-          chatId,
+          runId,
           charId,
           seat.memberId,
           seat.model || '',
@@ -151,7 +155,7 @@ export default function MysteryGameRoom({ theme, chatId, chat, onClose }) {
         let cleanupError = null
         for (let cleanupAttempt = 0; cleanupAttempt < 3; cleanupAttempt += 1) {
           try {
-            await cleanupMysteryGame(chatId, [charId])
+            await cleanupMysteryGame(runId, [charId])
             cleanupError = null
             break
           } catch (cleanupFailure) {
@@ -169,12 +173,12 @@ export default function MysteryGameRoom({ theme, chatId, chat, onClose }) {
     throw new Error('CC 没有回应')
   }
 
-  const callCharacterModel = async (charId, seat, systemPrompt, turnPrompt, signal, onPreview) => {
+  const callCharacterModel = async (runId, charId, seat, systemPrompt, turnPrompt, signal, onPreview) => {
     if (seat.memberId === 'claude-code') {
-      return runCcTurnWithRecovery(charId, seat, systemPrompt, turnPrompt, signal, onPreview)
+      return runCcTurnWithRecovery(runId, charId, seat, systemPrompt, turnPrompt, signal, onPreview)
     }
     if (isVpsMemberId(seat.memberId)) {
-      return await runMysteryTurn(chatId, charId, seat.memberId, seat.model || '', systemPrompt, turnPrompt, signal)
+      return await runMysteryTurn(runId, charId, seat.memberId, seat.model || '', systemPrompt, turnPrompt, signal)
     }
     const info = resolveGroupMemberInfo(seat.memberId, sessions)
     const cfg = resolveApiMemberConfig(info.session, {
@@ -222,7 +226,7 @@ export default function MysteryGameRoom({ theme, chatId, chat, onClose }) {
       const cur = useStore.getState().mysteryGames?.[chatId]
       const systemPrompt = buildCharacterSystemPrompt(cur.scriptId, charId)
       const turnPrompt = buildTurnPrompt(cur, charId)
-      const text = ((await callCharacterModel(charId, seat, systemPrompt, turnPrompt, call.abort.signal, (preview) => setAiState({ charId, status: 'thinking', preview }))) || '').trim()
+      const text = ((await callCharacterModel(resolveRunId(cur, chatId), charId, seat, systemPrompt, turnPrompt, call.abort.signal, (preview) => setAiState({ charId, status: 'thinking', preview }))) || '').trim()
       if (activeCallRef.current !== call) return // 已经被跳过，这条迟到的回复不提交
       if (!text) throw new Error('模型返回了空内容')
       commit((g) => (currentChapter(g)?.stage === 'vote'
@@ -254,7 +258,7 @@ export default function MysteryGameRoom({ theme, chatId, chat, onClose }) {
       const cur = useStore.getState().mysteryGames?.[chatId]
       const systemPrompt = buildCharacterSystemPrompt(cur.scriptId, charId)
       const turnPrompt = buildFreeSpeechPrompt(cur, charId)
-      const text = ((await callCharacterModel(charId, seat, systemPrompt, turnPrompt, call.abort.signal, (preview) => setAiState({ charId, status: 'thinking', preview, free: true }))) || '').trim()
+      const text = ((await callCharacterModel(resolveRunId(cur, chatId), charId, seat, systemPrompt, turnPrompt, call.abort.signal, (preview) => setAiState({ charId, status: 'thinking', preview, free: true }))) || '').trim()
       if (activeCallRef.current !== call) return // 已经被跳过：不提交、不重复消耗额度
       commit((g) => (text ? appendFreeSpeech(g, charId, text) : skipFreeSpeechTurn(g, charId)))
     } catch {
@@ -377,7 +381,7 @@ export default function MysteryGameRoom({ theme, chatId, chat, onClose }) {
     // 又突然不说话”。跳过 CC 时同时销毁这一个临时角色会话；不碰 CC 本体单聊、
     // 其他角色或其他模型。
     if (skippedSeat?.memberId === 'claude-code') {
-      cleanupMysteryGame(chatId, [skippedCharId]).catch(() => {})
+      cleanupMysteryGame(resolveRunId(game, chatId), [skippedCharId]).catch(() => {})
     }
   }
   const goNextChapter = () => {
@@ -391,11 +395,12 @@ export default function MysteryGameRoom({ theme, chatId, chat, onClose }) {
   // 失败即可，反正同一个 gameId 不会再被用到了）。
   const endGame = () => {
     if (!game || !window.confirm('结束本局？这个群聊的剧本杀存档会被清空，无法恢复。')) return
+    const runId = resolveRunId(game, chatId)
     const vpsCharIds = Object.entries(game.seats)
       .filter(([, seat]) => seat.kind === SEAT_AI && isVpsMemberId(seat.memberId))
       .map(([charId]) => charId)
     clearMysteryGame(chatId)
-    if (vpsCharIds.length) cleanupMysteryGame(chatId, vpsCharIds).catch(() => {})
+    if (vpsCharIds.length) cleanupMysteryGame(runId, vpsCharIds).catch(() => {})
   }
 
   // ---------------------------------------------------------- 渲染
