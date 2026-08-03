@@ -32,7 +32,9 @@ function buildAnthropicMessages(messages) {
   return messages
     .filter(m => m.role !== 'system')
     .map(m => {
-      if (m.type === 'text') return { role: m.role, content: m.content }
+      // Plain { role, content } is the standard chat-message shape. Treat a
+      // missing type as text instead of silently deleting the user's turn.
+      if (!m.type || m.type === 'text') return { role: m.role, content: m.content }
       if (m.type === 'image') {
         const media_type = VALID_MEDIA_TYPES.has(m.imageType) ? m.imageType : detectMediaType(m.imageData)
         return {
@@ -54,7 +56,9 @@ function buildOpenAIMessages(systemPrompt, messages) {
   if (systemPrompt) result.push({ role: 'system', content: systemPrompt })
   for (const m of messages) {
     if (m.role === 'system') continue
-    if (m.type === 'text') {
+    // Plain { role, content } is the standard chat-message shape. Treat a
+    // missing type as text instead of silently deleting the user's turn.
+    if (!m.type || m.type === 'text') {
       result.push({ role: m.role, content: m.content || '' })
     } else if (m.type === 'image') {
       // 纯文本模型（硅基流动/GLM 等）不接受数组 content；只保留文字说明，丢弃图片数据

@@ -104,7 +104,11 @@ export async function fulfillApiMemberTurn(chatId, memberId, pending, session, g
       apiBaseUrl: cfg.baseUrl,
       model: cfg.model,
       systemPrompt: buildApiMemberSystemPrompt(session),
-      messages: [{ role: 'user', content: userTurnContent }],
+      // streamChat's message normalizer distinguishes text/image/voice by
+      // `type`.  Without this field the whole current group instruction was
+      // silently dropped, leaving the model with only its old persona/memory
+      // — exactly why DSP kept answering an unrelated calculator task.
+      messages: [{ role: 'user', type: 'text', content: userTurnContent }],
       workerUrl: globals?.workerUrl,
       useWorkerProxy: globals?.useWorkerProxy,
       providerName: cfg.providerName,
