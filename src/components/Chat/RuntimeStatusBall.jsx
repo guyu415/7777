@@ -13,7 +13,32 @@ const CC_MODEL_OPTIONS = [
   { id: 'claude-opus-4-7', label: 'Opus 4.7' },
 ]
 const ccModelOption = (id) => CC_MODEL_OPTIONS.find(option => option.id === id)
-const POLL_MS = 25000
+const POLL_MS = 10000
+
+function resetHasPassed(value) {
+  if (value == null) return false
+  const raw = Number(value)
+  if (!Number.isFinite(raw)) return false
+  const resetMs = raw < 1e12 ? raw * 1000 : raw
+  return resetMs <= Date.now()
+}
+
+function currentCcWindow(window) {
+  if (!window || !resetHasPassed(window.resets_at)) return window
+  return { ...window, used_percentage: 0, expired: true }
+}
+
+function currentCodexWindow(window) {
+  if (!window || !resetHasPassed(window.resetsAt)) return window
+  return { ...window, usedPercent: 0, expired: true }
+}
+
+function formatCredits(value) {
+  if (value == null || value === '') return '—'
+  const number = Number(value)
+  if (!Number.isFinite(number)) return String(value)
+  return new Intl.NumberFormat('zh-CN', { maximumFractionDigits: 2 }).format(number)
+}
 
 function formatResetTime(unixSeconds) {
   if (!unixSeconds) return ''
@@ -22,8 +47,8 @@ function formatResetTime(unixSeconds) {
 }
 
 function ccBallColor(status) {
-  const fh = status?.rate_limits?.five_hour?.used_percentage
-  const wk = status?.rate_limits?.seven_day?.used_percentage
+  const fh = currentCcWindow(status?.rate_limits?.five_hour)?.used_percentage
+  const wk = currentCcWindow(status?.rate_limits?.seven_day)?.used_percentage
   if (fh == null && wk == null) return '#a0b8d0' // 等待首次响应
   const remaining = Math.min(100 - (fh ?? 0), 100 - (wk ?? 0))
   if (remaining < 20) return '#e07070'
@@ -32,7 +57,7 @@ function ccBallColor(status) {
 }
 
 function codexBallColor(status) {
-  const pct = status?.usage?.primary?.usedPercent
+  const pct = currentCodexWindow(status?.usage?.primary)?.usedPercent
   if (pct == null) return '#a0b8d0'
   if (pct >= 80) return '#e07070'
   if (pct >= 50) return '#d4a017'
@@ -95,8 +120,24 @@ export default function RuntimeStatusBall({ theme, isLoading, runtime }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [runtime, savedCcModelId])
 
+  // iOS suspends interval timers while Safari/PWA is in the background.
+  // Refresh immediately when the page becomes active again instead of
+  // leaving the pre-reset usage visible until the next timer happens to run.
+  useEffect(() => {
+    const refreshWhenVisible = () => {
+      if (document.visibilityState === 'visible') refresh()
+    }
+    document.addEventListener('visibilitychange', refreshWhenVisible)
+    window.addEventListener('focus', refreshWhenVisible)
+    return () => {
+      document.removeEventListener('visibilitychange', refreshWhenVisible)
+      window.removeEventListener('focus', refreshWhenVisible)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [runtime, savedCcModelId])
+
   // Refresh right when a turn actually finishes (isLoading true → false),
-  // not just on the next up-to-25s poll tick — this is what makes "完成一
+  // not just on the next up-to-10s poll tick — this is what makes "完成一
   // 轮对话后用量刷新" actually feel immediate rather than eventually-consistent.
   const wasLoadingRef = useRef(false)
   useEffect(() => {
@@ -157,10 +198,10 @@ export default function RuntimeStatusBall({ theme, isLoading, runtime }) {
   const currentModelId = isCodex ? status?.model?.id : status?.model?.id
   const currentModelLabel = isCodex ? (status?.model?.displayName || '—') : (status?.model?.display_name || '—')
 
-  const fh = !isCodex ? status?.rate_limits?.five_hour : null
-  const wk = !isCodex ? status?.rate_limits?.seven_day : null
+  const fh = !isCodex ? currentCcWindow(status?.rate_limits?.five_hour) : null
+  const wk = !isCodex ? currentCcWindow(status?.rate_limits?.seven_day) : null
   const cw = !isCodex ? status?.context_window : null
-  const codexPrimary = isCodex ? status?.usage?.primary : null
+  const codexPrimary = isCodex ? currentCodexWindow(status?.usage?.primary) : null
   const codexCredits = isCodex ? status?.usage?.credits : null
   // Present ONLY when the backend has a real, specific reason usage can't be
   // shown (e.g. Codex not logged in) — see /codex/model-status's own
@@ -303,7 +344,7 @@ export default function RuntimeStatusBall({ theme, isLoading, runtime }) {
               <div className="text-[11px] mb-1" style={{ color: '#6a90b8' }}>5 小时用量</div>
               {fh ? (
                 <p className="text-[10px] mb-2" style={{ color: '#7a9cc0' }}>
-                  已用 {Math.round(fh.used_percentage)}% · 重置于 {formatResetTime(fh.resets_at)}
+                  {fh.expired ? '已用 0% · 已重置，等待新数据' : `已用 ${Math.round(fh.used_percentage)}% · 重置于 ${formatResetTime(fh.resets_at)}`}
                 </p>
               ) : (
                 <p className="text-[10px] mb-2" style={{ color: '#a0b8d0' }}>等待首次响应</p>
@@ -312,7 +353,7 @@ export default function RuntimeStatusBall({ theme, isLoading, runtime }) {
               <div className="text-[11px] mb-1" style={{ color: '#6a90b8' }}>每周用量</div>
               {wk ? (
                 <p className="text-[10px]" style={{ color: '#7a9cc0' }}>
-                  已用 {Math.round(wk.used_percentage)}% · 重置于 {formatResetTime(wk.resets_at)}
+                  {wk.expired ? '已用 0% · 已重置，等待新数据' : `已用 ${Math.round(wk.used_percentage)}% · 重置于 ${formatResetTime(wk.resets_at)}`}
                 </p>
               ) : (
                 <p className="text-[10px]" style={{ color: '#a0b8d0' }}>等待首次响应</p>
@@ -331,11 +372,13 @@ export default function RuntimeStatusBall({ theme, isLoading, runtime }) {
               <>
                 <div className="text-[11px] mb-1" style={{ color: '#6a90b8' }}>用量窗口</div>
                 <p className="text-[10px] mb-2" style={{ color: '#7a9cc0' }}>
-                  已用 {Math.round(codexPrimary.usedPercent)}%{codexPrimary.resetsAt ? ` · 重置于 ${formatResetTime(codexPrimary.resetsAt)}` : ''}
+                  {codexPrimary.expired
+                    ? '已用 0% · 已重置，等待新数据'
+                    : `已用 ${Math.round(codexPrimary.usedPercent)}%${codexPrimary.resetsAt ? ` · 重置于 ${formatResetTime(codexPrimary.resetsAt)}` : ''}`}
                 </p>
                 {codexCredits && (
                   <p className="text-[10px]" style={{ color: '#7a9cc0' }}>
-                    {codexCredits.unlimited ? '额度：不限量' : (codexCredits.hasCredits ? `额度余量：${codexCredits.balance ?? '—'}` : '无额外额度')}
+                    {codexCredits.unlimited ? '额度：不限量' : (codexCredits.hasCredits ? `额度余量：${formatCredits(codexCredits.balance)}` : '无额外额度')}
                   </p>
                 )}
               </>
