@@ -210,15 +210,14 @@ export default function MysteryGameRoom({ theme, chatId, chat, onClose }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [game, actor?.charId, chapter?.id])
 
-  // 按顺序发言全部说完、且这一章是剧情章（stage:'story'）时，自动进入自由
-  // 讨论——不需要用户点任何东西。投票/揭晓章保持原样，直接走"进入下一章"。
-  useEffect(() => {
-    if (!game || game.finished || !chapter) return
-    if (chapter.stage === 'story' && isChapterComplete(game) && !isInFreeDiscussion(game)) {
-      commit((g) => enterFreeDiscussion(g))
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [game, chapter?.id])
+  // 按顺序发言全部说完、且这一章是剧情章（stage:'story'）时，不再自动进入
+  // 自由讨论——用户经常还没看完前面的顺序发言，一开始自动刷自由讨论会把
+  // 还没读完的内容顶上去。改成先停下来问一句，用户点了"开始自由讨论"才真的
+  // 调用 enterFreeDiscussion；也可以直接跳过、进入下一章。投票/揭晓章完全
+  // 不受影响，还是直接走"进入下一章"。
+  const startFreeDiscussion = () => {
+    commit((g) => enterFreeDiscussion(g))
+  }
 
   // 自由讨论的自动驱动：每次日志变化（有人刚说完）、暂停状态变化、或刚进入
   // 自由讨论时，都重新算一次"接下来该谁说"，留 8 秒反应时间再真的去调用。
@@ -405,6 +404,18 @@ export default function MysteryGameRoom({ theme, chatId, chat, onClose }) {
           <div className="text-center text-[11.5px] py-2" style={{ color: '#c79fae' }}>本局已结束。想再来一次，点右上角结束本局后重新开本。</div>
         ) : isChapterComplete(game) ? (
           <>
+            {chapter?.stage === 'story' && !isInFreeDiscussion(game) && (
+              <div className="flex items-center justify-between mb-1.5 gap-2">
+                <span className="text-[10.5px]" style={{ color: '#b79aa5' }}>顺序发言说完了——看完了吗？</span>
+                <button
+                  onClick={startFreeDiscussion}
+                  className="flex-shrink-0"
+                  style={{ background: 'none', border: `1px solid ${primary}55`, borderRadius: 14, color: primary, fontSize: 10.5, padding: '3px 10px' }}
+                >
+                  开始自由讨论
+                </button>
+              </div>
+            )}
             {isInFreeDiscussion(game) && (
               <div className="flex items-center justify-between mb-1.5">
                 <span className="text-[10.5px]" style={{ color: '#b79aa5' }}>
