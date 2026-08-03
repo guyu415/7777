@@ -54,6 +54,16 @@ function SocialBrowserIcon() {
   )
 }
 
+function DivinationIcon() {
+  return (
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="5" y="3" width="14" height="18" rx="3"/>
+      <path d="m12 7 .8 2.2L15 10l-2.2.8L12 13l-.8-2.2L9 10l2.2-.8L12 7Z"/>
+      <path d="M8 17h8"/>
+    </svg>
+  )
+}
+
 function PlusIcon() {
   return (
     <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -118,7 +128,7 @@ function MenuItem({ icon, label, sub, onClick, disabled }) {
   )
 }
 
-const MessageInput = forwardRef(function MessageInput({ onSend, onStartCall, onSendImage, onOpenGomoku, gomokuEnabled, onOpenFocus, disabled, theme, isLoading, onStop }, ref) {
+const MessageInput = forwardRef(function MessageInput({ onSend, onStartCall, onSendImage, onOpenGomoku, gomokuEnabled, onOpenFocus, onOpenDivination, disabled, theme, isLoading, onStop }, ref) {
   const [text, setText] = useState('')
   const [menuOpen, setMenuOpen] = useState(false)
   // A picked image sits here as a draft — thumbnail + cancel, still editable
@@ -215,6 +225,11 @@ const MessageInput = forwardRef(function MessageInput({ onSend, onStartCall, onS
   const handleMenuFocus = () => {
     setMenuOpen(false)
     onOpenFocus?.()
+  }
+
+  const handleMenuDivination = () => {
+    setMenuOpen(false)
+    onOpenDivination?.()
   }
 
   // 云社媒浏览器入口——第一版只是人工进入 https://browser.xiaoman.xyz 的
@@ -391,6 +406,7 @@ const MessageInput = forwardRef(function MessageInput({ onSend, onStartCall, onS
             disabled={!gomokuEnabled}
           />
           <MenuItem icon={<FocusIcon />} label="专注" onClick={handleMenuFocus} />
+          <MenuItem icon={<DivinationIcon />} label="抽签" onClick={handleMenuDivination} />
           <MenuItem icon={<SocialBrowserIcon />} label="社媒浏览器" onClick={handleMenuSocialBrowser} />
         </div>
       </div>

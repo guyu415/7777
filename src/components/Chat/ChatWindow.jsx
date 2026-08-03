@@ -11,6 +11,7 @@ import GomokuBoard from './GomokuBoard'
 import XinchaoPanel from './XinchaoPanel'
 import FocusPomodoroSheet from '../Focus/FocusPomodoroSheet'
 import FocusSession from '../Focus/FocusSession'
+import DivinationRoom from '../Divination/DivinationRoom'
 import { useChat } from '../../hooks/useChat'
 import { useCodexChat } from '../../hooks/useCodexChat'
 import { useScheduledMessages } from '../../hooks/useScheduledMessages'
@@ -111,6 +112,7 @@ export default function ChatWindow({ theme }) {
   const [toast, setToast] = useState(null)
   const [showCall, setShowCall] = useState(false)
   const [showGomoku, setShowGomoku] = useState(false)
+  const [showDivination, setShowDivination] = useState(false)
   // Focus (专注) — ONE real global task, server-authoritative (see
   // useFocusRuntime.js and channel-server.ts's own Focus section), entirely
   // separate from chat/session state — it can be started by any runtime
@@ -672,6 +674,7 @@ export default function ChatWindow({ theme }) {
           onOpenGomoku={() => setShowGomoku(true)}
           gomokuEnabled={isFixedVpsSession}
           onOpenFocus={() => setShowFocusSheet(true)}
+          onOpenDivination={() => setShowDivination(true)}
           disabled={isLoading}
           theme={theme}
           isLoading={isLoading}
@@ -739,6 +742,18 @@ export default function ChatWindow({ theme }) {
 
       {showXinchaoPanel && (
         <XinchaoPanel theme={theme} state={xinchaoState} onClose={() => setShowXinchaoPanel(false)} />
+      )}
+
+      {showDivination && (
+        <DivinationRoom
+          theme={theme}
+          onClose={() => setShowDivination(false)}
+          onInterpret={(prompt) => {
+            setShowDivination(false)
+            updateActiveTime()
+            sendMessage(prompt, 'text').catch((e) => console.error('[DIVINATION] send failed:', e.message))
+          }}
+        />
       )}
 
       {/* Focus (专注) — setup sheet and full-screen countdown are two
