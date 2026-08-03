@@ -15,22 +15,21 @@ const CC_MODEL_OPTIONS = [
 const ccModelOption = (id) => CC_MODEL_OPTIONS.find(option => option.id === id)
 const POLL_MS = 10000
 
-function resetHasPassed(value) {
-  if (value == null) return false
-  const raw = Number(value)
-  if (!Number.isFinite(raw)) return false
-  const resetMs = raw < 1e12 ? raw * 1000 : raw
-  return resetMs <= Date.now()
-}
-
-function currentCcWindow(window) {
-  if (!window || !resetHasPassed(window.resets_at)) return window
-  return { ...window, used_percentage: 0, expired: true }
-}
-
-function currentCodexWindow(window) {
-  if (!window || !resetHasPassed(window.resetsAt)) return window
-  return { ...window, usedPercent: 0, expired: true }
+// 曾经这里有一段"如果 resets_at 已经过了当前时间，就在前端强行把用量显示成
+// 0%"的逻辑——那是纯猜测：真实用量永远只有后端（statusLine / Codex 自己的
+// account/rateLimits/read）知道，猜出来的 0% 在真实用量其实还没清零、或者
+// 后端只是暂时没刷新的时候会直接显示错误数字。真正的修复是让后端在每轮真实
+// 对话结束后都确定性地刷新一次（见 VPS 上 hook-notify.sh 新增的 statusLine
+// 强制重绘），前端这里只管老老实实展示后端给的真实数字，外加一个"更新于"
+// 时间戳——让用户自己判断这份数据够不够新，而不是替他们瞎猜。
+function formatCapturedAt(ms) {
+  if (!ms) return ''
+  const diffSec = Math.round((Date.now() - ms) / 1000)
+  if (diffSec < 5) return '刚刚更新'
+  if (diffSec < 60) return `${diffSec} 秒前更新`
+  if (diffSec < 3600) return `${Math.round(diffSec / 60)} 分钟前更新`
+  const d = new Date(ms)
+  return `${d.toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false, month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })} 更新`
 }
 
 function formatCredits(value) {
@@ -47,8 +46,8 @@ function formatResetTime(unixSeconds) {
 }
 
 function ccBallColor(status) {
-  const fh = currentCcWindow(status?.rate_limits?.five_hour)?.used_percentage
-  const wk = currentCcWindow(status?.rate_limits?.seven_day)?.used_percentage
+  const fh = status?.rate_limits?.five_hour?.used_percentage
+  const wk = status?.rate_limits?.seven_day?.used_percentage
   if (fh == null && wk == null) return '#a0b8d0' // 等待首次响应
   const remaining = Math.min(100 - (fh ?? 0), 100 - (wk ?? 0))
   if (remaining < 20) return '#e07070'
@@ -57,7 +56,7 @@ function ccBallColor(status) {
 }
 
 function codexBallColor(status) {
-  const pct = currentCodexWindow(status?.usage?.primary)?.usedPercent
+  const pct = status?.usage?.primary?.usedPercent
   if (pct == null) return '#a0b8d0'
   if (pct >= 80) return '#e07070'
   if (pct >= 50) return '#d4a017'
@@ -198,11 +197,15 @@ export default function RuntimeStatusBall({ theme, isLoading, runtime }) {
   const currentModelId = isCodex ? status?.model?.id : status?.model?.id
   const currentModelLabel = isCodex ? (status?.model?.displayName || '—') : (status?.model?.display_name || '—')
 
-  const fh = !isCodex ? currentCcWindow(status?.rate_limits?.five_hour) : null
-  const wk = !isCodex ? currentCcWindow(status?.rate_limits?.seven_day) : null
+  const fh = !isCodex ? status?.rate_limits?.five_hour : null
+  const wk = !isCodex ? status?.rate_limits?.seven_day : null
   const cw = !isCodex ? status?.context_window : null
-  const codexPrimary = isCodex ? currentCodexWindow(status?.usage?.primary) : null
+  const codexPrimary = isCodex ? status?.usage?.primary : null
   const codexCredits = isCodex ? status?.usage?.credits : null
+  // 真实的"这份数据是什么时候测到的"——CC 来自 statusLine 的 capturedAt，
+  // Codex 来自 account/rateLimits/read 的 usageCapturedAt。只用来给用户一个
+  // 判断新鲜度的参考，从不用来推导/伪造任何用量数字本身。
+  const capturedAt = isCodex ? status?.usageCapturedAt : status?.capturedAt
   // Present ONLY when the backend has a real, specific reason usage can't be
   // shown (e.g. Codex not logged in) — see /codex/model-status's own
   // comment. Distinct from "usage is simply null" (still legitimately
@@ -344,7 +347,7 @@ export default function RuntimeStatusBall({ theme, isLoading, runtime }) {
               <div className="text-[11px] mb-1" style={{ color: '#6a90b8' }}>5 小时用量</div>
               {fh ? (
                 <p className="text-[10px] mb-2" style={{ color: '#7a9cc0' }}>
-                  {fh.expired ? '已用 0%' : `已用 ${Math.round(fh.used_percentage)}% · 重置于 ${formatResetTime(fh.resets_at)}`}
+                  已用 {Math.round(fh.used_percentage)}% · 重置于 {formatResetTime(fh.resets_at)}
                 </p>
               ) : (
                 <p className="text-[10px] mb-2" style={{ color: '#a0b8d0' }}>等待首次响应</p>
@@ -352,11 +355,11 @@ export default function RuntimeStatusBall({ theme, isLoading, runtime }) {
 
               <div className="text-[11px] mb-1" style={{ color: '#6a90b8' }}>每周用量</div>
               {wk ? (
-                <p className="text-[10px]" style={{ color: '#7a9cc0' }}>
-                  {wk.expired ? '已用 0%' : `已用 ${Math.round(wk.used_percentage)}% · 重置于 ${formatResetTime(wk.resets_at)}`}
+                <p className="text-[10px] mb-2" style={{ color: '#7a9cc0' }}>
+                  已用 {Math.round(wk.used_percentage)}% · 重置于 {formatResetTime(wk.resets_at)}
                 </p>
               ) : (
-                <p className="text-[10px]" style={{ color: '#a0b8d0' }}>等待首次响应</p>
+                <p className="text-[10px] mb-2" style={{ color: '#a0b8d0' }}>等待首次响应</p>
               )}
             </>
           )}
@@ -372,21 +375,22 @@ export default function RuntimeStatusBall({ theme, isLoading, runtime }) {
               <>
                 <div className="text-[11px] mb-1" style={{ color: '#6a90b8' }}>用量窗口</div>
                 <p className="text-[10px] mb-2" style={{ color: '#7a9cc0' }}>
-                  {codexPrimary.expired
-                    ? '已用 0%'
-                    : `已用 ${Math.round(codexPrimary.usedPercent)}%${codexPrimary.resetsAt ? ` · 重置于 ${formatResetTime(codexPrimary.resetsAt)}` : ''}`}
+                  已用 {Math.round(codexPrimary.usedPercent)}%{codexPrimary.resetsAt ? ` · 重置于 ${formatResetTime(codexPrimary.resetsAt)}` : ''}
                 </p>
                 {codexCredits && (
-                  <p className="text-[10px]" style={{ color: '#7a9cc0' }}>
+                  <p className="text-[10px] mb-2" style={{ color: '#7a9cc0' }}>
                     {codexCredits.unlimited ? '额度：不限量' : (codexCredits.hasCredits ? `额度余量：${formatCredits(codexCredits.balance)}` : '无额外额度')}
                   </p>
                 )}
               </>
             ) : codexUsageUnavailable ? (
-              <p className="text-[10px]" style={{ color: '#e07070' }}>用量获取失败：{codexUsageUnavailable}</p>
+              <p className="text-[10px] mb-2" style={{ color: '#e07070' }}>用量获取失败：{codexUsageUnavailable}</p>
             ) : (
-              <p className="text-[10px]" style={{ color: '#a0b8d0' }}>{!status ? '等待首次响应' : '暂无用量数据'}</p>
+              <p className="text-[10px] mb-2" style={{ color: '#a0b8d0' }}>{!status ? '等待首次响应' : '暂无用量数据'}</p>
             )
+          )}
+          {capturedAt && (
+            <p className="text-[9.5px]" style={{ color: '#a0b8d0' }}>{formatCapturedAt(capturedAt)}</p>
           )}
         </div>
       )}
