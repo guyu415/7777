@@ -18,13 +18,16 @@ import { useStore, saveBlob, getBlob } from '../store'
 // small runtime switch, instead of maintaining a second full page shell —
 // see ChatWindow.jsx's own top-of-file comment.
 
+// Only the two IN-PROGRESS states get a header label — the server's own
+// codexStatus is now structurally never anything else (see
+// channel-server.ts's CodexStatus comment: 'done' resolves straight back to
+// 'idle', so there is no "已完成" value to ever render, live or on refresh).
+// stopped/error are delivered separately as a one-shot codex_notice (see
+// below) and shown as a toast, never a lingering header pill.
 export const CODEX_STATUS_LABELS = {
   idle: '',
   thinking: '正在思考',
   working: '正在工作',
-  done: '已完成',
-  stopped: '已停止',
-  error: '出错了',
 }
 
 // Maps the server's own CodexMsg shape into exactly what MessageBubble
@@ -77,6 +80,12 @@ export function useCodexChat() {
   const [openTurnId, setOpenTurnId] = useState(null)
   const [loaded, setLoaded] = useState(false)
   const [sendError, setSendError] = useState(null)
+  // A one-shot stopped/error notice for ChatWindow.jsx to show as a brief
+  // toast — a fresh object identity every time (even for a repeated
+  // message), never persisted/replayed on refresh, and never folded into
+  // `status` (which only ever holds idle/thinking/working — see
+  // CODEX_STATUS_LABELS's own comment).
+  const [notice, setNotice] = useState(null)
 
   // Same session-then-global TTS config fallback useChat.js uses — Codex's
   // voice reuses the CURRENT session's own configured voice, never a
@@ -227,6 +236,9 @@ export function useCodexChat() {
         case 'codex_status':
           setStatus(evt.status)
           break
+        case 'codex_notice':
+          setNotice({ kind: evt.kind, message: evt.message, ts: Date.now() })
+          break
         case 'codex_turn_end':
           setOpenTurnId(null)
           break
@@ -297,6 +309,6 @@ export function useCodexChat() {
     deleteMsg: notSupported, editMessage: notSupported,
     stopStreaming,
     // Codex-only extras ChatWindow.jsx reads directly (not part of useChat()'s shape)
-    status, statusLabel: CODEX_STATUS_LABELS[status] || '', openTurnId, loaded, sendError, reset,
+    status, statusLabel: CODEX_STATUS_LABELS[status] || '', openTurnId, loaded, sendError, reset, notice,
   }
 }

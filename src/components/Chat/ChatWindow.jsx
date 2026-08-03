@@ -150,6 +150,15 @@ export default function ChatWindow({ theme }) {
     setSummaryToast(null)
   }, [summaryToast])
 
+  // Codex's stopped/error notices are one-shot toasts, never a lingering
+  // header pill (see useCodexChat.js's `notice` — a fresh object every time,
+  // so this fires once per real occurrence and is never replayed on refresh).
+  useEffect(() => {
+    if (!isCodexSession || !codex.notice) return
+    showToast(codex.notice.message || (codex.notice.kind === 'stopped' ? '已停止' : '出错了'))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isCodexSession, codex.notice])
+
   useEffect(() => {
     const check = async () => {
       const hasNew = await fetchPendingMessages()

@@ -436,7 +436,7 @@ listeners.add(evt => {
       announceXinchao(m.state, m.runtime || 'claude-code')
       return
     }
-    if (m.type === 'codex_msg' || m.type === 'codex_status' || m.type === 'codex_turn_end'
+    if (m.type === 'codex_msg' || m.type === 'codex_status' || m.type === 'codex_notice' || m.type === 'codex_turn_end'
       || m.type === 'codex_turn_busy' || m.type === 'codex_reset_busy' || m.type === 'codex_reset') {
       announceCodex(m)
       return
