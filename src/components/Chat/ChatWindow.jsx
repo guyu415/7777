@@ -9,9 +9,12 @@ import RuntimeStatusBall from './RuntimeStatusBall'
 import VoiceCall from '../Voice/VoiceCall'
 import GomokuBoard from './GomokuBoard'
 import XinchaoPanel from './XinchaoPanel'
+import FocusPomodoroSheet from '../Focus/FocusPomodoroSheet'
+import FocusSession from '../Focus/FocusSession'
 import { useChat } from '../../hooks/useChat'
 import { useCodexChat } from '../../hooks/useCodexChat'
 import { useScheduledMessages } from '../../hooks/useScheduledMessages'
+import { usePomodoro } from '../../hooks/usePomodoro'
 import { useStore, deleteMessageFromDB, getBlob } from '../../store'
 import { putAsset } from '../../services/sync'
 import { getXinchaoStatus, onXinchaoUpdate } from '../../services/companion'
@@ -108,6 +111,16 @@ export default function ChatWindow({ theme }) {
   const [toast, setToast] = useState(null)
   const [showCall, setShowCall] = useState(false)
   const [showGomoku, setShowGomoku] = useState(false)
+  // Focus (专注番茄钟) — its own persisted state lives in localStorage via
+  // usePomodoro (see pomodoroCore.js), entirely separate from chat/session
+  // state. showFocusSheet is just "is the setup bottom-sheet open"; the
+  // full-screen countdown's own visibility is driven by the timer's actual
+  // status further down (see focusSessionVisible), not by this flag, so a
+  // running/paused session (or its completion card) stays visible across a
+  // sheet close/reopen or a plain page reload.
+  const [showFocusSheet, setShowFocusSheet] = useState(false)
+  const pomodoro = usePomodoro()
+  const focusSessionVisible = pomodoro.state.status !== 'idle' || !!pomodoro.justCompleted
   const [xinchaoState, setXinchaoState] = useState(null)
   const [showXinchaoPanel, setShowXinchaoPanel] = useState(false)
   const callAudioRef = useRef(null)
@@ -655,6 +668,7 @@ export default function ChatWindow({ theme }) {
           onSendImage={handleSendImage}
           onOpenGomoku={() => setShowGomoku(true)}
           gomokuEnabled={isFixedVpsSession}
+          onOpenFocus={() => setShowFocusSheet(true)}
           disabled={isLoading}
           theme={theme}
           isLoading={isLoading}
@@ -722,6 +736,34 @@ export default function ChatWindow({ theme }) {
 
       {showXinchaoPanel && (
         <XinchaoPanel theme={theme} state={xinchaoState} onClose={() => setShowXinchaoPanel(false)} />
+      )}
+
+      {/* Focus (专注番茄钟) — setup sheet and full-screen countdown are two
+          independent overlays, same "standalone takeover, not a route
+          change" pattern as GomokuBoard/VoiceCall above. The sheet only
+          decides whether the setup form is open; once a session actually
+          starts, FocusSession's own visibility takes over (see
+          focusSessionVisible above) and survives the sheet closing. */}
+      {showFocusSheet && (
+        <FocusPomodoroSheet
+          theme={theme}
+          aiName={effectiveAiName}
+          aiAvatar={effectiveAiAvatar}
+          onClose={() => setShowFocusSheet(false)}
+          onStart={(opts) => {
+            pomodoro.startFocusSession(opts)
+            setShowFocusSheet(false)
+          }}
+        />
+      )}
+      {focusSessionVisible && (
+        <FocusSession
+          theme={theme}
+          aiName={effectiveAiName}
+          aiAvatar={effectiveAiAvatar}
+          pomodoro={pomodoro}
+          onExit={() => setShowFocusSheet(false)}
+        />
       )}
     </div>
   )

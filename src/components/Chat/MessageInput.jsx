@@ -34,6 +34,16 @@ function GomokuIcon() {
   )
 }
 
+function FocusIcon() {
+  return (
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="12" cy="13" r="8"/>
+      <polyline points="12 9 12 13 15 15"/>
+      <path d="M9 2h6"/>
+    </svg>
+  )
+}
+
 function PlusIcon() {
   return (
     <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -90,7 +100,7 @@ function MenuItem({ icon, label, sub, onClick, disabled }) {
   )
 }
 
-const MessageInput = forwardRef(function MessageInput({ onSend, onStartCall, onSendImage, onOpenGomoku, gomokuEnabled, disabled, theme, isLoading, onStop }, ref) {
+const MessageInput = forwardRef(function MessageInput({ onSend, onStartCall, onSendImage, onOpenGomoku, gomokuEnabled, onOpenFocus, disabled, theme, isLoading, onStop }, ref) {
   const [text, setText] = useState('')
   const [menuOpen, setMenuOpen] = useState(false)
   // A picked image sits here as a draft — thumbnail + cancel, still editable
@@ -184,6 +194,11 @@ const MessageInput = forwardRef(function MessageInput({ onSend, onStartCall, onS
     onOpenGomoku?.()
   }
 
+  const handleMenuFocus = () => {
+    setMenuOpen(false)
+    onOpenFocus?.()
+  }
+
   const primaryColor = theme?.primary || '#ff85b3'
 
   return (
@@ -223,6 +238,7 @@ const MessageInput = forwardRef(function MessageInput({ onSend, onStartCall, onS
             onClick={handleMenuGomoku}
             disabled={!gomokuEnabled}
           />
+          <MenuItem icon={<FocusIcon />} label="专注" onClick={handleMenuFocus} />
         </div>
       )}
 
