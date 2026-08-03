@@ -14,7 +14,7 @@ import FocusSession from '../Focus/FocusSession'
 import { useChat } from '../../hooks/useChat'
 import { useCodexChat } from '../../hooks/useCodexChat'
 import { useScheduledMessages } from '../../hooks/useScheduledMessages'
-import { usePomodoro } from '../../hooks/usePomodoro'
+import { useFocusRuntime } from '../../hooks/useFocusRuntime'
 import { useStore, deleteMessageFromDB, getBlob } from '../../store'
 import { putAsset } from '../../services/sync'
 import { getXinchaoStatus, onXinchaoUpdate } from '../../services/companion'
@@ -111,16 +111,19 @@ export default function ChatWindow({ theme }) {
   const [toast, setToast] = useState(null)
   const [showCall, setShowCall] = useState(false)
   const [showGomoku, setShowGomoku] = useState(false)
-  // Focus (专注番茄钟) — its own persisted state lives in localStorage via
-  // usePomodoro (see pomodoroCore.js), entirely separate from chat/session
-  // state. showFocusSheet is just "is the setup bottom-sheet open"; the
-  // full-screen countdown's own visibility is driven by the timer's actual
-  // status further down (see focusSessionVisible), not by this flag, so a
-  // running/paused session (or its completion card) stays visible across a
-  // sheet close/reopen or a plain page reload.
+  // Focus (专注) — ONE real global task, server-authoritative (see
+  // useFocusRuntime.js and channel-server.ts's own Focus section), entirely
+  // separate from chat/session state — it can be started by any runtime
+  // (CC/Codex's real tools, or this user's own manual start) and is visible
+  // from any window. showFocusSheet is just "is the setup bottom-sheet
+  // open"; the full-screen countdown's own visibility is driven by the
+  // server's real active/justFinished state further down (see
+  // focusSessionVisible), not by this flag, so an AI-started session (or
+  // its completion card) shows up automatically — no click needed — and
+  // survives a sheet close/reopen or a page reload.
   const [showFocusSheet, setShowFocusSheet] = useState(false)
-  const pomodoro = usePomodoro()
-  const focusSessionVisible = pomodoro.state.status !== 'idle' || !!pomodoro.justCompleted
+  const focusRuntime = useFocusRuntime()
+  const focusSessionVisible = !!focusRuntime.state?.active || !!focusRuntime.justFinished
   const [xinchaoState, setXinchaoState] = useState(null)
   const [showXinchaoPanel, setShowXinchaoPanel] = useState(false)
   const callAudioRef = useRef(null)
@@ -738,21 +741,22 @@ export default function ChatWindow({ theme }) {
         <XinchaoPanel theme={theme} state={xinchaoState} onClose={() => setShowXinchaoPanel(false)} />
       )}
 
-      {/* Focus (专注番茄钟) — setup sheet and full-screen countdown are two
+      {/* Focus (专注) — setup sheet and full-screen countdown are two
           independent overlays, same "standalone takeover, not a route
           change" pattern as GomokuBoard/VoiceCall above. The sheet only
           decides whether the setup form is open; once a session actually
-          starts, FocusSession's own visibility takes over (see
-          focusSessionVisible above) and survives the sheet closing. */}
+          starts (by the user here, or for real by CC/Codex calling their
+          own start_focus tool from anywhere), FocusSession's own visibility
+          takes over (see focusSessionVisible above) and survives the sheet
+          closing or a page reload. */}
       {showFocusSheet && (
         <FocusPomodoroSheet
           theme={theme}
-          aiName={effectiveAiName}
-          aiAvatar={effectiveAiAvatar}
           onClose={() => setShowFocusSheet(false)}
-          onStart={(opts) => {
-            pomodoro.startFocusSession(opts)
-            setShowFocusSheet(false)
+          onStart={async (opts) => {
+            const result = await focusRuntime.startFocus(opts)
+            if (result?.ok) setShowFocusSheet(false)
+            return result
           }}
         />
       )}
@@ -761,7 +765,7 @@ export default function ChatWindow({ theme }) {
           theme={theme}
           aiName={effectiveAiName}
           aiAvatar={effectiveAiAvatar}
-          pomodoro={pomodoro}
+          focus={focusRuntime}
           onExit={() => setShowFocusSheet(false)}
         />
       )}

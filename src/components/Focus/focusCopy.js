@@ -5,6 +5,8 @@
 //   · 真正生效靠的是用户连按三下侧边键
 //   · 配置过一次之后，之后可以很快再次进入
 //   · 小漫不会、也不能掌握或代为设置系统退出密码
+export const APPLE_GUIDE_URL = 'https://support.apple.com/111795'
+
 export const GA_STEPS = [
   { title: '打开"设置"', body: '进入"辅助功能 → 引导式访问"，把它打开。' },
   { title: '设置退出密码', body: '如果担心自己中途手痒关掉，可以不用 Face ID，请信任的人帮忙代设密码——这个密码小漫和网页都不会知道，也没有办法帮你设置。' },
@@ -15,18 +17,3 @@ export const GA_STEPS = [
 export const GA_DISCLAIMER = '这不是网页遮罩或熄屏锁机，小漫也不会在后台帮你操作手机系统。真正的单 App 限制来自 iPhone 自带的"引导式访问"，需要你自己完成上面几步；配置过一次之后，之后每次都能很快再进入。'
 
 export const GA_SHORT_REMINDER = '想让这次专注真正锁在这一页？现在连按三下 iPhone 侧边键，选择"引导式访问"并点"开始"——这一步只能由你自己动手。'
-
-const DEFAULT_LINES = [
-  '我在这陪着你，这段时间先交给我吧。',
-  '手机就先放这儿，其它事情我先帮你挡一挡。',
-  '专心一会儿就好，时间到了我会告诉你。',
-  '走神了也没关系，回来接着做就好啦。',
-  '慢慢来，我们一起把这段时间过完。',
-]
-
-// 供全屏专注页轮播——name 来自当前会话设置的小漫昵称，不写死。这是本地的
-// 固定文案轮播，不是真实调用 AI 生成的监督语——预览阶段就应当诚实到这个
-// 程度，见 FocusPomodoroSheet 里"模拟小漫发起专注"按钮旁的说明。
-export function xiaomanLines() {
-  return DEFAULT_LINES
-}

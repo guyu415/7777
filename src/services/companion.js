@@ -267,6 +267,105 @@ function announceTurnEnd(turnId) {
   }
 }
 
+// ---------- Focus (专注) ----------
+// A single GLOBAL task server-side (see channel-server.ts's own Focus
+// section) — not per-runtime like gomoku/xinchao, so no runtime filtering is
+// needed here; every subscriber just gets the one real state. Initial state
+// comes from a real GET (getFocusState, mirrors useCodexChat.js's own
+// refresh() pattern) since the WS 'history' snapshot's codexHistory/focus
+// fields are a known-latent, pre-existing gap in this module's history
+// notify() (only openTurnId/items/resetAt are actually forwarded) — never
+// relied on for Focus; live updates after that come from focus_update/
+// focus_finished pushes.
+const focusListeners = new Set()
+export function onFocusUpdate(fn) {
+  focusListeners.add(fn)
+  return () => focusListeners.delete(fn)
+}
+function announceFocusUpdate(state) {
+  for (const fn of focusListeners) {
+    try { fn(state) } catch { /* one subscriber's throw must not break the others */ }
+  }
+}
+const focusFinishedListeners = new Set()
+export function onFocusFinished(fn) {
+  focusFinishedListeners.add(fn)
+  return () => focusFinishedListeners.delete(fn)
+}
+function announceFocusFinished(payload) {
+  for (const fn of focusFinishedListeners) {
+    try { fn(payload) } catch { /* one subscriber's throw must not break the others */ }
+  }
+}
+
+export async function getFocusState() {
+  const { state } = await companionJson('/focus/state')
+  return state
+}
+export async function startFocus({ task, minutes, manager } = {}) {
+  return companionJson('/focus/start', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ task, minutes, ...(manager ? { manager } : {}) }),
+  })
+}
+export async function focusInteract(text) {
+  return companionJson('/focus/interact', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ text }),
+  })
+}
+export async function requestFocus(kind, reason) {
+  return companionJson('/focus/request', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ kind, reason }),
+  })
+}
+export async function resumeFocusFromApproval() {
+  return companionJson('/focus/resume', { method: 'POST' })
+}
+export async function selfPauseFocus() {
+  return companionJson('/focus/self/pause', { method: 'POST' })
+}
+export async function selfResumeFocus() {
+  return companionJson('/focus/self/resume', { method: 'POST' })
+}
+export async function selfEndFocus() {
+  return companionJson('/focus/self/end', { method: 'POST' })
+}
+// Used by useChat.js after parsing a real [FOCUS_APPROVE:...]/[FOCUS_DENY:...]
+// tag out of a plain API-key model's own reply — see that file.
+export async function apiManagerApproveFocus(sessionId, requestId, message) {
+  return companionJson('/focus/api-manager/approve', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ sessionId, requestId, message }),
+  })
+}
+export async function apiManagerDenyFocus(sessionId, requestId, reason) {
+  return companionJson('/focus/api-manager/deny', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ sessionId, requestId, reason }),
+  })
+}
+export async function apiManagerFinishFocus(sessionId) {
+  return companionJson('/focus/api-manager/finish', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ sessionId }),
+  })
+}
+export async function apiManagerExtendFocus(sessionId, minutes) {
+  return companionJson('/focus/api-manager/extend', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ sessionId, minutes }),
+  })
+}
+
 // ---------- 心潮 (xinchao) ----------
 // Purely reactive — no polling. The server pushes a fresh xinchao_update on
 // WS open, and again whenever a turn ends (see channel-server.ts). This just
@@ -434,6 +533,14 @@ listeners.add(evt => {
     }
     if (m.type === 'xinchao_update') {
       announceXinchao(m.state, m.runtime || 'claude-code')
+      return
+    }
+    if (m.type === 'focus_update') {
+      announceFocusUpdate(m.state)
+      return
+    }
+    if (m.type === 'focus_finished') {
+      announceFocusFinished({ reason: m.reason, manager: m.manager, actualMs: m.actualMs })
       return
     }
     if (m.type === 'codex_msg' || m.type === 'codex_status' || m.type === 'codex_notice' || m.type === 'codex_turn_end'

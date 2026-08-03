@@ -1,143 +1,170 @@
-import { useEffect, useMemo, useState } from 'react'
-import { Pause, Play, Info, X } from 'lucide-react'
-import { GA_STEPS, GA_DISCLAIMER, GA_SHORT_REMINDER, xiaomanLines } from './focusCopy'
+import { useEffect, useRef, useState } from 'react'
+import { Send, Info, X, Pause, Play } from 'lucide-react'
+import { GA_STEPS, GA_DISCLAIMER, GA_SHORT_REMINDER } from './focusCopy'
 
-const LINE_ROTATE_MS = 22000
+const QUICK_REASONS = ['上厕所', '身体不舒服', '临时有事']
 
-// The full-screen countdown takeover — shown whenever a focus/break session
-// is running/paused, OR a phase just finished (completion card), driven
-// entirely by usePomodoro()'s state (see ChatWindow.jsx's mount condition).
-// Deliberately no FallingParticles / heavy motion here — "安静，不放大量装饰
-// 粒子" — the only animation is a slow breathing glow on the ring itself.
-export default function FocusSession({ theme, aiName, aiAvatar, pomodoro, onExit }) {
+function bgGradient(primary) {
+  return `radial-gradient(circle at 50% 18%, ${primary}22, transparent 55%), linear-gradient(175deg, #fdf1f6 0%, #f8e4ef 35%, #f3e6fb 70%, #f9f0ff 100%)`
+}
+
+function LogLine({ msg, primary, opponentName }) {
+  if (msg.from === 'system') {
+    return <div style={{ textAlign: 'center', fontSize: 10.5, color: '#c9a2ad', padding: '4px 8px' }}>{msg.text}</div>
+  }
+  const isUser = msg.from === 'user'
+  return (
+    <div style={{ display: 'flex', justifyContent: isUser ? 'flex-end' : 'flex-start', padding: '2px 4px' }}>
+      <div style={{
+        maxWidth: '78%', padding: '7px 12px', borderRadius: 14, fontSize: 12.5, lineHeight: 1.5,
+        background: isUser ? `linear-gradient(135deg, ${primary}, ${primary}cc)` : 'rgba(255,255,255,0.75)',
+        color: isUser ? '#fff' : '#5a3548',
+        border: isUser ? 'none' : `1px solid ${primary}22`,
+      }}>
+        {!isUser && <div style={{ fontSize: 9.5, color: primary, marginBottom: 2, fontWeight: 600 }}>{opponentName}</div>}
+        {msg.text}
+      </div>
+    </div>
+  )
+}
+
+// The full-screen countdown + (when AI-managed) a real interaction area —
+// entirely driven by useFocusRuntime()'s server-authoritative state (see
+// that hook and channel-server.ts's Focus section), never local state. Shown
+// whenever ChatWindow.jsx's focusSessionVisible is true (state.active, or a
+// just-finished completion card still pending acknowledgement).
+export default function FocusSession({ theme, aiName, aiAvatar, focus, onExit }) {
   const primary = theme?.primary || '#ff85b3'
   const primaryDark = theme?.primaryDark || '#ff6b9d'
-  const { state, remainingMs, todayCount, justCompleted, pauseFocus, resumeFocus, endFocus, startBreak, skipBreak, acknowledgeCompletion, format } = pomodoro
+  const {
+    state, remainingMs, todayCount, justFinished, acknowledgeFinished, format,
+    focusInteract, requestFocus, resumeFocusFromApproval, selfPauseFocus, selfResumeFocus, selfEndFocus,
+  } = focus
 
-  const opponentName = aiName || '小漫'
-  const [lineIdx, setLineIdx] = useState(0)
+  const [chatText, setChatText] = useState('')
+  const [sending, setSending] = useState(false)
+  const [requestKind, setRequestKind] = useState(null)
+  const [reasonText, setReasonText] = useState('')
+  const [submittingRequest, setSubmittingRequest] = useState(false)
+  const [requestError, setRequestError] = useState(null)
   const [showGuideInfo, setShowGuideInfo] = useState(false)
-  const lines = useMemo(() => xiaomanLines(), [])
+  const logRef = useRef(null)
+
+  const managed = !!state?.manager
+  const opponentName = state?.manager?.name || aiName || '小漫'
 
   useEffect(() => {
-    if (!(state.managed && state.mode === 'focus' && state.status === 'running')) return
-    const t = setInterval(() => setLineIdx(i => (i + 1) % lines.length), LINE_ROTATE_MS)
-    return () => clearInterval(t)
-  }, [state.managed, state.mode, state.status, lines.length])
+    logRef.current?.scrollTo({ top: logRef.current.scrollHeight, behavior: 'smooth' })
+  }, [state?.log?.length])
 
-  // ---- Completion card (focus just finished, or break just finished) ----
-  if (justCompleted) {
-    const focusDone = justCompleted === 'focus'
+  if (!state) return null
+
+  // ---- Completion card (real: naturally expired, manager-finished, or an
+  // approved early end — see justFinished.reason) ----
+  if (justFinished) {
+    const completed = justFinished.reason === 'completed'
     return (
       <div className="fixed inset-0 flex flex-col items-center justify-center px-8" style={{ zIndex: 65, background: bgGradient(primary) }}>
-        <div style={{ fontSize: 46, marginBottom: 6 }}>{focusDone ? '🎉' : '🌿'}</div>
+        <div style={{ fontSize: 46, marginBottom: 6 }}>{completed ? '🎉' : '⏹️'}</div>
         <div style={{ fontSize: 19, fontWeight: 600, color: '#5a3548', textAlign: 'center' }}>
-          {focusDone ? '这段专注完成啦' : '休息结束'}
+          {completed ? '这段专注完成啦' : '专注提前结束了'}
         </div>
         <div style={{ fontSize: 12.5, color: '#a97d8a', marginTop: 6, textAlign: 'center', lineHeight: 1.7 }}>
-          {focusDone
-            ? `今天已经完成 ${todayCount} 次专注，${opponentName}都看在眼里。`
-            : '休息够了的话，我们可以开始下一段专注。'}
+          {completed
+            ? `今天已经完成 ${todayCount} 次专注${justFinished.manager ? `，${justFinished.manager.name}都看在眼里` : ''}。`
+            : (justFinished.actualMs ? `这次进行了约 ${Math.max(1, Math.round(justFinished.actualMs / 60000))} 分钟。` : '')}
         </div>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 10, width: '100%', maxWidth: 300, marginTop: 28 }}>
-          {focusDone ? (
-            <>
-              <button
-                onClick={startBreak}
-                style={{
-                  padding: '13px', borderRadius: 18, border: 'none', fontSize: 14.5, fontWeight: 600,
-                  background: `linear-gradient(135deg, ${primary}, ${primaryDark})`, color: '#fff',
-                  boxShadow: `0 6px 20px ${primary}45`,
-                }}
-              >
-                开始休息（{state.breakMinutes} 分钟）
-              </button>
-              <button
-                onClick={() => { skipBreak(); acknowledgeCompletion(); onExit() }}
-                style={{ padding: '12px', borderRadius: 18, border: `1px solid ${primary}35`, fontSize: 13.5, color: '#8b5060', background: 'rgba(255,255,255,0.55)' }}
-              >
-                先不休息了
-              </button>
-            </>
-          ) : (
-            <button
-              onClick={() => { acknowledgeCompletion(); onExit() }}
-              style={{
-                padding: '13px', borderRadius: 18, border: 'none', fontSize: 14.5, fontWeight: 600,
-                background: `linear-gradient(135deg, ${primary}, ${primaryDark})`, color: '#fff',
-                boxShadow: `0 6px 20px ${primary}45`,
-              }}
-            >
-              好的，回到聊天
-            </button>
-          )}
-        </div>
+        <button
+          onClick={() => { acknowledgeFinished(); onExit() }}
+          style={{
+            marginTop: 26, padding: '13px 32px', borderRadius: 18, border: 'none', fontSize: 14.5, fontWeight: 600,
+            background: `linear-gradient(135deg, ${primary}, ${primaryDark})`, color: '#fff',
+            boxShadow: `0 6px 20px ${primary}45`,
+          }}
+        >
+          好的，回到聊天
+        </button>
       </div>
     )
   }
 
-  // ---- Live countdown ----
-  const totalMs = (state.mode === 'break' ? state.breakMinutes : state.focusMinutes) * 60000
+  const pending = state.pendingRequest
+
+  const handleSendChat = async () => {
+    const text = chatText.trim()
+    if (!text || sending) return
+    setSending(true)
+    setChatText('')
+    try { await focusInteract(text) } catch { /* best-effort — log stays as the source of truth */ } finally { setSending(false) }
+  }
+
+  const openRequest = (kind) => { setRequestKind(kind); setReasonText(''); setRequestError(null) }
+  const submitRequest = async () => {
+    if (!reasonText.trim() || submittingRequest) return
+    setSubmittingRequest(true)
+    setRequestError(null)
+    try {
+      const result = await requestFocus(requestKind, reasonText.trim())
+      if (!result?.ok) { setRequestError('提交失败，请重试'); return }
+      setRequestKind(null)
+    } catch {
+      setRequestError('提交失败，请重试')
+    } finally {
+      setSubmittingRequest(false)
+    }
+  }
+
+  const totalMs = (state.minutes || 25) * 60000
   const pct = totalMs > 0 ? Math.min(1, Math.max(0, 1 - remainingMs / totalMs)) : 0
-  const managedFocus = state.managed && state.mode === 'focus'
-  const line = lines[lineIdx % lines.length]
 
   return (
     <div className="fixed inset-0 flex flex-col" style={{ zIndex: 65, background: bgGradient(primary) }}>
-      {/* Xiaoman header — reads current session's own name/avatar, never a
-          hardcoded identity. Only shown during managed focus (that's the
-          "陪伴/监督" slot); plain countdown otherwise stays uncluttered. */}
-      <div className="flex flex-col items-center flex-shrink-0" style={{ paddingTop: 'calc(env(safe-area-inset-top, 0px) + 22px)' }}>
-        {managedFocus && (
+      {/* Header — managed only: who's running this, real identity from the
+          session that actually called start_focus, never a generic label. */}
+      <div className="flex flex-col items-center flex-shrink-0" style={{ paddingTop: 'calc(env(safe-area-inset-top, 0px) + 14px)' }}>
+        {managed ? (
           <>
             <div style={{
-              width: 52, height: 52, borderRadius: '50%', overflow: 'hidden',
-              display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 22,
+              width: 40, height: 40, borderRadius: '50%', overflow: 'hidden',
+              display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 18,
               background: 'rgba(255,255,255,0.7)', border: `2px solid ${primary}55`,
-              boxShadow: `0 0 16px ${primary}40`,
+              boxShadow: `0 0 14px ${primary}35`,
             }}>
               {aiAvatar ? <img src={aiAvatar} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : '🌸'}
             </div>
-            <div style={{ fontSize: 12.5, fontWeight: 600, color: '#6a3f56', marginTop: 6 }}>{opponentName}正在陪你专注</div>
-            <div key={lineIdx} className="animate-fade-up" style={{ fontSize: 11.5, color: '#a97d8a', marginTop: 4, padding: '0 32px', textAlign: 'center', lineHeight: 1.6, minHeight: 32 }}>
-              {line}
-            </div>
+            <div style={{ fontSize: 11.5, fontWeight: 600, color: '#6a3f56', marginTop: 5 }}>由{opponentName}管理这次专注</div>
           </>
-        )}
-        {!managedFocus && (
-          <div style={{ fontSize: 12.5, color: '#a97d8a' }}>{state.mode === 'break' ? '休息一下' : '专注中'}</div>
+        ) : (
+          <div style={{ fontSize: 12, color: '#a97d8a' }}>{state.status === 'paused' ? '已暂停' : '专注中'}</div>
         )}
       </div>
 
-      {/* Countdown ring — the visual center. Conic-gradient progress ring +
-          a glass inner disc, no SVG/canvas needed. The one and only
-          animation on this page is the ring's own slow glow breathing. */}
-      <div className="flex-1 flex items-center justify-center min-h-0">
-        <div style={{ position: 'relative', width: 232, height: 232, flexShrink: 0 }}>
-          <style>{`
-            @keyframes focus-ring-breathe { 0%,100% { opacity: 0.55 } 50% { opacity: 0.9 } }
-          `}</style>
+      {/* Countdown ring — the visual center. Conic-gradient progress + a
+          glass inner disc, no SVG/canvas needed. Only animation on this page
+          is the ring's own slow glow breathing. */}
+      <div className="flex-shrink-0 flex items-center justify-center" style={{ padding: '10px 0' }}>
+        <div style={{ position: 'relative', width: 190, height: 190, flexShrink: 0 }}>
+          <style>{`@keyframes focus-ring-breathe { 0%,100% { opacity: 0.55 } 50% { opacity: 0.9 } }`}</style>
           <div style={{
             position: 'absolute', inset: 0, borderRadius: '50%',
             background: `conic-gradient(${primary} ${pct * 360}deg, rgba(255,255,255,0.35) 0deg)`,
-            boxShadow: `0 0 32px ${primary}35`,
+            boxShadow: `0 0 26px ${primary}30`,
           }} />
           <div style={{
-            position: 'absolute', inset: 0, borderRadius: '50%',
-            border: `1px solid ${primary}55`,
+            position: 'absolute', inset: 0, borderRadius: '50%', border: `1px solid ${primary}55`,
             animation: state.status === 'running' ? 'focus-ring-breathe 4.5s ease-in-out infinite' : 'none',
           }} />
           <div style={{
-            position: 'absolute', inset: 15, borderRadius: '50%',
+            position: 'absolute', inset: 13, borderRadius: '50%',
             background: 'radial-gradient(circle at 38% 30%, rgba(255,255,255,0.98), rgba(255,247,251,0.94) 70%)',
             display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
             boxShadow: 'inset 0 2px 10px rgba(139,80,96,0.08)',
           }}>
-            <span style={{ fontSize: 44, fontWeight: 650, letterSpacing: 0.5, color: '#5a3548', fontFamily: 'ui-rounded, -apple-system, sans-serif', lineHeight: 1 }}>
+            <span style={{ fontSize: 38, fontWeight: 650, letterSpacing: 0.5, color: '#5a3548', fontFamily: 'ui-rounded, -apple-system, sans-serif', lineHeight: 1 }}>
               {format(remainingMs)}
             </span>
-            <span style={{ fontSize: 11, color: '#c48a9a', marginTop: 8 }}>
-              {state.status === 'paused' ? '已暂停' : state.mode === 'break' ? '休息中' : '专注中'}
+            <span style={{ fontSize: 10.5, color: '#c48a9a', marginTop: 6 }}>
+              {state.status === 'paused' ? '已暂停' : '专注中'}
             </span>
           </div>
         </div>
@@ -147,78 +174,159 @@ export default function FocusSession({ theme, aiName, aiAvatar, pomodoro, onExit
       <div className="flex flex-col items-center flex-shrink-0" style={{ padding: '0 24px' }}>
         {state.task && (
           <div style={{
-            maxWidth: 300, padding: '8px 16px', borderRadius: 14, marginBottom: 10,
+            maxWidth: 300, padding: '6px 14px', borderRadius: 13, marginBottom: 6,
             background: 'rgba(255,255,255,0.55)', border: `1px solid ${primary}25`,
-            fontSize: 13, color: '#6a3f56', textAlign: 'center',
+            fontSize: 12.5, color: '#6a3f56', textAlign: 'center',
           }}>
             {state.task}
           </div>
         )}
-        <div style={{ fontSize: 11, color: '#b98a96', marginBottom: 14 }}>今日已完成 {todayCount} 次专注</div>
+        <div style={{ fontSize: 10.5, color: '#b98a96', marginBottom: 8 }}>今日已完成 {todayCount} 次专注</div>
       </div>
 
-      {/* Guided Access reminder — managed + focus + running only, short and
-          non-blocking; a real triple-click is the only thing that actually
-          starts iOS's own system lock, this page cannot do it for the user. */}
-      {managedFocus && state.status === 'running' && (
+      {/* Guided Access reminder — managed + running only, short, informational */}
+      {managed && state.status === 'running' && (
         <div style={{ padding: '0 20px', flexShrink: 0 }}>
           <button
             onClick={() => setShowGuideInfo(true)}
             className="flex items-start gap-2 w-full text-left"
-            style={{
-              padding: '10px 14px', borderRadius: 16, marginBottom: 14,
-              background: `${primary}14`, border: `1px solid ${primary}30`,
-            }}
+            style={{ padding: '8px 12px', borderRadius: 14, marginBottom: 8, background: `${primary}14`, border: `1px solid ${primary}30` }}
           >
-            <Info size={13} style={{ color: primary, flexShrink: 0, marginTop: 2 }} />
-            <span style={{ fontSize: 11, color: '#8b5060', lineHeight: 1.6 }}>{GA_SHORT_REMINDER}</span>
+            <Info size={12} style={{ color: primary, flexShrink: 0, marginTop: 2 }} />
+            <span style={{ fontSize: 10.5, color: '#8b5060', lineHeight: 1.5 }}>{GA_SHORT_REMINDER}</span>
           </button>
         </div>
       )}
 
-      {/* Manual mode controls — pause/resume + end. Managed mode shows
-          NEITHER (hides pause/skip/restart entirely, per spec) — the only
-          way out during managed focus is the real iOS Guided Access exit,
-          or just letting the timer run out. */}
-      {!state.managed && (
-        <div className="flex items-center justify-center gap-3 flex-shrink-0" style={{ padding: '0 24px', paddingBottom: 'max(22px, calc(env(safe-area-inset-bottom, 0px) + 14px))' }}>
-          <button
-            onClick={state.status === 'running' ? pauseFocus : resumeFocus}
-            className="flex items-center gap-1.5"
-            style={{
-              padding: '12px 22px', borderRadius: 18, border: 'none', fontSize: 13.5, fontWeight: 600,
-              background: `linear-gradient(135deg, ${primary}, ${primaryDark})`, color: '#fff',
-              boxShadow: `0 6px 18px ${primary}40`,
-            }}
-          >
-            {state.status === 'running' ? <Pause size={14} /> : <Play size={14} />}
-            {state.status === 'running' ? '暂停' : '继续'}
-          </button>
-          <button
-            onClick={() => { endFocus(); onExit() }}
-            style={{
-              padding: '12px 22px', borderRadius: 18, fontSize: 13.5, color: '#8b5060',
-              background: 'rgba(255,255,255,0.55)', border: `1px solid ${primary}35`,
-            }}
-          >
-            结束
-          </button>
+      {/* Controls */}
+      <div className="flex-shrink-0" style={{ padding: '0 20px' }}>
+        {managed ? (
+          state.status === 'paused' ? (
+            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6, marginBottom: 10 }}>
+              <div style={{ fontSize: 11, color: '#8b5060' }}>已批准暂停</div>
+              <button
+                onClick={resumeFocusFromApproval}
+                className="flex items-center gap-1.5"
+                style={{ padding: '10px 24px', borderRadius: 16, border: 'none', fontSize: 13, fontWeight: 600, background: `linear-gradient(135deg, ${primary}, ${primaryDark})`, color: '#fff' }}
+              >
+                <Play size={13} /> 继续专注
+              </button>
+            </div>
+          ) : pending ? (
+            <div style={{
+              textAlign: 'center', fontSize: 11.5, color: '#8b5060', padding: '10px 14px', borderRadius: 14, marginBottom: 10,
+              background: 'rgba(255,255,255,0.55)', border: `1px dashed ${primary}40`,
+            }}>
+              {pending.kind === 'pause' ? '已申请暂停' : '已申请结束'} · 等待{opponentName}决定…
+            </div>
+          ) : (
+            <div className="flex items-center justify-center gap-2" style={{ marginBottom: 10 }}>
+              <button onClick={() => openRequest('pause')} style={ctrlBtn(primary, false)}>申请暂停</button>
+              <button onClick={() => openRequest('end')} style={ctrlBtn(primary, false)}>申请结束</button>
+            </div>
+          )
+        ) : (
+          <div className="flex items-center justify-center gap-2" style={{ marginBottom: 10 }}>
+            <button onClick={state.status === 'running' ? selfPauseFocus : selfResumeFocus} className="flex items-center gap-1.5" style={ctrlBtn(primary, true)}>
+              {state.status === 'running' ? <Pause size={13} /> : <Play size={13} />}
+              {state.status === 'running' ? '暂停' : '继续'}
+            </button>
+            <button onClick={() => { selfEndFocus(); onExit() }} style={ctrlBtn(primary, false)}>结束</button>
+          </div>
+        )}
+      </div>
+
+      {/* Interaction area — real chat with the managing AI, same session/
+          history it always has (see channel-server.ts's Focus section) —
+          managed only; a self-managed session has no one to talk to here. */}
+      {managed ? (
+        <div className="flex-1 flex flex-col min-h-0 mx-3 mb-2 rounded-2xl overflow-hidden" style={{ background: 'rgba(255,255,255,0.4)', border: `1px solid ${primary}22` }}>
+          <div ref={logRef} className="flex-1 overflow-y-auto px-1 pt-2" style={{ minHeight: 0 }}>
+            {(!state.log || state.log.length === 0) && (
+              <div style={{ textAlign: 'center', fontSize: 11, color: '#c9a2ad', paddingTop: 8 }}>可以和{opponentName}说说话～</div>
+            )}
+            {(state.log || []).map((m) => <LogLine key={m.id} msg={m} primary={primary} opponentName={opponentName} />)}
+          </div>
+          <div className="flex items-center gap-2" style={{ padding: '6px 8px' }}>
+            <input
+              value={chatText}
+              onChange={(e) => setChatText(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') handleSendChat() }}
+              placeholder={`和${opponentName}说句话…`}
+              disabled={sending}
+              style={{ flex: 1, minWidth: 0, background: 'rgba(255,255,255,0.7)', border: `1px solid ${primary}33`, borderRadius: 16, padding: '8px 12px', fontSize: 13, color: '#6a3f56', outline: 'none', fontFamily: 'inherit' }}
+            />
+            <button
+              onClick={handleSendChat}
+              disabled={sending || !chatText.trim()}
+              className="flex items-center justify-center flex-shrink-0"
+              style={{ width: 34, height: 34, borderRadius: '50%', border: 'none', background: `linear-gradient(135deg, ${primary}, ${primaryDark})`, color: '#fff', opacity: (sending || !chatText.trim()) ? 0.5 : 1 }}
+            >
+              <Send size={14} />
+            </button>
+          </div>
+        </div>
+      ) : (
+        <div style={{ paddingBottom: 'max(18px, env(safe-area-inset-bottom, 0px))' }} />
+      )}
+      {managed && <div style={{ paddingBottom: 'max(8px, env(safe-area-inset-bottom, 0px))' }} />}
+
+      {/* Reason picker — required for either request kind, per spec */}
+      {requestKind && (
+        <div className="fixed inset-0 flex items-end justify-center" style={{ zIndex: 70, background: 'rgba(60,20,40,0.32)', backdropFilter: 'blur(6px)' }} onClick={() => setRequestKind(null)}>
+          <div onClick={(e) => e.stopPropagation()} style={{ width: '100%', maxWidth: 480, background: 'rgba(255,252,254,0.99)', borderRadius: '24px 24px 0 0', padding: `16px 18px calc(16px + env(safe-area-inset-bottom, 0px))`, boxShadow: '0 -16px 50px rgba(90,53,72,0.2)' }}>
+            <div className="flex items-center justify-between mb-3">
+              <span style={{ fontSize: 14, fontWeight: 600, color: '#5a3548' }}>
+                {requestKind === 'pause' ? '申请暂停' : '申请结束'}专注
+              </span>
+              <button onClick={() => setRequestKind(null)} style={{ width: 26, height: 26, borderRadius: '50%', border: 'none', background: `${primary}18`, color: primary, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <X size={13} />
+              </button>
+            </div>
+            <div className="flex flex-wrap gap-2 mb-3">
+              {QUICK_REASONS.map((r) => (
+                <button
+                  key={r}
+                  onClick={() => setReasonText(r)}
+                  style={{
+                    padding: '7px 14px', borderRadius: 999, fontSize: 12.5,
+                    background: reasonText === r ? `linear-gradient(135deg, ${primary}, ${primaryDark})` : 'rgba(255,255,255,0.7)',
+                    color: reasonText === r ? '#fff' : '#8b5060',
+                    border: reasonText === r ? 'none' : `1px solid ${primary}30`,
+                  }}
+                >
+                  {r}
+                </button>
+              ))}
+            </div>
+            <textarea
+              value={reasonText}
+              onChange={(e) => setReasonText(e.target.value)}
+              maxLength={200}
+              rows={2}
+              placeholder="告诉对方原因…"
+              style={{ width: '100%', padding: '10px 12px', borderRadius: 14, background: 'rgba(255,255,255,0.75)', border: `1px solid ${primary}30`, color: '#6a3f56', fontSize: 13, outline: 'none', fontFamily: 'inherit', resize: 'none' }}
+            />
+            {requestError && <p style={{ fontSize: 11, color: '#e07070', margin: '6px 2px 0' }}>{requestError}</p>}
+            <button
+              onClick={submitRequest}
+              disabled={!reasonText.trim() || submittingRequest}
+              style={{
+                width: '100%', marginTop: 10, padding: '12px', borderRadius: 16, border: 'none', fontSize: 14, fontWeight: 600,
+                background: `linear-gradient(135deg, ${primary}, ${primaryDark})`, color: '#fff',
+                opacity: (!reasonText.trim() || submittingRequest) ? 0.5 : 1,
+              }}
+            >
+              {submittingRequest ? '提交中…' : '提交申请'}
+            </button>
+          </div>
         </div>
       )}
-      {state.managed && <div style={{ paddingBottom: 'max(18px, env(safe-area-inset-bottom, 0px))' }} />}
 
-      {/* Guided Access step reference — informational only, never pauses or
-          ends the session; just lets the user re-check the steps mid-focus. */}
+      {/* Guided Access step reference — informational only */}
       {showGuideInfo && (
-        <div
-          className="fixed inset-0 flex items-center justify-center px-6"
-          style={{ zIndex: 70, background: 'rgba(60,20,40,0.4)', backdropFilter: 'blur(6px)' }}
-          onClick={() => setShowGuideInfo(false)}
-        >
-          <div
-            onClick={e => e.stopPropagation()}
-            style={{ width: '100%', maxWidth: 320, maxHeight: '76dvh', overflowY: 'auto', background: 'rgba(255,252,254,0.99)', borderRadius: 22, padding: 18, boxShadow: '0 16px 50px rgba(90,53,72,0.25)' }}
-          >
+        <div className="fixed inset-0 flex items-center justify-center px-6" style={{ zIndex: 75, background: 'rgba(60,20,40,0.4)', backdropFilter: 'blur(6px)' }} onClick={() => setShowGuideInfo(false)}>
+          <div onClick={(e) => e.stopPropagation()} style={{ width: '100%', maxWidth: 320, maxHeight: '76dvh', overflowY: 'auto', background: 'rgba(255,252,254,0.99)', borderRadius: 22, padding: 18, boxShadow: '0 16px 50px rgba(90,53,72,0.25)' }}>
             <div className="flex items-center justify-between mb-3">
               <span style={{ fontSize: 13, fontWeight: 600, color: '#5a3548' }}>📌 引导式访问设置步骤</span>
               <button onClick={() => setShowGuideInfo(false)} style={{ width: 26, height: 26, borderRadius: '50%', border: 'none', background: `${primary}18`, color: primary, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -241,6 +349,8 @@ export default function FocusSession({ theme, aiName, aiAvatar, pomodoro, onExit
   )
 }
 
-function bgGradient(primary) {
-  return `radial-gradient(circle at 50% 18%, ${primary}22, transparent 55%), linear-gradient(175deg, #fdf1f6 0%, #f8e4ef 35%, #f3e6fb 70%, #f9f0ff 100%)`
+function ctrlBtn(primary, primaryFill) {
+  return primaryFill
+    ? { display: 'flex', alignItems: 'center', gap: 6, padding: '10px 20px', borderRadius: 16, border: 'none', fontSize: 13, fontWeight: 600, background: `linear-gradient(135deg, ${primary}, ${primary}cc)`, color: '#fff' }
+    : { padding: '10px 20px', borderRadius: 16, fontSize: 13, color: '#8b5060', background: 'rgba(255,255,255,0.55)', border: `1px solid ${primary}35` }
 }

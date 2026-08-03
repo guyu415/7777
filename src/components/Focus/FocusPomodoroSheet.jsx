@@ -1,55 +1,47 @@
 import { useState } from 'react'
-import { X, ChevronDown, Sparkles } from 'lucide-react'
-import { GA_STEPS, GA_DISCLAIMER } from './focusCopy'
-import { APPLE_GUIDE_URL } from '../../services/pomodoroCore'
+import { X, ChevronDown } from 'lucide-react'
+import { GA_STEPS, GA_DISCLAIMER, APPLE_GUIDE_URL } from './focusCopy'
 
 const QUICK_MINUTES = [15, 25, 40, 60]
 
 // The bottom-sheet setup panel opened from the "+" menu's "专注" entry (see
-// MessageInput.jsx/ChatWindow.jsx). Purely a form over usePomodoro()'s
-// startFocusSession — no timer runs in here; once started, ChatWindow swaps
-// this out for FocusSession (the fullscreen countdown), same handoff pattern
-// GomokuBoard/VoiceCall already use for their own full-screen takeovers.
-export default function FocusPomodoroSheet({ theme, aiName, aiAvatar, onClose, onStart }) {
+// MessageInput.jsx/ChatWindow.jsx). Manual start here is ALWAYS
+// self-managed — no approval flow, no AI "managing" it — because a real
+// AI-managed session can only be genuinely initiated by the AI itself
+// calling its real start_focus tool (see channel-server.ts's Focus section
+// and useFocusRuntime.js), never faked from this form. Once started,
+// ChatWindow.jsx swaps this out for FocusSession (the fullscreen countdown).
+export default function FocusPomodoroSheet({ theme, onClose, onStart }) {
   const primary = theme?.primary || '#ff85b3'
   const primaryDark = theme?.primaryDark || '#ff6b9d'
   const [task, setTask] = useState('')
   const [minutes, setMinutes] = useState(25)
   const [customOpen, setCustomOpen] = useState(false)
   const [customValue, setCustomValue] = useState('')
-  const [managed, setManaged] = useState(false)
   const [showGuide, setShowGuide] = useState(false)
+  const [starting, setStarting] = useState(false)
+  const [error, setError] = useState(null)
 
-  const opponentName = aiName || '小漫'
-
-  const pickQuick = (m) => {
-    setMinutes(m)
-    setCustomOpen(false)
-  }
+  const pickQuick = (m) => { setMinutes(m); setCustomOpen(false) }
   const applyCustom = () => {
     const n = Math.round(Number(customValue))
     if (Number.isFinite(n) && n >= 1 && n <= 180) setMinutes(n)
   }
 
-  const handleStart = (overrides = {}) => {
-    onStart({
-      task: overrides.task ?? task,
-      minutes: overrides.minutes ?? minutes,
-      managed: overrides.managed ?? managed,
-    })
-  }
-
-  // Preview-only affordance for this branch: shows what it'll feel like once
-  // 小漫 can genuinely initiate focus sessions through real tools
-  // (start_focus/extend_focus/finish_focus — not wired up yet). This fills
-  // the form and starts a session locally, in this browser, right now — it
-  // does NOT talk to any AI/tool backend, and the button says so.
-  const handleSimulate = () => {
-    const simulatedTask = task.trim() || '整理今天的学习笔记'
-    setTask(simulatedTask)
-    setMinutes(25)
-    setManaged(true)
-    handleStart({ task: simulatedTask, minutes: 25, managed: true })
+  const handleStart = async () => {
+    if (starting) return
+    setStarting(true)
+    setError(null)
+    try {
+      const result = await onStart({ task, minutes })
+      if (!result?.ok) {
+        setError(result?.reason === 'already_active' ? '已经有一个专注任务在进行中了' : '开始失败，请重试')
+      }
+    } catch {
+      setError('开始失败，请重试')
+    } finally {
+      setStarting(false)
+    }
   }
 
   return (
@@ -87,6 +79,10 @@ export default function FocusPomodoroSheet({ theme, aiName, aiAvatar, onClose, o
             <X size={15} />
           </button>
         </div>
+
+        <p style={{ fontSize: 10.5, color: '#c9a2ad', lineHeight: 1.6, margin: '0 2px 12px' }}>
+          在这里开始的专注由你自己掌控，随时可以暂停或结束。想让 AI 真正帮你管理和监督这段专注，直接在聊天里跟 TA 说就行——TA 会用真正的工具帮你开始。
+        </p>
 
         {/* Task */}
         <label style={{ fontSize: 11, color: '#b98a96', paddingLeft: 2 }}>这次要专注做什么？</label>
@@ -155,124 +151,70 @@ export default function FocusPomodoroSheet({ theme, aiName, aiAvatar, onClose, o
           </div>
         )}
 
-        {/* 交给小漫管理 */}
-        <div
-          style={{
-            display: 'flex', alignItems: 'center', gap: 10,
-            padding: '12px 14px', borderRadius: 18, marginBottom: 12,
-            background: managed ? `linear-gradient(135deg, ${primary}1a, ${primaryDark}12)` : 'rgba(255,255,255,0.55)',
-            border: `1px solid ${primary}${managed ? '40' : '22'}`,
-          }}
-        >
-          <div style={{
-            width: 36, height: 36, borderRadius: '50%', overflow: 'hidden', flexShrink: 0,
-            display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 16,
-            background: 'rgba(255,255,255,0.7)', border: `1.5px solid ${primary}55`,
-          }}>
-            {aiAvatar ? <img src={aiAvatar} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : '🌸'}
-          </div>
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ fontSize: 13, fontWeight: 500, color: '#6a3f56' }}>交给{opponentName}管理</div>
-            <div style={{ fontSize: 10.5, color: '#b98a96', marginTop: 2, lineHeight: 1.5 }}>
-              开启后专注页会隐藏暂停/跳过/重来，配合 iOS 引导式访问更难中途划走
-            </div>
-          </div>
+        {/* Guided Access setup — orthogonal to who manages the session; a
+            real device-level lock the user may still want even for a
+            self-managed session. Collapsible, accurate copy only. */}
+        <div style={{ marginBottom: 14 }}>
           <button
-            onClick={() => setManaged(v => !v)}
-            role="switch"
-            aria-checked={managed}
+            onClick={() => setShowGuide(v => !v)}
+            className="flex items-center justify-between w-full"
             style={{
-              width: 42, height: 24, borderRadius: 99, flexShrink: 0, border: 'none', position: 'relative',
-              background: managed ? `linear-gradient(135deg, ${primary}, ${primaryDark})` : 'rgba(0,0,0,0.12)',
-              transition: 'background 0.2s',
+              padding: '10px 14px', borderRadius: 14,
+              background: 'rgba(255,255,255,0.55)', border: `1px solid ${primary}25`,
+              color: '#8b5060', fontSize: 12,
             }}
           >
-            <span style={{
-              position: 'absolute', top: 3, left: managed ? 21 : 3,
-              width: 18, height: 18, borderRadius: '50%', background: '#fff',
-              boxShadow: '0 1px 4px rgba(0,0,0,0.25)', transition: 'left 0.2s',
-            }} />
+            <span>📌 想更强的自律锁定？查看引导式访问设置步骤</span>
+            <ChevronDown size={14} style={{ transform: showGuide ? 'rotate(180deg)' : 'none', transition: 'transform 0.2s' }} />
           </button>
+          {showGuide && (
+            <div style={{
+              marginTop: 8, padding: '12px 14px', borderRadius: 16,
+              background: 'rgba(255,255,255,0.5)', border: `1px solid ${primary}20`,
+            }}>
+              <ol style={{ margin: 0, padding: 0, listStyle: 'none' }}>
+                {GA_STEPS.map((step, i) => (
+                  <li key={i} style={{ display: 'flex', gap: 10, padding: '7px 0', borderTop: i ? `1px solid ${primary}18` : 'none' }}>
+                    <span style={{
+                      flexShrink: 0, width: 20, height: 20, borderRadius: 7, marginTop: 1,
+                      display: 'flex', alignItems: 'center', justifyContent: 'center',
+                      fontSize: 10, fontWeight: 600, color: '#8b5060', background: `${primary}20`,
+                    }}>{i + 1}</span>
+                    <div>
+                      <div style={{ fontSize: 12, fontWeight: 500, color: '#6a3f56' }}>{step.title}</div>
+                      <div style={{ fontSize: 10.5, color: '#a97d8a', marginTop: 2, lineHeight: 1.6 }}>{step.body}</div>
+                    </div>
+                  </li>
+                ))}
+              </ol>
+              <a
+                href={APPLE_GUIDE_URL}
+                target="_blank" rel="noreferrer"
+                style={{ display: 'block', marginTop: 8, fontSize: 10.5, color: primary, textAlign: 'center' }}
+              >
+                查看苹果官方说明 ↗
+              </a>
+              <p style={{ fontSize: 10, color: '#c9a2ad', lineHeight: 1.6, marginTop: 8, marginBottom: 0 }}>{GA_DISCLAIMER}</p>
+            </div>
+          )}
         </div>
 
-        {/* Guided Access setup — collapsible, accurate copy only */}
-        {managed && (
-          <div style={{ marginBottom: 14 }}>
-            <button
-              onClick={() => setShowGuide(v => !v)}
-              className="flex items-center justify-between w-full"
-              style={{
-                padding: '10px 14px', borderRadius: 14,
-                background: 'rgba(255,255,255,0.55)', border: `1px solid ${primary}25`,
-                color: '#8b5060', fontSize: 12,
-              }}
-            >
-              <span>📌 第一次用？查看引导式访问设置步骤</span>
-              <ChevronDown size={14} style={{ transform: showGuide ? 'rotate(180deg)' : 'none', transition: 'transform 0.2s' }} />
-            </button>
-            {showGuide && (
-              <div style={{
-                marginTop: 8, padding: '12px 14px', borderRadius: 16,
-                background: 'rgba(255,255,255,0.5)', border: `1px solid ${primary}20`,
-              }}>
-                <ol style={{ margin: 0, padding: 0, listStyle: 'none' }}>
-                  {GA_STEPS.map((step, i) => (
-                    <li key={i} style={{ display: 'flex', gap: 10, padding: '7px 0', borderTop: i ? `1px solid ${primary}18` : 'none' }}>
-                      <span style={{
-                        flexShrink: 0, width: 20, height: 20, borderRadius: 7, marginTop: 1,
-                        display: 'flex', alignItems: 'center', justifyContent: 'center',
-                        fontSize: 10, fontWeight: 600, color: '#8b5060', background: `${primary}20`,
-                      }}>{i + 1}</span>
-                      <div>
-                        <div style={{ fontSize: 12, fontWeight: 500, color: '#6a3f56' }}>{step.title}</div>
-                        <div style={{ fontSize: 10.5, color: '#a97d8a', marginTop: 2, lineHeight: 1.6 }}>{step.body}</div>
-                      </div>
-                    </li>
-                  ))}
-                </ol>
-                <a
-                  href={APPLE_GUIDE_URL}
-                  target="_blank" rel="noreferrer"
-                  style={{ display: 'block', marginTop: 8, fontSize: 10.5, color: primary, textAlign: 'center' }}
-                >
-                  查看苹果官方说明 ↗
-                </a>
-                <p style={{ fontSize: 10, color: '#c9a2ad', lineHeight: 1.6, marginTop: 8, marginBottom: 0 }}>{GA_DISCLAIMER}</p>
-              </div>
-            )}
-          </div>
-        )}
+        {error && <p style={{ fontSize: 11.5, color: '#e07070', textAlign: 'center', margin: '0 0 10px' }}>{error}</p>}
 
         {/* Start */}
         <button
-          onClick={() => handleStart()}
+          onClick={handleStart}
+          disabled={starting}
           style={{
             width: '100%', padding: '13px', borderRadius: 18, marginBottom: 10,
             background: `linear-gradient(135deg, ${primary}, ${primaryDark})`, color: '#fff',
             border: 'none', fontSize: 15, fontWeight: 600,
             boxShadow: `0 6px 20px ${primary}45`,
+            opacity: starting ? 0.6 : 1,
           }}
         >
-          开始专注
+          {starting ? '开始中…' : '开始专注'}
         </button>
-
-        {/* Preview-only: simulate 小漫 initiating a focus session */}
-        <button
-          onClick={handleSimulate}
-          className="flex items-center justify-center gap-1.5"
-          style={{
-            width: '100%', padding: '10px', borderRadius: 16, marginBottom: 4,
-            background: 'rgba(255,255,255,0.55)', color: '#8b5060',
-            border: `1px dashed ${primary}45`, fontSize: 12.5, fontWeight: 500,
-          }}
-        >
-          <Sparkles size={13} />
-          预览：模拟{opponentName}发起专注
-        </button>
-        <p style={{ fontSize: 10, color: '#c9a2ad', textAlign: 'center', lineHeight: 1.6, margin: '4px 4px 14px' }}>
-          这是预览效果，本地模拟{opponentName}帮你填好任务并开始 25 分钟专注管理模式——目前还没有接入真实 AI 工具；
-          正式版会通过 start_focus 等真实工具由{opponentName}发起。
-        </p>
 
         <p style={{ fontSize: 9.5, color: '#d3b3bd', textAlign: 'center', lineHeight: 1.7, margin: 0 }}>
           专注计时逻辑改编自 <span style={{ fontWeight: 600 }}>NYRA</span> 的开源项目

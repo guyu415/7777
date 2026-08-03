@@ -35,6 +35,7 @@ import { fetchTTSAudio } from '../services/tts'
 import { getSessionMsgs, saveSessionMsgs, putAssetDataUrl, loadAsset } from '../services/sync'
 import { playByQuery, pausePlayer, resumePlayer, stopPlayer, getPlayerState } from '../services/player'
 import { addLetter, getLettersByCharacter } from '../services/letters'
+import { getFocusState, startFocus as startFocusApi, apiManagerApproveFocus, apiManagerDenyFocus, apiManagerFinishFocus, apiManagerExtendFocus } from '../services/companion'
 
 const CTX_KEEP    = 80  // 保留最近 N 条原文
 const CTX_TRIGGER = 150  // 超过 M 条时触发总结
@@ -42,6 +43,25 @@ const CTX_BATCH   = 70  // 每次压缩最旧的 B 条（触发后原文回落�
 
 const AC_TAG_RE = /\[AC:([^\]]+)\]/
 const MUSIC_TAG_RE = /\[MUSIC:([^\]]+)\]/
+// Focus (专注) — this plain API-key session's own real control over the ONE
+// global Focus task (see channel-server.ts's Focus section), via the SAME
+// "structured tag in a real reply" convention AC/MUSIC already use — never
+// pretending to be a real MCP/tool call the way CC/Codex genuinely have
+// (see useFocusRuntime.js's own comment on why those two use real tools
+// instead). minutes comes first in FOCUS_START so splitting is unambiguous
+// even though `task` itself may contain almost anything (including `|`) —
+// only the FIRST `|` is a real delimiter, so task is joined back with any
+// remaining pipes intact.
+const FOCUS_START_RE = /\[FOCUS_START:([^\]]+)\]/
+const FOCUS_APPROVE_RE = /\[FOCUS_APPROVE:([^\]]+)\]/
+const FOCUS_DENY_RE = /\[FOCUS_DENY:([^\]]+)\]/
+const FOCUS_FINISH_RE = /\[FOCUS_FINISH\]/
+const FOCUS_EXTEND_RE = /\[FOCUS_EXTEND:([^\]]+)\]/
+function stripFocusTags(content) {
+  return content
+    .replace(FOCUS_START_RE, '').replace(FOCUS_APPROVE_RE, '').replace(FOCUS_DENY_RE, '')
+    .replace(FOCUS_FINISH_RE, '').replace(FOCUS_EXTEND_RE, '')
+}
 // Tokenization: split content on [VOICE]…[/VOICE] boundaries (capturing + global),
 // then test/extract each segment. VOICE_ONE_RE matches a single voice token.
 const VOICE_SPLIT_RE = /(\[VOICE\][\s\S]*?\[\/VOICE\])/g
@@ -50,7 +70,7 @@ const SPLIT_RE = /\[SPLIT\]/g
 const LETTER_RE = /\[LETTER\s+mood=(\S+?)\s+weather=(\S+?)\s+date=(\S+?)\]([\s\S]*?)\[\/LETTER\]/g
 
 function stripDisplayTags(content) {
-  return content
+  return stripFocusTags(content)
     .replace(AC_TAG_RE, '')
     .replace(MUSIC_TAG_RE, '')
     .replace(/\[VOICE\]/g, '').replace(/\[\/VOICE\]/g, '')
@@ -104,7 +124,7 @@ function tokenizeContent(content) {
 // MessageList) only reacts to changes that are actually relevant.
 export function useChat() {
   const {
-    apiKey, apiBaseUrl, model, systemPrompt,
+    apiKey, apiBaseUrl, model, systemPrompt, aiName,
     memoryEnabled, workerUrl, useWorkerProxy, acWorkerUrl,
     ttsApiKey, ttsGroupId, ttsVoiceId, aiVoiceEnabled, aiVoiceFrequency,
     messages, addMessage, updateMessage, setMessages,
@@ -114,7 +134,7 @@ export function useChat() {
     providers, selectedProviderId,
     setSummaryToast,
   } = useStore(useShallow(s => ({
-    apiKey: s.apiKey, apiBaseUrl: s.apiBaseUrl, model: s.model, systemPrompt: s.systemPrompt,
+    apiKey: s.apiKey, apiBaseUrl: s.apiBaseUrl, model: s.model, systemPrompt: s.systemPrompt, aiName: s.aiName,
     memoryEnabled: s.memoryEnabled, workerUrl: s.workerUrl, useWorkerProxy: s.useWorkerProxy, acWorkerUrl: s.acWorkerUrl,
     ttsApiKey: s.ttsApiKey, ttsGroupId: s.ttsGroupId, ttsVoiceId: s.ttsVoiceId, aiVoiceEnabled: s.aiVoiceEnabled, aiVoiceFrequency: s.aiVoiceFrequency,
     messages: s.messages, addMessage: s.addMessage, updateMessage: s.updateMessage, setMessages: s.setMessages,
@@ -129,6 +149,7 @@ export function useChat() {
 
   const currentSession = sessions?.find(s => s.id === CONVERSATION_ID)
   const selectedProvider = providers?.find(p => p.id === selectedProviderId)
+  const effectiveAiName = currentSession?.aiName || aiName || 'AI'
 
   // Session key > Provider key > Global key (fixes "key lost after refresh" when user sets key via provider panel)
   const effectiveApiKey = currentSession?.apiKey || selectedProvider?.apiKey || apiKey
@@ -350,6 +371,31 @@ export function useChat() {
           builtSystemPrompt += `\n【正在播放】《${np.current.name}》- ${np.current.artists}（${np.playing ? '播放中' : '已暂停'}）`
         }
       }
+
+      // Focus (专注) — real control over the ONE global focus/Pomodoro task
+      // (see channel-server.ts's Focus section), via the same structured-tag
+      // convention as AC/MUSIC above — this is a genuine state mutation on a
+      // real shared backend, not a local pretend timer. Fetched fresh each
+      // turn so the model always sees the CURRENT real status, never a stale
+      // guess.
+      let focusStateSnapshot = null
+      try { focusStateSnapshot = await getFocusState() } catch { /* best-effort — omit the section below if unreachable */ }
+      if (focusStateSnapshot) {
+        const isThisSessionManager = focusStateSnapshot.manager?.runtime === 'api' && focusStateSnapshot.manager?.sessionId === CONVERSATION_ID
+        builtSystemPrompt += '\n\n你有真正的专注计时器控制能力（一个全局唯一的番茄钟任务，不是你自己假装的）。在回复末尾自然地加上指令标签（不要向用户提及标签格式本身）：\n' +
+          '- [FOCUS_START:分钟|任务内容] 仅当用户明确要求开始专注/学习/工作（或明确同意你的提议）时才调用——这是真实动作，用户的界面会立刻切到运行中的倒计时，不需要用户再点确认；已有专注任务在进行时会失败，不要重复调用。调用后你就是这次专注的管理者：用户在专注页里说的话会像现在这样正常发给你（真实记忆，不是全新对话），回复就行；用户申请暂停/结束时，你会看到申请理由，必须调用 [FOCUS_APPROVE:requestId|可选留言] 或 [FOCUS_DENY:requestId|必填理由] 做出真正的决定——只在文字里说"可以"或"不行"没有用。\n' +
+          '- [FOCUS_FINISH] 你（管理者）判断这次专注已经真正完成，计入今日次数。\n' +
+          '- [FOCUS_EXTEND:分钟] 给你管理的这次专注增加时间。'
+        if (focusStateSnapshot.active) {
+          builtSystemPrompt += `\n【专注状态】任务：${focusStateSnapshot.task || '（未填写）'} · ${focusStateSnapshot.status === 'paused' ? '已暂停' : '进行中'} · 管理者：${focusStateSnapshot.manager ? focusStateSnapshot.manager.name : '用户自己（未交给 AI 管理）'}`
+          if (isThisSessionManager && focusStateSnapshot.pendingRequest) {
+            const req = focusStateSnapshot.pendingRequest
+            builtSystemPrompt += `\n【待你决定】用户申请${req.kind === 'pause' ? '暂停' : '结束'}这次专注，requestId="${req.id}"，理由："${req.reason || '（未填写）'}"。请你自己判断，然后在这条回复里用 [FOCUS_APPROVE:${req.id}|...] 或 [FOCUS_DENY:${req.id}|理由] 做出真正的决定。`
+          }
+        } else {
+          builtSystemPrompt += '\n【专注状态】当前没有进行中的专注任务。'
+        }
+      }
       if (aiVoiceEnabled && effectiveVoiceFrequency !== 0) {
         const freqNote = effectiveVoiceFrequency < 0.3
           ? '尽量少发语音，只在非常合适时（撒娇、道晚安）才用。'
@@ -560,6 +606,50 @@ export function useChat() {
         }
       }
 
+      // Handle FOCUS_* commands — real mutations on the one global Focus
+      // task (see channel-server.ts's Focus section), same trust model as
+      // AC/MUSIC: the model's own real tag, executed exactly once per turn,
+      // never silently retried or assumed.
+      let focusNote = ''
+      const focusStartMatch = fullContent.match(FOCUS_START_RE)
+      const focusApproveMatch = fullContent.match(FOCUS_APPROVE_RE)
+      const focusDenyMatch = fullContent.match(FOCUS_DENY_RE)
+      const focusFinishMatch = fullContent.match(FOCUS_FINISH_RE)
+      const focusExtendMatch = fullContent.match(FOCUS_EXTEND_RE)
+      try {
+        if (focusStartMatch) {
+          const raw = focusStartMatch[1]
+          const sep = raw.indexOf('|')
+          const minutes = Number((sep === -1 ? raw : raw.slice(0, sep)).trim())
+          const task = sep === -1 ? '' : raw.slice(sep + 1).trim()
+          const result = await startFocusApi({ task, minutes, manager: { runtime: 'api', sessionId: CONVERSATION_ID, name: effectiveAiName } })
+          focusNote = result?.ok ? `[✓ 已开始专注：${result.state?.task || task}，${result.state?.minutes ?? minutes} 分钟]` : `[✗ 专注未能开始：${result?.reason || '未知原因'}]`
+        } else if (focusApproveMatch) {
+          const raw = focusApproveMatch[1]
+          const sep = raw.indexOf('|')
+          const requestId = (sep === -1 ? raw : raw.slice(0, sep)).trim()
+          const message = sep === -1 ? undefined : raw.slice(sep + 1).trim()
+          const result = await apiManagerApproveFocus(CONVERSATION_ID, requestId, message)
+          focusNote = result?.ok ? '[✓ 已批准]' : `[✗ 批准失败：${result?.reason || '未知原因'}]`
+        } else if (focusDenyMatch) {
+          const raw = focusDenyMatch[1]
+          const sep = raw.indexOf('|')
+          const requestId = (sep === -1 ? raw : raw.slice(0, sep)).trim()
+          const reason = sep === -1 ? '' : raw.slice(sep + 1).trim()
+          const result = await apiManagerDenyFocus(CONVERSATION_ID, requestId, reason)
+          focusNote = result?.ok ? '[✓ 已拒绝]' : `[✗ 拒绝失败：${result?.reason || '未知原因'}]`
+        } else if (focusFinishMatch) {
+          const result = await apiManagerFinishFocus(CONVERSATION_ID)
+          focusNote = result?.ok ? '[✓ 专注已标记完成]' : `[✗ 操作失败：${result?.reason || '未知原因'}]`
+        } else if (focusExtendMatch) {
+          const minutes = Number(focusExtendMatch[1])
+          const result = await apiManagerExtendFocus(CONVERSATION_ID, minutes)
+          focusNote = result?.ok ? `[✓ 已延长 ${minutes} 分钟]` : `[✗ 延长失败：${result?.reason || '未知原因'}]`
+        }
+      } catch (e) {
+        focusNote = `[✗ 专注指令失败：${e.message}]`
+      }
+
       const acNote = [
         acStatus
           ? (acStatus.success
@@ -567,10 +657,11 @@ export function useChat() {
             : `[✗ 空调指令执行失败：${acStatus.error || '未知错误'}]`)
           : '',
         musicNote,
+        focusNote,
       ].filter(Boolean).join('\n')
 
-      // AC/MUSIC tags already executed above — strip them from displayed content.
-      const cleanContent = fullContent.replace(AC_TAG_RE, '').replace(MUSIC_TAG_RE, '').trim()
+      // AC/MUSIC/FOCUS tags already executed above — strip them from displayed content.
+      const cleanContent = stripFocusTags(fullContent.replace(AC_TAG_RE, '').replace(MUSIC_TAG_RE, '')).trim()
 
       const prob = effectiveVoiceFrequency  // 0=从不 0.3=偶尔 0.7=经常 1.0=总是
       const rand = Math.random()

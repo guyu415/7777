@@ -73,6 +73,14 @@ const btnBase = {
   background: 'rgba(255,182,209,0.25)',
 }
 
+// flex: '1 0 72px' (grow:1, shrink:0, basis:72px) is what makes the row
+// behave correctly at both ends: with few entries, grow=1 lets them stretch
+// and evenly share the row's full width; once enough entries are added that
+// even the 72px floor per item doesn't fit, shrink:0 refuses to compress
+// them further — the row's total width then exceeds its container, and
+// since the container itself scrolls (overflow-x:auto, see the menu wrapper
+// below) that overflow becomes an internal horizontal scroll, never a
+// viewport-level one.
 function MenuItem({ icon, label, sub, onClick, disabled }) {
   return (
     <button
@@ -80,8 +88,8 @@ function MenuItem({ icon, label, sub, onClick, disabled }) {
       disabled={disabled}
       style={{
         display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4,
-        background: 'none', border: 'none', padding: '2px 6px',
-        width: 64, flexShrink: 0,
+        background: 'none', border: 'none', padding: '4px 6px',
+        flex: '1 0 72px', minWidth: 72, maxWidth: 120,
         cursor: disabled ? 'default' : 'pointer',
         opacity: disabled ? 0.45 : 1,
       }}
@@ -202,46 +210,7 @@ const MessageInput = forwardRef(function MessageInput({ onSend, onStartCall, onS
   const primaryColor = theme?.primary || '#ff85b3'
 
   return (
-    <div style={{ flexShrink: 0, position: 'relative' }}>
-      {/* "+" 折叠菜单：绝对定位在输入区上方，不占用布局空间。
-          right 偏移对齐"+"按钮（现在排在发送按钮左侧），要跳过发送按钮的
-          宽度(56)+间距(8)+行右内边距(12) */}
-      {menuOpen && (
-        <div
-          ref={menuRef}
-          style={{
-            position: 'absolute',
-            bottom: '100%',
-            right: 76,
-            marginBottom: 8,
-            display: 'flex',
-            gap: 6,
-            background: 'rgba(255,255,255,0.85)',
-            backdropFilter: 'blur(16px)',
-            WebkitBackdropFilter: 'blur(16px)',
-            border: `1px solid ${primaryColor}30`,
-            borderRadius: 20,
-            padding: '10px 8px',
-            boxShadow: '0 8px 28px rgba(255,133,179,0.25)',
-            zIndex: 20,
-          }}
-        >
-          <MenuItem icon={<ImageIcon />} label="图片" onClick={handleMenuImage} />
-          <MenuItem icon={<PhoneIcon />} label="语音通话" onClick={handleMenuCall} />
-          {/* 对手是当前聊天里真实的 Claude Code 或 Codex（各自独立棋局），
-              落子由各自的常驻 VPS 会话真实决定——普通 API 会话没有对应的
-              落子通道，不可用。 */}
-          <MenuItem
-            icon={<GomokuIcon />}
-            label="五子棋"
-            sub={gomokuEnabled ? undefined : '仅VPS会话支持'}
-            onClick={handleMenuGomoku}
-            disabled={!gomokuEnabled}
-          />
-          <MenuItem icon={<FocusIcon />} label="专注" onClick={handleMenuFocus} />
-        </div>
-      )}
-
+    <div style={{ flexShrink: 0 }}>
       {imageDraft && (
         <div style={{
           display: 'flex', alignItems: 'center', gap: 8,
@@ -358,6 +327,52 @@ const MessageInput = forwardRef(function MessageInput({ onSend, onStartCall, onS
             <img src="/assets/paw.png" alt="发送" style={{ width: 48, height: 48, objectFit: 'contain' }} />
           </button>
         )}
+      </div>
+
+      {/* "+" 功能栏 — 微信式：作为 composer 的正常文档流子元素渲染在输入框
+          这一行的下方，从不使用 absolute/fixed 浮层。展开时靠 max-height
+          从 0 过渡到内容高度，把整个底部输入区"撑高"，消息区随之被自然挤
+          压变矮（ChatWindow.jsx 里包裹本组件的容器是 flex-shrink:0 的正常
+          流子节点，见其自身注释），而不是盖在消息区上方。宽度严格
+          100%+box-sizing:border-box，永不造成页面横向溢出；入口数量超出一
+          行能放下的宽度时，只在这个横条内部 overflow-x 滚动（见 MenuItem
+          自身注释），同样不会横向溢出 viewport。 */}
+      <div
+        style={{
+          maxHeight: menuOpen ? 120 : 0,
+          opacity: menuOpen ? 1 : 0,
+          overflow: 'hidden',
+          transition: 'max-height 0.28s ease, opacity 0.2s ease',
+          width: '100%',
+          boxSizing: 'border-box',
+        }}
+      >
+        <div
+          ref={menuRef}
+          style={{
+            display: 'flex',
+            width: '100%',
+            boxSizing: 'border-box',
+            gap: 4,
+            padding: '8px 10px calc(8px + env(safe-area-inset-bottom, 0px))',
+            overflowX: 'auto',
+            borderTop: `1px solid ${primaryColor}18`,
+          }}
+        >
+          <MenuItem icon={<ImageIcon />} label="图片" onClick={handleMenuImage} />
+          <MenuItem icon={<PhoneIcon />} label="语音通话" onClick={handleMenuCall} />
+          {/* 对手是当前聊天里真实的 Claude Code 或 Codex（各自独立棋局），
+              落子由各自的常驻 VPS 会话真实决定——普通 API 会话没有对应的
+              落子通道，不可用。 */}
+          <MenuItem
+            icon={<GomokuIcon />}
+            label="五子棋"
+            sub={gomokuEnabled ? undefined : '仅VPS会话支持'}
+            onClick={handleMenuGomoku}
+            disabled={!gomokuEnabled}
+          />
+          <MenuItem icon={<FocusIcon />} label="专注" onClick={handleMenuFocus} />
+        </div>
       </div>
     </div>
   )
