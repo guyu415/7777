@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, forwardRef, useImperativeHandle } from 'react'
+import { useState, useRef, useEffect, useCallback, forwardRef, useImperativeHandle } from 'react'
 import { X as CloseIcon } from 'lucide-react'
 import { compressImage } from '../../utils/image'
 
@@ -128,8 +128,31 @@ function MenuItem({ icon, label, sub, onClick, disabled }) {
   )
 }
 
-const MessageInput = forwardRef(function MessageInput({ onSend, onStartCall, onSendImage, onOpenGomoku, gomokuEnabled, onOpenFocus, onOpenDivination, disabled, theme, isLoading, onStop }, ref) {
-  const [text, setText] = useState('')
+// 草稿持久化——打了一半的文字随每次输入写进 localStorage（按会话分键），
+// 切页面/切会话/刷新回来原样恢复，发送成功才清掉。之前的方案是模块级内存
+// 对象 + ChatWindow 卸载时经 ref 抢救文字，但 React 在卸载时先解除 ref 再
+// 跑 effect cleanup，恰好切走页面（整个 ChatWindow 卸载）时 getText() 已经
+// 拿不到内容——所以换成这里的写穿（write-through）方案，不依赖卸载时机。
+function readDraft(storageKey) {
+  if (!storageKey) return ''
+  try { return localStorage.getItem(storageKey) || '' } catch { return '' }
+}
+
+const MessageInput = forwardRef(function MessageInput({ onSend, onStartCall, onSendImage, onOpenGomoku, gomokuEnabled, onOpenFocus, onOpenDivination, disabled, theme, isLoading, onStop, draftKey }, ref) {
+  const draftStorageKey = draftKey ? `chat.draft.${draftKey}` : null
+  const [text, setTextRaw] = useState(() => readDraft(draftStorageKey))
+  // useCallback'd on draftStorageKey so fill()'s useImperativeHandle closure
+  // (below) always writes to whichever session is CURRENT when fill() is
+  // actually invoked, not whichever session was active when the ref was
+  // first attached.
+  const setText = useCallback((value) => {
+    setTextRaw(value)
+    if (!draftStorageKey) return
+    try {
+      if (value.trim()) localStorage.setItem(draftStorageKey, value)
+      else localStorage.removeItem(draftStorageKey)
+    } catch { /* 存储满/隐私模式——草稿只活在本次挂载内，不影响输入本身 */ }
+  }, [draftStorageKey])
   const [menuOpen, setMenuOpen] = useState(false)
   // A picked image sits here as a draft — thumbnail + cancel, still editable
   // alongside the text field — until Send is actually pressed. Shared by
@@ -156,8 +179,22 @@ const MessageInput = forwardRef(function MessageInput({ onSend, onStartCall, onS
         el.style.height = Math.min(el.scrollHeight, 96) + 'px'
       }, 0)
     },
-    getText() { return text },
-  }), [text])
+  }), [setText])
+
+  // 会话切换（组件不卸载、只换 draftKey）时装入对应会话自己的草稿；恢复的
+  // 草稿可能是多行的，下一拍把 textarea 高度撑到和内容一致。首次挂载时
+  // useState 的初始化已经读过一遍，这里重复读到同样的值，无副作用。
+  useEffect(() => {
+    const restored = readDraft(draftStorageKey)
+    setTextRaw(restored)
+    const timer = setTimeout(() => {
+      const el = textareaRef.current
+      if (!el) return
+      el.style.height = 'auto'
+      el.style.height = Math.min(el.scrollHeight, 96) + 'px'
+    }, 0)
+    return () => clearTimeout(timer)
+  }, [draftStorageKey])
 
   // 点击菜单外部收起
   useEffect(() => {

@@ -24,8 +24,6 @@ import { getXinchaoStatus, onXinchaoUpdate } from '../../services/companion'
 const SYNC_BASE = 'https://chat.xiaoman.xyz'
 const FAV_LIST_KEY = 'user:xiaoman2.26:voice_fav_list'
 
-const draftsBySession = {}
-
 function Signature({ text, color, shadow }) {
   const wrapRef = useRef(null)
   const firstRef = useRef(null)
@@ -195,16 +193,8 @@ export default function ChatWindow({ theme }) {
   // MessageList, next to the virtualizer that actually owns the scroll
   // container — see its own comments for why.
 
-  // Draft preservation: save on unmount/session-change, restore on mount/session-change
-  useEffect(() => {
-    const draft = draftsBySession[currentSessionId] || ''
-    if (draft) setTimeout(() => inputRef.current?.fill(draft), 0)
-    return () => {
-      const text = inputRef.current?.getText() || ''
-      if (text.trim()) draftsBySession[currentSessionId] = text
-      else delete draftsBySession[currentSessionId]
-    }
-  }, [currentSessionId])
+  // 草稿持久化已下沉进 MessageInput 自己（write-through localStorage，按
+  // draftKey=会话 id 分键）——这里不再需要卸载时经 ref 抢救文字的旧方案。
 
   // 在用户点击的调用栈里解锁音频：iOS 对无手势的自动播放很苛刻。
   // 1) AudioContext 播一帧静音 → 之后通话中可用 WebAudio 自由播放
@@ -689,6 +679,7 @@ export default function ChatWindow({ theme }) {
           theme={theme}
           isLoading={isLoading}
           onStop={stopStreaming}
+          draftKey={currentSessionId}
         />
       </div>
 
