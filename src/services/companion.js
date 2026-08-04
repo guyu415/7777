@@ -10,6 +10,32 @@
 // { type:'history', items, openTurnId } snapshot. See channel-server.ts on the
 // VPS for the authoritative implementation.
 
+// The VPS only knows its own server clock — every message to CC/Codex (main
+// chat and gomoku) attaches a fresh reading of the user's actual DEVICE
+// clock so the model can reason about "what day/time is it right now" using
+// the user's real local time, not the server's. Read live on every single
+// call (never cached from page load) so it stays correct across timezone
+// travel, DST, or just a long-running tab. The channel server turns this
+// into a short bracketed line prepended to the model's own turn content —
+// it never touches the persisted/broadcast chat text, so it can't pollute
+// the user's own message bubble or get written into any memory file.
+export function clientTimeContext() {
+  const now = new Date()
+  let formatted
+  try {
+    formatted = new Intl.DateTimeFormat('zh-CN', { dateStyle: 'full', timeStyle: 'medium', hour12: false }).format(now)
+  } catch {
+    formatted = now.toString()
+  }
+  let timeZone
+  try {
+    timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone
+  } catch {
+    timeZone = undefined
+  }
+  return { formatted, timeZone, utcOffsetMinutes: -now.getTimezoneOffset() }
+}
+
 const WS_URL = 'wss://companion.xiaoman.xyz/ws'
 const STATUS_URL = 'https://companion.xiaoman.xyz/auth/status'
 const LOGOUT_URL = 'https://companion.xiaoman.xyz/auth/logout'
@@ -533,7 +559,7 @@ export async function makeGomokuMove(row, col, runtime = 'claude-code') {
   return companionJson('/gomoku/move', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ row, col, runtime }),
+    body: JSON.stringify({ row, col, runtime, clientTime: clientTimeContext() }),
   })
 }
 // mode:'immediate' (AI hadn't moved yet, retracted right away) or
@@ -545,14 +571,14 @@ export async function requestGomokuUndo(runtime = 'claude-code') {
   return companionJson('/gomoku/undo-request', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ runtime }),
+    body: JSON.stringify({ runtime, clientTime: clientTimeContext() }),
   })
 }
 export async function resignGomokuGame(runtime = 'claude-code') {
   return companionJson('/gomoku/resign', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ runtime }),
+    body: JSON.stringify({ runtime, clientTime: clientTimeContext() }),
   })
 }
 // In-game chat — text typed on the gomoku screen, or a voice press-and-hold's
@@ -564,7 +590,7 @@ export async function postGomokuChat(gameId, text, voice = false, runtime = 'cla
   return companionJson('/gomoku/chat', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ gameId, text, voice, runtime }),
+    body: JSON.stringify({ gameId, text, voice, runtime, clientTime: clientTimeContext() }),
   })
 }
 
@@ -624,7 +650,7 @@ export async function resetCodex() {
 let codexSeq = 0
 export function sendCodexMessage(text, imageUrl) {
   const id = `codex-eunoia-${Date.now()}-${++codexSeq}`
-  return sendRaw({ runtime: 'codex', id, text, ...(imageUrl ? { imageUrl } : {}) })
+  return sendRaw({ runtime: 'codex', id, text, clientTime: clientTimeContext(), ...(imageUrl ? { imageUrl } : {}) })
 }
 
 listeners.add(evt => {
@@ -920,7 +946,7 @@ export async function* streamChatViaCompanion({ text, signal }) {
   signal?.addEventListener('abort', onAbort)
 
   try {
-    const sent = sendRaw({ id, text })
+    const sent = sendRaw({ id, text, clientTime: clientTimeContext() })
     if (!sent) {
       throw Object.assign(new Error('companion 未连接'), { code: 'not_connected', turnId })
     }
