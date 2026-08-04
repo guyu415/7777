@@ -14,6 +14,9 @@ import GroupSettingsDrawer from './GroupSettingsDrawer'
 import GroupChatBackground from './GroupChatBackground'
 import GameHubSheet from './games/GameHubSheet'
 import MysteryGameRoom from './games/MysteryGameRoom'
+import PokerHub from './games/poker/PokerHub'
+import DoudizhuRoom from './games/poker/DoudizhuRoom'
+import ZhajinhuaRoom from './games/poker/ZhajinhuaRoom'
 
 // fallback is context-specific ('🐣' for the user, '🌸' for an AI member —
 // same neutral placeholders the rest of the app already uses, e.g.
@@ -181,6 +184,12 @@ export default function GroupChatWindow({ theme, chatId, onClose }) {
   // 隔离线程/会话也一并请求清理（见 MysteryGameRoom.jsx 的 endGame 同款逻辑）。
   const mysteryGame = useStore((s) => s.mysteryGames?.[chatId])
   const clearMysteryGame = useStore((s) => s.clearMysteryGame)
+  // 同样的道理，斗地主/炸金花各自的存档也要在删群时一并清掉（各自独立，
+  // 一个群聊可能同时有一局剧本杀+一局斗地主+一局炸金花在进行）。
+  const doudizhuGame = useStore((s) => s.doudizhuGames?.[chatId])
+  const clearDoudizhuGame = useStore((s) => s.clearDoudizhuGame)
+  const zhajinhuaGame = useStore((s) => s.zhajinhuaGames?.[chatId])
+  const clearZhajinhuaGame = useStore((s) => s.clearZhajinhuaGame)
 
   const [chat, setChat] = useState(null)
   const [loading, setLoading] = useState(true)
@@ -406,6 +415,24 @@ export default function GroupChatWindow({ theme, chatId, onClose }) {
             .map(([charId]) => charId)
           clearMysteryGame(chatId)
           if (vpsCharIds.length) cleanupMysteryGame(chatId, vpsCharIds).catch(() => {})
+        }
+        // 斗地主/炸金花同款清理——用各自游戏自己的 runId（不是 chatId），
+        // 和 DoudizhuRoom/ZhajinhuaRoom 自己的"结束本局"用的是同一个 id。
+        if (doudizhuGame) {
+          const vpsCharIds = doudizhuGame.players
+            .map((p, i) => ({ p, i }))
+            .filter(({ p }) => p.kind === 'ai' && isVpsMemberId(p.memberId))
+            .map(({ i }) => `seat${i}`)
+          clearDoudizhuGame(chatId)
+          if (vpsCharIds.length) cleanupMysteryGame(doudizhuGame.runId, vpsCharIds).catch(() => {})
+        }
+        if (zhajinhuaGame) {
+          const vpsCharIds = zhajinhuaGame.players
+            .map((p, i) => ({ p, i }))
+            .filter(({ p }) => p.kind === 'ai' && isVpsMemberId(p.memberId))
+            .map(({ i }) => `seat${i}`)
+          clearZhajinhuaGame(chatId)
+          if (vpsCharIds.length) cleanupMysteryGame(zhajinhuaGame.runId, vpsCharIds).catch(() => {})
         }
         onClose()
       }
@@ -661,6 +688,18 @@ export default function GroupChatWindow({ theme, chatId, onClose }) {
       )}
       {gameView === 'mystery' && (
         <MysteryGameRoom theme={theme} chatId={chatId} chat={chat} onClose={() => setGameView(null)} />
+      )}
+      {gameView === 'poker' && (
+        <PokerHub theme={theme} chatId={chatId} onPick={(id) => setGameView(id)} onBack={() => setGameView(null)} />
+      )}
+      {/* 斗地主/炸金花的返回箭头回到扑克大厅（'poker'），不是直接关掉整个
+          小游戏面板——牌局状态本来就持久化在 store 里，退到大厅或退回群聊
+          都不会丢，见 doudizhuGames/zhajinhuaGames 各自的 store 定义。 */}
+      {gameView === 'doudizhu' && (
+        <DoudizhuRoom theme={theme} chatId={chatId} chat={chat} onBack={() => setGameView('poker')} />
+      )}
+      {gameView === 'zhajinhua' && (
+        <ZhajinhuaRoom theme={theme} chatId={chatId} chat={chat} onBack={() => setGameView('poker')} />
       )}
     </div>
   )

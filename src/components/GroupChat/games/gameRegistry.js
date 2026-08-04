@@ -14,7 +14,7 @@ export const GROUP_GAMES = [
     id: 'poker',
     label: '扑克',
     icon: '🃏',
-    description: '还没做',
-    available: false,
+    description: '斗地主 / 炸金花，四川版升级筹备中',
+    available: true,
   },
 ]

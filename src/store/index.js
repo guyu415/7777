@@ -195,6 +195,12 @@ export const useStore = create(
       // 刷新、换标签页回来都能接着玩。一个群聊同时只有一局；"结束本局"
       // 走 clearMysteryGame 把这条删掉。
       mysteryGames: {},
+      // 斗地主/炸金花存档，和 mysteryGames 同一个模式：{ [chatId]: GameState }，
+      // GameState 分别是 doudizhuEngine.js / zhajinhuaEngine.js 产出的普通
+      // 对象，原样存 localStorage 即可续玩。两种扑克游戏各自独立、互不影响，
+      // 也和剧本杀完全独立——一个群聊三种小游戏可以同时各有一局在进行。
+      doudizhuGames: {},
+      zhajinhuaGames: {},
 
       setApiKey: (key) => set({ apiKey: key }),
       setApiBaseUrl: (url) => set({ apiBaseUrl: url }),
@@ -308,6 +314,20 @@ export const useStore = create(
       clearMysteryGame: (groupId) => set((state) => {
         const { [groupId]: _removed, ...rest } = state.mysteryGames
         return { mysteryGames: rest }
+      }),
+      setDoudizhuGame: (groupId, game) => set((state) => ({
+        doudizhuGames: { ...state.doudizhuGames, [groupId]: game }
+      })),
+      clearDoudizhuGame: (groupId) => set((state) => {
+        const { [groupId]: _removed, ...rest } = state.doudizhuGames
+        return { doudizhuGames: rest }
+      }),
+      setZhajinhuaGame: (groupId, game) => set((state) => ({
+        zhajinhuaGames: { ...state.zhajinhuaGames, [groupId]: game }
+      })),
+      clearZhajinhuaGame: (groupId) => set((state) => {
+        const { [groupId]: _removed, ...rest } = state.zhajinhuaGames
+        return { zhajinhuaGames: rest }
       }),
       setSessionSignature: (sessionId, sig) => set((state) => ({
         sessions: state.sessions.map(s => s.id === sessionId ? { ...s, signature: sig } : s)
@@ -541,6 +561,8 @@ export const useStore = create(
         groupUserAvatars: state.groupUserAvatars,
         groupChatBg: state.groupChatBg,
         mysteryGames: state.mysteryGames,
+        doudizhuGames: state.doudizhuGames,
+        zhajinhuaGames: state.zhajinhuaGames,
       }),
     }
   )
