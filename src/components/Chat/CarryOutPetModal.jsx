@@ -5,10 +5,10 @@ import { compressImage } from '../../utils/image'
 
 const DEFAULT_PET_IMAGE = '/pets/black-haired-pet.png'
 
-// "抱走"入口的确认弹层：选桌宠形象，确认后把当前这条会话本体挂成全局
-// 桌宠（见 store 里的 desktopPet 和 components/DesktopPet.jsx）。不是复制
-// 出一个失忆分身——sessionId 绑定的就是这条会话，之后所有互动都会写回它
-// 自己的消息记录。
+// "抱走"入口的确认弹层：选桌宠形象，确认后把桌宠浮层打开。桌宠本质上就
+// 是当前这条会话的缩小版聊天窗（见 components/DesktopPet.jsx），不持有
+// 独立的会话绑定——它始终跟随 currentSessionId，摸它/跟它说话都走和主
+// 聊天窗完全相同的真实链路，写进的就是这同一段对话历史。
 export default function CarryOutPetModal({ theme, session, onClose }) {
   const updateDesktopPet = useStore((s) => s.updateDesktopPet)
   const [petImage, setPetImage] = useState(DEFAULT_PET_IMAGE)
@@ -27,18 +27,11 @@ export default function CarryOutPetModal({ theme, session, onClose }) {
   }
 
   const confirm = () => {
-    // 每次新的"抱走"都是新的一趟出门，心情计数器从零开始——不带着上一次
-    // 出门攒的烦躁/黏人值。
     updateDesktopPet({
       active: true,
-      sessionId: session.id,
       petImage,
       x: window.innerWidth - 102,
       y: window.innerHeight - 300,
-      allowSceneAwareness: false,
-      moodAffection: 0,
-      moodAnnoyance: 0,
-      moodUpdatedAt: 0,
     })
     onClose()
   }

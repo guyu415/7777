@@ -206,24 +206,13 @@ export const useStore = create(
       // to expand one into group discussion. Merely creating a summary must
       // never trigger group-model replies.
       pokerSummaries: {},
-      // 全局桌宠：不是复制出的失忆分身，绑定的就是某条真实会话本体——
-      // 从那个会话里"抱走"之后，摸/捏/戳/锤/聊天都会真实写回那条会话的
-      // 消息记录，沿用它自己的模型、人设、长期记忆摘要；position/scale/
-      // mood 跨页面、刷新与设备同步。active=false 时桌宠不渲染，只是
-      // 待在原会话里，等下一次被抱走。
-      // moodAffection/moodAnnoyance 是"一直摸它会变黏人、一直锤它会翻脸"
-      // 的累积状态（0-8 计数，随时间自然回落，见 services/desktopPet.js
-      // 的 effectiveMood），不是每次互动都独立生成、互不关联的孤立反应。
-      desktopPet: {
-        active: false,
-        sessionId: '',
-        petImage: '',
-        x: null, y: null, scale: 1,
-        allowSceneAwareness: false,
-        moodAffection: 0,
-        moodAnnoyance: 0,
-        moodUpdatedAt: 0,
-      },
+      // 全局桌宠：本质上就是当前这条会话的缩小版聊天窗，不是另开的独立
+      // 会话——它始终跟随 currentSessionId，摸/捏/锤/拖的手势和桌宠输入
+      // 框打字都走 useChat()/useCodexChat() 那条和主聊天窗完全相同的真实
+      // 链路（见 components/DesktopPet.jsx），没有自己的一套记忆或系统
+      // 提示词。active=false 时不渲染；petImage/scale/position 和
+      // batchSize（攒够几次手势才真的问一次模型）跨页面、刷新与设备同步。
+      desktopPet: { active: false, petImage: '', x: null, y: null, scale: 1, batchSize: 5 },
 
       setApiKey: (key) => set({ apiKey: key }),
       setApiBaseUrl: (url) => set({ apiBaseUrl: url }),
@@ -374,21 +363,6 @@ export const useStore = create(
       updateDesktopPet: (updates) => set((state) => ({
         desktopPet: { ...state.desktopPet, ...updates },
       })),
-      // Clamped, additive mood update — every pet interaction calls this
-      // instead of setting moodAffection/moodAnnoyance directly, so the two
-      // counters can never drift outside [0,8] no matter how fast the user
-      // pokes it.
-      bumpDesktopPetMood: (delta) => set((state) => {
-        const clamp = (v) => Math.max(0, Math.min(8, v))
-        return {
-          desktopPet: {
-            ...state.desktopPet,
-            moodAffection: clamp(state.desktopPet.moodAffection + (delta.affection || 0)),
-            moodAnnoyance: clamp(state.desktopPet.moodAnnoyance + (delta.annoyance || 0)),
-            moodUpdatedAt: Date.now(),
-          },
-        }
-      }),
       setSessionSignature: (sessionId, sig) => set((state) => ({
         sessions: state.sessions.map(s => s.id === sessionId ? { ...s, signature: sig } : s)
       })),
@@ -457,7 +431,7 @@ export const useStore = create(
     }),
     {
       name: 'pink-chat-settings',
-      version: 15,
+      version: 16,
       migrate: (persisted, version) => {
         if (version < 2) {
           const providers = [
@@ -589,24 +563,21 @@ export const useStore = create(
             })),
           }
         }
-        if (version < 15) {
-          // 桌宠从"只能挂在一条会话上的单例挂件"升级成"能被抱走/抱回的
-          // 会话本体分身"：旧版有 sessionId 就代表它当时挂在外面，直接
-          // 换算成 active + 默认形象；新增的心情计数器从零开始。
+        if (version < 16) {
+          // 桌宠几经改版（单例挂件 → 可抱走的会话分身 → 现在：跟随当前会话
+          // 的缩小版聊天窗），历史persisted 里可能残留 sessionId/mood* 等
+          // 已经没有意义的字段——统一收敛到最终形状，只留 active 状态和纯
+          // 展示用的 petImage/position/scale/batchSize。
           const old = persisted.desktopPet || {}
           persisted = {
             ...persisted,
             desktopPet: {
-              active: !!old.sessionId,
-              sessionId: old.sessionId || '',
-              petImage: old.sessionId ? '/pets/black-haired-pet.png' : '',
+              active: !!old.active,
+              petImage: old.petImage || '',
               x: old.x ?? null,
               y: old.y ?? null,
               scale: old.scale || 1,
-              allowSceneAwareness: false,
-              moodAffection: 0,
-              moodAnnoyance: 0,
-              moodUpdatedAt: 0,
+              batchSize: old.batchSize || 5,
             },
           }
         }
