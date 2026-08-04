@@ -233,6 +233,10 @@ export default function GroupChatWindow({ theme, chatId, onClose }) {
   const clearZhajinhuaGame = useStore((s) => s.clearZhajinhuaGame)
   const sichuanUpgradeGame = useStore((s) => s.sichuanUpgradeGames?.[chatId])
   const clearSichuanUpgradeGame = useStore((s) => s.clearSichuanUpgradeGame)
+  const pendingPokerSummaries = useStore((s) => s.pokerSummaries?.[chatId] || [])
+  const addPokerSummary = useStore((s) => s.addPokerSummary)
+  const removePokerSummary = useStore((s) => s.removePokerSummary)
+  const clearPokerSummaries = useStore((s) => s.clearPokerSummaries)
 
   const [chat, setChat] = useState(null)
   const [loading, setLoading] = useState(true)
@@ -246,6 +250,7 @@ export default function GroupChatWindow({ theme, chatId, onClose }) {
   const [showBgDrawer, setShowBgDrawer] = useState(false)
   const [showSettingsDrawer, setShowSettingsDrawer] = useState(false)
   const [summaryToShare, setSummaryToShare] = useState(null)
+  const [summaryDiscussionBusy, setSummaryDiscussionBusy] = useState('')
   // 小游戏：'hub' 是游戏列表弹层，'mystery' 是剧本杀房间。房间自己从 store 里
   // 读这个群聊的存档（mysteryGames[chatId]），所以关掉再打开就是续玩。
   const [gameView, setGameView] = useState(null)
@@ -294,7 +299,7 @@ export default function GroupChatWindow({ theme, chatId, onClose }) {
       return
     }
     logRef.current?.scrollTo({ top: logRef.current.scrollHeight, behavior: 'smooth' })
-  }, [chat?.messages?.length])
+  }, [chat?.messages?.length, pendingPokerSummaries.length])
 
   // Attempts (or re-attempts, on manual retry) ONE 'api'-kind member's
   // pending turn in THIS tab — the group chat page itself is the executing
@@ -414,13 +419,25 @@ export default function GroupChatWindow({ theme, chatId, onClose }) {
     try { await submitGroupClientTurn(chatId, memberId, scope, 'pass') } catch {}
   }
 
-  // A finished game becomes one ordinary, visible group message. Group history
-  // is server-owned and isolated from every single-chat session; only the
-  // explicit share button below writes a copy into a selected session.
+  // Finishing a game only prepares a local, persisted summary card. It does
+  // NOT call /group/message, so no group member is invited to reply until the
+  // user explicitly presses "展开群聊讨论".
   const handlePostGameSummary = async (summary) => {
-    const result = await sendGroupMessage(chatId, summary.text, [])
-    if (result?.chat) setChat(result.chat)
-    return result
+    addPokerSummary(chatId, summary)
+    return { ok: true }
+  }
+  const handleDiscussGameSummary = async (summary) => {
+    if (summaryDiscussionBusy) throw new Error('正在展开另一条摘要')
+    setSummaryDiscussionBusy(summary.id)
+    try {
+      const result = await sendGroupMessage(chatId, summary.text, [])
+      if (!result?.ok) throw new Error('展开讨论失败，请重试')
+      if (result.chat) setChat(result.chat)
+      removePokerSummary(chatId, summary.id)
+      return result
+    } finally {
+      setSummaryDiscussionBusy('')
+    }
   }
   const handleShareGameSummary = (sessionId, summary) => shareGameSummaryToSession(sessionId, summary)
 
@@ -444,7 +461,7 @@ export default function GroupChatWindow({ theme, chatId, onClose }) {
     setSettingsBusy(true)
     try {
       const result = await clearGroupMessages(chatId)
-      if (result?.ok) setChat(result.chat)
+      if (result?.ok) { setChat(result.chat); clearPokerSummaries(chatId) }
     } finally {
       setSettingsBusy(false)
     }
@@ -476,7 +493,7 @@ export default function GroupChatWindow({ theme, chatId, onClose }) {
           const vpsCharIds = doudizhuGame.players
             .map((p, i) => ({ p, i }))
             .filter(({ p }) => p.kind === 'ai' && isVpsMemberId(p.memberId))
-            .map(({ i }) => `seat${i}`)
+            .flatMap(({ i }) => [`seat${i}`, `tablechat-seat${i}`])
           clearDoudizhuGame(chatId)
           if (vpsCharIds.length) cleanupMysteryGame(doudizhuGame.runId, vpsCharIds).catch(() => {})
         }
@@ -484,7 +501,7 @@ export default function GroupChatWindow({ theme, chatId, onClose }) {
           const vpsCharIds = zhajinhuaGame.players
             .map((p, i) => ({ p, i }))
             .filter(({ p }) => p.kind === 'ai' && isVpsMemberId(p.memberId))
-            .map(({ i }) => `seat${i}`)
+            .flatMap(({ i }) => [`seat${i}`, `tablechat-seat${i}`])
           clearZhajinhuaGame(chatId)
           if (vpsCharIds.length) cleanupMysteryGame(zhajinhuaGame.runId, vpsCharIds).catch(() => {})
         }
@@ -492,10 +509,11 @@ export default function GroupChatWindow({ theme, chatId, onClose }) {
           const vpsCharIds = sichuanUpgradeGame.players
             .map((p, i) => ({ p, i }))
             .filter(({ p }) => p.kind === 'ai' && isVpsMemberId(p.memberId))
-            .map(({ i }) => `seat${i}`)
+            .flatMap(({ i }) => [`seat${i}`, `tablechat-seat${i}`])
           clearSichuanUpgradeGame(chatId)
           if (vpsCharIds.length) cleanupMysteryGame(sichuanUpgradeGame.runId, vpsCharIds).catch(() => {})
         }
+        clearPokerSummaries(chatId)
         onClose()
       }
     } finally {
@@ -573,7 +591,7 @@ export default function GroupChatWindow({ theme, chatId, onClose }) {
 
       {/* Messages */}
       <div ref={logRef} className="flex-1 overflow-y-auto px-3" style={{ minHeight: 0 }}>
-        {chat.messages.length === 0 && (
+        {chat.messages.length === 0 && pendingPokerSummaries.length === 0 && (
           <div className="text-center text-xs" style={{ color: '#c9a2ad', paddingTop: 20 }}>群聊已创建，说点什么开始吧～</div>
         )}
         {chat.messages.map((m) => {
@@ -629,6 +647,16 @@ export default function GroupChatWindow({ theme, chatId, onClose }) {
             </div>
           )
         })}
+        {pendingPokerSummaries.map((summary) => (
+          <div key={summary.id} className="my-3 mx-auto" style={{ width: 'calc(100% - 16px)', maxWidth: 430, padding: 13, borderRadius: 18, background: 'rgba(255,255,255,.8)', border: `1px solid ${primary}32`, boxShadow: `0 5px 18px ${primary}12` }}>
+            <div style={{ color: '#694858', fontSize: 11.5, whiteSpace: 'pre-wrap', lineHeight: 1.55 }}>{summary.text}</div>
+            <div style={{ color: '#aa8290', fontSize: 9.5, marginTop: 6 }}>摘要已保存；尚未通知群成员。</div>
+            <div style={{ display: 'flex', gap: 7, marginTop: 9 }}>
+              <button onClick={() => handleDiscussGameSummary(summary)} disabled={!!summaryDiscussionBusy} style={{ flex: 1, border: 0, borderRadius: 12, padding: '8px 7px', background: `linear-gradient(135deg,${primary},${primaryDark})`, color: '#fff', fontSize: 10.5, fontWeight: 700, opacity: summaryDiscussionBusy && summaryDiscussionBusy !== summary.id ? .5 : 1 }}>{summaryDiscussionBusy === summary.id ? '正在展开…' : '展开群聊讨论'}</button>
+              <button onClick={() => setSummaryToShare(summary)} style={{ border: `1px solid ${primary}45`, borderRadius: 12, padding: '8px 10px', background: 'rgba(255,255,255,.7)', color: primaryDark, fontSize: 10.5 }}><Share2 size={11} style={{ display: 'inline', marginRight: 3 }} />分享</button>
+            </div>
+          </div>
+        ))}
       </div>
 
       {/* Candidates awaiting approval — short direction only, never full content */}
@@ -770,13 +798,13 @@ export default function GroupChatWindow({ theme, chatId, onClose }) {
           小游戏面板——牌局状态本来就持久化在 store 里，退到大厅或退回群聊
           都不会丢，见 doudizhuGames/zhajinhuaGames 各自的 store 定义。 */}
       {gameView === 'doudizhu' && (
-        <DoudizhuRoom theme={theme} chatId={chatId} chat={chat} onBack={() => setGameView('poker')} onPostSummary={handlePostGameSummary} onShareSummary={handleShareGameSummary} />
+        <DoudizhuRoom theme={theme} chatId={chatId} chat={chat} onBack={() => setGameView('poker')} onPostSummary={handlePostGameSummary} onDiscussSummary={handleDiscussGameSummary} onShareSummary={handleShareGameSummary} />
       )}
       {gameView === 'zhajinhua' && (
-        <ZhajinhuaRoom theme={theme} chatId={chatId} chat={chat} onBack={() => setGameView('poker')} onPostSummary={handlePostGameSummary} onShareSummary={handleShareGameSummary} />
+        <ZhajinhuaRoom theme={theme} chatId={chatId} chat={chat} onBack={() => setGameView('poker')} onPostSummary={handlePostGameSummary} onDiscussSummary={handleDiscussGameSummary} onShareSummary={handleShareGameSummary} />
       )}
       {gameView === 'sichuan_upgrade' && (
-        <SichuanUpgradeRoom theme={theme} chatId={chatId} chat={chat} onBack={() => setGameView('poker')} onPostSummary={handlePostGameSummary} onShareSummary={handleShareGameSummary} />
+        <SichuanUpgradeRoom theme={theme} chatId={chatId} chat={chat} onBack={() => setGameView('poker')} onPostSummary={handlePostGameSummary} onDiscussSummary={handleDiscussGameSummary} onShareSummary={handleShareGameSummary} />
       )}
     </div>
   )

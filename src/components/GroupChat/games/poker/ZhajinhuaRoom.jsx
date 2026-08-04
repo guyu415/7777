@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { RotateCcw, Trash2, Volume2, VolumeX } from 'lucide-react'
+import { MessageCircle, RotateCcw, Trash2, Volume2, VolumeX } from 'lucide-react'
 import { useStore } from '../../../../store'
 import { cleanupMysteryGame } from '../../../../services/companion'
 import { isVpsMemberId } from '../../../../utils/groupMembers'
@@ -7,7 +7,9 @@ import PokerShell from './PokerShell'
 import PokerCard from './PokerCard'
 import PokerSetupPanel from './PokerSetupPanel'
 import PokerSummaryPanel from './PokerSummaryPanel'
+import PokerTableChat from './PokerTableChat'
 import { usePokerAudio } from './pokerAudio'
+import { pokerChatCharId, requestPokerChatReplies } from './pokerTableChat'
 import { zhajinhuaSummary } from './gameSummary'
 import { callSeatForPokerDecision, cleanupStuckSeat, buildPokerSystemPrompt } from './pokerAiCall'
 import {
@@ -20,7 +22,7 @@ const charIdFor = (seatIndex) => `seat${seatIndex}`
 const vpsCharIdsOf = (game) => game.players
   .map((p, i) => ({ p, i }))
   .filter(({ p }) => p.kind === 'ai' && isVpsMemberId(p.memberId))
-  .map(({ i }) => charIdFor(i))
+  .flatMap(({ i }) => [charIdFor(i), pokerChatCharId(i)])
 
 function actionLabel(a) {
   if (a.type === 'fold') return '弃牌'
@@ -31,7 +33,7 @@ function actionLabel(a) {
 }
 
 // 炸金花房间。规则/牌型/下注状态机全部在 zhajinhuaEngine.js（纯函数）。
-export default function ZhajinhuaRoom({ theme, chatId, chat, onBack, onPostSummary, onShareSummary }) {
+export default function ZhajinhuaRoom({ theme, chatId, chat, onBack, onPostSummary, onDiscussSummary, onShareSummary }) {
   const primary = theme?.primary || '#ff85b3'
   const primaryDark = theme?.primaryDark || '#ff6b9d'
   const sessions = useStore((s) => s.sessions)
@@ -50,6 +52,8 @@ export default function ZhajinhuaRoom({ theme, chatId, chat, onBack, onPostSumma
 
   const [aiState, setAiState] = useState(null)
   const [error, setError] = useState('')
+  const [showTableChat, setShowTableChat] = useState(false)
+  const [tableChatBusy, setTableChatBusy] = useState(false)
   const runningRef = useRef(new Set())
   const summaryRef = useRef(new Set())
   const lastHistoryRef = useRef(0)
@@ -74,7 +78,7 @@ export default function ZhajinhuaRoom({ theme, chatId, chat, onBack, onPostSumma
     // 里只是展示/记录用的标记，不影响 AI 自己本来就知道的真实手牌。
     const withLook = cur.players[seatIndex].hasLooked ? cur : lookAtCards(cur, seatIndex)
     if (withLook !== cur) commit(() => withLook)
-    const systemPrompt = buildPokerSystemPrompt('', GAME_LABEL)
+    const systemPrompt = buildPokerSystemPrompt('', GAME_LABEL, seat.name || seat.memberId)
     const turnPrompt = buildZhajinhuaPrompt(withLook, seatIndex)
     const actions = enumerateZhajinhuaActions(withLook, seatIndex)
     let action
@@ -152,6 +156,20 @@ export default function ZhajinhuaRoom({ theme, chatId, chat, onBack, onPostSumma
     }
   }
 
+  const sendTableChat = async (value) => {
+    const snapshot = useStore.getState().zhajinhuaGames?.[chatId]
+    if (!snapshot || tableChatBusy) return
+    const stamp = Date.now()
+    commit((g) => ({ ...g, tableChat: [...(g.tableChat || []), { id: `tablechat-${stamp}-user`, player: 0, text: value }].slice(-60) }))
+    setTableChatBusy(true)
+    try {
+      const replies = await requestPokerChatReplies({ game: snapshot, gameLabel: GAME_LABEL, userText: value, sessions, globals })
+      if (replies.length) commit((g) => g.id === snapshot.id ? { ...g, tableChat: [...(g.tableChat || []), ...replies.map((reply, i) => ({ id: `tablechat-${stamp}-${reply.player}-${i}`, ...reply }))].slice(-60) } : g)
+    } finally {
+      setTableChatBusy(false)
+    }
+  }
+
   const restart = () => {
     if (!game) return
     const oldRunId = game.runId
@@ -192,7 +210,7 @@ export default function ZhajinhuaRoom({ theme, chatId, chat, onBack, onPostSumma
     <PokerShell
       theme={theme} title="炸金花" icon="🎴" onBack={onBack}
       actions={(
-        <><button onClick={toggleMuted} aria-label={muted ? '开启游戏音乐' : '关闭游戏音乐'} className="flex items-center justify-center" style={{ width: 32, height: 32, borderRadius: '50%', border: 'none', background: 'rgba(255,255,255,.58)', color: '#8c6172' }}>{muted ? <VolumeX size={14} /> : <Volume2 size={14} />}</button><button onClick={endGame} aria-label="结束本局" className="flex items-center justify-center" style={{ width: 32, height: 32, borderRadius: '50%', border: 'none', background: 'rgba(0,0,0,0.06)', color: '#c9647a' }}>
+        <><button onClick={() => setShowTableChat(true)} aria-label="打开牌桌闲聊" className="flex items-center justify-center" style={{ width: 32, height: 32, position: 'relative', borderRadius: '50%', border: 'none', background: 'rgba(255,255,255,.58)', color: '#8c6172' }}><MessageCircle size={14} />{!!game.tableChat?.length && <span style={{ position: 'absolute', right: -1, top: -2, minWidth: 13, height: 13, borderRadius: 7, background: primary, color: '#fff', fontSize: 7, display: 'grid', placeItems: 'center' }}>{Math.min(99, game.tableChat.length)}</span>}</button><button onClick={toggleMuted} aria-label={muted ? '开启游戏音乐' : '关闭游戏音乐'} className="flex items-center justify-center" style={{ width: 32, height: 32, borderRadius: '50%', border: 'none', background: 'rgba(255,255,255,.58)', color: '#8c6172' }}>{muted ? <VolumeX size={14} /> : <Volume2 size={14} />}</button><button onClick={endGame} aria-label="结束本局" className="flex items-center justify-center" style={{ width: 32, height: 32, borderRadius: '50%', border: 'none', background: 'rgba(0,0,0,0.06)', color: '#c9647a' }}>
           <Trash2 size={14} />
         </button></>
       )}
@@ -241,7 +259,7 @@ export default function ZhajinhuaRoom({ theme, chatId, chat, onBack, onPostSumma
               <button onClick={restart} className="mt-3 inline-flex items-center gap-1.5" style={{ border: 'none', borderRadius: 16, padding: '9px 18px', color: '#fff', background: `linear-gradient(135deg, ${primary}, ${primaryDark})`, fontSize: 13, fontWeight: 600 }}>
                 <RotateCcw size={13} /> 再来一局
               </button>
-              <PokerSummaryPanel summary={summary} sessions={sessions} onShare={onShareSummary} accent={primary} />
+              <PokerSummaryPanel summary={summary} sessions={sessions} onShare={onShareSummary} onDiscuss={onDiscussSummary} accent={primary} />
             </div>
           )}
         </div>
@@ -282,6 +300,7 @@ export default function ZhajinhuaRoom({ theme, chatId, chat, onBack, onPostSumma
           )}
         </footer>
       )}
+      <PokerTableChat open={showTableChat} onClose={() => setShowTableChat(false)} messages={game.tableChat || []} players={game.players} onSend={sendTableChat} busy={tableChatBusy} accent={primary} />
     </PokerShell>
   )
 }

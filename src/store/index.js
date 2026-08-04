@@ -202,6 +202,10 @@ export const useStore = create(
       doudizhuGames: {},
       zhajinhuaGames: {},
       sichuanUpgradeGames: {},
+      // Finished poker summaries wait here until the user explicitly chooses
+      // to expand one into group discussion. Merely creating a summary must
+      // never trigger group-model replies.
+      pokerSummaries: {},
 
       setApiKey: (key) => set({ apiKey: key }),
       setApiBaseUrl: (url) => set({ apiBaseUrl: url }),
@@ -336,6 +340,18 @@ export const useStore = create(
       clearSichuanUpgradeGame: (groupId) => set((state) => {
         const { [groupId]: _removed, ...rest } = state.sichuanUpgradeGames
         return { sichuanUpgradeGames: rest }
+      }),
+      addPokerSummary: (groupId, summary) => set((state) => {
+        const current = state.pokerSummaries?.[groupId] || []
+        if (current.some((item) => item.id === summary.id)) return {}
+        return { pokerSummaries: { ...state.pokerSummaries, [groupId]: [...current, { ...summary, createdAt: Date.now() }].slice(-20) } }
+      }),
+      removePokerSummary: (groupId, summaryId) => set((state) => ({
+        pokerSummaries: { ...state.pokerSummaries, [groupId]: (state.pokerSummaries?.[groupId] || []).filter((item) => item.id !== summaryId) }
+      })),
+      clearPokerSummaries: (groupId) => set((state) => {
+        const { [groupId]: _removed, ...rest } = state.pokerSummaries || {}
+        return { pokerSummaries: rest }
       }),
       setSessionSignature: (sessionId, sig) => set((state) => ({
         sessions: state.sessions.map(s => s.id === sessionId ? { ...s, signature: sig } : s)
@@ -572,6 +588,7 @@ export const useStore = create(
         doudizhuGames: state.doudizhuGames,
         zhajinhuaGames: state.zhajinhuaGames,
         sichuanUpgradeGames: state.sichuanUpgradeGames,
+        pokerSummaries: state.pokerSummaries,
       }),
     }
   )

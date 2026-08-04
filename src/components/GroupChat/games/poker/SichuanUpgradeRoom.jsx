@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { RotateCcw, Trash2, Volume2, VolumeX, X } from 'lucide-react'
+import { MessageCircle, RotateCcw, Trash2, Volume2, VolumeX, X } from 'lucide-react'
 import { useStore } from '../../../../store'
 import { cleanupMysteryGame } from '../../../../services/companion'
 import { isVpsMemberId } from '../../../../utils/groupMembers'
@@ -9,7 +9,9 @@ import PokerHand from './PokerHand'
 import PokerPlayHistory from './PokerPlayHistory'
 import PokerSetupPanel from './PokerSetupPanel'
 import PokerSummaryPanel from './PokerSummaryPanel'
+import PokerTableChat from './PokerTableChat'
 import { usePokerAudio } from './pokerAudio'
+import { pokerChatCharId, requestPokerChatReplies } from './pokerTableChat'
 import { sichuanUpgradeSummary } from './gameSummary'
 import { callSeatForPokerDecision, cleanupStuckSeat, buildPokerSystemPrompt } from './pokerAiCall'
 import {
@@ -24,7 +26,7 @@ const charIdFor = (seatIndex) => `seat${seatIndex}`
 const vpsCharIdsOf = (game) => game.players
   .map((p, i) => ({ p, i }))
   .filter(({ p }) => p.kind === 'ai' && isVpsMemberId(p.memberId))
-  .map(({ i }) => charIdFor(i))
+  .flatMap(({ i }) => [charIdFor(i), pokerChatCharId(i)])
 
 function UpgradeSeat({ player, index, active, thinking, dealer, dealerTeam, primary, primaryDark, style }) {
   const relation = index === 0 ? '我' : index === 1 ? '下家' : index === 2 ? '对家' : '上家'
@@ -37,7 +39,7 @@ function UpgradeSeat({ player, index, active, thinking, dealer, dealerTeam, prim
   )
 }
 
-export default function SichuanUpgradeRoom({ theme, chatId, chat, onBack, onPostSummary, onShareSummary }) {
+export default function SichuanUpgradeRoom({ theme, chatId, chat, onBack, onPostSummary, onDiscussSummary, onShareSummary }) {
   const primary = theme?.primary || '#ff85b3'
   const primaryDark = theme?.primaryDark || '#ff6b9d'
   const sessions = useStore((s) => s.sessions)
@@ -57,6 +59,8 @@ export default function SichuanUpgradeRoom({ theme, chatId, chat, onBack, onPost
   const [error, setError] = useState('')
   const [aiState, setAiState] = useState(null)
   const [showBuried, setShowBuried] = useState(false)
+  const [showTableChat, setShowTableChat] = useState(false)
+  const [tableChatBusy, setTableChatBusy] = useState(false)
   const runningRef = useRef(new Set())
   const summaryRef = useRef(new Set())
   const lastHistoryRef = useRef(0)
@@ -75,7 +79,7 @@ export default function SichuanUpgradeRoom({ theme, chatId, chat, onBack, onPost
     if (runningRef.current.has(key)) return
     runningRef.current.add(key)
     setAiState({ seatIndex, status: 'thinking' })
-    const systemPrompt = buildPokerSystemPrompt('', GAME_LABEL)
+    const systemPrompt = buildPokerSystemPrompt('', GAME_LABEL, seat.name || seat.memberId)
     let result
     let auto = false
     try {
@@ -163,6 +167,20 @@ export default function SichuanUpgradeRoom({ theme, chatId, chat, onBack, onPost
     try { commit((g) => playUpgradeCard(g, 0, [...selected][0])); setSelected(new Set()); setError('') } catch (e) { setError(e.message) }
   }
 
+  const sendTableChat = async (value) => {
+    const snapshot = useStore.getState().sichuanUpgradeGames?.[chatId]
+    if (!snapshot || tableChatBusy) return
+    const stamp = Date.now()
+    commit((g) => ({ ...g, tableChat: [...(g.tableChat || []), { id: `tablechat-${stamp}-user`, player: 0, text: value }].slice(-60) }))
+    setTableChatBusy(true)
+    try {
+      const replies = await requestPokerChatReplies({ game: snapshot, gameLabel: GAME_LABEL, userText: value, sessions, globals })
+      if (replies.length) commit((g) => g.id === snapshot.id ? { ...g, tableChat: [...(g.tableChat || []), ...replies.map((reply, i) => ({ id: `tablechat-${stamp}-${reply.player}-${i}`, ...reply }))].slice(-60) } : g)
+    } finally {
+      setTableChatBusy(false)
+    }
+  }
+
   const restart = () => {
     const oldRunId = game.runId
     const ids = vpsCharIdsOf(game)
@@ -197,7 +215,7 @@ export default function SichuanUpgradeRoom({ theme, chatId, chat, onBack, onPost
   )
 
   return (
-    <PokerShell theme={theme} title="四川版升级" icon="🂡" onBack={onBack} actions={<>{audioButton}<button onClick={endGame} aria-label="结束本局" style={{ width: 32, height: 32, borderRadius: '50%', border: 0, background: 'rgba(255,255,255,.58)', color: '#c9647a', display: 'grid', placeItems: 'center' }}><Trash2 size={14} /></button></>}>
+    <PokerShell theme={theme} title="四川版升级" icon="🂡" onBack={onBack} actions={<><button onClick={() => setShowTableChat(true)} aria-label="打开牌桌闲聊" style={{ width: 32, height: 32, position: 'relative', borderRadius: '50%', border: 0, background: 'rgba(255,255,255,.58)', color: '#8c6172', display: 'grid', placeItems: 'center' }}><MessageCircle size={14} />{!!game.tableChat?.length && <span style={{ position: 'absolute', right: -1, top: -2, minWidth: 13, height: 13, borderRadius: 7, background: primary, color: '#fff', fontSize: 7, display: 'grid', placeItems: 'center' }}>{Math.min(99, game.tableChat.length)}</span>}</button>{audioButton}<button onClick={endGame} aria-label="结束本局" style={{ width: 32, height: 32, borderRadius: '50%', border: 0, background: 'rgba(255,255,255,.58)', color: '#c9647a', display: 'grid', placeItems: 'center' }}><Trash2 size={14} /></button></>}>
       <main className="flex-1 flex flex-col px-2.5 pt-2" style={{ minHeight: 0, overflow: 'hidden' }}>
         <div style={{ flexShrink: 0, padding: '7px 10px', borderRadius: 14, background: 'rgba(255,255,255,.58)', color: '#795362', fontSize: 9.5, lineHeight: 1.45 }}>
           <div><b>打 {rankLabel(game.levelRank)}</b> · {game.trumpSuit ? `${game.trumpSuit}主` : '等待叫主'} · 庄家 {game.players[game.dealer].name} · 闲家 <b style={{ color: primaryDark }}>{game.defenderScore}分</b></div>
@@ -229,7 +247,7 @@ export default function SichuanUpgradeRoom({ theme, chatId, chat, onBack, onPost
             {game.phase === 'calling' && <><div style={{ color: '#674554', fontSize: 13, fontWeight: 700 }}>摸牌叫主</div><div style={{ color: '#9a7483', fontSize: 10.5, marginTop: 5 }}>{game.players[game.turn].name} 摸到 {callOption?.suit}{rankLabel(game.levelRank)}，正在决定是否叫主</div></>}
             {game.phase === 'burying' && <><div style={{ color: '#674554', fontSize: 13, fontWeight: 700 }}>庄家换底牌</div><div style={{ display: 'flex', gap: 2, marginTop: 7 }}>{game.revealedBottom.map((c) => <PokerCard key={c.id} card={c} size="sm" />)}</div><div style={{ color: '#9a7483', fontSize: 9.5, marginTop: 4 }}>原底牌已公开</div></>}
             {game.phase === 'playing' && <>{game.trick.length ? <><div style={{ color: '#9a7483', fontSize: 9.5, marginBottom: 6 }}>第 {game.trickNo + 1} 墩</div><div style={{ display: 'flex', gap: 5, alignItems: 'flex-end' }}>{game.trick.map((x) => <div key={x.player}><PokerCard card={x.card} size="sm" /><div style={{ fontSize: 8, color: '#987181', marginTop: 2 }}>{game.players[x.player].name}</div></div>)}</div></> : <div style={{ color: '#9a7483', fontSize: 11 }}>{game.players[game.turn].name} 领出</div>}</>}
-            {game.phase === 'finished' && <><div style={{ color: '#5e3d4c', fontSize: 16, fontWeight: 800 }}>🏆 {game.result.description}</div><div style={{ color: '#987181', fontSize: 11, marginTop: 4 }}>闲家共吃到 {game.defenderScore} 分</div><button onClick={restart} style={{ marginTop: 10, border: 0, borderRadius: 14, padding: '8px 15px', background: `linear-gradient(135deg,${primary},${primaryDark})`, color: '#fff', fontSize: 12, fontWeight: 700 }}><RotateCcw size={12} style={{ display: 'inline', marginRight: 5 }} />继续下一轮</button><PokerSummaryPanel summary={summary} sessions={sessions} onShare={onShareSummary} accent={primary} /></>}
+            {game.phase === 'finished' && <><div style={{ color: '#5e3d4c', fontSize: 16, fontWeight: 800 }}>🏆 {game.result.description}</div><div style={{ color: '#987181', fontSize: 11, marginTop: 4 }}>闲家共吃到 {game.defenderScore} 分</div><button onClick={restart} style={{ marginTop: 10, border: 0, borderRadius: 14, padding: '8px 15px', background: `linear-gradient(135deg,${primary},${primaryDark})`, color: '#fff', fontSize: 12, fontWeight: 700 }}><RotateCcw size={12} style={{ display: 'inline', marginRight: 5 }} />继续下一轮</button><PokerSummaryPanel summary={summary} sessions={sessions} onShare={onShareSummary} onDiscuss={onDiscussSummary} accent={primary} /></>}
           </div>
         </section>
         {error && <div style={{ color: '#c9647a', textAlign: 'center', fontSize: 10.5, paddingTop: 3 }}>{error}</div>}
@@ -254,6 +272,7 @@ export default function SichuanUpgradeRoom({ theme, chatId, chat, onBack, onPost
           </div>
         </div>
       )}
+      <PokerTableChat open={showTableChat} onClose={() => setShowTableChat(false)} messages={game.tableChat || []} players={game.players} onSend={sendTableChat} busy={tableChatBusy} accent={primary} />
     </PokerShell>
   )
 }

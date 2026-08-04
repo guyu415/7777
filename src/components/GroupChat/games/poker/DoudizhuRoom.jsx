@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { RotateCcw, Trash2, Volume2, VolumeX } from 'lucide-react'
+import { MessageCircle, RotateCcw, Trash2, Volume2, VolumeX } from 'lucide-react'
 import { useStore } from '../../../../store'
 import { cleanupMysteryGame } from '../../../../services/companion'
 import { isVpsMemberId } from '../../../../utils/groupMembers'
@@ -9,7 +9,9 @@ import PokerSetupPanel from './PokerSetupPanel'
 import PokerHand from './PokerHand'
 import PokerPlayHistory from './PokerPlayHistory'
 import PokerSummaryPanel from './PokerSummaryPanel'
+import PokerTableChat from './PokerTableChat'
 import { usePokerAudio } from './pokerAudio'
+import { pokerChatCharId, requestPokerChatReplies } from './pokerTableChat'
 import { doudizhuSummary } from './gameSummary'
 import { callSeatForPokerDecision, cleanupStuckSeat, buildPokerSystemPrompt } from './pokerAiCall'
 import {
@@ -22,7 +24,7 @@ const charIdFor = (seatIndex) => `seat${seatIndex}`
 const vpsCharIdsOf = (game) => game.players
   .map((p, i) => ({ p, i }))
   .filter(({ p }) => p.kind === 'ai' && isVpsMemberId(p.memberId))
-  .map(({ i }) => charIdFor(i))
+  .flatMap(({ i }) => [charIdFor(i), pokerChatCharId(i)])
 
 function DoudizhuSeat({ player, index, active, thinking, roleLabel, primary, primaryDark, style }) {
   return (
@@ -38,7 +40,7 @@ function DoudizhuSeat({ player, index, active, thinking, roleLabel, primary, pri
 // 画出来；轮到 AI 玩家时用群成员自己的模型真实调用一次（10 秒思考超时，
 // 超时/报错/解析不出合法选项立刻自动托管，绝不卡住整局）；把引擎返回的
 // 新状态写回 store（持久化，误退群聊/刷新都能续玩）。
-export default function DoudizhuRoom({ theme, chatId, chat, onBack, onPostSummary, onShareSummary }) {
+export default function DoudizhuRoom({ theme, chatId, chat, onBack, onPostSummary, onDiscussSummary, onShareSummary }) {
   const primary = theme?.primary || '#ff85b3'
   const primaryDark = theme?.primaryDark || '#ff6b9d'
   const sessions = useStore((s) => s.sessions)
@@ -58,6 +60,8 @@ export default function DoudizhuRoom({ theme, chatId, chat, onBack, onPostSummar
   const [selected, setSelected] = useState(() => new Set())
   const [playError, setPlayError] = useState('')
   const [aiState, setAiState] = useState(null) // { seatIndex, status:'thinking' }
+  const [showTableChat, setShowTableChat] = useState(false)
+  const [tableChatBusy, setTableChatBusy] = useState(false)
   const runningRef = useRef(new Set())
   const summaryRef = useRef(new Set())
   const lastHistoryRef = useRef(0)
@@ -78,7 +82,7 @@ export default function DoudizhuRoom({ theme, chatId, chat, onBack, onPostSummar
     if (runningRef.current.has(key)) return
     runningRef.current.add(key)
     setAiState({ seatIndex, status: 'thinking' })
-    const systemPrompt = buildPokerSystemPrompt('', GAME_LABEL)
+    const systemPrompt = buildPokerSystemPrompt('', GAME_LABEL, seat.name || seat.memberId)
     const turnPrompt = buildBidPrompt(cur, seatIndex)
     const options = enumerateBidOptions(cur)
     let value
@@ -106,7 +110,7 @@ export default function DoudizhuRoom({ theme, chatId, chat, onBack, onPostSummar
     if (runningRef.current.has(key)) return
     runningRef.current.add(key)
     setAiState({ seatIndex, status: 'thinking' })
-    const systemPrompt = buildPokerSystemPrompt('', GAME_LABEL)
+    const systemPrompt = buildPokerSystemPrompt('', GAME_LABEL, seat.name || seat.memberId)
     const turnPrompt = buildPlayPrompt(cur, seatIndex)
     const { canPass, actions } = enumerateLegalActions(cur, seatIndex)
     const maxIndex = actions.length - 1 + (canPass ? 1 : 0)
@@ -211,6 +215,20 @@ export default function DoudizhuRoom({ theme, chatId, chat, onBack, onPostSummar
     }
   }
 
+  const sendTableChat = async (value) => {
+    const snapshot = useStore.getState().doudizhuGames?.[chatId]
+    if (!snapshot || tableChatBusy) return
+    const stamp = Date.now()
+    commit((g) => ({ ...g, tableChat: [...(g.tableChat || []), { id: `tablechat-${stamp}-user`, player: 0, text: value }].slice(-60) }))
+    setTableChatBusy(true)
+    try {
+      const replies = await requestPokerChatReplies({ game: snapshot, gameLabel: GAME_LABEL, userText: value, sessions, globals })
+      if (replies.length) commit((g) => g.id === snapshot.id ? { ...g, tableChat: [...(g.tableChat || []), ...replies.map((reply, i) => ({ id: `tablechat-${stamp}-${reply.player}-${i}`, ...reply }))].slice(-60) } : g)
+    } finally {
+      setTableChatBusy(false)
+    }
+  }
+
   const restart = () => {
     if (!game) return
     const oldRunId = game.runId
@@ -255,7 +273,7 @@ export default function DoudizhuRoom({ theme, chatId, chat, onBack, onPostSummar
     <PokerShell
       theme={theme} title="斗地主" icon="🀄" onBack={onBack}
       actions={(
-        <><button onClick={toggleMuted} aria-label={muted ? '开启游戏音乐' : '关闭游戏音乐'} className="flex items-center justify-center" style={{ width: 32, height: 32, borderRadius: '50%', border: 'none', background: 'rgba(255,255,255,.58)', color: '#8c6172' }}>{muted ? <VolumeX size={14} /> : <Volume2 size={14} />}</button><button onClick={endGame} aria-label="结束本局" className="flex items-center justify-center" style={{ width: 32, height: 32, borderRadius: '50%', border: 'none', background: 'rgba(0,0,0,0.06)', color: '#c9647a' }}>
+        <><button onClick={() => setShowTableChat(true)} aria-label="打开牌桌闲聊" className="flex items-center justify-center" style={{ width: 32, height: 32, position: 'relative', borderRadius: '50%', border: 'none', background: 'rgba(255,255,255,.58)', color: '#8c6172' }}><MessageCircle size={14} />{!!game.tableChat?.length && <span style={{ position: 'absolute', right: -1, top: -2, minWidth: 13, height: 13, borderRadius: 7, background: primary, color: '#fff', fontSize: 7, display: 'grid', placeItems: 'center' }}>{Math.min(99, game.tableChat.length)}</span>}</button><button onClick={toggleMuted} aria-label={muted ? '开启游戏音乐' : '关闭游戏音乐'} className="flex items-center justify-center" style={{ width: 32, height: 32, borderRadius: '50%', border: 'none', background: 'rgba(255,255,255,.58)', color: '#8c6172' }}>{muted ? <VolumeX size={14} /> : <Volume2 size={14} />}</button><button onClick={endGame} aria-label="结束本局" className="flex items-center justify-center" style={{ width: 32, height: 32, borderRadius: '50%', border: 'none', background: 'rgba(0,0,0,0.06)', color: '#c9647a' }}>
           <Trash2 size={14} />
         </button></>
       )}
@@ -314,7 +332,7 @@ export default function DoudizhuRoom({ theme, chatId, chat, onBack, onPostSummar
               <button onClick={restart} className="mt-3 inline-flex items-center gap-1.5" style={{ border: 'none', borderRadius: 16, padding: '9px 18px', color: '#fff', background: `linear-gradient(135deg, ${primary}, ${primaryDark})`, fontSize: 13, fontWeight: 600 }}>
                 <RotateCcw size={13} /> 再来一局
               </button>
-              <PokerSummaryPanel summary={summary} sessions={sessions} onShare={onShareSummary} accent={primary} />
+              <PokerSummaryPanel summary={summary} sessions={sessions} onShare={onShareSummary} onDiscuss={onDiscussSummary} accent={primary} />
             </div>
           )}
         </div>
@@ -346,6 +364,7 @@ export default function DoudizhuRoom({ theme, chatId, chat, onBack, onPostSummar
           )}
         </footer>
       )}
+      <PokerTableChat open={showTableChat} onClose={() => setShowTableChat(false)} messages={game.tableChat || []} players={game.players} onSend={sendTableChat} busy={tableChatBusy} accent={primary} />
     </PokerShell>
   )
 }

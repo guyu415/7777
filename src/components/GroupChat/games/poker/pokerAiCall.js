@@ -64,10 +64,11 @@ export function cleanupStuckSeat(runId, charId, seat) {
 // 座位自己的系统提示词——沿用它在群里本来的人设（如果有的话），加一段
 // 通用的"这是真牌局，只回数字"框定。两个游戏共用同一套框定文字，只有
 // gameLabel 不同。
-export function buildPokerSystemPrompt(personaPrompt, gameLabel) {
+export function buildPokerSystemPrompt(personaPrompt, gameLabel, identity = '') {
   const persona = (personaPrompt || '').trim()
   return [
     persona ? `你的人设/身份设定：\n${persona}` : '',
+    identity ? `你在这局牌里的身份是“${identity}”。真人玩家统一称为“用户”；你只能代表“${identity}”行动，绝不能把自己当成用户或其他牌友。` : '',
     `你现在和用户一起玩${gameLabel}。这是一局真实的、由程序判定合法性的牌局，不是聊天。`,
     '每一轮我会把你自己的手牌（只有你自己的，看不到别人的）、桌面公开信息和这一步能选的合法操作列出来，你只需要回复对应操作前面的那个数字，不要输出任何其他文字、不要描述你的牌、不要自己判断合不合法——合法性已经由程序保证，你只管从给出的选项里选。',
   ].filter(Boolean).join('\n\n')
