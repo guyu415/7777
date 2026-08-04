@@ -884,7 +884,7 @@ export async function* streamChatViaCompanion({ text, signal }) {
           // delivered before the disconnect, so appending would duplicate it.
           if (r.thinking) push({ reasoningReplace: r.thinking })
           if (r.kind === 'voice') push({ voice: { id: r.id, text: r.text, voice: r.voice, style: r.style } })
-          else push({ text: r.text })
+          else push({ text: r.text, wireId: r.id })
         }
         push({ done: true })
       } else {
@@ -927,7 +927,7 @@ export async function* streamChatViaCompanion({ text, signal }) {
       markDelivered(m.id)
       thisTurnDeliveredIds.push(m.id)
       if (m.kind === 'voice') push({ voice: { id: m.id, text: m.text, voice: m.voice, style: m.style } })
-      else push({ text: m.text })
+      else push({ text: m.text, wireId: m.id })
     } else if (m.type === 'turn_end') {
       push({ done: true })
     } else if (m.type === 'turn_error') {
@@ -968,7 +968,11 @@ export async function* streamChatViaCompanion({ text, signal }) {
       }
       if (item.reasoningReplace !== undefined) yield { reasoningReplace: item.reasoningReplace }
       else if (item.reasoning) yield { reasoning: item.reasoning }
-      else yield item.voice ? { voice: item.voice } : { text: item.text }
+      // wireId rides along with each text chunk so the caller can persist
+      // which server-side message ids this turn already displayed — the
+      // history-snapshot dedup in App.jsx matches against them (voice chunks
+      // already carry their wire id inside `voice.id`).
+      else yield item.voice ? { voice: item.voice } : { text: item.text, wireId: item.wireId }
     }
   } finally {
     listeners.delete(onEvent)

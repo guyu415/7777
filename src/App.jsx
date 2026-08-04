@@ -485,7 +485,11 @@ export default function App() {
       const vpsSession = useStore.getState().sessions?.find(s => s.providerName === 'claude-code-vps')
       if (!vpsSession) return
       const existing = await getMessages(vpsSession.id)
-      if (existing.some(m => m.id === id)) return
+      // A live-delivered turn saves its bubbles under local ids but records
+      // the server wire ids it displayed in `wireIds` — check both, otherwise
+      // every reconnect's history snapshot re-appends replies this browser
+      // already showed live.
+      if (existing.some(m => m.id === id || (Array.isArray(m.wireIds) && m.wireIds.includes(id)))) return
       const reasoningFields = thinking ? { reasoning: thinking, reasoningStreaming: false } : {}
 
       if (kind === 'voice') {

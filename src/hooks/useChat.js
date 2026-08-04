@@ -280,6 +280,17 @@ export function useChat() {
     let currentTextId = assistantId
     let currentTextAdded = true // assistantId was already added() above
     let vpsUsedVoiceThisTurn = false
+    // Server-side wire ids (Wire.id) this turn delivered live. Persisted onto
+    // every bubble the turn saves (`wireIds` field) so App.jsx's proactive
+    // handler can recognize them when the server's history snapshot replays
+    // the same messages on the next reconnect — without this, live-delivered
+    // replies are stored only under local genId()s, the snapshot's id-dedup
+    // misses, and every CC reply gets appended a second time after any
+    // reconnect (phone lock/unlock, network blip). That was the real cause
+    // of the "CC 每次都回复两遍" bug, not the harness's no-visible-output
+    // notice.
+    const vpsWireIds = []
+    const wireIdsField = () => (isVpsProvider && vpsWireIds.length ? { wireIds: [...vpsWireIds] } : {})
 
     // Finalizes whatever text has accumulated into currentTextId — persists
     // it to IndexedDB if it has real content, or drops the empty typing-
@@ -290,8 +301,8 @@ export function useChat() {
       const reasoningFields = fullReasoning ? { reasoning: fullReasoning, reasoningStreaming: false } : {}
       if (contentStarted && fullContent.trim()) {
         const doneContent = stripDisplayTags(fullContent)
-        updateMessage(currentTextId, { content: doneContent, streaming: false, ...reasoningFields })
-        await saveMessage({ id: currentTextId, conversationId: CONVERSATION_ID, role: 'assistant', type: 'text', content: doneContent, timestamp: Date.now(), streaming: false, ...reasoningFields })
+        updateMessage(currentTextId, { content: doneContent, streaming: false, ...reasoningFields, ...wireIdsField() })
+        await saveMessage({ id: currentTextId, conversationId: CONVERSATION_ID, role: 'assistant', type: 'text', content: doneContent, timestamp: Date.now(), streaming: false, ...reasoningFields, ...wireIdsField() })
         return true
       }
       if (currentTextAdded) deleteMessage(currentTextId)
@@ -301,8 +312,11 @@ export function useChat() {
     // reasoning: whatever public thinking (if any) preceded this specific
     // voice message — attached here, not read to the user; TTS only ever
     // synthesizes `text`, the explicit voice content CC sent.
-    const deliverVpsVoice = async ({ text, voice }, reasoning) => {
-      const vid = genId()
+    // The bubble id IS the server's wire id when available — that makes the
+    // history-snapshot dedup in App.jsx (`m.id === id`) match voice replies
+    // directly, same end as wireIdsField() achieves for text bubbles.
+    const deliverVpsVoice = async ({ id: voiceWireId, text, voice }, reasoning) => {
+      const vid = voiceWireId || genId()
       const reasoningFields = reasoning ? { reasoning, reasoningStreaming: false } : {}
       addMessage({ id: vid, conversationId: CONVERSATION_ID, role: 'assistant', type: 'text', content: '', timestamp: Date.now(), streaming: false, voiceLoading: true, ...reasoningFields })
       const hasTts = effectiveTtsApiKey && effectiveTtsGroupId
@@ -487,6 +501,8 @@ export function useChat() {
             fullReasoning = chunk.reasoningReplace
             dirty = true
           }
+          if (isVpsProvider && chunk.wireId) vpsWireIds.push(chunk.wireId)
+          if (isVpsProvider && chunk.voice?.id) vpsWireIds.push(chunk.voice.id)
           if (isVpsProvider && chunk.voice) {
             vpsUsedVoiceThisTurn = true
             // Finalize whatever text bubble was accumulating (if any) before
@@ -707,10 +723,10 @@ export function useChat() {
           let content = tk.content
           if (i === lastTextIdx && acNote) content = `${content}\n${acNote}`
           if (placed === 0) {
-            updateMessage(assistantId, { content, streaming: false, ...attachAc })
-            await saveMessage({ ...assistantMsg, content, streaming: false, ...attachAc })
+            updateMessage(assistantId, { content, streaming: false, ...attachAc, ...wireIdsField() })
+            await saveMessage({ ...assistantMsg, content, streaming: false, ...attachAc, ...wireIdsField() })
           } else {
-            const partMsg = { id: genId(), conversationId: CONVERSATION_ID, role: 'assistant', type: 'text', content, timestamp: Date.now(), streaming: false, ...attachAc }
+            const partMsg = { id: genId(), conversationId: CONVERSATION_ID, role: 'assistant', type: 'text', content, timestamp: Date.now(), streaming: false, ...attachAc, ...wireIdsField() }
             addMessage(partMsg)
             await saveMessage(partMsg)
           }
@@ -759,8 +775,8 @@ export function useChat() {
         const stopNote = isVpsProvider ? '\n\n_（已停止接收，本轮服务器可能仍在完成）_' : ''
         const savedContent = stripDisplayTags(fullContent) + stopNote
         if (savedContent.trim()) {
-          updateMessage(assistantId, { content: savedContent, streaming: false })
-          await saveMessage({ ...assistantMsg, content: savedContent, streaming: false })
+          updateMessage(assistantId, { content: savedContent, streaming: false, ...wireIdsField() })
+          await saveMessage({ ...assistantMsg, content: savedContent, streaming: false, ...wireIdsField() })
           updateSession(CONVERSATION_ID, { lastMsgPreview: savedContent.slice(0, 40), lastMsgTime: Date.now() })
         } else {
           deleteMessage(assistantId)
