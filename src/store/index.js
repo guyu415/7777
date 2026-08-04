@@ -206,9 +206,24 @@ export const useStore = create(
       // to expand one into group discussion. Merely creating a summary must
       // never trigger group-model replies.
       pokerSummaries: {},
-      // 全局桌宠：绑定的是一条真实私聊会话，因此它能沿用那名 AI 自己的
-      // 模型、人设和记忆；位置和大小跨页面、刷新与设备同步。
-      desktopPet: { sessionId: '', x: null, y: null, scale: 1 },
+      // 全局桌宠：不是复制出的失忆分身，绑定的就是某条真实会话本体——
+      // 从那个会话里"抱走"之后，摸/捏/戳/锤/聊天都会真实写回那条会话的
+      // 消息记录，沿用它自己的模型、人设、长期记忆摘要；position/scale/
+      // mood 跨页面、刷新与设备同步。active=false 时桌宠不渲染，只是
+      // 待在原会话里，等下一次被抱走。
+      // moodAffection/moodAnnoyance 是"一直摸它会变黏人、一直锤它会翻脸"
+      // 的累积状态（0-8 计数，随时间自然回落，见 services/desktopPet.js
+      // 的 effectiveMood），不是每次互动都独立生成、互不关联的孤立反应。
+      desktopPet: {
+        active: false,
+        sessionId: '',
+        petImage: '',
+        x: null, y: null, scale: 1,
+        allowSceneAwareness: false,
+        moodAffection: 0,
+        moodAnnoyance: 0,
+        moodUpdatedAt: 0,
+      },
 
       setApiKey: (key) => set({ apiKey: key }),
       setApiBaseUrl: (url) => set({ apiBaseUrl: url }),
@@ -359,6 +374,21 @@ export const useStore = create(
       updateDesktopPet: (updates) => set((state) => ({
         desktopPet: { ...state.desktopPet, ...updates },
       })),
+      // Clamped, additive mood update — every pet interaction calls this
+      // instead of setting moodAffection/moodAnnoyance directly, so the two
+      // counters can never drift outside [0,8] no matter how fast the user
+      // pokes it.
+      bumpDesktopPetMood: (delta) => set((state) => {
+        const clamp = (v) => Math.max(0, Math.min(8, v))
+        return {
+          desktopPet: {
+            ...state.desktopPet,
+            moodAffection: clamp(state.desktopPet.moodAffection + (delta.affection || 0)),
+            moodAnnoyance: clamp(state.desktopPet.moodAnnoyance + (delta.annoyance || 0)),
+            moodUpdatedAt: Date.now(),
+          },
+        }
+      }),
       setSessionSignature: (sessionId, sig) => set((state) => ({
         sessions: state.sessions.map(s => s.id === sessionId ? { ...s, signature: sig } : s)
       })),
@@ -427,7 +457,7 @@ export const useStore = create(
     }),
     {
       name: 'pink-chat-settings',
-      version: 14,
+      version: 15,
       migrate: (persisted, version) => {
         if (version < 2) {
           const providers = [
@@ -557,6 +587,27 @@ export const useStore = create(
               ...s,
               systemPrompt: s.systemPrompt === OLD_PROMPT ? '' : s.systemPrompt,
             })),
+          }
+        }
+        if (version < 15) {
+          // 桌宠从"只能挂在一条会话上的单例挂件"升级成"能被抱走/抱回的
+          // 会话本体分身"：旧版有 sessionId 就代表它当时挂在外面，直接
+          // 换算成 active + 默认形象；新增的心情计数器从零开始。
+          const old = persisted.desktopPet || {}
+          persisted = {
+            ...persisted,
+            desktopPet: {
+              active: !!old.sessionId,
+              sessionId: old.sessionId || '',
+              petImage: old.sessionId ? '/pets/black-haired-pet.png' : '',
+              x: old.x ?? null,
+              y: old.y ?? null,
+              scale: old.scale || 1,
+              allowSceneAwareness: false,
+              moodAffection: 0,
+              moodAnnoyance: 0,
+              moodUpdatedAt: 0,
+            },
           }
         }
         return persisted

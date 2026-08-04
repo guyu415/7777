@@ -107,6 +107,10 @@ export async function slimSettings(settings) {
   out.userAvatar = await track(settings.userAvatar, AVATAR_LIMIT, avatarOpts)
   out.aiAvatar = await track(settings.aiAvatar, AVATAR_LIMIT, avatarOpts)
   out.chatBg = await slimBg(settings.chatBg)
+  if (settings.desktopPet?.petImage) {
+    const petImage = await track(settings.desktopPet.petImage, AVATAR_LIMIT, avatarOpts)
+    if (petImage !== settings.desktopPet.petImage) out.desktopPet = { ...settings.desktopPet, petImage }
+  }
 
   const sessions = []
   for (const s of (settings.sessions || [])) {

@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useRef, useState, useLayoutEffect } from 'react'
-import { Menu } from 'lucide-react'
+import { Menu, Cat } from 'lucide-react'
 import { useShallow } from 'zustand/react/shallow'
 import MessageList from './MessageList'
 import FallingParticles from './FallingParticles'
 import MessageInput from './MessageInput'
 import MemoryModal from './MemoryModal'
 import RuntimeStatusBall from './RuntimeStatusBall'
+import CarryOutPetModal from './CarryOutPetModal'
 import VoiceCall from '../Voice/VoiceCall'
 import GomokuBoard from './GomokuBoard'
 import XinchaoPanel from './XinchaoPanel'
@@ -113,6 +114,7 @@ export default function ChatWindow({ theme }) {
   const [showCall, setShowCall] = useState(false)
   const [showGomoku, setShowGomoku] = useState(false)
   const [showDivination, setShowDivination] = useState(false)
+  const [showCarryOut, setShowCarryOut] = useState(false)
   // Focus (专注) — ONE real global task, server-authoritative (see
   // useFocusRuntime.js and channel-server.ts's own Focus section), entirely
   // separate from chat/session state — it can be started by any runtime
@@ -453,6 +455,14 @@ export default function ChatWindow({ theme }) {
         </div>
         <div className="flex items-center gap-2 flex-shrink-0" style={{ position: 'relative', zIndex: 10 }}>
           <button
+            onClick={() => setShowCarryOut(true)}
+            title="把它抱走，变成桌宠"
+            className="w-9 h-9 rounded-full flex items-center justify-center flex-shrink-0"
+            style={{ background: `${primaryColor}18`, color: primaryColor }}
+          >
+            <Cat size={16} />
+          </button>
+          <button
             onClick={() => setCurrentView('sessionSettings')}
             className="btn-whale flex items-center justify-center flex-shrink-0"
             style={{
@@ -783,6 +793,10 @@ export default function ChatWindow({ theme }) {
           focus={focusRuntime}
           onExit={() => setShowFocusSheet(false)}
         />
+      )}
+
+      {showCarryOut && currentSession && (
+        <CarryOutPetModal theme={theme} session={currentSession} onClose={() => setShowCarryOut(false)} />
       )}
     </div>
   )
