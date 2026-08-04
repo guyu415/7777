@@ -648,8 +648,15 @@ export default function GroupChatWindow({ theme, chatId, onClose }) {
           )
         })}
         {pendingPokerSummaries.map((summary) => (
-          <div key={summary.id} className="my-3 mx-auto" style={{ width: 'calc(100% - 16px)', maxWidth: 430, padding: 13, borderRadius: 18, background: 'rgba(255,255,255,.8)', border: `1px solid ${primary}32`, boxShadow: `0 5px 18px ${primary}12` }}>
-            <div style={{ color: '#694858', fontSize: 11.5, whiteSpace: 'pre-wrap', lineHeight: 1.55 }}>{summary.text}</div>
+          <div key={summary.id} className="my-3 mx-auto" style={{ position: 'relative', width: 'calc(100% - 16px)', maxWidth: 430, padding: 13, borderRadius: 18, background: 'rgba(255,255,255,.8)', border: `1px solid ${primary}32`, boxShadow: `0 5px 18px ${primary}12` }}>
+            <button
+              onClick={() => removePokerSummary(chatId, summary.id)}
+              aria-label="关闭摘要"
+              style={{ position: 'absolute', top: 8, right: 8, width: 20, height: 20, display: 'flex', alignItems: 'center', justifyContent: 'center', border: 'none', borderRadius: '50%', background: 'rgba(0,0,0,.06)', color: '#aa8290', cursor: 'pointer' }}
+            >
+              <XIcon size={12} />
+            </button>
+            <div style={{ color: '#694858', fontSize: 11.5, whiteSpace: 'pre-wrap', lineHeight: 1.55, paddingRight: 20 }}>{summary.text}</div>
             <div style={{ color: '#aa8290', fontSize: 9.5, marginTop: 6 }}>摘要已保存；尚未通知群成员。</div>
             <div style={{ display: 'flex', gap: 7, marginTop: 9 }}>
               <button onClick={() => handleDiscussGameSummary(summary)} disabled={!!summaryDiscussionBusy} style={{ flex: 1, border: 0, borderRadius: 12, padding: '8px 7px', background: `linear-gradient(135deg,${primary},${primaryDark})`, color: '#fff', fontSize: 10.5, fontWeight: 700, opacity: summaryDiscussionBusy && summaryDiscussionBusy !== summary.id ? .5 : 1 }}>{summaryDiscussionBusy === summary.id ? '正在展开…' : '展开群聊讨论'}</button>
