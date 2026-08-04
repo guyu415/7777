@@ -10,6 +10,11 @@ let musicStep = 0
 let ownerCount = 0
 let audioWanted = false
 let userUnlocked = false
+// iOS 有一个已知坑：来电/系统打断结束后，AudioContext.resume() 经常会“假成功”——
+// state 变回 running、甚至能补一小段声音，但硬件音轨其实已经断开，之后永远哑掉，
+// 而且不会再触发 statechange，所以光靠监听 state 永远抓不到。唯一可靠的做法是：
+// 只要经历过一次打断，就不再信任这个 context，下次恢复时整个关掉重建。
+let contextDirty = false
 
 // iOS 会把 WebAudio 和普通媒体分到不同的播放通道。来电/锁屏之后，单独的
 // AudioContext 很容易永远留在 interrupted/suspended；这段循环静音 PCM 让它
@@ -57,8 +62,17 @@ function audioContext() {
     ctx = new AudioContextClass()
     ctx.onstatechange = () => {
       if (!audioWanted || ownerCount <= 0) return
-      if (ctx.state === 'running') startMusic()
-      else {
+      if (ctx.state === 'running') {
+        if (contextDirty) {
+          // 这个 running 可能是打断结束后的“假恢复”，别直接信——走一次完整的
+          // resumeAudio，让它按 contextDirty 重建 context 再确认真的出声。
+          window.clearTimeout(recoveryTimer)
+          recoveryTimer = window.setTimeout(() => resumeAudio(false), 30)
+        } else {
+          startMusic()
+        }
+      } else {
+        contextDirty = true
         stopMusic()
         // iOS 的来电结束通常不会触发 visibilitychange，所以监听状态本身。
         window.clearTimeout(recoveryTimer)
@@ -69,16 +83,29 @@ function audioContext() {
   return ctx
 }
 
+function hardResetAudioContext() {
+  stopMusic()
+  if (ctx) {
+    try { ctx.onstatechange = null } catch { /* noop */ }
+    try { ctx.close() } catch { /* noop */ }
+  }
+  ctx = null
+  contextDirty = false
+}
+
 async function resumeAudio(fromGesture = false) {
   if (!audioWanted || ownerCount <= 0) return false
   if (fromGesture) userUnlocked = true
   if (!userUnlocked) return false
+  // 打断过就直接重建，不要在旧 context 上反复 resume——那个“running”经常是假的。
+  if (contextDirty) hardResetAudioContext()
   const ac = audioContext()
   try { await getMediaBridge().play() } catch { /* iOS 会等下一次手势再放行 */ }
   try {
     if (ac && ac.state !== 'running') await ac.resume()
   } catch { /* watchdog/下一次点击会继续恢复 */ }
   if (ac?.state === 'running') {
+    contextDirty = false
     startMusic()
     return true
   }
@@ -155,14 +182,23 @@ export function usePokerAudio() {
         resumeAudio(false)
       }
     }
+    // 退到后台/来电时先标脏：不管回来后 state 汇报什么，都强制重建 context，
+    // 不再信任一个经历过后台/打断的旧实例。
+    const handleVisibility = () => {
+      if (document.visibilityState === 'hidden') {
+        contextDirty = true
+      } else {
+        recoverFromLifecycle()
+      }
+    }
     window.addEventListener('pointerdown', recoverFromGesture, { passive: true })
     window.addEventListener('touchend', recoverFromGesture, { passive: true })
     window.addEventListener('focus', recoverFromLifecycle)
     window.addEventListener('pageshow', recoverFromLifecycle)
-    document.addEventListener('visibilitychange', recoverFromLifecycle)
+    document.addEventListener('visibilitychange', handleVisibility)
 
     const watchdog = window.setInterval(() => {
-      if (!muted && document.visibilityState !== 'hidden' && ctx?.state !== 'running') resumeAudio(false)
+      if (!muted && document.visibilityState !== 'hidden' && (contextDirty || ctx?.state !== 'running')) resumeAudio(false)
     }, 1500)
 
     if (!muted) resumeAudio(false)
@@ -172,7 +208,7 @@ export function usePokerAudio() {
       window.removeEventListener('touchend', recoverFromGesture)
       window.removeEventListener('focus', recoverFromLifecycle)
       window.removeEventListener('pageshow', recoverFromLifecycle)
-      document.removeEventListener('visibilitychange', recoverFromLifecycle)
+      document.removeEventListener('visibilitychange', handleVisibility)
       window.clearInterval(watchdog)
       if (ownerCount <= 0) suspendAudio()
     }
@@ -189,7 +225,7 @@ export function usePokerAudio() {
 
   const play = useCallback((kind) => {
     if (muted || !userUnlocked) return
-    if (ctx?.state !== 'running') {
+    if (contextDirty || ctx?.state !== 'running') {
       resumeAudio(false)
       return
     }
