@@ -6,7 +6,7 @@ import { isVpsMemberId } from '../../../../utils/groupMembers'
 import PokerShell from './PokerShell'
 import PokerCard from './PokerCard'
 import PokerSetupPanel from './PokerSetupPanel'
-import PokerHand from './PokerHand'
+import DoudizhuHand from './DoudizhuHand'
 import PokerPlayHistory from './PokerPlayHistory'
 import PokerSummaryPanel from './PokerSummaryPanel'
 import PokerTableChat from './PokerTableChat'
@@ -342,7 +342,7 @@ export default function DoudizhuRoom({ theme, chatId, chat, onBack, onPostSummar
 
       {game.phase !== 'finished' && (
         <footer className="flex-shrink-0 px-3" style={{ paddingBottom: 'max(12px, env(safe-area-inset-bottom, 0px))' }}>
-          <PokerHand cards={me.hand || []} selected={selected} disabled={!isMyPlayTurn} onCardClick={(card) => toggleCard(card.id)} />
+          <DoudizhuHand cards={me.hand || []} selected={selected} disabled={!isMyPlayTurn} onCardClick={(card) => toggleCard(card.id)} />
           {isMyBidTurn && (
             <div className="flex gap-2 mb-1">
               {bidOptions.map((v) => (
