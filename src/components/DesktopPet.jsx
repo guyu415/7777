@@ -1,18 +1,20 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Settings, X, MessageCircle, Undo2, Upload } from 'lucide-react'
-import { useStore } from '../store'
+import { Settings, X, MessageCircle, Undo2, Upload, MoreHorizontal } from 'lucide-react'
+import { useStore, getBlob } from '../store'
 import { useChat } from '../hooks/useChat'
 import { useCodexChat } from '../hooks/useCodexChat'
 import {
   findGesture, emptyGestureCounts, totalGestureCount,
-  buildGestureReport, describeGestureCounts,
+  buildGestureReport, describeGestureCounts, playGestureSfx, playLightTapSfx,
 } from '../services/desktopPet'
 import { compressImage } from '../utils/image'
+import { fetchTTSAudio } from '../services/tts'
 
 const PET_W = 88
 const PET_H = 136
 const LONG_PRESS_MS = 500
 const RAPID_TAP_MS = 420
+const RAPID_TAP_BURST = 3 // 快速连点攒够几下才算一次"锤"
 const PINCH_CLOSE_PX = 18
 const DEFAULT_PET_IMAGE = '/pets/black-haired-pet.png'
 
@@ -55,8 +57,9 @@ function DesktopPetWindow({ theme }) {
     Number.isFinite(desktopPet?.x) ? desktopPet.x : window.innerWidth - 102,
     Number.isFinite(desktopPet?.y) ? desktopPet.y : window.innerHeight - 300,
   ))
-  const [expression, setExpression] = useState('')
+  const [gestureFlash, setGestureFlash] = useState('')
   const [motion, setMotion] = useState('')
+  const [toolbarOpen, setToolbarOpen] = useState(false)
   const [chatOpen, setChatOpen] = useState(false)
   const [chatText, setChatText] = useState('')
   const [settingsOpen, setSettingsOpen] = useState(false)
@@ -70,7 +73,9 @@ function DesktopPetWindow({ theme }) {
   const touchPinch = useRef(null) // { startDist, fired }
   const isPinchingRef = useRef(false)
   const lastTapAt = useRef(0)
+  const rapidStreak = useRef(0)
   const gestureCounts = useRef(emptyGestureCounts())
+  const flashTimer = useRef(null)
   const replyTimer = useRef(null)
   const chatInputRef = useRef(null)
   const fileInputRef = useRef(null)
@@ -81,6 +86,8 @@ function DesktopPetWindow({ theme }) {
   const scale = desktopPet.scale || 1
   const petImage = desktopPet.petImage || DEFAULT_PET_IMAGE
   const identity = currentSession?.aiName || currentSession?.name || 'AI'
+  const sfxOn = !!desktopPet.sfxEnabled
+  const voiceReply = desktopPet.replyMode === 'voice'
 
   useEffect(() => {
     const fit = () => setPosition((current) => clampPosition(current.x, current.y))
@@ -90,33 +97,92 @@ function DesktopPetWindow({ theme }) {
 
   useEffect(() => () => {
     window.clearTimeout(pressTimer.current)
+    window.clearTimeout(flashTimer.current)
     window.clearTimeout(replyTimer.current)
   }, [])
 
+  const playExistingVoice = useCallback(async (blobId) => {
+    try {
+      const blob = await getBlob(blobId)
+      if (!blob) return
+      const audio = new Audio(URL.createObjectURL(blob))
+      audio.play().catch(() => {})
+    } catch {
+      // 播放失败就算了，气泡兜底会转成文字
+    }
+  }, [])
+
+  // 复用会话自己已经配置好的 TTS 凭据——和主聊天窗的语音合成走同一个
+  // fetchTTSAudio 调用，只是这里是桌宠自己独立触发的一次合成播放，不经过
+  // useChat 内部那套"按频率概率决定要不要发语音"的逻辑，也不影响会话本身
+  // 的 aiVoiceEnabled/voiceFrequency 设置。
+  const synthesizeAndPlay = useCallback(async (text) => {
+    const s = useStore.getState()
+    const ttsApiKey = currentSession?.ttsApiKey || s.ttsApiKey
+    const ttsGroupId = currentSession?.ttsGroupId || s.ttsGroupId
+    const ttsVoiceId = currentSession?.ttsVoiceId || s.ttsVoiceId
+    const ttsModel = currentSession?.ttsModel || 'speech-2.6-hd'
+    if (!ttsApiKey || !ttsGroupId) return false
+    try {
+      const blob = await fetchTTSAudio(text, { apiKey: ttsApiKey, groupId: ttsGroupId, voiceId: ttsVoiceId || 'English_Trustworthy_Man', model: ttsModel })
+      const audio = new Audio(URL.createObjectURL(blob))
+      audio.play().catch(() => {})
+      return true
+    } catch (e) {
+      console.warn('[PET] 语音合成失败:', e?.message)
+      return false
+    }
+  }, [currentSession])
+
   // 只展示"桌宠开着之后新产生"的回复——已加载的历史最后一条不算，避免
-  // 一打开桌宠就把某条旧消息当成刚发生的反应弹出来。
+  // 一打开桌宠就把某条旧消息当成刚发生的反应弹出来。回复方式选语音时走
+  // TTS 播放（气泡只显示一个🔊），选文字（默认）就照常显示气泡文字。
   useEffect(() => {
     const last = messages?.[messages.length - 1]
     if (!last || last.role !== 'assistant' || last.streaming) return
     if ((last.timestamp || 0) < mountedAt.current) return
     if (last.id === lastShownReplyId.current) return
     lastShownReplyId.current = last.id
-    const text = (last.content || '').replace(/<i>[\s\S]*?<\/i>/g, '').trim()
-    if (!text) return
-    setReplyBubble(text.length > 60 ? `${text.slice(0, 60)}…` : text)
-    window.clearTimeout(replyTimer.current)
-    replyTimer.current = window.setTimeout(() => setReplyBubble(''), 7000)
-  }, [messages])
 
-  // 手势本身立即播放本地动效（现场反馈），是否要真的问一次模型是另一件
-  // 独立的事——见下面 reportGestures。
+    const isVoiceMsg = last.type === 'voice'
+    const plainText = (isVoiceMsg ? (last.voiceText || '') : (last.content || '')).replace(/<i>[\s\S]*?<\/i>/g, '').trim()
+
+    const showBubble = (text, fadeMs) => {
+      setReplyBubble(text)
+      window.clearTimeout(replyTimer.current)
+      replyTimer.current = window.setTimeout(() => setReplyBubble(''), fadeMs)
+    }
+
+    if (voiceReply) {
+      if (isVoiceMsg && last.voiceBlobId) {
+        playExistingVoice(last.voiceBlobId)
+        showBubble('🔊', 4000)
+        return
+      }
+      if (plainText) {
+        synthesizeAndPlay(plainText).then((ok) => {
+          showBubble(ok ? '🔊' : (plainText.length > 60 ? `${plainText.slice(0, 60)}…` : plainText), ok ? 4000 : 7000)
+        })
+        return
+      }
+    }
+
+    if (!plainText) return
+    showBubble(plainText.length > 60 ? `${plainText.slice(0, 60)}…` : plainText, 7000)
+  }, [messages, voiceReply, playExistingVoice, synthesizeAndPlay])
+
+  // 手势本身立即播放本地动效 + 短音效 + 一闪而过的文字反馈（现场反馈），
+  // 是否要真的问一次模型是另一件独立的事——见下面 reportGestures。
   const playLocalMotion = useCallback((gestureId) => {
     const g = findGesture(gestureId)
-    setExpression(g.mark)
+    setGestureFlash(g.feedback)
+    window.clearTimeout(flashTimer.current)
+    flashTimer.current = window.setTimeout(() => setGestureFlash(''), 700)
     setMotion(g.motion)
     window.setTimeout(() => setMotion(''), 650)
     navigator.vibrate?.(gestureId === 'bonk' ? 14 : 8)
-  }, [])
+    playGestureSfx(gestureId, sfxOn)
+  }, [sfxOn])
 
   const reportGestures = useCallback(async () => {
     const counts = gestureCounts.current
@@ -144,15 +210,38 @@ function DesktopPetWindow({ theme }) {
     }
   }, [playLocalMotion, batchSize, reportGestures])
 
+  // 轻反馈——快速连点还没攒够 RAPID_TAP_BURST 阈值的那几下，给个更轻的
+  // 提示（小抖动 + 更轻的"滴"声），不算一次正式手势、不计数、不出文字。
+  const lightTapPulse = useCallback(() => {
+    navigator.vibrate?.(4)
+    playLightTapSfx(sfxOn)
+    setMotion('light-pulse')
+    window.setTimeout(() => setMotion(''), 160)
+  }, [sfxOn])
+
+  // 单次点击=摸；短时间内连续点击攒到第 RAPID_TAP_BURST 下才真正判定成
+  // 一次"锤"——前面几下只给轻反馈，让人清楚感觉到自己点到第几下，而不是
+  // 从第二下就突然变成锤。
   const handleTap = useCallback(() => {
     const now = Date.now()
     const rapid = now - lastTapAt.current < RAPID_TAP_MS
     lastTapAt.current = now
-    triggerGesture(rapid ? 'bonk' : 'pet')
-  }, [triggerGesture])
+    if (!rapid) {
+      rapidStreak.current = 1
+      triggerGesture('pet')
+      return
+    }
+    rapidStreak.current += 1
+    if (rapidStreak.current >= RAPID_TAP_BURST) {
+      rapidStreak.current = 0
+      triggerGesture('bonk')
+    } else {
+      lightTapPulse()
+    }
+  }, [triggerGesture, lightTapPulse])
 
   const requestClose = useCallback(() => {
-    setChatOpen(false); setSettingsOpen(false)
+    setChatOpen(false); setSettingsOpen(false); setToolbarOpen(false)
     if (totalGestureCount(gestureCounts.current) > 0) {
       setLeaveConfirmOpen(true)
     } else {
@@ -296,8 +385,16 @@ function DesktopPetWindow({ theme }) {
   }
 
   const panelLeft = Math.max(10, Math.min(position.x - 85, window.innerWidth - 290))
-  const dotsLeft = Math.max(8, Math.min(position.x - 30, window.innerWidth - 160))
   const gestureSummaryPlain = describeGestureCounts(gestureCounts.current)
+
+  // 底部工具条——默认收起，只留一个把手；展开时也不能压住桌宠腿部，所以
+  // 优先放在桌宠脚下方，脚下方空间不够（贴近屏幕底边）时改放头顶上方，
+  // 两种情况都完全在桌宠本体的框外，做成半透明浮层。
+  const belowSpace = window.innerHeight - (position.y + PET_H)
+  const toolbarBelow = belowSpace > 70
+  const toolbarTop = toolbarBelow ? position.y + PET_H + 6 : Math.max(6, position.y - 40)
+  const toolbarWidth = toolbarOpen ? 138 : 34
+  const toolbarLeft = Math.max(8, Math.min(position.x + PET_W / 2 - toolbarWidth / 2, window.innerWidth - toolbarWidth - 8))
 
   return (
     <>
@@ -306,16 +403,34 @@ function DesktopPetWindow({ theme }) {
         @keyframes pet-squash { 0%,100%{transform:scale(1)} 35%{transform:scale(.88,1.08)} 70%{transform:scale(1.06,.94)} }
         @keyframes pet-bonk { 0%,100%{transform:rotate(0)} 20%{transform:rotate(-10deg)} 45%{transform:rotate(11deg)} 70%{transform:rotate(-6deg)} }
         @keyframes pet-lift { 0%,100%{transform:rotate(0)} 35%{transform:rotate(-5deg)} 70%{transform:rotate(5deg)} }
+        @keyframes pet-light-pulse { 0%,100%{transform:scale(1)} 50%{transform:scale(1.035)} }
+        @keyframes pet-flash { 0%{opacity:0; transform:translate(-50%,4px)} 15%{opacity:1; transform:translate(-50%,0)} 75%{opacity:1} 100%{opacity:0; transform:translate(-50%,-6px)} }
         .desktop-pet.pet{animation:pet-bob .62s ease}.desktop-pet.pinch{animation:pet-squash .58s ease}
         .desktop-pet.bonk{animation:pet-bonk .52s ease}.desktop-pet.lift{animation:pet-lift .55s ease-in-out infinite}
+        .desktop-pet.light-pulse{animation:pet-light-pulse .16s ease}
+        .pet-flash-text{animation:pet-flash .7s ease forwards}
       `}</style>
 
-      {/* 手势进度点——攒够 batchSize 次才真的问一次模型，这里只是让"还差几下"看得见 */}
-      {pendingCount > 0 && (
-        <div className="fixed flex gap-1" style={{ left: dotsLeft, top: Math.max(46, position.y - 20), zIndex: 121 }}>
-          {Array.from({ length: batchSize }).map((_, i) => (
-            <span key={i} style={{ width: 6, height: 6, borderRadius: '50%', background: i < pendingCount ? theme.primary : theme.primary + '30' }} />
-          ))}
+      {/* 手势计数角标——紧贴桌宠肩侧，跟随桌宠位置移动，没有待上报手势时淡出 */}
+      <div
+        className="fixed grid place-items-center rounded-full transition-opacity duration-300"
+        style={{
+          left: position.x + PET_W * 0.66, top: position.y + PET_H * 0.08,
+          width: 18, height: 18, zIndex: 121, pointerEvents: 'none',
+          background: theme.primary, color: 'white', fontSize: 10, fontWeight: 700,
+          boxShadow: '0 2px 6px rgba(0,0,0,.18)',
+          opacity: pendingCount > 0 ? 1 : 0,
+        }}
+      >{pendingCount}</div>
+
+      {/* 手势反馈——每次手势一闪而过的短字，贴着头顶 */}
+      {gestureFlash && (
+        <div
+          key={gestureFlash + Date.now()}
+          className="fixed text-sm font-bold pet-flash-text"
+          style={{ left: position.x + PET_W / 2, top: position.y - 24, zIndex: 122, pointerEvents: 'none', color: theme.primary, textShadow: '0 0 6px rgba(255,255,255,.95), 0 0 10px rgba(255,255,255,.8)' }}
+        >
+          {gestureFlash}
         </div>
       )}
 
@@ -341,15 +456,25 @@ function DesktopPetWindow({ theme }) {
         onTouchEnd={onTouchEnd}
         title="轻点=摸，快速连点=锤，长按或双指捏=捏脸，拖动=拎起"
       >
-        {expression && <span className="absolute right-0 top-2 w-7 h-7 grid place-items-center rounded-full text-sm font-bold" style={{ zIndex: 2, color: theme.primary, background: 'rgba(255,255,255,.9)', boxShadow: '0 3px 10px rgba(0,0,0,.12)' }}>{expression}</span>}
         <img src={petImage} alt={identity} draggable="false" style={{ width: '100%', height: '100%', objectFit: 'contain', transform: `scale(${scale})`, transformOrigin: 'bottom center', filter: 'drop-shadow(0 5px 5px rgba(35,25,31,.22))', userSelect: 'none', WebkitUserDrag: 'none' }} />
       </div>
 
-      {/* 小工具条——不是互动按钮，只是"打字/设置/收起"这三个导航动作，放在手势区之外，不会和摸/捏/锤冲突 */}
-      <div className="fixed flex items-center gap-1.5 p-1 rounded-full" style={{ left: Math.max(8, Math.min(position.x + PET_W - 20, window.innerWidth - 130)), top: Math.min(position.y + PET_H - 30, window.innerHeight - 60), zIndex: 121, background: 'rgba(255,255,255,.9)', boxShadow: '0 4px 16px rgba(54,35,48,.16)', backdropFilter: 'blur(10px)' }}>
-        <button onClick={() => { setChatOpen((v) => !v); setSettingsOpen(false); window.setTimeout(() => chatInputRef.current?.focus(), 30) }} className="w-8 h-8 grid place-items-center rounded-full" style={{ color: theme.primary }} aria-label="跟它说两句"><MessageCircle size={15} /></button>
-        <button onClick={() => { setSettingsOpen((v) => !v); setChatOpen(false) }} className="w-8 h-8 grid place-items-center rounded-full" style={{ color: theme.primary }} aria-label="桌宠设置"><Settings size={15} /></button>
-        <button onClick={requestClose} className="w-8 h-8 grid place-items-center rounded-full" style={{ color: theme.primary }} aria-label="返回聊天窗"><Undo2 size={15} /></button>
+      {/* 底部工具条——默认只有一个把手，点一下展开/收起；放在桌宠脚下方
+          （空间不够时挪到头顶上方），完全不压桌宠本体，半透明浮层 */}
+      <div
+        className="fixed flex items-center gap-1 p-1 rounded-full overflow-hidden transition-all"
+        style={{ left: toolbarLeft, top: toolbarTop, width: toolbarWidth, zIndex: 121, background: 'rgba(255,255,255,.68)', backdropFilter: 'blur(10px)', boxShadow: '0 4px 14px rgba(54,35,48,.14)' }}
+      >
+        {toolbarOpen && (
+          <>
+            <button onClick={() => { setChatOpen((v) => !v); setSettingsOpen(false); window.setTimeout(() => chatInputRef.current?.focus(), 30) }} className="w-8 h-8 grid place-items-center rounded-full flex-shrink-0" style={{ color: theme.primary }} aria-label="跟它说两句"><MessageCircle size={15} /></button>
+            <button onClick={() => { setSettingsOpen((v) => !v); setChatOpen(false) }} className="w-8 h-8 grid place-items-center rounded-full flex-shrink-0" style={{ color: theme.primary }} aria-label="桌宠设置"><Settings size={15} /></button>
+            <button onClick={requestClose} className="w-8 h-8 grid place-items-center rounded-full flex-shrink-0" style={{ color: theme.primary }} aria-label="返回聊天窗"><Undo2 size={15} /></button>
+          </>
+        )}
+        <button onClick={() => setToolbarOpen((v) => !v)} className="w-8 h-8 grid place-items-center rounded-full flex-shrink-0" style={{ color: theme.primary }} aria-label={toolbarOpen ? '收起工具条' : '展开工具条'}>
+          <MoreHorizontal size={15} />
+        </button>
       </div>
 
       {chatOpen && (
@@ -371,7 +496,7 @@ function DesktopPetWindow({ theme }) {
       )}
 
       {settingsOpen && (
-        <div className="fixed rounded-3xl p-4" style={{ left: panelLeft, top: Math.max(70, Math.min(position.y - 80, window.innerHeight - 300)), width: 280, maxHeight: '70vh', overflowY: 'auto', zIndex: 123, color: theme.text, background: 'rgba(255,255,255,.96)', boxShadow: '0 12px 40px rgba(43,29,38,.24)', backdropFilter: 'blur(18px)' }}>
+        <div className="fixed rounded-3xl p-4" style={{ left: panelLeft, top: Math.max(70, Math.min(position.y - 80, window.innerHeight - 360)), width: 280, maxHeight: '72vh', overflowY: 'auto', zIndex: 123, color: theme.text, background: 'rgba(255,255,255,.96)', boxShadow: '0 12px 40px rgba(43,29,38,.24)', backdropFilter: 'blur(18px)' }}>
           <div className="flex items-center justify-between mb-3">
             <div><div className="font-semibold">桌宠设置</div><div className="text-[11px] opacity-55 mt-0.5">跟着当前会话「{identity}」走</div></div>
             <button onClick={() => setSettingsOpen(false)} className="w-8 h-8 grid place-items-center rounded-full" style={{ background: theme.primary + '12' }}><X size={16} /></button>
@@ -407,6 +532,19 @@ function DesktopPetWindow({ theme }) {
             <div className="flex gap-1">
               {[3, 5, 8].map((value) => <button key={value} onClick={() => updateDesktopPet({ batchSize: value })} className="px-3 py-1.5 rounded-lg text-xs" style={{ background: batchSize === value ? theme.primary : theme.primary + '12', color: batchSize === value ? 'white' : theme.text }}>{value}</button>)}
             </div>
+          </div>
+
+          <div className="mt-3 flex items-center justify-between">
+            <span className="text-xs opacity-65">回复方式</span>
+            <div className="flex gap-1">
+              <button onClick={() => updateDesktopPet({ replyMode: 'text' })} className="px-3 py-1.5 rounded-lg text-xs" style={{ background: !voiceReply ? theme.primary : theme.primary + '12', color: !voiceReply ? 'white' : theme.text }}>文字</button>
+              <button onClick={() => updateDesktopPet({ replyMode: 'voice' })} className="px-3 py-1.5 rounded-lg text-xs" style={{ background: voiceReply ? theme.primary : theme.primary + '12', color: voiceReply ? 'white' : theme.text }}>语音</button>
+            </div>
+          </div>
+
+          <div className="mt-3 flex items-center justify-between">
+            <span className="text-xs opacity-65">手势音效</span>
+            <button onClick={() => updateDesktopPet({ sfxEnabled: !sfxOn })} className="px-3 py-1.5 rounded-lg text-xs" style={{ background: sfxOn ? theme.primary : theme.primary + '12', color: sfxOn ? 'white' : theme.text }}>{sfxOn ? '开' : '关'}</button>
           </div>
         </div>
       )}

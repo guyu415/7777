@@ -210,9 +210,12 @@ export const useStore = create(
       // 会话——它始终跟随 currentSessionId，摸/捏/锤/拖的手势和桌宠输入
       // 框打字都走 useChat()/useCodexChat() 那条和主聊天窗完全相同的真实
       // 链路（见 components/DesktopPet.jsx），没有自己的一套记忆或系统
-      // 提示词。active=false 时不渲染；petImage/scale/position 和
-      // batchSize（攒够几次手势才真的问一次模型）跨页面、刷新与设备同步。
-      desktopPet: { active: false, petImage: '', x: null, y: null, scale: 1, batchSize: 5 },
+      // 提示词。active=false 时不渲染；petImage/scale/position、batchSize
+      // （攒够几次手势才真的问一次模型）、sfxEnabled（手势音效开关——应用
+      // 里目前没有别的全局静音设置，这个就是桌宠这块唯一的音效控制）、
+      // replyMode（回复以文字气泡还是语音播出，只影响桌宠这层展示，不动
+      // 会话本身的语音设置）跨页面、刷新与设备同步。
+      desktopPet: { active: false, petImage: '', x: null, y: null, scale: 1, batchSize: 5, sfxEnabled: true, replyMode: 'text' },
 
       setApiKey: (key) => set({ apiKey: key }),
       setApiBaseUrl: (url) => set({ apiBaseUrl: url }),
@@ -431,7 +434,7 @@ export const useStore = create(
     }),
     {
       name: 'pink-chat-settings',
-      version: 16,
+      version: 17,
       migrate: (persisted, version) => {
         if (version < 2) {
           const providers = [
@@ -563,11 +566,11 @@ export const useStore = create(
             })),
           }
         }
-        if (version < 16) {
-          // 桌宠几经改版（单例挂件 → 可抱走的会话分身 → 现在：跟随当前会话
-          // 的缩小版聊天窗），历史persisted 里可能残留 sessionId/mood* 等
-          // 已经没有意义的字段——统一收敛到最终形状，只留 active 状态和纯
-          // 展示用的 petImage/position/scale/batchSize。
+        if (version < 17) {
+          // 桌宠几经改版（单例挂件 → 可抱走的会话分身 → 跟随当前会话的缩小
+          // 版聊天窗 → 加音效开关与语音/文字回复模式），历史 persisted 里
+          // 可能残留 sessionId/mood* 等已经没有意义的字段——统一收敛到最终
+          // 形状。
           const old = persisted.desktopPet || {}
           persisted = {
             ...persisted,
@@ -578,6 +581,8 @@ export const useStore = create(
               y: old.y ?? null,
               scale: old.scale || 1,
               batchSize: old.batchSize || 5,
+              sfxEnabled: old.sfxEnabled ?? true,
+              replyMode: old.replyMode === 'voice' ? 'voice' : 'text',
             },
           }
         }
