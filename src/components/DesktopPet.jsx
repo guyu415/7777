@@ -17,6 +17,9 @@ const RAPID_TAP_MS = 420
 const RAPID_TAP_BURST = 3 // 快速连点攒够几下才算一次"锤"
 const PINCH_CLOSE_PX = 18
 const DEFAULT_PET_IMAGE = '/pets/black-haired-pet.png'
+const SWING_DEADZONE_PX = 4 // 判定方向反转前的抖动容差
+const SWING_MIN_AMPLITUDE_PX = 24 // 单次摆幅至少要达到这个距离才算数
+const SWING_MIN_SPEED_PX_MS = 0.15 // 单次摆动的最低速度（px/ms），挡住"缓慢挪动时顺手回摆一下"
 
 function clampPosition(x, y) {
   const shellWidth = Math.min(window.innerWidth, 448)
@@ -280,7 +283,7 @@ function DesktopPetWindow({ theme }) {
     }
   }, [chatText, isLoading, sendMessage])
 
-  // ── 手势识别：轻点=摸／快速连点=锤／长按或双指捏=捏脸／拖动=拎起 ──────
+  // ── 手势识别：轻点=摸／快速连点=锤／长按或双指捏=捏脸／拖起后左右往复摆动=拎起来晃 ──
 
   const onPointerDown = (event) => {
     if (isPinchingRef.current) return
@@ -294,6 +297,14 @@ function DesktopPetWindow({ theme }) {
       originX: position.x,
       originY: position.y,
       moved: false,
+      // 摆动判定：swingDir 记录当前这一段的水平方向（0=还没定下来），
+      // segStartX/segStartTime 是这一段的起点，extremumX 是目前为止在这个
+      // 方向上走到的最远处——一旦从 extremumX 往回退超过死区，就认为方向
+      // 反转了一次，检查这一段的摆幅和速度是否达标。
+      swingDir: 0,
+      segStartX: event.clientX,
+      segStartTime: event.timeStamp,
+      extremumX: event.clientX,
     }
     window.clearTimeout(pressTimer.current)
     pressTimer.current = window.setTimeout(() => {
@@ -303,6 +314,46 @@ function DesktopPetWindow({ theme }) {
       }
     }, LONG_PRESS_MS)
   }
+
+  // 单纯换个位置（哪怕挪得快）只会往一个方向走，swingDir 只会被设一次、
+  // 永远不会触发下面的反转分支，所以不计数；只有拖起来之后真的左右来回
+  // 摆，且每一次摆幅、速度都过阈值,才会记一次"拎起来晃"。垂直方向的移动
+  // 完全不影响这里的判定。
+  const detectSwing = useCallback((x, t) => {
+    const d = drag.current
+    if (!d) return
+    if (d.swingDir === 0) {
+      if (x - d.segStartX > SWING_DEADZONE_PX) { d.swingDir = 1; d.extremumX = x }
+      else if (d.segStartX - x > SWING_DEADZONE_PX) { d.swingDir = -1; d.extremumX = x }
+      return
+    }
+    if (d.swingDir === 1) {
+      if (x > d.extremumX) { d.extremumX = x; return }
+      if (d.extremumX - x <= SWING_DEADZONE_PX) return
+      const amplitude = d.extremumX - d.segStartX
+      const duration = Math.max(1, t - d.segStartTime)
+      if (amplitude >= SWING_MIN_AMPLITUDE_PX && amplitude / duration >= SWING_MIN_SPEED_PX_MS) {
+        triggerGesture('lift')
+      }
+      d.segStartX = d.extremumX
+      d.segStartTime = t
+      d.swingDir = -1
+      d.extremumX = x
+      return
+    }
+    // swingDir === -1
+    if (x < d.extremumX) { d.extremumX = x; return }
+    if (x - d.extremumX <= SWING_DEADZONE_PX) return
+    const amplitude = d.segStartX - d.extremumX
+    const duration = Math.max(1, t - d.segStartTime)
+    if (amplitude >= SWING_MIN_AMPLITUDE_PX && amplitude / duration >= SWING_MIN_SPEED_PX_MS) {
+      triggerGesture('lift')
+    }
+    d.segStartX = d.extremumX
+    d.segStartTime = t
+    d.swingDir = 1
+    d.extremumX = x
+  }, [triggerGesture])
 
   const onPointerMove = (event) => {
     if (!drag.current || drag.current.pointerId !== event.pointerId) return
@@ -314,6 +365,7 @@ function DesktopPetWindow({ theme }) {
     }
     if (drag.current.moved) {
       setMotion('lift')
+      detectSwing(event.clientX, event.timeStamp)
       const next = clampPosition(drag.current.originX + dx, drag.current.originY + dy)
       drag.current.latest = next
       setPosition(next)
@@ -330,8 +382,9 @@ function DesktopPetWindow({ theme }) {
     setMotion('')
     if (wasLongPress) return // 捏脸已经在长按计时器里触发过了
     if (wasMoved) {
+      // 单纯挪位置不算互动，只落位；真正的"拎起来晃"手势已经在拖动过程中
+      // 由 detectSwing 实时判定并触发了，这里不再重复计一次。
       updateDesktopPet({ x: finalPosition.x, y: finalPosition.y })
-      triggerGesture('lift')
     } else {
       handleTap()
     }
@@ -387,14 +440,15 @@ function DesktopPetWindow({ theme }) {
   const panelLeft = Math.max(10, Math.min(position.x - 85, window.innerWidth - 290))
   const gestureSummaryPlain = describeGestureCounts(gestureCounts.current)
 
-  // 底部工具条——默认收起，只留一个把手；展开时也不能压住桌宠腿部，所以
-  // 优先放在桌宠脚下方，脚下方空间不够（贴近屏幕底边）时改放头顶上方，
-  // 两种情况都完全在桌宠本体的框外，做成半透明浮层。
-  const belowSpace = window.innerHeight - (position.y + PET_H)
-  const toolbarBelow = belowSpace > 70
-  const toolbarTop = toolbarBelow ? position.y + PET_H + 6 : Math.max(6, position.y - 40)
-  const toolbarWidth = toolbarOpen ? 138 : 34
-  const toolbarLeft = Math.max(8, Math.min(position.x + PET_W / 2 - toolbarWidth / 2, window.innerWidth - toolbarWidth - 8))
+  // 菜单入口合并进右上角角标——不再有常驻的底部工具条。角标本身始终可点：
+  // 有待汇报手势时显示数字，没有时显示一个小“更多”图标；点一下在角标旁
+  // 展开菜单（说两句/设置/返回），再点一下收起。
+  const badgeSize = 20
+  const badgeLeft = position.x + PET_W * 0.66
+  const badgeTop = position.y + PET_H * 0.08
+  const menuWidth = 118
+  const menuLeft = Math.max(8, Math.min(badgeLeft + badgeSize - menuWidth, window.innerWidth - menuWidth - 8))
+  const menuTop = badgeTop + badgeSize + 6
 
   return (
     <>
@@ -411,17 +465,33 @@ function DesktopPetWindow({ theme }) {
         .pet-flash-text{animation:pet-flash .7s ease forwards}
       `}</style>
 
-      {/* 手势计数角标——紧贴桌宠肩侧，跟随桌宠位置移动，没有待上报手势时淡出 */}
-      <div
-        className="fixed grid place-items-center rounded-full transition-opacity duration-300"
+      {/* 手势计数角标——紧贴桌宠肩侧、跟随桌宠位置移动，同时也是菜单入口：
+          有待汇报手势时显示数字，没有时显示“更多”图标，点一下展开/收起菜单 */}
+      <button
+        onClick={() => setToolbarOpen((v) => !v)}
+        className="fixed grid place-items-center rounded-full"
         style={{
-          left: position.x + PET_W * 0.66, top: position.y + PET_H * 0.08,
-          width: 18, height: 18, zIndex: 121, pointerEvents: 'none',
+          left: badgeLeft, top: badgeTop,
+          width: badgeSize, height: badgeSize, zIndex: 125, border: 'none', padding: 0,
           background: theme.primary, color: 'white', fontSize: 10, fontWeight: 700,
           boxShadow: '0 2px 6px rgba(0,0,0,.18)',
-          opacity: pendingCount > 0 ? 1 : 0,
         }}
-      >{pendingCount}</div>
+        aria-label={toolbarOpen ? '收起菜单' : (pendingCount > 0 ? `${pendingCount} 次待汇报，展开菜单` : '展开菜单')}
+      >
+        {toolbarOpen ? <X size={11} /> : (pendingCount > 0 ? pendingCount : <MoreHorizontal size={11} />)}
+      </button>
+
+      {/* 菜单——从角标展开，桌宠下方不再保留任何常驻控件 */}
+      {toolbarOpen && (
+        <div
+          className="fixed flex items-center gap-1 p-1 rounded-full"
+          style={{ left: menuLeft, top: menuTop, zIndex: 124, background: 'rgba(255,255,255,.9)', backdropFilter: 'blur(10px)', boxShadow: '0 4px 14px rgba(54,35,48,.14)' }}
+        >
+          <button onClick={() => { setChatOpen((v) => !v); setSettingsOpen(false); window.setTimeout(() => chatInputRef.current?.focus(), 30) }} className="w-8 h-8 grid place-items-center rounded-full flex-shrink-0" style={{ color: theme.primary }} aria-label="跟它说两句"><MessageCircle size={15} /></button>
+          <button onClick={() => { setSettingsOpen((v) => !v); setChatOpen(false) }} className="w-8 h-8 grid place-items-center rounded-full flex-shrink-0" style={{ color: theme.primary }} aria-label="桌宠设置"><Settings size={15} /></button>
+          <button onClick={requestClose} className="w-8 h-8 grid place-items-center rounded-full flex-shrink-0" style={{ color: theme.primary }} aria-label="返回聊天窗"><Undo2 size={15} /></button>
+        </div>
+      )}
 
       {/* 手势反馈——每次手势一闪而过的短字，贴着头顶 */}
       {gestureFlash && (
@@ -457,24 +527,6 @@ function DesktopPetWindow({ theme }) {
         title="轻点=摸，快速连点=锤，长按或双指捏=捏脸，拖动=拎起"
       >
         <img src={petImage} alt={identity} draggable="false" style={{ width: '100%', height: '100%', objectFit: 'contain', transform: `scale(${scale})`, transformOrigin: 'bottom center', filter: 'drop-shadow(0 5px 5px rgba(35,25,31,.22))', userSelect: 'none', WebkitUserDrag: 'none' }} />
-      </div>
-
-      {/* 底部工具条——默认只有一个把手，点一下展开/收起；放在桌宠脚下方
-          （空间不够时挪到头顶上方），完全不压桌宠本体，半透明浮层 */}
-      <div
-        className="fixed flex items-center gap-1 p-1 rounded-full overflow-hidden transition-all"
-        style={{ left: toolbarLeft, top: toolbarTop, width: toolbarWidth, zIndex: 121, background: 'rgba(255,255,255,.68)', backdropFilter: 'blur(10px)', boxShadow: '0 4px 14px rgba(54,35,48,.14)' }}
-      >
-        {toolbarOpen && (
-          <>
-            <button onClick={() => { setChatOpen((v) => !v); setSettingsOpen(false); window.setTimeout(() => chatInputRef.current?.focus(), 30) }} className="w-8 h-8 grid place-items-center rounded-full flex-shrink-0" style={{ color: theme.primary }} aria-label="跟它说两句"><MessageCircle size={15} /></button>
-            <button onClick={() => { setSettingsOpen((v) => !v); setChatOpen(false) }} className="w-8 h-8 grid place-items-center rounded-full flex-shrink-0" style={{ color: theme.primary }} aria-label="桌宠设置"><Settings size={15} /></button>
-            <button onClick={requestClose} className="w-8 h-8 grid place-items-center rounded-full flex-shrink-0" style={{ color: theme.primary }} aria-label="返回聊天窗"><Undo2 size={15} /></button>
-          </>
-        )}
-        <button onClick={() => setToolbarOpen((v) => !v)} className="w-8 h-8 grid place-items-center rounded-full flex-shrink-0" style={{ color: theme.primary }} aria-label={toolbarOpen ? '收起工具条' : '展开工具条'}>
-          <MoreHorizontal size={15} />
-        </button>
       </div>
 
       {chatOpen && (
