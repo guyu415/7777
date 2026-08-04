@@ -1,11 +1,14 @@
 import { useEffect, useRef, useState } from 'react'
-import { RotateCcw, Trash2 } from 'lucide-react'
+import { RotateCcw, Trash2, Volume2, VolumeX } from 'lucide-react'
 import { useStore } from '../../../../store'
 import { cleanupMysteryGame } from '../../../../services/companion'
 import { isVpsMemberId } from '../../../../utils/groupMembers'
 import PokerShell from './PokerShell'
 import PokerCard from './PokerCard'
 import PokerSetupPanel from './PokerSetupPanel'
+import PokerSummaryPanel from './PokerSummaryPanel'
+import { usePokerAudio } from './pokerAudio'
+import { zhajinhuaSummary } from './gameSummary'
 import { callSeatForPokerDecision, cleanupStuckSeat, buildPokerSystemPrompt } from './pokerAiCall'
 import {
   createZhajinhuaGame, restartZhajinhua, lookAtCards, enumerateZhajinhuaActions, applyZhajinhuaAction,
@@ -28,7 +31,7 @@ function actionLabel(a) {
 }
 
 // 炸金花房间。规则/牌型/下注状态机全部在 zhajinhuaEngine.js（纯函数）。
-export default function ZhajinhuaRoom({ theme, chatId, chat, onBack }) {
+export default function ZhajinhuaRoom({ theme, chatId, chat, onBack, onPostSummary, onShareSummary }) {
   const primary = theme?.primary || '#ff85b3'
   const primaryDark = theme?.primaryDark || '#ff6b9d'
   const sessions = useStore((s) => s.sessions)
@@ -48,6 +51,9 @@ export default function ZhajinhuaRoom({ theme, chatId, chat, onBack }) {
   const [aiState, setAiState] = useState(null)
   const [error, setError] = useState('')
   const runningRef = useRef(new Set())
+  const summaryRef = useRef(new Set())
+  const lastHistoryRef = useRef(0)
+  const { muted, toggleMuted, play, unlock } = usePokerAudio()
 
   const commit = (fn) => {
     const store = useStore.getState()
@@ -104,8 +110,31 @@ export default function ZhajinhuaRoom({ theme, chatId, chat, onBack }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [game?.turn, game?.actionsCount, game?.finished])
 
+  useEffect(() => {
+    if (!game) return
+    if (game.history.length > lastHistoryRef.current) {
+      const entry = game.history[game.history.length - 1]
+      if (entry?.type === 'fold') play('pass')
+      else if (entry?.type === 'call' || entry?.type === 'raise') play('chip')
+      else if (entry?.type === 'compare') play('play')
+    }
+    lastHistoryRef.current = game.history.length
+  }, [game?.history?.length, play])
+
+  useEffect(() => {
+    if (!game?.finished || game.summaryPosted || summaryRef.current.has(game.id)) return
+    summaryRef.current.add(game.id)
+    const summary = zhajinhuaSummary(game)
+    play(game.winner === 0 ? 'win' : 'lose')
+    Promise.resolve(onPostSummary?.(summary))
+      .then(() => commit((g) => g.id === game.id ? { ...g, summaryPosted: true } : g))
+      .catch(() => summaryRef.current.delete(game.id))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [game?.finished, game?.summaryPosted, game?.id])
+
   // ------------------------------------------------------------ 用户操作
   const userLook = () => {
+    unlock()
     setError('')
     try {
       commit((g) => lookAtCards(g, 0))
@@ -114,6 +143,7 @@ export default function ZhajinhuaRoom({ theme, chatId, chat, onBack }) {
     }
   }
   const userAct = (action) => {
+    unlock()
     setError('')
     try {
       commit((g) => applyZhajinhuaAction(g, 0, action))
@@ -156,14 +186,15 @@ export default function ZhajinhuaRoom({ theme, chatId, chat, onBack }) {
   const myActions = isMyTurn ? enumerateZhajinhuaActions(game, 0) : []
   const lastEntry = game.history[game.history.length - 1]
   const settleEntry = game.phase === 'finished' ? game.history.find((h) => h.type === 'settle') : null
+  const summary = game.finished ? zhajinhuaSummary(game) : null
 
   return (
     <PokerShell
       theme={theme} title="炸金花" icon="🎴" onBack={onBack}
       actions={(
-        <button onClick={endGame} aria-label="结束本局" className="flex items-center justify-center" style={{ width: 32, height: 32, borderRadius: '50%', border: 'none', background: 'rgba(0,0,0,0.06)', color: '#c9647a' }}>
+        <><button onClick={toggleMuted} aria-label={muted ? '开启游戏音乐' : '关闭游戏音乐'} className="flex items-center justify-center" style={{ width: 32, height: 32, borderRadius: '50%', border: 'none', background: 'rgba(255,255,255,.58)', color: '#8c6172' }}>{muted ? <VolumeX size={14} /> : <Volume2 size={14} />}</button><button onClick={endGame} aria-label="结束本局" className="flex items-center justify-center" style={{ width: 32, height: 32, borderRadius: '50%', border: 'none', background: 'rgba(0,0,0,0.06)', color: '#c9647a' }}>
           <Trash2 size={14} />
-        </button>
+        </button></>
       )}
     >
       <main className="flex-1 overflow-y-auto px-3 py-3 flex flex-col" style={{ minHeight: 0 }}>
@@ -189,7 +220,7 @@ export default function ZhajinhuaRoom({ theme, chatId, chat, onBack }) {
           })}
         </div>
 
-        <div className="flex-1 flex flex-col items-center justify-center rounded-2xl mb-3 px-3 py-4" style={{ minHeight: 110, background: 'rgba(255,255,255,0.45)' }}>
+        <div className="flex-1 flex flex-col items-center justify-center rounded-3xl mb-3 px-3 py-4" style={{ minHeight: 150, background: 'radial-gradient(circle at 50% 42%, rgba(255,255,255,.9), rgba(244,222,228,.58))', border: '1px solid rgba(255,255,255,.7)' }}>
           {game.phase === 'betting' && (
             <div className="text-center w-full">
               <div style={{ fontSize: 13, fontWeight: 700, color: '#5a3548' }}>彩池 {game.pot} · 当前注额 {game.currentBet}</div>
@@ -202,7 +233,7 @@ export default function ZhajinhuaRoom({ theme, chatId, chat, onBack }) {
             </div>
           )}
           {game.phase === 'finished' && (
-            <div className="text-center">
+            <div className="text-center flex flex-col items-center" style={{ width: '100%' }}>
               <div style={{ fontSize: 16, fontWeight: 700, color: '#5a3548' }}>
                 🏆 {game.winner === 0 ? '你赢了这一局' : `${game.players[game.winner]?.name || '对方'} 赢了这一局`}
               </div>
@@ -210,6 +241,7 @@ export default function ZhajinhuaRoom({ theme, chatId, chat, onBack }) {
               <button onClick={restart} className="mt-3 inline-flex items-center gap-1.5" style={{ border: 'none', borderRadius: 16, padding: '9px 18px', color: '#fff', background: `linear-gradient(135deg, ${primary}, ${primaryDark})`, fontSize: 13, fontWeight: 600 }}>
                 <RotateCcw size={13} /> 再来一局
               </button>
+              <PokerSummaryPanel summary={summary} sessions={sessions} onShare={onShareSummary} accent={primary} />
             </div>
           )}
         </div>

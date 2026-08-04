@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { Menu, RotateCcw, Send, Check, X as XIcon, Settings, Users, Image as ImageIcon, Sliders, Dices } from 'lucide-react'
+import { Menu, RotateCcw, Send, Check, X as XIcon, Settings, Users, Image as ImageIcon, Sliders, Dices, Share2 } from 'lucide-react'
 import { useStore } from '../../store'
 import { compressImage } from '../../utils/image'
 import {
@@ -17,6 +17,8 @@ import MysteryGameRoom from './games/MysteryGameRoom'
 import PokerHub from './games/poker/PokerHub'
 import DoudizhuRoom from './games/poker/DoudizhuRoom'
 import ZhajinhuaRoom from './games/poker/ZhajinhuaRoom'
+import SichuanUpgradeRoom from './games/poker/SichuanUpgradeRoom'
+import { shareGameSummaryToSession } from './games/poker/gameSummary'
 
 // fallback is context-specific ('🐣' for the user, '🌸' for an AI member —
 // same neutral placeholders the rest of the app already uses, e.g.
@@ -140,6 +142,45 @@ function GroupMenuSheet({ theme, onPickAvatar, onPickMembers, onPickBg, onPickGa
   )
 }
 
+function GameSummaryShareSheet({ theme, summary, sessions, onShare, onClose }) {
+  const primary = theme?.primary || '#ff85b3'
+  const [target, setTarget] = useState(sessions[0]?.id || '')
+  const [status, setStatus] = useState('')
+  const [busy, setBusy] = useState(false)
+  const share = async () => {
+    if (!target || busy) return
+    setBusy(true)
+    setStatus('')
+    try {
+      await onShare(target, summary)
+      setStatus(`已分享到「${sessions.find((s) => s.id === target)?.name || target}」`)
+    } catch (e) {
+      setStatus(e.message || '分享失败')
+    } finally {
+      setBusy(false)
+    }
+  }
+  return (
+    <div className="fixed inset-0 flex items-end" style={{ zIndex: 121, background: 'rgba(31,18,25,.32)', backdropFilter: 'blur(4px)' }} onClick={onClose}>
+      <div onClick={(e) => e.stopPropagation()} className="w-full" style={{ borderRadius: '24px 24px 0 0', background: '#fffaf9', padding: '16px 16px max(16px, env(safe-area-inset-bottom, 0px))' }}>
+        <div style={{ color: '#573847', fontSize: 14, fontWeight: 700 }}>分享对局摘要</div>
+        <div style={{ color: '#a07a89', fontSize: 10.5, margin: '3px 0 12px' }}>只有点击确认后，摘要才会复制到所选单聊。</div>
+        <select value={target} onChange={(e) => { setTarget(e.target.value); setStatus('') }} style={{ width: '100%', borderRadius: 13, border: `1px solid ${primary}38`, background: '#fff', color: '#684555', fontSize: 12, padding: '10px 11px' }}>
+          {sessions.map((s) => <option key={s.id} value={s.id}>{s.name || s.id}</option>)}
+        </select>
+        <button onClick={share} disabled={!target || busy} style={{ width: '100%', marginTop: 10, border: 0, borderRadius: 14, padding: 11, background: primary, color: '#fff', fontSize: 13, fontWeight: 700, opacity: target && !busy ? 1 : .5 }}>{busy ? '分享中…' : '确认分享至这个会话'}</button>
+        {status && <div style={{ color: '#8e6878', fontSize: 10.5, marginTop: 7, textAlign: 'center' }}>{status}</div>}
+        <button onClick={onClose} style={{ width: '100%', marginTop: 5, border: 0, background: 'transparent', color: '#a07a89', fontSize: 11.5, padding: 7 }}>关闭</button>
+      </div>
+    </div>
+  )
+}
+
+function gameNameFromSummary(text = '') {
+  const match = text.match(/^【(.+?)对局摘要】/)
+  return match?.[1] || ''
+}
+
 // A real, independently persisted session (never mixed into any member's
 // own single-chat history — see channel-server.ts's Group chat section).
 // All orchestration (free-speech quota, candidate approval, @ mention
@@ -190,6 +231,8 @@ export default function GroupChatWindow({ theme, chatId, onClose }) {
   const clearDoudizhuGame = useStore((s) => s.clearDoudizhuGame)
   const zhajinhuaGame = useStore((s) => s.zhajinhuaGames?.[chatId])
   const clearZhajinhuaGame = useStore((s) => s.clearZhajinhuaGame)
+  const sichuanUpgradeGame = useStore((s) => s.sichuanUpgradeGames?.[chatId])
+  const clearSichuanUpgradeGame = useStore((s) => s.clearSichuanUpgradeGame)
 
   const [chat, setChat] = useState(null)
   const [loading, setLoading] = useState(true)
@@ -202,6 +245,7 @@ export default function GroupChatWindow({ theme, chatId, onClose }) {
   const [showMemberDrawer, setShowMemberDrawer] = useState(false)
   const [showBgDrawer, setShowBgDrawer] = useState(false)
   const [showSettingsDrawer, setShowSettingsDrawer] = useState(false)
+  const [summaryToShare, setSummaryToShare] = useState(null)
   // 小游戏：'hub' 是游戏列表弹层，'mystery' 是剧本杀房间。房间自己从 store 里
   // 读这个群聊的存档（mysteryGames[chatId]），所以关掉再打开就是续玩。
   const [gameView, setGameView] = useState(null)
@@ -370,6 +414,16 @@ export default function GroupChatWindow({ theme, chatId, onClose }) {
     try { await submitGroupClientTurn(chatId, memberId, scope, 'pass') } catch {}
   }
 
+  // A finished game becomes one ordinary, visible group message. Group history
+  // is server-owned and isolated from every single-chat session; only the
+  // explicit share button below writes a copy into a selected session.
+  const handlePostGameSummary = async (summary) => {
+    const result = await sendGroupMessage(chatId, summary.text, [])
+    if (result?.chat) setChat(result.chat)
+    return result
+  }
+  const handleShareGameSummary = (sessionId, summary) => shareGameSummaryToSession(sessionId, summary)
+
   const handleAvatarUpload = async (e) => {
     const file = e.target.files?.[0]
     if (!file) return
@@ -433,6 +487,14 @@ export default function GroupChatWindow({ theme, chatId, onClose }) {
             .map(({ i }) => `seat${i}`)
           clearZhajinhuaGame(chatId)
           if (vpsCharIds.length) cleanupMysteryGame(zhajinhuaGame.runId, vpsCharIds).catch(() => {})
+        }
+        if (sichuanUpgradeGame) {
+          const vpsCharIds = sichuanUpgradeGame.players
+            .map((p, i) => ({ p, i }))
+            .filter(({ p }) => p.kind === 'ai' && isVpsMemberId(p.memberId))
+            .map(({ i }) => `seat${i}`)
+          clearSichuanUpgradeGame(chatId)
+          if (vpsCharIds.length) cleanupMysteryGame(sichuanUpgradeGame.runId, vpsCharIds).catch(() => {})
         }
         onClose()
       }
@@ -529,6 +591,7 @@ export default function GroupChatWindow({ theme, chatId, onClose }) {
             return <div key={m.id} className="text-center text-[10.5px] my-2" style={{ color: '#c9a2ad' }}>{m.text}</div>
           }
           const isUser = m.from === 'user'
+          const summaryGame = isUser ? gameNameFromSummary(m.text) : ''
           // The user's own avatar is THIS group's own (myAvatar), never any
           // AI's avatar and never the app-wide global one — see this
           // component's own top comment for the bug this fixes.
@@ -553,6 +616,14 @@ export default function GroupChatWindow({ theme, chatId, onClose }) {
                   }}
                 >
                   {m.text}
+                  {summaryGame && (
+                    <button
+                      onClick={() => setSummaryToShare({ id: `group-${m.id}`, game: summaryGame, text: m.text })}
+                      style={{ marginTop: 9, display: 'flex', alignItems: 'center', gap: 5, border: '1px solid rgba(255,255,255,.6)', borderRadius: 12, padding: '6px 9px', background: 'rgba(255,255,255,.16)', color: '#fff', fontSize: 10.5 }}
+                    >
+                      <Share2 size={11} /> 分享至会话
+                    </button>
+                  )}
                 </div>
               </div>
             </div>
@@ -683,6 +754,9 @@ export default function GroupChatWindow({ theme, chatId, onClose }) {
           onClose={() => setShowSettingsDrawer(false)}
         />
       )}
+      {summaryToShare && (
+        <GameSummaryShareSheet theme={theme} summary={summaryToShare} sessions={sessions} onShare={handleShareGameSummary} onClose={() => setSummaryToShare(null)} />
+      )}
       {gameView === 'hub' && (
         <GameHubSheet theme={theme} onPick={(id) => setGameView(id)} onClose={() => setGameView(null)} />
       )}
@@ -696,10 +770,13 @@ export default function GroupChatWindow({ theme, chatId, onClose }) {
           小游戏面板——牌局状态本来就持久化在 store 里，退到大厅或退回群聊
           都不会丢，见 doudizhuGames/zhajinhuaGames 各自的 store 定义。 */}
       {gameView === 'doudizhu' && (
-        <DoudizhuRoom theme={theme} chatId={chatId} chat={chat} onBack={() => setGameView('poker')} />
+        <DoudizhuRoom theme={theme} chatId={chatId} chat={chat} onBack={() => setGameView('poker')} onPostSummary={handlePostGameSummary} onShareSummary={handleShareGameSummary} />
       )}
       {gameView === 'zhajinhua' && (
-        <ZhajinhuaRoom theme={theme} chatId={chatId} chat={chat} onBack={() => setGameView('poker')} />
+        <ZhajinhuaRoom theme={theme} chatId={chatId} chat={chat} onBack={() => setGameView('poker')} onPostSummary={handlePostGameSummary} onShareSummary={handleShareGameSummary} />
+      )}
+      {gameView === 'sichuan_upgrade' && (
+        <SichuanUpgradeRoom theme={theme} chatId={chatId} chat={chat} onBack={() => setGameView('poker')} onPostSummary={handlePostGameSummary} onShareSummary={handleShareGameSummary} />
       )}
     </div>
   )

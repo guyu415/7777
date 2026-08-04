@@ -201,6 +201,7 @@ export const useStore = create(
       // 也和剧本杀完全独立——一个群聊三种小游戏可以同时各有一局在进行。
       doudizhuGames: {},
       zhajinhuaGames: {},
+      sichuanUpgradeGames: {},
 
       setApiKey: (key) => set({ apiKey: key }),
       setApiBaseUrl: (url) => set({ apiBaseUrl: url }),
@@ -328,6 +329,13 @@ export const useStore = create(
       clearZhajinhuaGame: (groupId) => set((state) => {
         const { [groupId]: _removed, ...rest } = state.zhajinhuaGames
         return { zhajinhuaGames: rest }
+      }),
+      setSichuanUpgradeGame: (groupId, game) => set((state) => ({
+        sichuanUpgradeGames: { ...state.sichuanUpgradeGames, [groupId]: game }
+      })),
+      clearSichuanUpgradeGame: (groupId) => set((state) => {
+        const { [groupId]: _removed, ...rest } = state.sichuanUpgradeGames
+        return { sichuanUpgradeGames: rest }
       }),
       setSessionSignature: (sessionId, sig) => set((state) => ({
         sessions: state.sessions.map(s => s.id === sessionId ? { ...s, signature: sig } : s)
@@ -563,6 +571,7 @@ export const useStore = create(
         mysteryGames: state.mysteryGames,
         doudizhuGames: state.doudizhuGames,
         zhajinhuaGames: state.zhajinhuaGames,
+        sichuanUpgradeGames: state.sichuanUpgradeGames,
       }),
     }
   )

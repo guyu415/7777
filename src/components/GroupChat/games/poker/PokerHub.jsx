@@ -3,12 +3,10 @@ import { useStore } from '../../../../store'
 import PokerShell from './PokerShell'
 
 // 扑克二级大厅——原来"扑克"入口的占位内容，现在换成三个真正的入口。
-// 四川版升级先只露出入口，标"规则待确认"，点不进去——不擅自照普通拖拉机
-// 或炒地皮规则实现，等规则确认后再补。
 const POKER_GAMES = [
   { id: 'doudizhu', label: '斗地主', icon: '🀄', description: '三人局：你和两位群成员，标准54张牌', available: true },
   { id: 'zhajinhua', label: '炸金花', icon: '🎴', description: '三人局：虚拟筹码，看牌/跟注/加注/弃牌/比牌', available: true },
-  { id: 'sichuan_shengji', label: '四川版升级', icon: '🁰', description: '规则待确认，暂不可进入', available: false },
+  { id: 'sichuan_upgrade', label: '四川版升级', icon: '🂡', description: '四人对家组队：叫主、守庄与45分上台', available: true },
 ]
 
 export default function PokerHub({ theme, chatId, onPick, onBack }) {
@@ -16,9 +14,11 @@ export default function PokerHub({ theme, chatId, onPick, onBack }) {
   const primaryDark = theme?.primaryDark || '#ff6b9d'
   const doudizhuGame = useStore((s) => s.doudizhuGames?.[chatId])
   const zhajinhuaGame = useStore((s) => s.zhajinhuaGames?.[chatId])
+  const sichuanUpgradeGame = useStore((s) => s.sichuanUpgradeGames?.[chatId])
   const inProgress = {
     doudizhu: !!doudizhuGame && !doudizhuGame.finished,
     zhajinhua: !!zhajinhuaGame && !zhajinhuaGame.finished,
+    sichuan_upgrade: !!sichuanUpgradeGame && !sichuanUpgradeGame.finished,
   }
 
   return (

@@ -3,7 +3,11 @@ import { rankLabel } from './cards'
 // 斗地主/炸金花共用的单张牌视觉——选中时上浮一点，方便小屏幕触控点选；
 // 背面用于"还没揭示"的牌（对手的手牌、比牌前的自己）。
 export default function PokerCard({ card, size = 'md', selected, faceDown, onClick, style }) {
-  const dims = size === 'sm' ? { w: 28, h: 40, font: 11.5 } : size === 'lg' ? { w: 46, h: 64, font: 17 } : { w: 36, h: 51, font: 13.5 }
+  const dims = size === 'micro' ? { w: 18, h: 27, font: 7.5 }
+    : size === 'sm' ? { w: 28, h: 40, font: 11.5 }
+      : size === 'hand' ? { w: 48, h: 68, font: 16 }
+        : size === 'lg' ? { w: 46, h: 64, font: 17 }
+          : { w: 36, h: 51, font: 13.5 }
   if (faceDown || !card) {
     return (
       <div
@@ -30,7 +34,7 @@ export default function PokerCard({ card, size = 'md', selected, faceDown, onCli
         width: dims.w, height: dims.h, borderRadius: 6,
         background: '#fffaf7',
         border: selected ? '2px solid #ff6b9d' : '1px solid rgba(0,0,0,0.15)',
-        transform: selected ? 'translateY(-9px)' : 'none',
+        transform: selected ? 'translateY(-14px)' : 'none',
         transition: 'transform 0.15s',
         color, fontSize: dims.font, fontWeight: 700, lineHeight: 1.1,
         boxShadow: '0 1px 3px rgba(0,0,0,0.15)',

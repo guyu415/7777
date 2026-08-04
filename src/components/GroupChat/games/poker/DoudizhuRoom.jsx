@@ -1,11 +1,16 @@
 import { useEffect, useRef, useState } from 'react'
-import { RotateCcw, Trash2 } from 'lucide-react'
+import { RotateCcw, Trash2, Volume2, VolumeX } from 'lucide-react'
 import { useStore } from '../../../../store'
 import { cleanupMysteryGame } from '../../../../services/companion'
 import { isVpsMemberId } from '../../../../utils/groupMembers'
 import PokerShell from './PokerShell'
 import PokerCard from './PokerCard'
 import PokerSetupPanel from './PokerSetupPanel'
+import PokerHand from './PokerHand'
+import PokerPlayHistory from './PokerPlayHistory'
+import PokerSummaryPanel from './PokerSummaryPanel'
+import { usePokerAudio } from './pokerAudio'
+import { doudizhuSummary } from './gameSummary'
 import { callSeatForPokerDecision, cleanupStuckSeat, buildPokerSystemPrompt } from './pokerAiCall'
 import {
   createDoudizhuGame, restartDoudizhu, bid, applyPlay, enumerateBidOptions, enumerateLegalActions,
@@ -23,7 +28,7 @@ const vpsCharIdsOf = (game) => game.players
 // 画出来；轮到 AI 玩家时用群成员自己的模型真实调用一次（10 秒思考超时，
 // 超时/报错/解析不出合法选项立刻自动托管，绝不卡住整局）；把引擎返回的
 // 新状态写回 store（持久化，误退群聊/刷新都能续玩）。
-export default function DoudizhuRoom({ theme, chatId, chat, onBack }) {
+export default function DoudizhuRoom({ theme, chatId, chat, onBack, onPostSummary, onShareSummary }) {
   const primary = theme?.primary || '#ff85b3'
   const primaryDark = theme?.primaryDark || '#ff6b9d'
   const sessions = useStore((s) => s.sessions)
@@ -44,6 +49,9 @@ export default function DoudizhuRoom({ theme, chatId, chat, onBack }) {
   const [playError, setPlayError] = useState('')
   const [aiState, setAiState] = useState(null) // { seatIndex, status:'thinking' }
   const runningRef = useRef(new Set())
+  const summaryRef = useRef(new Set())
+  const lastHistoryRef = useRef(0)
+  const { muted, toggleMuted, play, unlock } = usePokerAudio()
 
   const commit = (fn) => {
     const store = useStore.getState()
@@ -133,6 +141,28 @@ export default function DoudizhuRoom({ theme, chatId, chat, onBack }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [game?.phase, game?.biddingTurn, game?.turn, game?.bids?.length, game?.history?.length, game?.finished])
 
+  useEffect(() => {
+    if (!game) return
+    if (game.history.length > lastHistoryRef.current) {
+      const entry = game.history[game.history.length - 1]
+      if (entry?.type === 'play') play(entry.handType === 'bomb' || entry.handType === 'rocket' ? 'bomb' : 'play')
+      else if (entry?.type === 'pass') play('pass')
+      else if (entry?.type === 'landlord') play('bid')
+    }
+    lastHistoryRef.current = game.history.length
+  }, [game?.history?.length, play])
+
+  useEffect(() => {
+    if (!game?.finished || game.summaryPosted || summaryRef.current.has(game.id)) return
+    summaryRef.current.add(game.id)
+    const summary = doudizhuSummary(game)
+    play(game.winnerRole === game.players[0]?.role ? 'win' : 'lose')
+    Promise.resolve(onPostSummary?.(summary))
+      .then(() => commit((g) => g.id === game.id ? { ...g, summaryPosted: true } : g))
+      .catch(() => summaryRef.current.delete(game.id))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [game?.finished, game?.summaryPosted, game?.id])
+
   // ------------------------------------------------------------ 用户操作
   const userBid = (value) => {
     setPlayError('')
@@ -143,6 +173,8 @@ export default function DoudizhuRoom({ theme, chatId, chat, onBack }) {
     }
   }
   const toggleCard = (id) => {
+    unlock()
+    play('select')
     setSelected((prev) => {
       const next = new Set(prev)
       if (next.has(id)) next.delete(id)
@@ -207,24 +239,25 @@ export default function DoudizhuRoom({ theme, chatId, chat, onBack }) {
   const { canPass } = game.phase === 'playing' ? enumerateLegalActions(game, 0) : { canPass: false }
   const selectedCards = me.hand ? me.hand.filter((c) => selected.has(c.id)) : []
   const lastHistoryAuto = game.history[game.history.length - 1]?.auto
+  const summary = game.finished ? doudizhuSummary(game) : null
 
   return (
     <PokerShell
       theme={theme} title="斗地主" icon="🀄" onBack={onBack}
       actions={(
-        <button onClick={endGame} aria-label="结束本局" className="flex items-center justify-center" style={{ width: 32, height: 32, borderRadius: '50%', border: 'none', background: 'rgba(0,0,0,0.06)', color: '#c9647a' }}>
+        <><button onClick={toggleMuted} aria-label={muted ? '开启游戏音乐' : '关闭游戏音乐'} className="flex items-center justify-center" style={{ width: 32, height: 32, borderRadius: '50%', border: 'none', background: 'rgba(255,255,255,.58)', color: '#8c6172' }}>{muted ? <VolumeX size={14} /> : <Volume2 size={14} />}</button><button onClick={endGame} aria-label="结束本局" className="flex items-center justify-center" style={{ width: 32, height: 32, borderRadius: '50%', border: 'none', background: 'rgba(0,0,0,0.06)', color: '#c9647a' }}>
           <Trash2 size={14} />
-        </button>
+        </button></>
       )}
     >
       <main className="flex-1 overflow-y-auto px-3 py-3 flex flex-col" style={{ minHeight: 0 }}>
-        <div className="flex gap-2 mb-3">
+        <div className="flex gap-2 mb-2">
           {[1, 2].map((i) => {
             const p = game.players[i]
             const isTurn = (game.phase === 'bidding' && game.biddingTurn === i) || (game.phase === 'playing' && game.turn === i)
             const thinking = aiState?.seatIndex === i
             return (
-              <div key={i} className="flex-1 text-center rounded-2xl py-2" style={{ background: 'rgba(255,255,255,0.65)', border: isTurn ? `1.5px solid ${primary}` : '1px solid rgba(0,0,0,0.06)' }}>
+              <div key={i} className="flex-1 text-center rounded-2xl py-1.5" style={{ background: 'rgba(255,255,255,0.65)', border: isTurn ? `1.5px solid ${primary}` : '1px solid rgba(0,0,0,0.06)' }}>
                 <div style={{ fontSize: 12.5, fontWeight: 600, color: '#5a3548' }}>{p.name || p.memberId}</div>
                 <div className="text-[10px] mt-0.5" style={{ color: '#a2798a' }}>
                   {p.role ? roleLabel(p.role) : ''}{p.role ? ' · ' : ''}{p.hand ? `${p.hand.length}张` : ''}
@@ -235,7 +268,8 @@ export default function DoudizhuRoom({ theme, chatId, chat, onBack }) {
           })}
         </div>
 
-        <div className="flex-1 flex flex-col items-center justify-center rounded-2xl mb-3 px-3 py-4" style={{ minHeight: 130, background: 'rgba(255,255,255,0.45)' }}>
+        <div className="flex-1 relative flex flex-col items-center justify-center rounded-3xl mb-2 px-3 py-4 overflow-hidden" style={{ minHeight: 170, background: 'radial-gradient(circle at 48% 43%, rgba(255,255,255,.88), rgba(244,222,228,.58))', border: '1px solid rgba(255,255,255,.72)' }}>
+          <PokerPlayHistory history={game.history} players={game.players} accent={primary} />
           {game.phase === 'bidding' && (
             <div className="text-center text-[12.5px] w-full" style={{ color: '#5a3548' }}>
               {game.bids.length === 0 && <div style={{ color: '#a2798a' }}>叫分开始</div>}
@@ -263,13 +297,14 @@ export default function DoudizhuRoom({ theme, chatId, chat, onBack }) {
             </div>
           )}
           {game.phase === 'finished' && (
-            <div className="text-center">
+            <div className="text-center flex flex-col items-center" style={{ width: '100%', paddingRight: 72 }}>
               <div style={{ fontSize: 16, fontWeight: 700, color: '#5a3548' }}>
                 {game.winnerRole === 'landlord' ? '🏆 地主获胜！' : '🏆 农民获胜！'}
               </div>
               <button onClick={restart} className="mt-3 inline-flex items-center gap-1.5" style={{ border: 'none', borderRadius: 16, padding: '9px 18px', color: '#fff', background: `linear-gradient(135deg, ${primary}, ${primaryDark})`, fontSize: 13, fontWeight: 600 }}>
                 <RotateCcw size={13} /> 再来一局
               </button>
+              <PokerSummaryPanel summary={summary} sessions={sessions} onShare={onShareSummary} accent={primary} />
             </div>
           )}
         </div>
@@ -279,11 +314,7 @@ export default function DoudizhuRoom({ theme, chatId, chat, onBack }) {
 
       {game.phase !== 'finished' && (
         <footer className="flex-shrink-0 px-3" style={{ paddingBottom: 'max(12px, env(safe-area-inset-bottom, 0px))' }}>
-          <div className="flex gap-1 overflow-x-auto pt-2 pb-2" style={{ WebkitOverflowScrolling: 'touch' }}>
-            {(me.hand || []).map((c) => (
-              <PokerCard key={c.id} card={c} selected={selected.has(c.id)} onClick={isMyPlayTurn ? () => toggleCard(c.id) : undefined} />
-            ))}
-          </div>
+          <PokerHand cards={me.hand || []} selected={selected} disabled={!isMyPlayTurn} onCardClick={(card) => toggleCard(card.id)} />
           {isMyBidTurn && (
             <div className="flex gap-2 mb-1">
               {bidOptions.map((v) => (
