@@ -297,7 +297,7 @@ export default function DoudizhuRoom({ theme, chatId, chat, onBack, onPostSummar
             </div>
           )}
           {game.phase === 'finished' && (
-            <div className="text-center flex flex-col items-center" style={{ width: '100%', paddingRight: 72 }}>
+            <div className="text-center flex flex-col items-center" style={{ width: '100%' }}>
               <div style={{ fontSize: 16, fontWeight: 700, color: '#5a3548' }}>
                 {game.winnerRole === 'landlord' ? '🏆 地主获胜！' : '🏆 农民获胜！'}
               </div>

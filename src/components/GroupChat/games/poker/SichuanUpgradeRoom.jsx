@@ -206,7 +206,7 @@ export default function SichuanUpgradeRoom({ theme, chatId, chat, onBack, onPost
             <div>庄家：{game.players[game.dealer].name}</div>
             <div>闲家得分：<b style={{ color: primaryDark }}>{game.defenderScore}</b></div>
           </div>
-          <PokerPlayHistory history={game.history} players={game.players} accent={primary} />
+          <PokerPlayHistory history={game.history} players={game.players} accent={primary} top={58} />
           {game.buriedCards.length > 0 && (
             <button onClick={() => setShowBuried(true)} style={{ position: 'absolute', left: 8, bottom: 8, zIndex: 3, width: 78, border: `1px solid ${primary}25`, borderRadius: 13, background: 'rgba(255,255,255,.7)', padding: '5px 5px 4px', color: '#8d6675' }}>
               <div style={{ fontSize: 8.5, marginBottom: 2 }}>公开新底牌</div>

@@ -9,36 +9,26 @@ function entryText(entry, players) {
   return ''
 }
 
-function MiniCards({ cards = [] }) {
-  return (
-    <div style={{ position: 'relative', height: 29, width: Math.min(68, 18 + Math.max(0, cards.length - 1) * 8) }}>
-      {cards.map((card, i) => (
-        <PokerCard key={card.id} card={card} size="micro" style={{ position: 'absolute', left: i * 8, top: 0, zIndex: i }} />
-      ))}
-    </div>
-  )
-}
-
-export default function PokerPlayHistory({ history = [], players = [], accent = '#ff85b3' }) {
+export default function PokerPlayHistory({ history = [], players = [], accent = '#ff85b3', top = 8 }) {
   const [open, setOpen] = useState(false)
   const entries = history.filter((h) => h.type === 'play' || h.type === 'pass')
   if (!entries.length) return null
-  const recent = entries.slice(-5)
+  const playedCards = entries.filter((entry) => entry.type === 'play').flatMap((entry) => entry.cards || [])
+  const pile = playedCards.slice(-10)
 
   return (
     <>
       <button
         onClick={() => setOpen(true)}
         aria-label="查看出牌记录"
-        style={{ position: 'absolute', right: 7, top: 8, width: 74, maxHeight: 182, overflow: 'hidden', border: `1px solid ${accent}25`, borderRadius: 14, background: 'rgba(255,255,255,.68)', backdropFilter: 'blur(10px)', padding: '6px 5px', zIndex: 3 }}
+        style={{ position: 'absolute', left: 7, top, width: 68, height: 53, overflow: 'visible', border: 0, background: 'transparent', padding: 0, zIndex: 3 }}
       >
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 3, color: '#8d6675', fontSize: 9.5, marginBottom: 4 }}><History size={10} /> 出牌记录</div>
-        {recent.map((entry, i) => (
-          <div key={`${entry.player}-${i}-${entry.type}`} style={{ minHeight: 25, borderTop: i ? '1px solid rgba(0,0,0,.04)' : 'none', paddingTop: 3, textAlign: 'left' }}>
-            <div style={{ color: '#8d6675', fontSize: 8.5, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{entryText(entry, players)}</div>
-            {entry.type === 'play' && <MiniCards cards={entry.cards} />}
-          </div>
-        ))}
+        <div style={{ position: 'relative', height: 45, width: 58 }}>
+          {pile.map((card, i) => (
+            <PokerCard key={`${card.id}-${i}`} card={card} size="sm" style={{ position: 'absolute', left: 9 + i * 2.1, top: 2 + (i % 3), zIndex: i, transform: `rotate(${(i % 5) - 2}deg)`, transformOrigin: 'bottom center', boxShadow: '0 2px 5px rgba(80,45,60,.18)' }} />
+          ))}
+          <span style={{ position: 'absolute', right: 0, bottom: 0, zIndex: 20, minWidth: 19, height: 19, padding: '0 4px', borderRadius: 10, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 2, background: accent, color: '#fff', fontSize: 8, boxShadow: '0 2px 5px rgba(80,45,60,.18)' }}><History size={8} />{playedCards.length}</span>
+        </div>
       </button>
 
       {open && (

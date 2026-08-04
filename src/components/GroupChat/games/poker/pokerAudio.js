@@ -30,12 +30,14 @@ function startMusic() {
   if (musicTimer) return
   const notes = [261.63, 329.63, 392, 329.63, 293.66, 349.23, 440, 349.23]
   const tick = () => {
-    tone(notes[musicStep % notes.length], 0.42, 0.012, 'sine')
-    if (musicStep % 4 === 0) tone(notes[musicStep % notes.length] / 2, 0.58, 0.008, 'triangle')
+    const note = notes[musicStep % notes.length]
+    tone(note, 0.38, 0.032, 'sine')
+    tone(note * 1.5, 0.22, 0.014, 'triangle', 0.1)
+    if (musicStep % 4 === 0) tone(note / 2, 0.55, 0.018, 'triangle')
     musicStep += 1
   }
   tick()
-  musicTimer = window.setInterval(tick, 620)
+  musicTimer = window.setInterval(tick, 540)
 }
 
 function stopMusic() {
@@ -50,7 +52,7 @@ export function usePokerAudio() {
   const unlock = useCallback(async () => {
     if (muted) return
     const ac = audioContext()
-    if (ac.state === 'suspended') await ac.resume().catch(() => {})
+    if (ac.state === 'suspended') ac.resume().catch(() => {})
     unlocked.current = true
     startMusic()
   }, [muted])
@@ -83,5 +85,17 @@ export function usePokerAudio() {
     if (kind === 'win') { tone(659, .15, .025, 'sine', .12); tone(784, .2, .025, 'sine', .24) }
   }, [muted])
 
-  return { muted, toggleMuted: () => setMuted((v) => !v), play, unlock }
+  const toggleMuted = useCallback(() => {
+    if (muted) {
+      const ac = audioContext()
+      if (ac.state === 'suspended') ac.resume().catch(() => {})
+      unlocked.current = true
+      setMuted(false)
+      startMusic()
+    } else {
+      setMuted(true)
+    }
+  }, [muted])
+
+  return { muted, toggleMuted, play, unlock }
 }

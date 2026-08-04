@@ -25,13 +25,16 @@ export default function PokerCard({ card, size = 'md', selected, faceDown, onCli
   const isRed = card.suit === '♥' || card.suit === '♦'
   const color = isJoker ? (card.rank === 17 ? '#c94b4b' : '#4a4a4a') : (isRed ? '#d1435b' : '#3a3a3a')
   const Tag = onClick ? 'button' : 'div'
+  const isHand = size === 'hand'
   return (
     <Tag
       onClick={onClick}
       data-testid="poker-card"
-      className="flex flex-col items-center justify-center flex-shrink-0"
+      className={`flex flex-col flex-shrink-0 ${isHand ? 'items-start justify-start' : 'items-center justify-center'}`}
       style={{
         width: dims.w, height: dims.h, borderRadius: 6,
+        boxSizing: 'border-box',
+        padding: isHand ? '5px 0 0 4px' : 0,
         background: '#fffaf7',
         border: selected ? '2px solid #ff6b9d' : '1px solid rgba(0,0,0,0.15)',
         transform: selected ? 'translateY(-14px)' : 'none',
@@ -41,8 +44,13 @@ export default function PokerCard({ card, size = 'md', selected, faceDown, onCli
         ...style,
       }}
     >
-      <span>{isJoker ? (card.rank === 17 ? '大王' : '小王') : rankLabel(card.rank)}</span>
-      {!isJoker && <span style={{ fontSize: dims.font * 0.85 }}>{card.suit}</span>}
+      {isJoker ? (
+        isHand
+          ? <><span style={{ fontSize: 11 }}>{card.rank === 17 ? '大' : '小'}</span><span style={{ fontSize: 11 }}>王</span></>
+          : <span>{card.rank === 17 ? '大王' : '小王'}</span>
+      ) : (
+        <><span>{rankLabel(card.rank)}</span><span style={{ fontSize: dims.font * 0.85 }}>{card.suit}</span></>
+      )}
     </Tag>
   )
 }
