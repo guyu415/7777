@@ -26,6 +26,17 @@ const vpsCharIdsOf = (game) => game.players
   .filter(({ p }) => p.kind === 'ai' && isVpsMemberId(p.memberId))
   .map(({ i }) => charIdFor(i))
 
+function UpgradeSeat({ player, index, active, thinking, dealer, dealerTeam, primary, primaryDark, style }) {
+  const relation = index === 0 ? '我' : index === 1 ? '下家' : index === 2 ? '对家' : '上家'
+  return (
+    <div style={{ position: 'absolute', zIndex: 4, width: index % 2 === 0 ? 98 : 76, minWidth: 0, padding: '6px 5px', borderRadius: 13, textAlign: 'center', background: active ? 'rgba(255,255,255,.94)' : 'rgba(255,255,255,.7)', border: active ? `2px solid ${primary}` : '1px solid rgba(0,0,0,.06)', boxShadow: active ? `0 0 0 4px ${primary}16` : 'none', ...style }}>
+      <div style={{ color: '#583948', fontSize: 10, fontWeight: 800, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{index + 1} · {relation}{index ? ` ${player.name}` : ''}</div>
+      <div style={{ color: '#9d7786', fontSize: 8.2, marginTop: 1 }}>{player.team === dealerTeam ? '庄家队' : '抓分方'} · {player.hand.length}张{dealer === index ? ' · 庄' : ''}</div>
+      {thinking && <div style={{ color: primaryDark, fontSize: 8 }}>思考中…</div>}
+    </div>
+  )
+}
+
 export default function SichuanUpgradeRoom({ theme, chatId, chat, onBack, onPostSummary, onShareSummary }) {
   const primary = theme?.primary || '#ff85b3'
   const primaryDark = theme?.primaryDark || '#ff6b9d'
@@ -188,25 +199,23 @@ export default function SichuanUpgradeRoom({ theme, chatId, chat, onBack, onPost
   return (
     <PokerShell theme={theme} title="四川版升级" icon="🂡" onBack={onBack} actions={<>{audioButton}<button onClick={endGame} aria-label="结束本局" style={{ width: 32, height: 32, borderRadius: '50%', border: 0, background: 'rgba(255,255,255,.58)', color: '#c9647a', display: 'grid', placeItems: 'center' }}><Trash2 size={14} /></button></>}>
       <main className="flex-1 flex flex-col px-2.5 pt-2" style={{ minHeight: 0, overflow: 'hidden' }}>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,minmax(0,1fr))', gap: 6 }}>
-          {[1, 2, 3].map((i) => {
-            const p = game.players[i]
-            const active = game.turn === i && !game.finished
-            return <div key={i} style={{ minWidth: 0, padding: '7px 4px', borderRadius: 13, textAlign: 'center', background: p.team === game.dealerTeam ? 'rgba(255,255,255,.68)' : `${primary}10`, border: active ? `1.5px solid ${primary}` : '1px solid rgba(0,0,0,.055)' }}>
-              <div style={{ color: '#583948', fontSize: 11.5, fontWeight: 700, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.name}</div>
-              <div style={{ color: '#9d7786', fontSize: 9.5 }}>{p.team === game.dealerTeam ? '庄家队' : '抓分方'} · {p.hand.length}张{game.dealer === i ? ' · 庄' : ''}</div>
-              {aiState?.seatIndex === i && <div style={{ color: primaryDark, fontSize: 9 }}>思考中…</div>}
-            </div>
-          })}
+        <div style={{ flexShrink: 0, padding: '7px 10px', borderRadius: 14, background: 'rgba(255,255,255,.58)', color: '#795362', fontSize: 9.5, lineHeight: 1.45 }}>
+          <div><b>打 {rankLabel(game.levelRank)}</b> · {game.trumpSuit ? `${game.trumpSuit}主` : '等待叫主'} · 庄家 {game.players[game.dealer].name} · 闲家 <b style={{ color: primaryDark }}>{game.defenderScore}分</b></div>
+          <div style={{ color: '#a07a89', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>顺时针：①我 → ②{game.players[1].name} → ③{game.players[2].name} → ④{game.players[3].name}</div>
         </div>
 
         <section style={{ position: 'relative', flex: 1, minHeight: 0, marginTop: 7, borderRadius: 22, overflow: 'hidden', background: 'radial-gradient(circle at 48% 44%, rgba(255,255,255,.86), rgba(244,222,228,.58))', border: '1px solid rgba(255,255,255,.7)' }}>
-          <div style={{ position: 'absolute', left: 10, top: 9, color: '#795362', fontSize: 10.5, lineHeight: 1.55 }}>
-            <div><b>打 {rankLabel(game.levelRank)}</b> · {game.trumpSuit ? `${game.trumpSuit}主` : '等待叫主'}</div>
-            <div>庄家：{game.players[game.dealer].name}</div>
-            <div>闲家得分：<b style={{ color: primaryDark }}>{game.defenderScore}</b></div>
-          </div>
-          <PokerPlayHistory history={game.history} players={game.players} accent={primary} top={58} />
+          <PokerPlayHistory history={game.history} players={game.players} accent={primary} />
+          {!game.finished && <div aria-hidden="true" style={{ position: 'absolute', inset: '42px 46px 47px', border: `1px dashed ${primary}30`, borderRadius: '50%' }} />}
+          {!game.finished && [0, 1, 2, 3].map((i) => {
+            const positions = [
+              { left: '50%', bottom: 7, transform: 'translateX(-50%)' },
+              { left: 7, top: '49%', transform: 'translateY(-50%)' },
+              { left: '50%', top: 7, transform: 'translateX(-50%)' },
+              { right: 7, top: '49%', transform: 'translateY(-50%)' },
+            ]
+            return <UpgradeSeat key={i} player={game.players[i]} index={i} active={game.turn === i} thinking={aiState?.seatIndex === i} dealer={game.dealer} dealerTeam={game.dealerTeam} primary={primary} primaryDark={primaryDark} style={positions[i]} />
+          })}
           {game.buriedCards.length > 0 && (
             <button onClick={() => setShowBuried(true)} style={{ position: 'absolute', left: 8, bottom: 8, zIndex: 3, width: 78, border: `1px solid ${primary}25`, borderRadius: 13, background: 'rgba(255,255,255,.7)', padding: '5px 5px 4px', color: '#8d6675' }}>
               <div style={{ fontSize: 8.5, marginBottom: 2 }}>公开新底牌</div>
@@ -216,7 +225,7 @@ export default function SichuanUpgradeRoom({ theme, chatId, chat, onBack, onPost
             </button>
           )}
 
-          <div style={{ height: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '72px 86px 18px 12px', textAlign: 'center' }}>
+          <div style={{ height: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: game.finished ? '18px 12px' : '62px 84px 60px', textAlign: 'center' }}>
             {game.phase === 'calling' && <><div style={{ color: '#674554', fontSize: 13, fontWeight: 700 }}>摸牌叫主</div><div style={{ color: '#9a7483', fontSize: 10.5, marginTop: 5 }}>{game.players[game.turn].name} 摸到 {callOption?.suit}{rankLabel(game.levelRank)}，正在决定是否叫主</div></>}
             {game.phase === 'burying' && <><div style={{ color: '#674554', fontSize: 13, fontWeight: 700 }}>庄家换底牌</div><div style={{ display: 'flex', gap: 2, marginTop: 7 }}>{game.revealedBottom.map((c) => <PokerCard key={c.id} card={c} size="sm" />)}</div><div style={{ color: '#9a7483', fontSize: 9.5, marginTop: 4 }}>原底牌已公开</div></>}
             {game.phase === 'playing' && <>{game.trick.length ? <><div style={{ color: '#9a7483', fontSize: 9.5, marginBottom: 6 }}>第 {game.trickNo + 1} 墩</div><div style={{ display: 'flex', gap: 5, alignItems: 'flex-end' }}>{game.trick.map((x) => <div key={x.player}><PokerCard card={x.card} size="sm" /><div style={{ fontSize: 8, color: '#987181', marginTop: 2 }}>{game.players[x.player].name}</div></div>)}</div></> : <div style={{ color: '#9a7483', fontSize: 11 }}>{game.players[game.turn].name} 领出</div>}</>}

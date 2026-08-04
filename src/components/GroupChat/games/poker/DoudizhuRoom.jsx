@@ -24,6 +24,16 @@ const vpsCharIdsOf = (game) => game.players
   .filter(({ p }) => p.kind === 'ai' && isVpsMemberId(p.memberId))
   .map(({ i }) => charIdFor(i))
 
+function DoudizhuSeat({ player, index, active, thinking, roleLabel, primary, primaryDark, style }) {
+  return (
+    <div style={{ position: 'absolute', zIndex: 4, width: index === 0 ? 94 : 76, minWidth: 0, padding: '6px 5px', borderRadius: 13, textAlign: 'center', background: active ? 'rgba(255,255,255,.94)' : 'rgba(255,255,255,.68)', border: active ? `2px solid ${primary}` : '1px solid rgba(0,0,0,.06)', boxShadow: active ? `0 0 0 4px ${primary}16` : 'none', ...style }}>
+      <div style={{ color: '#583948', fontSize: 10.5, fontWeight: 800, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{index + 1} · {index === 0 ? '我' : (player.name || player.memberId)}</div>
+      <div style={{ color: '#9d7786', fontSize: 8.5, marginTop: 1 }}>{player.role ? `${roleLabel(player.role)} · ` : ''}{player.hand?.length || 0}张</div>
+      {thinking && <div style={{ color: primaryDark, fontSize: 8 }}>思考中…</div>}
+    </div>
+  )
+}
+
 // 斗地主房间。整局规则都在 doudizhuEngine.js（纯函数），这里只做三件事：
 // 画出来；轮到 AI 玩家时用群成员自己的模型真实调用一次（10 秒思考超时，
 // 超时/报错/解析不出合法选项立刻自动托管，绝不卡住整局）；把引擎返回的
@@ -250,26 +260,26 @@ export default function DoudizhuRoom({ theme, chatId, chat, onBack, onPostSummar
         </button></>
       )}
     >
-      <main className="flex-1 overflow-y-auto px-3 py-3 flex flex-col" style={{ minHeight: 0 }}>
-        <div className="flex gap-2 mb-2">
-          {[1, 2].map((i) => {
-            const p = game.players[i]
-            const isTurn = (game.phase === 'bidding' && game.biddingTurn === i) || (game.phase === 'playing' && game.turn === i)
-            const thinking = aiState?.seatIndex === i
-            return (
-              <div key={i} className="flex-1 text-center rounded-2xl py-1.5" style={{ background: 'rgba(255,255,255,0.65)', border: isTurn ? `1.5px solid ${primary}` : '1px solid rgba(0,0,0,0.06)' }}>
-                <div style={{ fontSize: 12.5, fontWeight: 600, color: '#5a3548' }}>{p.name || p.memberId}</div>
-                <div className="text-[10px] mt-0.5" style={{ color: '#a2798a' }}>
-                  {p.role ? roleLabel(p.role) : ''}{p.role ? ' · ' : ''}{p.hand ? `${p.hand.length}张` : ''}
-                </div>
-                {thinking && <div className="text-[10px] mt-0.5" style={{ color: primaryDark }}>思考中…</div>}
-              </div>
-            )
-          })}
-        </div>
-
-        <div className="flex-1 relative flex flex-col items-center justify-center rounded-3xl mb-2 px-3 py-4 overflow-hidden" style={{ minHeight: 170, background: 'radial-gradient(circle at 48% 43%, rgba(255,255,255,.88), rgba(244,222,228,.58))', border: '1px solid rgba(255,255,255,.72)' }}>
+      <main className="flex-1 overflow-y-auto px-3 pt-3 flex flex-col" style={{ minHeight: 0 }}>
+        <div className="flex-1 relative flex flex-col items-center justify-center rounded-3xl mb-2 overflow-hidden" style={{ minHeight: 260, padding: game.finished ? '22px 14px' : '48px 84px 58px', background: 'radial-gradient(circle at 48% 43%, rgba(255,255,255,.88), rgba(244,222,228,.58))', border: '1px solid rgba(255,255,255,.72)' }}>
           <PokerPlayHistory history={game.history} players={game.players} accent={primary} />
+          {!game.finished && (
+            <>
+              <div aria-hidden="true" style={{ position: 'absolute', inset: '38px 48px 45px', border: `1px dashed ${primary}30`, borderRadius: '50%' }} />
+              <div style={{ position: 'absolute', left: '50%', top: 9, transform: 'translateX(-50%)', color: '#9b7484', fontSize: 9, letterSpacing: 1, whiteSpace: 'nowrap' }}>① → ② → ③ · 顺时针</div>
+              {[0, 1, 2].map((i) => {
+                const active = (game.phase === 'bidding' ? game.biddingTurn : game.turn) === i
+                const positions = [
+                  { left: '50%', bottom: 7, transform: 'translateX(-50%)' },
+                  { left: 7, top: '48%', transform: 'translateY(-50%)' },
+                  { right: 7, top: '48%', transform: 'translateY(-50%)' },
+                ]
+                return <DoudizhuSeat key={i} player={game.players[i]} index={i} active={active} thinking={aiState?.seatIndex === i} roleLabel={roleLabel} primary={primary} primaryDark={primaryDark} style={positions[i]} />
+              })}
+              <span style={{ position: 'absolute', left: 52, bottom: 54, color: `${primary}99`, fontSize: 13 }}>↖</span>
+              <span style={{ position: 'absolute', right: 52, top: '26%', color: `${primary}99`, fontSize: 13 }}>↘</span>
+            </>
+          )}
           {game.phase === 'bidding' && (
             <div className="text-center text-[12.5px] w-full" style={{ color: '#5a3548' }}>
               {game.bids.length === 0 && <div style={{ color: '#a2798a' }}>叫分开始</div>}
