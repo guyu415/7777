@@ -32,6 +32,7 @@ date 用当天日期。
 
 动作描写用 <i>动作内容</i> 包裹，对话和心理活动正常写，不要包裹。`
 import { fetchTTSAudio } from '../services/tts'
+import { pruneReasoningBeyondTurns } from '../utils/pruneReasoning'
 import { getSessionMsgs, saveSessionMsgs, putAssetDataUrl, loadAsset } from '../services/sync'
 import { playByQuery, pausePlayer, resumePlayer, stopPlayer, getPlayerState } from '../services/player'
 import { addLetter, getLettersByCharacter } from '../services/letters'
@@ -233,6 +234,14 @@ export function useChat() {
         }
       }
     }
+
+    // 加载时也做一次思维链清理——覆盖"上次清理后没再聊过"或云端拉回的旧
+    // 记录里还带着早期思维链的情况。
+    const prunedAtLoad = pruneReasoningBeyondTurns(history)
+    for (const m of prunedAtLoad.changed) {
+      try { await saveMessage(m) } catch { /* 清理失败不影响加载 */ }
+    }
+    history = prunedAtLoad.messages
 
     setMessages(history)
     if (history.length > 0) {
@@ -797,6 +806,20 @@ export function useChat() {
       abortRef.current = null
       setIsLoading(false)
       setStreamingMessageId(null)
+
+      // 每轮结束后自动清掉 5 轮之前的思维链（store + IndexedDB；紧随其后的
+      // scheduleMsgSync 会把清理后的版本同步到云端，云端副本也随之瘦身）。
+      try {
+        const allMsgs = useStore.getState().messages.filter(m => m.conversationId === CONVERSATION_ID)
+        const prunedNow = pruneReasoningBeyondTurns(allMsgs)
+        for (const m of prunedNow.changed) {
+          updateMessage(m.id, { reasoning: undefined, reasoningStreaming: undefined })
+          await saveMessage(m)
+        }
+      } catch (e) {
+        console.warn('[REASONING-PRUNE] 思维链清理失败:', e?.message)
+      }
+
       scheduleMsgSync(CONVERSATION_ID)
 
       // Background summarization: fire-and-forget, does not block chat
