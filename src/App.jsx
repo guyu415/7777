@@ -10,6 +10,7 @@ import BottomNav from './components/BottomNav'
 import LoginPage from './components/LoginPage'
 import VoiceFavorites from './components/VoiceFavorites'
 import CompanionMemory from './components/CompanionMemory'
+import DesktopPet from './components/DesktopPet'
 import { getSettings, saveSettings, extractSettings, saveSessionMsgs, putAsset, putAssetDataUrl, loadAsset, getLetters } from './services/sync'
 import { mergeLetters } from './services/letters'
 import { compressImage, slimSettings } from './utils/image'
@@ -640,6 +641,9 @@ export default function App() {
           <BottomNav currentView={currentView} onChange={setCurrentView} theme={theme} />
         )}
       </div>
+
+      {/* 同一只桌宠跨私聊、群聊和牌桌保留位置与绑定身份。 */}
+      <DesktopPet theme={theme} />
 
       {/* Sync error toast (bottom-right) */}
       {syncError && (

@@ -206,6 +206,9 @@ export const useStore = create(
       // to expand one into group discussion. Merely creating a summary must
       // never trigger group-model replies.
       pokerSummaries: {},
+      // 全局桌宠：绑定的是一条真实私聊会话，因此它能沿用那名 AI 自己的
+      // 模型、人设和记忆；位置和大小跨页面、刷新与设备同步。
+      desktopPet: { sessionId: '', x: null, y: null, scale: 1 },
 
       setApiKey: (key) => set({ apiKey: key }),
       setApiBaseUrl: (url) => set({ apiBaseUrl: url }),
@@ -353,6 +356,9 @@ export const useStore = create(
         const { [groupId]: _removed, ...rest } = state.pokerSummaries || {}
         return { pokerSummaries: rest }
       }),
+      updateDesktopPet: (updates) => set((state) => ({
+        desktopPet: { ...state.desktopPet, ...updates },
+      })),
       setSessionSignature: (sessionId, sig) => set((state) => ({
         sessions: state.sessions.map(s => s.id === sessionId ? { ...s, signature: sig } : s)
       })),
@@ -589,6 +595,7 @@ export const useStore = create(
         zhajinhuaGames: state.zhajinhuaGames,
         sichuanUpgradeGames: state.sichuanUpgradeGames,
         pokerSummaries: state.pokerSummaries,
+        desktopPet: state.desktopPet,
       }),
     }
   )
