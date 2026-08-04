@@ -11,7 +11,7 @@ import LoginPage from './components/LoginPage'
 import VoiceFavorites from './components/VoiceFavorites'
 import CompanionMemory from './components/CompanionMemory'
 import DesktopPet from './components/DesktopPet'
-import { getSettings, saveSettings, extractSettings, saveSessionMsgs, putAsset, putAssetDataUrl, loadAsset, getLetters } from './services/sync'
+import { getSettings, saveSettings, extractSettings, saveSessionMsgs, deleteSessionMsgs, putAsset, putAssetDataUrl, loadAsset, getLetters } from './services/sync'
 import { mergeLetters } from './services/letters'
 import { compressImage, slimSettings } from './utils/image'
 import { ensureConnected as ensureCompanionConnected, getAuthStatus as getCompanionAuthStatus, onProactiveMessage, onCcReset } from './services/companion'
@@ -550,6 +550,21 @@ export default function App() {
       const vpsSession = useStore.getState().sessions?.find(s => s.providerName === 'claude-code-vps')
       if (!vpsSession) return
       await deleteMessagesForSession(vpsSession.id)
+      // The cloud KV copy must go too — useChat's scheduleMsgSync uploads
+      // this session's messages after every turn, and loadHistory re-pulls
+      // the cloud copy (and re-saves it into IndexedDB) whenever local
+      // storage is empty, which is exactly the state this handler just
+      // created. Without this, "清空上下文" looked like a no-op: the next
+      // loadHistory resurrected the entire conversation.
+      const password = localStorage.getItem('auth.password')
+      if (password) {
+        try {
+          await deleteSessionMsgs(password, vpsSession.id)
+        } catch (e) {
+          console.warn('[CC-RESET] 云端消息副本删除失败（下次 loadHistory 可能拉回旧记录）:', e.message)
+        }
+      }
+      useStore.getState().updateSession(vpsSession.id, { lastMsgPreview: '', lastMsgTime: null })
       if (useStore.getState().currentSessionId === vpsSession.id) {
         useStore.getState().setMessages([])
       }
