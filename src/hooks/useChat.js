@@ -2,7 +2,7 @@ import { useCallback, useRef } from 'react'
 import { useShallow } from 'zustand/react/shallow'
 import { useStore, saveMessage, saveBlob, getMessages, deleteMessageFromDB } from '../store'
 import { streamChat, generateSummary } from '../services/claude'
-import { streamChatViaCompanion, sendDeleteNotice, uploadImageToCompanion } from '../services/companion'
+import { streamChatViaCompanion, sendDeleteNotice, uploadImageToCompanion, deleteUploadedImage } from '../services/companion'
 import { listMemories, formatMemories } from '../services/memory'
 import { executeAcCommand } from '../services/ac'
 
@@ -501,6 +501,13 @@ export function useChat() {
       if (isVpsProvider && lastUserMsg?.type === 'image' && lastUserMsg.imageUrl) {
         try {
           vpsImagePath = await uploadImageToCompanion(lastUserMsg.imageUrl)
+          // Persisted onto the message itself (not just this local variable)
+          // so a later delete of this exact message can tell the server
+          // which file to remove — see deleteMsg below.
+          if (vpsImagePath) {
+            updateMessage(lastUserMsg.id, { imagePath: vpsImagePath })
+            saveMessage({ ...lastUserMsg, imagePath: vpsImagePath }).catch(e => console.error('[IMG-UPLOAD] imagePath 写入 IDB 失败:', e.message))
+          }
         } catch (e) {
           console.error('[IMG-UPLOAD] 图片上传到 companion 失败:', e.message)
         }
@@ -1023,6 +1030,10 @@ export function useChat() {
       const msg = useStore.getState().messages.find(m => m.id === id)
       const text = msg?.voiceText || msg?.content
       if (text) sendDeleteNotice(text)
+      // Deleting the message should also remove the uploaded file it
+      // referenced (see uploadImageToCompanion above) — otherwise every
+      // deleted image message leaves an orphaned file on the VPS forever.
+      if (msg?.imagePath) deleteUploadedImage(msg.imagePath).catch(e => console.error('[IMG-DELETE] 删除服务器图片失败:', e.message))
     }
     await deleteMessageFromDB(id)
     deleteMessage(id)

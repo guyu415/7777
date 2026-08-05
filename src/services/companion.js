@@ -1071,6 +1071,18 @@ export async function uploadImageToCompanion(dataUrl) {
   return data.path
 }
 
+// Removes an image previously uploaded via uploadImageToCompanion — called
+// when the message that referenced it gets deleted, so a deleted message
+// doesn't leave its file behind forever on the VPS.
+export async function deleteUploadedImage(path) {
+  if (!path) return
+  return companionJson('/upload/image/delete', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ path }),
+  })
+}
+
 export async function deleteMemoryFile(name) {
   return companionJson('/memory/delete', {
     method: 'POST',

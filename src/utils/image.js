@@ -65,6 +65,67 @@ export async function compressImage(source, { maxDim = 1280, quality = 0.8, keep
   return { dataUrl, base64: dataUrl.split(',')[1], mimeType: 'image/jpeg' }
 }
 
+// ── 聊天发图专用压缩（与上面 compressImage 用途分开：那个服务头像/设置里
+// 的内联图，这个专门服务聊天发图上传到 VPS）────────────────────────────
+// 阈值以下不处理，省一次编解码；超过阈值才缩放+按目标字节数迭代降质，
+// EXIF 方向靠 createImageBitmap 的 imageOrientation:'from-image' 保证正
+// 确，不用手动读 EXIF 标签。
+
+export const CHAT_IMAGE_COMPRESS_THRESHOLD_BYTES = 1024 * 1024 // 原图 ≤1MB 直接放行
+export const CHAT_IMAGE_MAX_DIMENSION = 1600 // 长边
+export const CHAT_IMAGE_TARGET_BYTES = 500 * 1024 // 压缩目标（尽量，不保证）
+export const CHAT_IMAGE_QUALITY = 0.8 // 起始质量
+
+async function canvasToBlobTargeted(canvas, targetBytes) {
+  let best = null
+  for (const mime of ['image/webp', 'image/jpeg']) {
+    let quality = CHAT_IMAGE_QUALITY
+    for (let i = 0; i < 4; i++) {
+      const blob = await new Promise((resolve) => canvas.toBlob(resolve, mime, quality))
+      if (!blob) break // 该浏览器不支持编码成这个格式，换下一个
+      if (!best || blob.size < best.size) best = blob
+      if (blob.size <= targetBytes || quality <= 0.5) return blob
+      quality -= 0.15
+    }
+  }
+  return best || await new Promise((resolve) => canvas.toBlob(resolve, 'image/jpeg', 0.5))
+}
+
+/**
+ * 聊天发图专用压缩。原图 ≤ CHAT_IMAGE_COMPRESS_THRESHOLD_BYTES 时直接放行
+ * （compressed:false）；否则缩到长边 CHAT_IMAGE_MAX_DIMENSION 内，
+ * WebP/JPEG 质量从 CHAT_IMAGE_QUALITY 起步朝目标字节数迭代降质。
+ * @param {File|Blob} file
+ * @returns {Promise<{dataUrl: string, base64: string, mimeType: string, originalBytes: number, compressedBytes: number, compressed: boolean}>}
+ */
+export async function compressChatImage(file) {
+  const originalBytes = file.size
+
+  // 动图重编码会丢动画，跟 compressImage 的 keepGif 默认行为一致：原样放行
+  if (originalBytes <= CHAT_IMAGE_COMPRESS_THRESHOLD_BYTES || file.type === 'image/gif') {
+    const dataUrl = await blobToDataUrl(file)
+    return { dataUrl, base64: dataUrl.split(',')[1], mimeType: dataUrlMime(dataUrl), originalBytes, compressedBytes: originalBytes, compressed: false }
+  }
+
+  const bitmap = await createImageBitmap(file, { imageOrientation: 'from-image' })
+  const scale = Math.min(1, CHAT_IMAGE_MAX_DIMENSION / Math.max(bitmap.width, bitmap.height))
+  const w = Math.max(1, Math.round(bitmap.width * scale))
+  const h = Math.max(1, Math.round(bitmap.height * scale))
+
+  const canvas = document.createElement('canvas')
+  canvas.width = w
+  canvas.height = h
+  const ctx = canvas.getContext('2d')
+  ctx.fillStyle = '#ffffff' // WebP/JPEG 没有透明通道，透明区域直接画会变黑底
+  ctx.fillRect(0, 0, w, h)
+  ctx.drawImage(bitmap, 0, 0, w, h)
+  bitmap.close?.()
+
+  const blob = await canvasToBlobTargeted(canvas, CHAT_IMAGE_TARGET_BYTES)
+  const dataUrl = await blobToDataUrl(blob)
+  return { dataUrl, base64: dataUrl.split(',')[1], mimeType: blob.type || 'image/jpeg', originalBytes, compressedBytes: blob.size, compressed: true }
+}
+
 // ── 云端 settings 就地瘦身 ──────────────────────────────────────────
 // 云端可能还留着旧版上传的"胖配置"（原图头像/内联背景）。恢复进 store 之前
 // 必须先压小：zustand persist 会把整个 settings 写进 localStorage，Safari

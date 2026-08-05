@@ -1,6 +1,11 @@
 import { useState, useRef, useEffect, useCallback, forwardRef, useImperativeHandle } from 'react'
 import { X as CloseIcon } from 'lucide-react'
-import { compressImage } from '../../utils/image'
+import { compressChatImage } from '../../utils/image'
+
+function formatImageBytes(bytes) {
+  if (bytes >= 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)}MB`
+  return `${Math.max(1, Math.round(bytes / 1024))}KB`
+}
 
 function PhoneIcon() {
   return (
@@ -216,7 +221,11 @@ const MessageInput = forwardRef(function MessageInput({ onSend, onStartCall, onS
     console.log('[PAW] handleSend: canSend=', canSend, 'textLen=', text.trim().length, 'hasImageDraft=', !!imageDraft)
     if (!canSend) return
     if (imageDraft) {
-      onSendImage({ ...imageDraft, text: text.trim() })
+      // Only the fields the send pipeline actually expects — originalBytes/
+      // compressedBytes/compressed are purely for this draft preview's own
+      // "原图 X → 压缩后 Y" label, no reason for them to ride along onto the
+      // stored message.
+      onSendImage({ imageData: imageDraft.imageData, imageType: imageDraft.imageType, imageUrl: imageDraft.imageUrl, text: text.trim() })
       setImageDraft(null)
     } else {
       onSend(text.trim())
@@ -234,12 +243,12 @@ const MessageInput = forwardRef(function MessageInput({ onSend, onStartCall, onS
     if (!file) return
     e.target.value = ''
     try {
-      const { dataUrl, base64, mimeType } = await compressImage(file, { maxDim: 1280, quality: 0.8 })
-      setImageDraft({ imageData: base64, imageType: mimeType, imageUrl: dataUrl })
+      const { dataUrl, base64, mimeType, originalBytes, compressedBytes, compressed } = await compressChatImage(file)
+      setImageDraft({ imageData: base64, imageType: mimeType, imageUrl: dataUrl, originalBytes, compressedBytes, compressed })
     } catch (err) {
       console.warn('[IMG] 压缩失败，回退原图:', err.message)
       const reader = new FileReader()
-      reader.onload = () => setImageDraft({ imageData: reader.result.split(',')[1], imageType: file.type, imageUrl: reader.result })
+      reader.onload = () => setImageDraft({ imageData: reader.result.split(',')[1], imageType: file.type, imageUrl: reader.result, originalBytes: file.size, compressedBytes: file.size, compressed: false })
       reader.readAsDataURL(file)
     }
   }
@@ -305,7 +314,11 @@ const MessageInput = forwardRef(function MessageInput({ onSend, onStartCall, onS
               <CloseIcon size={12} />
             </button>
           </div>
-          <span style={{ fontSize: 12, color: '#8b5060' }}>已选图片，可继续输入文字一起发送</span>
+          <span style={{ fontSize: 12, color: '#8b5060' }}>
+            {imageDraft.compressed
+              ? `原图 ${formatImageBytes(imageDraft.originalBytes)} → 压缩后 ${formatImageBytes(imageDraft.compressedBytes)}`
+              : '已选图片，可继续输入文字一起发送'}
+          </span>
         </div>
       )}
 
