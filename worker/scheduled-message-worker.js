@@ -800,7 +800,7 @@ async function sendWebPush(env, subscription, payloadStr) {
   return { status: res.status, bodyText }
 }
 
-// 给该用户的所有订阅设备推送；404/410 的失效订阅顺手清掉
+// 给该用户的所有订阅设备推送；永久性失败的订阅顺手清掉
 async function sendPushToUser(env, password, payload) {
   const key = `user:${password}:push:subs`
   const stored = await kvGetJson(env, key)
@@ -813,7 +813,15 @@ async function sendPushToUser(env, password, payload) {
     try {
       const { status, bodyText } = await sendWebPush(env, sub, payloadStr)
       results.push({ endpoint: sub.endpoint.slice(0, 60), status, ...(bodyText ? { body: bodyText.slice(0, 300) } : {}) })
-      if (status === 404 || status === 410) continue
+      // Any 4xx (except 429, which is transient rate-limiting, not a broken
+      // subscription) means the push service itself has given up on this
+      // subscription for good — 404/410 (gone), 400 with reason
+      // VapidPkHashMismatch (subscription tied to a since-rotated VAPID key,
+      // confirmed live 2026-08-05 after regenerating the keypair), etc.
+      // Keeping a permanently-dead subscription around just means it fails
+      // silently forever instead of the device ever getting a chance to
+      // re-subscribe and actually receive pushes again.
+      if (status >= 400 && status < 500 && status !== 429) continue
       alive.push(sub)
     } catch (e) {
       results.push({ endpoint: sub.endpoint.slice(0, 60), error: `${e.name}: ${e.message}` })
