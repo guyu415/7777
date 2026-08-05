@@ -369,14 +369,35 @@ export default function ChatWindow({ theme }) {
           zIndex: 10,
         }}>
         <div className="flex items-center gap-3 min-w-0">
-          <button
-            onClick={() => setCurrentView('sessions')}
-            title="会话列表"
-            className="w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 transition-all duration-200"
-            style={{ background: `${primaryColor}18`, color: primaryColor }}
-          >
-            <Menu size={16} />
-          </button>
+          {/* 心潮 status pill moved here (below the session-list button) from
+              the name row — on narrow screens it used to sit inline next to
+              the name and get visually covered by the header's right-side
+              button group (that row is explicitly z-indexed above), making
+              it unclickable. Stacking it under a button that's already its
+              own fixed-width column has no crowding to compete with. */}
+          <div className="flex flex-col items-center gap-1 flex-shrink-0">
+            <button
+              onClick={() => setCurrentView('sessions')}
+              title="会话列表"
+              className="w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 transition-all duration-200"
+              style={{ background: `${primaryColor}18`, color: primaryColor }}
+            >
+              <Menu size={16} />
+            </button>
+            {xinchaoState?.toneLabel && (
+              <button
+                onClick={() => setShowXinchaoPanel(true)}
+                title="心潮状态"
+                style={{
+                  fontSize: 10, color: primaryColor, background: `${primaryColor}12`,
+                  border: `1px solid ${primaryColor}30`, borderRadius: 8,
+                  padding: '1px 6px', lineHeight: 1.5, whiteSpace: 'nowrap',
+                }}
+              >
+                {xinchaoState.toneLabel}
+              </button>
+            )}
+          </div>
           <div className="w-11 h-11 rounded-full overflow-hidden flex items-center justify-center text-xl flex-shrink-0"
             style={{
               background: `${primaryColor}33`,
@@ -421,19 +442,6 @@ export default function ChatWindow({ theme }) {
                 }}>
                   {codex.statusLabel}
                 </span>
-              )}
-              {xinchaoState?.toneLabel && (
-                <button
-                  onClick={() => setShowXinchaoPanel(true)}
-                  title="心潮状态"
-                  style={{
-                    fontSize: 10, color: primaryColor, background: `${primaryColor}12`,
-                    border: `1px solid ${primaryColor}30`, borderRadius: 8,
-                    padding: '1px 6px', lineHeight: 1.5, flexShrink: 0, whiteSpace: 'nowrap', marginLeft: 4,
-                  }}
-                >
-                  {xinchaoState.toneLabel}
-                </button>
               )}
             </div>
             <div className="flex items-center gap-1.5">

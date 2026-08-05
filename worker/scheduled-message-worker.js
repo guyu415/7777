@@ -792,7 +792,12 @@ async function sendWebPush(env, subscription, payloadStr) {
     },
     body,
   })
-  return res.status
+  // Push services return a real diagnostic body on rejection (Apple in
+  // particular) — surfacing it is the difference between guessing and
+  // actually knowing why a send failed. Only read it on non-2xx so a normal
+  // successful send (body is empty anyway) pays no extra cost.
+  const bodyText = res.ok ? null : await res.text().catch(() => null)
+  return { status: res.status, bodyText }
 }
 
 // 给该用户的所有订阅设备推送；404/410 的失效订阅顺手清掉
@@ -806,8 +811,8 @@ async function sendPushToUser(env, password, payload) {
   const alive = []
   for (const sub of list) {
     try {
-      const status = await sendWebPush(env, sub, payloadStr)
-      results.push({ endpoint: sub.endpoint.slice(0, 60), status })
+      const { status, bodyText } = await sendWebPush(env, sub, payloadStr)
+      results.push({ endpoint: sub.endpoint.slice(0, 60), status, ...(bodyText ? { body: bodyText.slice(0, 300) } : {}) })
       if (status === 404 || status === 410) continue
       alive.push(sub)
     } catch (e) {
