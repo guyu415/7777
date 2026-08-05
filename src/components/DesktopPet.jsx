@@ -84,6 +84,11 @@ function DesktopPetWindow({ theme }) {
   const fileInputRef = useRef(null)
   const mountedAt = useRef(Date.now())
   const lastShownReplyId = useRef(null)
+  // 主聊天窗口跟桌宠共用同一个 useChat 会话/messages 数组——只有靠这个标记
+  // 才能分清"新回复是桌宠自己发的话引出来的"还是"用户在主对话框里聊天顺带
+  // 冒出来的"，桌宠语音只该在前一种情况下响，见 sendChat 和下面的回复气泡
+  // effect。
+  const petTriggeredRef = useRef(false)
 
   const batchSize = desktopPet.batchSize || 5
   const scale = desktopPet.scale || 1
@@ -156,7 +161,12 @@ function DesktopPetWindow({ theme }) {
       replyTimer.current = window.setTimeout(() => setReplyBubble(''), fadeMs)
     }
 
-    if (voiceReply) {
+    // 消费一次就复位，不管这条回复最终是不是真的走了语音——下一条回复
+    // 默认又是"不是桌宠触发的"，除非 sendChat 再次置位。
+    const isPetTriggered = petTriggeredRef.current
+    petTriggeredRef.current = false
+
+    if (voiceReply && isPetTriggered) {
       if (isVoiceMsg && last.voiceBlobId) {
         playExistingVoice(last.voiceBlobId)
         showBubble('🔊', 4000)
@@ -276,6 +286,7 @@ function DesktopPetWindow({ theme }) {
     setChatText('')
     // 发送后立刻收起输入框，不常驻挡屏幕；回复走上面那个"新回复"气泡。
     setChatOpen(false)
+    petTriggeredRef.current = true
     try {
       await sendMessage(text, 'text')
     } catch (e) {
@@ -450,6 +461,13 @@ function DesktopPetWindow({ theme }) {
   const menuLeft = Math.max(8, Math.min(badgeLeft + badgeSize - menuWidth, window.innerWidth - menuWidth - 8))
   const menuTop = badgeTop + badgeSize + 6
 
+  // 回复气泡（"…"/单字反应/语音🔊/长回复摘录都走这一个气泡）——横向以桌宠
+  // 中线为基准居中，不再是原来那种以桌宠左侧为锚点、盒子整体往右怼的算法
+  // （短反应字符一少，视觉上就飘到离人物很远的地方去了）。
+  const bubbleWidth = 210
+  const bubbleLeft = Math.max(8, Math.min(position.x + PET_W / 2 - bubbleWidth / 2, window.innerWidth - bubbleWidth - 8))
+  const bubbleTop = Math.max(8, position.y - 54)
+
   return (
     <>
       <style>{`
@@ -505,11 +523,19 @@ function DesktopPetWindow({ theme }) {
       )}
 
       {(isLoading || replyBubble) && (
+        // 外层只负责定位/防止跑出屏幕（宽度固定 bubbleWidth，纯用来算居中锚点），
+        // 真正的气泡用 flex 居中在里面、宽度随内容走（最多到 bubbleWidth）——
+        // 短反应（"…"/"？"/"！"）不会被撑成一个大空盒子，长回复摘录也不会跑偏。
         <div
-          className="fixed px-3 py-2 rounded-2xl text-sm font-medium"
-          style={{ left: Math.max(8, Math.min(position.x - 20, window.innerWidth - 220)), top: Math.max(54, position.y - 46), maxWidth: 210, zIndex: 122, color: theme.text, background: 'rgba(255,255,255,.92)', boxShadow: '0 5px 20px rgba(54,35,48,.16)', backdropFilter: 'blur(10px)' }}
+          className="fixed flex justify-center"
+          style={{ left: bubbleLeft, top: bubbleTop, width: bubbleWidth, zIndex: 122, pointerEvents: 'none' }}
         >
-          {isLoading && !replyBubble ? '…' : replyBubble}
+          <div
+            className="px-3 py-2 rounded-2xl text-sm font-medium text-center"
+            style={{ maxWidth: bubbleWidth, color: theme.text, background: 'rgba(255,255,255,.92)', boxShadow: '0 5px 20px rgba(54,35,48,.16)', backdropFilter: 'blur(10px)' }}
+          >
+            {isLoading && !replyBubble ? '…' : replyBubble}
+          </div>
         </div>
       )}
 
