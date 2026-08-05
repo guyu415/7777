@@ -275,6 +275,9 @@ export function useChat() {
     let fullContent = ''
     let fullReasoning = ''
     let contentStarted = false
+    // Declared up here with fullReasoning (not down by the stream loop) so
+    // finalizeCurrentTextBubble, defined below, closes over it safely.
+    let toolUses = []
     // Declared here (not inside the try below) so the catch block can also see it.
     const isVpsProvider = effectiveProviderName === 'claude-code-vps'
 
@@ -308,10 +311,14 @@ export function useChat() {
     // cleanup so both leave IndexedDB and the store in the same state.
     const finalizeCurrentTextBubble = async () => {
       const reasoningFields = fullReasoning ? { reasoning: fullReasoning, reasoningStreaming: false } : {}
+      // Persisted alongside reasoning for the same reason: without this the
+      // activity list is live-only and vanishes on the next page load, which
+      // reads as a bug rather than as intended transience.
+      const toolFields = toolUses.length ? { toolUses: [...toolUses] } : {}
       if (contentStarted && fullContent.trim()) {
         const doneContent = stripDisplayTags(fullContent)
-        updateMessage(currentTextId, { content: doneContent, streaming: false, ...reasoningFields, ...wireIdsField() })
-        await saveMessage({ id: currentTextId, conversationId: CONVERSATION_ID, role: 'assistant', type: 'text', content: doneContent, timestamp: Date.now(), streaming: false, ...reasoningFields, ...wireIdsField() })
+        updateMessage(currentTextId, { content: doneContent, streaming: false, ...reasoningFields, ...toolFields, ...wireIdsField() })
+        await saveMessage({ id: currentTextId, conversationId: CONVERSATION_ID, role: 'assistant', type: 'text', content: doneContent, timestamp: Date.now(), streaming: false, ...reasoningFields, ...toolFields, ...wireIdsField() })
         return true
       }
       if (currentTextAdded) deleteMessage(currentTextId)
@@ -463,10 +470,9 @@ export function useChat() {
       let storedContent = ''
       let storedReasoning = ''
       let dirty = false
-      // VPS-only live activity log for this bubble. Shares the same throttle
-      // as reasoning — tool events can arrive in bursts (a parallel batch of
-      // reads), and one store write per event would thrash the list.
-      let toolUses = []
+      // Shares the reasoning throttle — tool events can arrive in bursts (a
+      // parallel batch of reads), and one store write per event would thrash
+      // the list. `toolUses` itself is declared with fullReasoning above.
       let storedToolCount = 0
 
       const flushUpdate = () => {
