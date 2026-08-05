@@ -785,6 +785,18 @@ function genId() {
   return `eunoia-${Date.now()}-${++seq}`
 }
 
+// Best-effort notice for the resident VPS session when the user deletes a
+// message locally: the deletion never touches CC's own persistent memory
+// (there's no such primitive), so without this it can later reference or
+// repeat content the user thought was gone. Fire-and-forget on purpose — a
+// dropped notice (offline, or CC mid-turn on something else, see
+// notifyCcOfDeletedMessage's own currentTurn check server-side) just means
+// this one deletion doesn't get flagged, not a broken feature.
+export function sendDeleteNotice(text) {
+  if (!text) return
+  sendRaw({ type: 'delete_notice', text, clientTime: clientTimeContext() })
+}
+
 /**
  * Async generator matching services/claude.js's streamChat yield contract:
  * yields { text } chunks and, when Claude Code's own engine publicly

@@ -2,7 +2,7 @@ import { useCallback, useRef } from 'react'
 import { useShallow } from 'zustand/react/shallow'
 import { useStore, saveMessage, saveBlob, getMessages, deleteMessageFromDB } from '../store'
 import { streamChat, generateSummary } from '../services/claude'
-import { streamChatViaCompanion } from '../services/companion'
+import { streamChatViaCompanion, sendDeleteNotice } from '../services/companion'
 import { listMemories, formatMemories } from '../services/memory'
 import { executeAcCommand } from '../services/ac'
 
@@ -1000,10 +1000,21 @@ export function useChat() {
   }, [isLoading, deleteMessagesFrom, streamResponse, effectiveProviderName])
 
   const deleteMsg = useCallback(async (id) => {
+    // The VPS's Claude session is stateful and persistent (same limitation
+    // documented on regenerate above) — deleting a bubble here only removes
+    // it from local IndexedDB + the cloud KV display copy, it can't make CC
+    // actually forget having said/received those words. Best-effort: tell it
+    // not to dwell on the deleted content, so it at least doesn't repeat the
+    // exact text back later. Fire-and-forget, never blocks the local delete.
+    if (effectiveProviderName === 'claude-code-vps') {
+      const msg = useStore.getState().messages.find(m => m.id === id)
+      const text = msg?.voiceText || msg?.content
+      if (text) sendDeleteNotice(text)
+    }
     await deleteMessageFromDB(id)
     deleteMessage(id)
     scheduleMsgSync(CONVERSATION_ID)
-  }, [deleteMessage, scheduleMsgSync, CONVERSATION_ID])
+  }, [deleteMessage, scheduleMsgSync, CONVERSATION_ID, effectiveProviderName])
 
   // In-place content edit (text messages). Overwrites content in store + IDB + KV.
   // Next-turn context reads from store messages, so it auto-reflects the edit.
