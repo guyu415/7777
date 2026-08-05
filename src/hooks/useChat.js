@@ -463,6 +463,11 @@ export function useChat() {
       let storedContent = ''
       let storedReasoning = ''
       let dirty = false
+      // VPS-only live activity log for this bubble. Shares the same throttle
+      // as reasoning — tool events can arrive in bursts (a parallel batch of
+      // reads), and one store write per event would thrash the list.
+      let toolUses = []
+      let storedToolCount = 0
 
       const flushUpdate = () => {
         if (!dirty) return
@@ -476,6 +481,10 @@ export function useChat() {
         if (contentStarted && fullContent !== storedContent) {
           updates.content = stripDisplayTags(fullContent)
           storedContent = fullContent
+        }
+        if (toolUses.length !== storedToolCount) {
+          updates.toolUses = [...toolUses]
+          storedToolCount = toolUses.length
         }
         if (Object.keys(updates).length) updateMessage(currentTextId, updates)
       }
@@ -522,6 +531,10 @@ export function useChat() {
             fullReasoning += chunk.reasoning
             dirty = true
           }
+          if (chunk.toolUse) {
+            toolUses.push(chunk.toolUse)
+            dirty = true
+          }
           // VPS-only: an authoritative post-reconnect value, not a delta —
           // see streamChatViaCompanion's doc comment. Overwrites rather than
           // appends so a live delta already accumulated before a disconnect
@@ -549,6 +562,8 @@ export function useChat() {
             storedContent = ''
             fullReasoning = ''
             storedReasoning = ''
+            toolUses = []
+            storedToolCount = 0
             dirty = false
             continue
           }
@@ -582,6 +597,11 @@ export function useChat() {
       if (fullReasoning && !(isVpsProvider && vpsUsedVoiceThisTurn)) {
         assistantMsg.reasoning = fullReasoning
         updateMessage(assistantId, { reasoning: fullReasoning, reasoningStreaming: false })
+      }
+      // Same bubble-scoping rule as reasoning above, for the same reason.
+      if (toolUses.length && !(isVpsProvider && vpsUsedVoiceThisTurn)) {
+        assistantMsg.toolUses = [...toolUses]
+        updateMessage(assistantId, { toolUses: [...toolUses] })
       }
 
       // VPS + at least one send_voice this turn: the shared post-stream

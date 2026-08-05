@@ -934,6 +934,14 @@ export async function* streamChatViaCompanion({ text, imagePath, signal }) {
       if (m.delta) push({ reasoning: m.delta })
       return
     }
+    // What CC is actually doing this turn (reading a file, running a command).
+    // Pushed by the server's PreToolUse hook, live only — nothing replays
+    // these after a reconnect, so a turn recovered from history simply shows
+    // no activity rather than a partial, misleading list.
+    if (m.type === 'tool_use') {
+      if (m.tool) push({ toolUse: { tool: m.tool, detail: m.detail || '', ts: m.ts } })
+      return
+    }
     if (m.type === 'msg' && m.from === 'cc') {
       if (alreadyDelivered(m.id)) return // e.g. already delivered via an earlier history recovery
       markDelivered(m.id)

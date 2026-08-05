@@ -16,6 +16,29 @@ function hasLetter(content) {
   return content.includes('{{LETTER_CARD:') || content.includes('[LETTER')
 }
 
+// Tool activity display. The server sends the raw tool name on purpose and
+// leaves the wording here, so changing how an action reads is a frontend
+// deploy rather than a restart of the resident session on the VPS.
+const TOOL_LABELS = {
+  Read: '读取', Write: '写入', Edit: '编辑', NotebookEdit: '编辑',
+  Bash: '执行', BashOutput: '查看输出', KillShell: '结束进程',
+  Grep: '搜索', Glob: '查找文件', WebFetch: '访问网页', WebSearch: '联网搜索',
+  Task: '调度子任务', Agent: '调度子任务', Skill: '调用技能',
+  TodoWrite: '整理任务', ExitPlanMode: '结束规划',
+}
+const TOOL_ICONS = {
+  Read: '📖', Write: '✍️', Edit: '✏️', NotebookEdit: '✏️',
+  Bash: '⚡', BashOutput: '📃', KillShell: '🛑',
+  Grep: '🔍', Glob: '🗂️', WebFetch: '🌐', WebSearch: '🌐',
+  Task: '🧩', Agent: '🧩', Skill: '🎯',
+  TodoWrite: '📝', ExitPlanMode: '📋',
+}
+// Unknown tools (new built-ins, any MCP tool) still show up — with the raw
+// name rather than being silently dropped, since an unexplained gap in the
+// activity list is worse than an unpolished label.
+function toolLabel(tool) { return TOOL_LABELS[tool] || tool }
+function toolIcon(tool) { return TOOL_ICONS[tool] || '🔧' }
+
 const ACTION_SPLIT_RE = /(<i>[\s\S]*?<\/i>)/g
 
 function renderWithActions(text) {
@@ -149,6 +172,31 @@ function MessageBubble({ message, onLongPress, onRegenerate, onRegenerateRound, 
       {avatarEl}
 
       <div className={clsx('relative max-w-[72vw] flex flex-col', isUser ? 'items-end' : 'items-start')}>
+        {/* What CC actually did this turn — VPS only, sits above the thinking
+            fold because it happened before the reply it belongs to. Deliberately
+            plain text rather than another collapsible: the whole point is being
+            visible without a tap, and a turn rarely has more than a few. */}
+        {!isUser && message.toolUses?.length > 0 && (
+          <div
+            className="mb-1.5 w-full flex flex-col gap-0.5"
+            style={{ fontSize: 11, color: 'rgba(120,140,160,0.8)', lineHeight: 1.5 }}
+          >
+            {message.toolUses.map((t, i) => (
+              <div key={i} className="flex items-center gap-1 min-w-0">
+                <span style={{ flexShrink: 0 }}>{toolIcon(t.tool)}</span>
+                <span style={{ flexShrink: 0 }}>{toolLabel(t.tool)}</span>
+                {t.detail && (
+                  <span
+                    className="truncate"
+                    style={{ opacity: 0.75, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', fontSize: 10 }}
+                  >
+                    {t.detail}
+                  </span>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
         {/* Collapsible reasoning / thinking chain (AI only) */}
         {!isUser && (message.reasoning || message.reasoningStreaming) && (
           <div className="mb-1.5 w-full">
