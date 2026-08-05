@@ -4,7 +4,7 @@
 const SYNC_BASE = 'https://chat.xiaoman.xyz'
 
 // VAPID 公钥（公开信息，与 Worker 端 VAPID_PRIVATE_KEY secret 配对）
-export const VAPID_PUBLIC_KEY = 'BPKvBZCXuZkfYM2ecirl3U-2bbyeembT9Xzt8Z6LtO7_gAzAPLFhkBMfT0_bw3L_FczUdbzlF-Sst-a5fdpxI_w'
+export const VAPID_PUBLIC_KEY = 'BMt7bfuZSZsuIQGuLp0QGZKbdPNwr1oZ9esLiS-Gu_Pm4gfKx9ymV-CxLcH1M1P2OCreeRXlKAXftcRPhNJFgNY'
 
 function urlBase64ToUint8Array(base64String) {
   const padding = '='.repeat((4 - (base64String.length % 4)) % 4)

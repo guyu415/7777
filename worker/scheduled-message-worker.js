@@ -688,7 +688,7 @@ function arrayBufferToBase64(buf) {
 // 私钥来自 Worker Secret VAPID_PRIVATE_KEY；公钥是公开信息，与前端
 // src/services/push.js 中的常量一致。
 
-const VAPID_PUBLIC_KEY = 'BPKvBZCXuZkfYM2ecirl3U-2bbyeembT9Xzt8Z6LtO7_gAzAPLFhkBMfT0_bw3L_FczUdbzlF-Sst-a5fdpxI_w'
+const VAPID_PUBLIC_KEY = 'BMt7bfuZSZsuIQGuLp0QGZKbdPNwr1oZ9esLiS-Gu_Pm4gfKx9ymV-CxLcH1M1P2OCreeRXlKAXftcRPhNJFgNY'
 
 function b64uToBytes(s) {
   const pad = '='.repeat((4 - (s.length % 4)) % 4)
