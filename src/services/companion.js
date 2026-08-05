@@ -962,6 +962,14 @@ export async function* streamChatViaCompanion({ text, imagePath, signal }) {
   const onAbort = () => {
     aborted = true
     push({ done: true })
+    // Previously "stop" only made THIS TAB stop listening — the resident
+    // Claude Code session on the VPS never learned about it and kept right
+    // on working (reading files, running commands) to a reply nobody would
+    // ever see. This tells the server to type a real Escape into the live
+    // tmux pane, the same interrupt a human would send from the terminal.
+    // Fire-and-forget: this generator is already tearing down regardless of
+    // whether the server actually manages to stop the remote turn in time.
+    sendRaw({ type: 'stop_turn', turnId })
   }
   signal?.addEventListener('abort', onAbort)
 
