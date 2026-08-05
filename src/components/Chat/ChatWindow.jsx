@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef, useState, useLayoutEffect } from 'react'
-import { Menu, Cat } from 'lucide-react'
+import { Menu, Cat, Search } from 'lucide-react'
 import { useShallow } from 'zustand/react/shallow'
 import MessageList from './MessageList'
+import MessageSearch from './MessageSearch'
 import FallingParticles from './FallingParticles'
 import MessageInput from './MessageInput'
 import MemoryModal from './MemoryModal'
@@ -128,7 +129,9 @@ export default function ChatWindow({ theme }) {
   const focusSessionVisible = !!focusRuntime.state?.active || !!focusRuntime.justFinished
   const [xinchaoState, setXinchaoState] = useState(null)
   const [showXinchaoPanel, setShowXinchaoPanel] = useState(false)
+  const [showSearch, setShowSearch] = useState(false)
   const callAudioRef = useRef(null)
+  const messageListRef = useRef(null)
 
   const selectedProvider = providers?.find(p => p.id === selectedProviderId)
   const effectiveApiKey = selectedProvider?.apiKey || apiKey
@@ -157,6 +160,11 @@ export default function ChatWindow({ theme }) {
     setToast(msg)
     setTimeout(() => setToast(null), 2200)
   }
+
+  const jumpToMessage = useCallback((index) => {
+    setShowSearch(false)
+    messageListRef.current?.scrollToIndex(index)
+  }, [])
 
   useEffect(() => {
     loadHistory()
@@ -442,6 +450,14 @@ export default function ChatWindow({ theme }) {
         </div>
         <div className="flex items-center gap-2 flex-shrink-0" style={{ position: 'relative', zIndex: 10 }}>
           <button
+            onClick={() => setShowSearch(true)}
+            title="搜索这个对话"
+            className="w-9 h-9 rounded-full flex items-center justify-center flex-shrink-0"
+            style={{ background: `${primaryColor}18`, color: primaryColor }}
+          >
+            <Search size={15} />
+          </button>
+          <button
             onClick={() => setShowCarryOut(true)}
             title="把它抱走，变成桌宠"
             className="w-9 h-9 rounded-full flex items-center justify-center flex-shrink-0"
@@ -479,6 +495,7 @@ export default function ChatWindow({ theme }) {
         {/* Falling + stacking accessory particles — clipped to this area */}
         <FallingParticles />
         <MessageList
+          ref={messageListRef}
           messages={messages}
           sessionId={currentSessionId}
           onLongPress={setMenuMsg}
@@ -740,6 +757,10 @@ export default function ChatWindow({ theme }) {
 
       {showXinchaoPanel && (
         <XinchaoPanel theme={theme} state={xinchaoState} onClose={() => setShowXinchaoPanel(false)} />
+      )}
+
+      {showSearch && (
+        <MessageSearch theme={theme} messages={messages} onSelect={jumpToMessage} onClose={() => setShowSearch(false)} />
       )}
 
       {showDivination && (
