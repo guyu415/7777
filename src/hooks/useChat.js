@@ -2,7 +2,7 @@ import { useCallback, useRef } from 'react'
 import { useShallow } from 'zustand/react/shallow'
 import { useStore, saveMessage, saveBlob, getMessages, deleteMessageFromDB } from '../store'
 import { streamChat, generateSummary } from '../services/claude'
-import { streamChatViaCompanion, sendDeleteNotice } from '../services/companion'
+import { streamChatViaCompanion, sendDeleteNotice, uploadImageToCompanion } from '../services/companion'
 import { listMemories, formatMemories } from '../services/memory'
 import { executeAcCommand } from '../services/ac'
 
@@ -492,8 +492,21 @@ export function useChat() {
       // message's raw text. This is a real behavioral difference from the
       // API providers, not an oversight — see PR notes for details.
       const lastUserMsg = isVpsProvider ? [...trimmedMsgs].reverse().find(m => m.role === 'user') : null
+      // Image messages upload the bytes to the VPS as a real file first (so
+      // CC's own Read tool can look at it) — the message text carries only
+      // the resulting path, never the base64 blob itself. Upload failure
+      // falls back to sending the caption text alone rather than losing the
+      // whole turn silently.
+      let vpsImagePath
+      if (isVpsProvider && lastUserMsg?.type === 'image' && lastUserMsg.imageUrl) {
+        try {
+          vpsImagePath = await uploadImageToCompanion(lastUserMsg.imageUrl)
+        } catch (e) {
+          console.error('[IMG-UPLOAD] 图片上传到 companion 失败:', e.message)
+        }
+      }
       const chunkSource = isVpsProvider
-        ? streamChatViaCompanion({ text: typeof lastUserMsg?.content === 'string' ? lastUserMsg.content : '', signal: controller.signal })
+        ? streamChatViaCompanion({ text: typeof lastUserMsg?.content === 'string' ? lastUserMsg.content : '', imagePath: vpsImagePath, signal: controller.signal })
         : streamChat({ apiKey: effectiveApiKey, apiBaseUrl: effectiveBaseUrl, model: effectiveModel, systemPrompt: builtSystemPrompt, messages: trimmedMsgs, workerUrl, useWorkerProxy, signal: controller.signal, disableThinking: effectiveDisableThinking, webSearch: effectiveWebSearch, providerName: effectiveProviderName })
 
       try {
@@ -899,7 +912,7 @@ export function useChat() {
   const sendMessage = useCallback(async (content, type = 'text', extra = {}) => {
     console.log('[SEND] sendMessage called | keyLen=', effectiveApiKey?.length ?? 0, '| baseUrl=', effectiveBaseUrl, '| isLoading=', isLoading)
     const isVpsProvider = effectiveProviderName === 'claude-code-vps'
-    if (isVpsProvider && type !== 'text') {
+    if (isVpsProvider && type !== 'text' && type !== 'image') {
       throw new Error('VPS Companion 暂不支持此消息类型')
     }
     if (!isVpsProvider && !effectiveApiKey) {

@@ -819,7 +819,7 @@ export function sendDeleteNotice(text) {
  * the module-level `deliveredIds` set, so a reconnect-triggered history
  * replay can never re-yield something already seen live, or vice versa.
  */
-export async function* streamChatViaCompanion({ text, signal }) {
+export async function* streamChatViaCompanion({ text, imagePath, signal }) {
   if (signal?.aborted) return
 
   await waitUntilOpenOrFail()
@@ -958,7 +958,7 @@ export async function* streamChatViaCompanion({ text, signal }) {
   signal?.addEventListener('abort', onAbort)
 
   try {
-    const sent = sendRaw({ id, text, clientTime: clientTimeContext() })
+    const sent = sendRaw({ id, text, ...(imagePath ? { imagePath } : {}), clientTime: clientTimeContext() })
     if (!sent) {
       throw Object.assign(new Error('companion 未连接'), { code: 'not_connected', turnId })
     }
@@ -1056,6 +1056,19 @@ export async function putMemoryFile(name, content) {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ name, content }),
   })
+}
+
+// Uploads an image to the VPS as a real file and returns its on-disk path,
+// so the resident CC session can look at it with its own Read tool instead
+// of the image being piped through as a base64 blob in the message text.
+// dataUrl must be a `data:image/(jpeg|png|webp|gif);base64,...` string.
+export async function uploadImageToCompanion(dataUrl) {
+  const data = await companionJson('/upload/image', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ dataUrl }),
+  })
+  return data.path
 }
 
 export async function deleteMemoryFile(name) {
