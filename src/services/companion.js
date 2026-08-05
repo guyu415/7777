@@ -51,6 +51,50 @@ let reconnectTimer = null
 let authFailed = false // definitive: stop auto-reconnecting until explicit ensureConnected() after re-login
 const listeners = new Set() // Set<(evt) => void>
 
+// ---------- app-level heartbeat ----------
+// A browser WebSocket can report itself as 'open' for a long time after the
+// underlying network path has actually died (mobile network handoffs, iOS
+// backgrounding) — the OS just hasn't gotten around to firing close/error
+// yet. Before this, a chat send during that window went out via a socket
+// that looked fine and vanished with zero trace on either side: no server
+// log (it never arrived), no client error (send() doesn't throw for this).
+// The user only found out minutes later when SOME eventual reconnect
+// revealed nothing had happened. Real incident, 2026-08-05 evening — see
+// project memory. This ping/pong catches a dead socket in seconds instead
+// of however long the OS takes to notice.
+let heartbeatTimer = null
+let pongTimeout = null
+const HEARTBEAT_INTERVAL_MS = 20000
+const PONG_TIMEOUT_MS = 8000
+
+function startHeartbeat() {
+  stopHeartbeat()
+  heartbeatTimer = setInterval(() => {
+    if (!ws || wsState !== 'open') return
+    try {
+      ws.send(JSON.stringify({ type: 'ping' }))
+    } catch {
+      return
+    }
+    clearTimeout(pongTimeout)
+    pongTimeout = setTimeout(() => {
+      // No pong in time — force-close so the existing reconnect/backoff
+      // logic (scheduleReconnect via onclose) takes over immediately.
+      try {
+        ws?.close()
+      } catch {
+        // ignore
+      }
+    }, PONG_TIMEOUT_MS)
+  }, HEARTBEAT_INTERVAL_MS)
+}
+function stopHeartbeat() {
+  clearInterval(heartbeatTimer)
+  heartbeatTimer = null
+  clearTimeout(pongTimeout)
+  pongTimeout = null
+}
+
 // ---------- delivered Wire.id dedup (connection-manager scope) ----------
 // Shared by BOTH the live wire path and history-recovery-after-reconnect path
 // for this page's whole lifetime — a message id, once delivered to some
@@ -131,6 +175,7 @@ function connect() {
     everOpenedThisAttempt = true
     reconnectAttempt = 0
     authFailed = false
+    startHeartbeat()
     notify({ kind: 'open' })
   }
 
@@ -139,6 +184,15 @@ function connect() {
     try {
       m = JSON.parse(ev.data)
     } catch {
+      return
+    }
+    if (m.type === 'pong') {
+      clearTimeout(pongTimeout)
+      pongTimeout = null
+      return
+    }
+    if (m.type === 'inbound_ack') {
+      notify({ kind: 'inbound_ack', id: m.id })
       return
     }
     if (m.type === 'history') {
@@ -152,6 +206,7 @@ function connect() {
     const openedBefore = everOpenedThisAttempt
     wsState = 'closed'
     ws = null
+    stopHeartbeat()
     notify({ kind: 'close', wasClean: ev.wasClean, code: ev.code })
 
     if (!openedBefore) {
@@ -857,11 +912,23 @@ export async function* streamChatViaCompanion({ text, imagePath, signal }) {
   // resolved while disconnected" on every single call — a real bug, caught by
   // the isolated single-reply Playwright test, not a test-harness artifact.
   let sawDisconnect = false
+  // Set only by a real inbound_ack from the server for THIS message id — see
+  // the heartbeat/ack comment above sendRaw's definition. Tells the two
+  // "no reply found on reconnect" cases apart: the send never actually
+  // reached the server (socket looked open but wasn't — the common case,
+  // silent and previously indistinguishable from a genuine server-side turn
+  // loss) versus it truly did arrive and something rarer happened server-side.
+  let ackReceived = false
 
   const onEvent = evt => {
     if (evt.kind === 'auth_required') {
       finishError = Object.assign(new Error('未登录 companion，请先登录'), { code: 'auth_required', turnId })
       push({ done: true })
+      return
+    }
+
+    if (evt.kind === 'inbound_ack') {
+      if (evt.id === id) ackReceived = true
       return
     }
 
@@ -898,6 +965,15 @@ export async function* streamChatViaCompanion({ text, imagePath, signal }) {
           if (r.kind === 'voice') push({ voice: { id: r.id, text: r.text, voice: r.voice, style: r.style } })
           else push({ text: r.text, wireId: r.id })
         }
+        push({ done: true })
+      } else if (!ackReceived) {
+        // The server never even confirmed receiving this message — almost
+        // certainly it never arrived (dead-looking-alive socket), not a
+        // server-side turn failure. Actionable: just resend.
+        finishError = Object.assign(
+          new Error('消息可能没有发送成功，请重新发送'),
+          { code: 'send_failed', turnId },
+        )
         push({ done: true })
       } else {
         finishError = Object.assign(
