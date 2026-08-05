@@ -988,6 +988,12 @@ export async function* streamChatViaCompanion({ text, imagePath, signal }) {
       }
       if (item.reasoningReplace !== undefined) yield { reasoningReplace: item.reasoningReplace }
       else if (item.reasoning) yield { reasoning: item.reasoning }
+      // The onEvent handler above already builds this into a proper
+      // { toolUse: {...} } queue item — this branch just has to actually let
+      // it out. Without it, a toolUse item fell through to the final `else`
+      // below and got yielded as { text: undefined, wireId: undefined }
+      // instead, so useChat.js's `chunk.toolUse` check never once saw it.
+      else if (item.toolUse) yield { toolUse: item.toolUse }
       // wireId rides along with each text chunk so the caller can persist
       // which server-side message ids this turn already displayed — the
       // history-snapshot dedup in App.jsx matches against them (voice chunks
