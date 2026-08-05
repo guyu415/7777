@@ -10,6 +10,7 @@ import BottomNav from './components/BottomNav'
 import LoginPage from './components/LoginPage'
 import VoiceFavorites from './components/VoiceFavorites'
 import CompanionMemory from './components/CompanionMemory'
+import DialogueCompression from './components/DialogueCompression'
 import DesktopPet from './components/DesktopPet'
 import { getSettings, saveSettings, extractSettings, saveSessionMsgs, deleteSessionMsgs, putAsset, putAssetDataUrl, loadAsset, getLetters } from './services/sync'
 import { mergeLetters } from './services/letters'
@@ -654,9 +655,10 @@ export default function App() {
           {currentView === 'sessionSettings' && <SessionSettings theme={theme} />}
           {currentView === 'voiceFavorites' && <VoiceFavorites theme={theme} />}
           {currentView === 'companionMemory' && <CompanionMemory theme={theme} onBack={() => setCurrentView('sessionSettings')} />}
+          {currentView === 'dialogueCompression' && <DialogueCompression theme={theme} onBack={() => setCurrentView('sessionSettings')} />}
         </div>
 
-        {currentView !== 'sessionSettings' && currentView !== 'voiceFavorites' && currentView !== 'chat' && currentView !== 'companionMemory' && currentView !== 'groupChat' && (
+        {currentView !== 'sessionSettings' && currentView !== 'voiceFavorites' && currentView !== 'chat' && currentView !== 'companionMemory' && currentView !== 'dialogueCompression' && currentView !== 'groupChat' && (
           <BottomNav currentView={currentView} onChange={setCurrentView} theme={theme} />
         )}
       </div>

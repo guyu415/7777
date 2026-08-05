@@ -1113,6 +1113,44 @@ export async function deleteMemoryFile(name) {
   })
 }
 
+// ---------- Dialogue compression review (灯/memo layer, human-gated) ----------
+// The pipeline itself (extract raw session dialogue -> SiliconFlow summary)
+// runs server-side, either automatically right before Claude Code's own
+// auto-compact (PreCompact hook) or on demand via regenerateCompression()
+// below. Nothing gets written into Auto Memory until acceptCompression() is
+// called — this module only ever surfaces what's already staged for review.
+
+export async function getCompressionStatus() {
+  return companionJson(`/compression/status?_=${Date.now()}`, { cache: 'no-store' })
+}
+
+export async function regenerateCompression() {
+  return companionJson('/compression/regenerate', { method: 'POST' })
+}
+
+export async function acceptCompression() {
+  return companionJson('/compression/accept', { method: 'POST' })
+}
+
+// Triggers a real browser download rather than returning text, since the
+// point is "give me a file I can save/inspect outside the app".
+export async function downloadCompressionDialogue() {
+  const res = await fetch(`${COMPANION_BASE}/compression/dialogue`, { credentials: 'include' })
+  if (!res.ok) throw new Error(`下载失败 (${res.status})`)
+  const blob = await res.blob()
+  const disposition = res.headers.get('content-disposition') || ''
+  const match = disposition.match(/filename="([^"]+)"/)
+  const filename = match ? match[1] : 'dialogue.md'
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = filename
+  document.body.appendChild(a)
+  a.click()
+  a.remove()
+  URL.revokeObjectURL(url)
+}
+
 // ---------- statusLine-fed usage/model status ----------
 
 export async function getCompanionStatus() {

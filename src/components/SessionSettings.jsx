@@ -850,6 +850,13 @@ export default function SessionSettings({ theme }) {
                 >
                   🧠 VPS 本体记忆管理
                 </button>
+                <button
+                  onClick={() => setCurrentView('dialogueCompression')}
+                  className="w-full mt-2 py-2 rounded-full text-xs font-medium"
+                  style={{ background: 'rgba(255,255,255,0.5)', color: '#4a7aaa', border: '1px solid rgba(120,160,220,0.35)' }}
+                >
+                  🗜️ 对话压缩审核
+                </button>
                 <div className="flex items-center justify-between mt-3 pt-3" style={{ borderTop: '1px solid rgba(120,160,220,0.2)' }}>
                   <div>
                     <div className="text-xs" style={{ color: '#2c5282' }}>主动消息</div>
