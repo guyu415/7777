@@ -231,13 +231,10 @@ export default function ChatWindow({ theme }) {
   // was staged. For Codex, sendMessage('image')'s extra.imageUrl combined
   // with a non-empty content string reaches codexSendUserTurn() as a single
   // real turn/start carrying both a text and an image UserInput — never two
-  // separate sends. Claude Code's VPS session still has no image support at
-  // all (unchanged, pre-existing limitation, not something this task adds).
+  // separate sends. Claude Code's VPS session now uploads the image to
+  // /upload/image and lets CC Read the file (see useChat.js sendMessage/
+  // streamResponse) — used to hard-block here too, that block is stale now.
   const handleSendImage = ({ imageData, imageType, imageUrl, text }) => {
-    if (isVpsSession) {
-      alert('VPS Companion 暂不支持此消息类型（图片）')
-      return
-    }
     updateActiveTime()
     sendMessage(text || '', 'image', { imageData, imageType, imageUrl })
   }
