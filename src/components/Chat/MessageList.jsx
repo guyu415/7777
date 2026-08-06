@@ -137,7 +137,7 @@ const MessageList = forwardRef(function MessageList({
   const items = virtualizer.getVirtualItems()
   const primaryColor = theme?.primary || '#4aacf0'
   const jumpButtonStyle = {
-    position: 'absolute', right: 12, zIndex: 5,
+    position: 'absolute', left: 12, zIndex: 5,
     width: 34, height: 34, borderRadius: '50%',
     display: 'flex', alignItems: 'center', justifyContent: 'center',
     border: `1px solid ${primaryColor}30`,
