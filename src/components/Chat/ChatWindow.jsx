@@ -96,7 +96,7 @@ export default function ChatWindow({ theme }) {
   // the file. cc/codex above are BOTH always called (Rules of Hooks); only
   // one is ever actually used per render.
   const active = isCodexSession ? codex : cc
-  const { messages, sendMessage, loadHistory, isLoading, regenerate, regenerateRound, deleteMsg, editMessage, stopStreaming } = active
+  const { messages, sendMessage, sendMessageBatch, loadHistory, isLoading, regenerate, regenerateRound, deleteMsg, editMessage, stopStreaming } = active
 
   const effectiveAiName = currentSession?.aiName ?? globalAiName
   const effectiveAiAvatar = currentSession?.aiAvatar ?? globalAiAvatar
@@ -690,6 +690,17 @@ export default function ChatWindow({ theme }) {
             console.log('[PAW] onSend received, text:', JSON.stringify(text))
             updateActiveTime()
             sendMessage(text, 'text').catch(e => console.error('[PAW] sendMessage error:', e.message))
+          }}
+          onSendBatch={(texts) => {
+            console.log('[PAW] onSendBatch received, count:', texts.length)
+            updateActiveTime()
+            // Codex sessions don't have a batch turn concept yet — fall back to
+            // sequential ordinary sends (each its own turn) rather than losing
+            // the queued segments outright.
+            const batch = sendMessageBatch || (async (list) => {
+              for (const t of list) await sendMessage(t, 'text')
+            })
+            batch(texts).catch(e => console.error('[PAW] sendMessageBatch error:', e.message))
           }}
           onStartCall={handleStartCall}
           onSendImage={handleSendImage}

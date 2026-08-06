@@ -503,10 +503,27 @@ export function useChat() {
       // above (builtSystemPrompt: persona, memory injection, AC/music/voice
       // tag instructions, summary, letter index) is sent to it, and it isn't
       // re-sent the trimmed message history either — the VPS session already
-      // has its own continuous context. We only forward the newest user
-      // message's raw text. This is a real behavioral difference from the
+      // has its own continuous context. We only forward the newest run of
+      // user messages' raw text. This is a real behavioral difference from the
       // API providers, not an oversight — see PR notes for details.
-      const lastUserMsg = isVpsProvider ? [...trimmedMsgs].reverse().find(m => m.role === 'user') : null
+      let lastUserMsg = null
+      let vpsBatchText = ''
+      if (isVpsProvider) {
+        // Normally a run of length 1 (one bubble per turn). sendMessageBatch's
+        // "分条发送" queue (see MessageInput.jsx's segments state) adds several
+        // consecutive user bubbles before triggering this turn, so CC needs to
+        // see all of them joined in order, not just the newest one.
+        const trailingUserMsgs = []
+        for (let i = trimmedMsgs.length - 1; i >= 0; i--) {
+          if (trimmedMsgs[i].role !== 'user') break
+          trailingUserMsgs.unshift(trimmedMsgs[i])
+        }
+        lastUserMsg = trailingUserMsgs[trailingUserMsgs.length - 1] || null
+        vpsBatchText = trailingUserMsgs
+          .filter(m => typeof m.content === 'string' && m.content)
+          .map(m => m.content)
+          .join('\n')
+      }
       // Image messages upload the bytes to the VPS as a real file first (so
       // CC's own Read tool can look at it) — the message text carries only
       // the resulting path, never the base64 blob itself. Upload failure
@@ -528,7 +545,7 @@ export function useChat() {
         }
       }
       const chunkSource = isVpsProvider
-        ? streamChatViaCompanion({ text: typeof lastUserMsg?.content === 'string' ? lastUserMsg.content : '', imagePath: vpsImagePath, signal: controller.signal })
+        ? streamChatViaCompanion({ text: vpsBatchText, imagePath: vpsImagePath, signal: controller.signal })
         : streamChat({ apiKey: effectiveApiKey, apiBaseUrl: effectiveBaseUrl, model: effectiveModel, systemPrompt: builtSystemPrompt, messages: trimmedMsgs, workerUrl, useWorkerProxy, signal: controller.signal, disableThinking: effectiveDisableThinking, webSearch: effectiveWebSearch, providerName: effectiveProviderName })
 
       try {
@@ -1000,6 +1017,62 @@ export function useChat() {
     await streamResponse([...messages, userMsg])
   }, [CONVERSATION_ID, effectiveApiKey, effectiveBaseUrl, isLoading, messages, addMessage, streamResponse, updateSession, currentSession, selectedProvider, apiKey])
 
+  // "分条发送" — MessageInput.jsx lets the user stage several Enter-split
+  // segments before actually pressing Send; this fires all of them at once.
+  // Each segment still becomes its own local bubble (added sequentially, in
+  // order), but only ONE streamResponse call goes out for the whole batch —
+  // built from a fresh useStore.getState().messages snapshot (same pattern
+  // regenerateRound uses below) rather than the closed-over `messages`, since
+  // that closure wouldn't yet reflect the addMessage calls made earlier in
+  // this same synchronous batch. streamResponse's own VPS branch (see
+  // vpsBatchText above) then joins the trailing run of user bubbles it finds
+  // in that snapshot, so CC sees the whole batch as one turn.
+  const sendMessageBatch = useCallback(async (contents) => {
+    const trimmed = contents.map(c => c.trim()).filter(Boolean)
+    if (trimmed.length === 0) return
+    if (trimmed.length === 1) return sendMessage(trimmed[0], 'text')
+
+    const isVpsProvider = effectiveProviderName === 'claude-code-vps'
+    if (!isVpsProvider && !effectiveApiKey) {
+      throw new Error('请先在设置中配置 API Key')
+    }
+
+    if (messages.length === 0) {
+      const autoName = trimmed[0].slice(0, 20).trim()
+      if (autoName) updateSession(CONVERSATION_ID, { name: autoName })
+    }
+
+    const userMsgs = trimmed.map(content => ({
+      id: genId(),
+      conversationId: CONVERSATION_ID,
+      role: 'user',
+      type: 'text',
+      content,
+      timestamp: Date.now(),
+    }))
+
+    for (const userMsg of userMsgs) {
+      addMessage(userMsg)
+      try {
+        await saveMessage(userMsg)
+      } catch (e) {
+        console.error('[DB] saveMessage failed:', e)
+      }
+    }
+    updateSession(CONVERSATION_ID, {
+      lastMsgPreview: trimmed[trimmed.length - 1].slice(0, 40),
+      lastMsgTime: Date.now(),
+    })
+
+    if (isLoading) {
+      console.log('[SEND] 插话：AI生成中，批量消息入队，等当前轮自然结束后一并回应')
+      pendingMessagesRef.current.push(...userMsgs)
+      return
+    }
+    const liveMessages = useStore.getState().messages
+    await streamResponse(liveMessages)
+  }, [CONVERSATION_ID, effectiveApiKey, effectiveProviderName, isLoading, messages, addMessage, streamResponse, updateSession, sendMessage])
+
   // Deliberately NOT depending on `messages` — that array's reference changes
   // on every streaming tick (80ms), and these callbacks are handed down to
   // every message bubble. Reading the live array via getState() at call time
@@ -1081,5 +1154,5 @@ export function useChat() {
     scheduleMsgSync(CONVERSATION_ID)
   }, [updateMessage, scheduleMsgSync, CONVERSATION_ID])
 
-  return { messages, sendMessage, loadHistory, isLoading, regenerate, regenerateRound, deleteMsg, editMessage, stopStreaming }
+  return { messages, sendMessage, sendMessageBatch, loadHistory, isLoading, regenerate, regenerateRound, deleteMsg, editMessage, stopStreaming }
 }
