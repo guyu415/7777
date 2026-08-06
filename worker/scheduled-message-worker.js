@@ -185,6 +185,37 @@ export default {
       return Response.json(result, { headers: CORS })
     }
 
+    // Server-to-server push trigger for the VPS-resident companion
+    // (ai-companion/channel-server.ts) — its own proactive check-ins and
+    // dream announcements only ever broadcast over its own WebSocket, which
+    // is useless once the app is backgrounded/closed. This lets it reuse the
+    // exact same VAPID/sendPushToUser plumbing the API-key sessions already
+    // have, without the VPS ever needing to know the user's real login
+    // password — auth here is a separate secret (VPS_SERVICE_KEY), and the
+    // real password is resolved server-side via getUserPassword(env).
+    if (pathname === '/vps/push' && request.method === 'POST') {
+      const vpsKey = request.headers.get('X-VPS-Key') || ''
+      if (!env.VPS_SERVICE_KEY || vpsKey !== env.VPS_SERVICE_KEY) {
+        return Response.json({ error: 'unauthorized' }, { status: 401, headers: CORS })
+      }
+      if (!env.VAPID_PRIVATE_KEY) {
+        return Response.json({ error: 'VAPID_PRIVATE_KEY secret not set' }, { status: 500, headers: CORS })
+      }
+      const password = getUserPassword(env)
+      if (!password) {
+        return Response.json({ error: 'USER_PASSWORD secret not set' }, { status: 500, headers: CORS })
+      }
+      const { title, body, url, tag } = await request.json().catch(() => ({}))
+      if (!body) return Response.json({ error: 'missing body' }, { status: 400, headers: CORS })
+      const result = await sendPushToUser(env, password, {
+        title: title || '小满 🌸',
+        body: String(body).slice(0, 120),
+        url: url || '/',
+        tag: tag || 'eunoia-vps',
+      })
+      return Response.json(result, { headers: CORS })
+    }
+
     // ── iTunes/Apple Music 代理（前端碟片播放器用）───────────────
     if (pathname.startsWith('/itunes/') && request.method === 'GET') {
       return handleItunesApi(request, env)
