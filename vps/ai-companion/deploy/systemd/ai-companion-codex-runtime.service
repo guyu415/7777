@@ -1,0 +1,14 @@
+[Unit]
+Description=Preserve the existing Eunoia Codex app-server across CC restarts
+ConditionPathExists=/run/ai-companion-codex/adopt.env
+
+[Service]
+Type=simple
+User=root
+Group=root
+ExecStart=/opt/ai-companion/scripts/start-codex-fd-bridge.sh
+Restart=no
+KillMode=control-group
+
+[Install]
+WantedBy=multi-user.target

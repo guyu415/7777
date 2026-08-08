@@ -32,6 +32,10 @@ The file contains the CC session id, rolling summary, processed boundary,
 two-phase pending record, retry timestamp, and FIFO messages that arrived
 during maintenance. It is private runtime state and must never be committed.
 
-The production service remains `ai-companion-brain.service`. It owns only the
-CC tmux session; Codex app-server processes are not managed or restarted by
-this unit.
+The production CC service remains `ai-companion-brain.service`. During the
+initial isolation rollout, `ai-companion-codex-runtime.service` adopts the
+already-running app-server's stdio fds with `pidfd_getfd`, moves its unchanged
+PIDs into a separate cgroup, and exposes a companion-only Unix socket. The
+restarted channel server attaches through `codex-fd-bridge client` without a
+second protocol initialization. This preserves both Codex OS processes and
+all thread ids while allowing CC to resume independently.

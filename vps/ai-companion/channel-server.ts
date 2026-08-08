@@ -4580,6 +4580,9 @@ let codexRespawnAttempts = 0
 // it never touches Claude's tmux session or the MCP parent.
 let codexRestartInFlight = false
 let codexProcExitReason: string | null = null
+const CODEX_EXISTING_BRIDGE_SOCKET = process.env.AI_COMPANION_CODEX_BRIDGE_SOCKET ?? '/run/ai-companion-codex/existing.sock'
+const CODEX_BRIDGE_CLIENT = process.env.AI_COMPANION_CODEX_BRIDGE_CLIENT ?? join(ROOT, 'scripts', 'codex-fd-bridge')
+let codexAttachedExistingProcess = false
 
 function codexWriteLine(obj: unknown) {
   if (!codexProc) return
@@ -5007,8 +5010,18 @@ async function codexEnsureProc(): Promise<void> {
   if (codexProc && codexInitPromise) return codexInitPromise
   codexRespawnAttempts += 1
   if (codexRespawnAttempts > 5) throw new Error('codex process failed to start too many times')
+  // During the 2026-08 tidal-memory rollout the already-running Codex
+  // app-server was moved out of CC's systemd cgroup without terminating it.
+  // Its original stdio socket is retained by codex-fd-bridge; attaching here
+  // preserves the exact OS process and every existing thread while allowing
+  // CC/channel-server itself to restart independently. On a cold boot there
+  // is no adopted socket, so the normal dedicated child path remains the
+  // safe fallback.
+  codexAttachedExistingProcess = existsSync(CODEX_EXISTING_BRIDGE_SOCKET)
   const proc = Bun.spawn({
-    cmd: ['codex', 'app-server'],
+    cmd: codexAttachedExistingProcess
+      ? [CODEX_BRIDGE_CLIENT, 'client', CODEX_EXISTING_BRIDGE_SOCKET]
+      : ['codex', 'app-server'],
     stdin: 'pipe', stdout: 'pipe', stderr: 'pipe',
     env: { ...process.env },
   })
@@ -5027,7 +5040,9 @@ async function codexEnsureProc(): Promise<void> {
     } catch {}
   })()
   codexInitPromise = (async () => {
-    await codexRequest('initialize', {
+    // The adopted stream was initialized by this same Eunoia client before
+    // handoff. Sending initialize twice would corrupt protocol state.
+    if (!codexAttachedExistingProcess) await codexRequest('initialize', {
       clientInfo: { name: 'eunoia-codex-vps', title: 'Eunoia (Codex)', version: '0.1.0' },
       capabilities: null,
     })
