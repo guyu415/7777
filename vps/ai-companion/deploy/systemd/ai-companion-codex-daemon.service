@@ -1,0 +1,20 @@
+[Unit]
+Description=Dedicated Eunoia Codex app-server daemon
+After=network.target
+
+[Service]
+Type=simple
+User=companion
+Group=companion
+Environment=HOME=/home/companion
+Environment=PATH=/usr/local/bin:/usr/bin:/bin
+RuntimeDirectory=ai-companion-codex
+RuntimeDirectoryMode=0750
+RuntimeDirectoryPreserve=yes
+ExecStart=/opt/ai-companion/scripts/codex-fd-bridge serve /usr/local/bin/codex /run/ai-companion-codex/daemon.sock
+Restart=always
+RestartSec=2
+KillMode=control-group
+
+[Install]
+WantedBy=multi-user.target

@@ -122,19 +122,12 @@ static int relay_client(int client, int app_in, int app_out, int app_err) {
   return 0;
 }
 
-static int adopt_mode(pid_t parent_pid, int stdin_fd, int stdout_fd, int stderr_fd, const char *path) {
-  int pidfd = (int)syscall(SYS_pidfd_open, parent_pid, 0);
-  if (pidfd < 0) { perror("pidfd_open"); return 1; }
-  int app_in = duplicated_fd(pidfd, stdin_fd);
-  int app_out = duplicated_fd(pidfd, stdout_fd);
-  int app_err = duplicated_fd(pidfd, stderr_fd);
-  close(pidfd);
-  if (app_in < 0 || app_out < 0 || app_err < 0) { perror("pidfd_getfd"); return 1; }
+static int relay_server(int app_in, int app_out, int app_err, const char *path) {
   int err_flags = fcntl(app_err, F_GETFL, 0);
   if (err_flags >= 0) (void)fcntl(app_err, F_SETFL, err_flags | O_NONBLOCK);
   int listener = make_listener(path);
   if (listener < 0) { perror("codex bridge listen"); return 1; }
-  fprintf(stderr, "codex-fd-bridge: adopted pid=%d fds=%d,%d,%d socket=%s\n", parent_pid, stdin_fd, stdout_fd, stderr_fd, path);
+  fprintf(stderr, "codex-fd-bridge: listening socket=%s\n", path);
   while (!stopping) {
     struct pollfd fds[2] = {{.fd = listener, .events = POLLIN}, {.fd = app_err, .events = POLLIN}};
     int ready = poll(fds, 2, -1);
@@ -151,12 +144,48 @@ static int adopt_mode(pid_t parent_pid, int stdin_fd, int stdout_fd, int stderr_
   return stopping ? 0 : 1;
 }
 
+static int adopt_mode(pid_t parent_pid, int stdin_fd, int stdout_fd, int stderr_fd, const char *path) {
+  int pidfd = (int)syscall(SYS_pidfd_open, parent_pid, 0);
+  if (pidfd < 0) { perror("pidfd_open"); return 1; }
+  int app_in = duplicated_fd(pidfd, stdin_fd);
+  int app_out = duplicated_fd(pidfd, stdout_fd);
+  int app_err = duplicated_fd(pidfd, stderr_fd);
+  close(pidfd);
+  if (app_in < 0 || app_out < 0 || app_err < 0) { perror("pidfd_getfd"); return 1; }
+  fprintf(stderr, "codex-fd-bridge: adopted pid=%d fds=%d,%d,%d\n", parent_pid, stdin_fd, stdout_fd, stderr_fd);
+  return relay_server(app_in, app_out, app_err, path);
+}
+
+static int serve_mode(const char *executable, const char *path) {
+  int in_pair[2], out_pair[2], err_pair[2];
+  if (socketpair(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0, in_pair) < 0 ||
+      socketpair(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0, out_pair) < 0 ||
+      socketpair(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0, err_pair) < 0) {
+    perror("codex bridge socketpair");
+    return 1;
+  }
+  pid_t child = fork();
+  if (child < 0) { perror("codex bridge fork"); return 1; }
+  if (child == 0) {
+    if (dup2(in_pair[1], STDIN_FILENO) < 0 || dup2(out_pair[1], STDOUT_FILENO) < 0 ||
+        dup2(err_pair[1], STDERR_FILENO) < 0) _exit(126);
+    close(in_pair[0]); close(in_pair[1]); close(out_pair[0]); close(out_pair[1]);
+    close(err_pair[0]); close(err_pair[1]);
+    execl(executable, executable, "app-server", (char *)NULL);
+    _exit(127);
+  }
+  close(in_pair[1]); close(out_pair[1]); close(err_pair[1]);
+  fprintf(stderr, "codex-fd-bridge: spawned app-server pid=%d\n", child);
+  return relay_server(in_pair[0], out_pair[0], err_pair[0], path);
+}
+
 int main(int argc, char **argv) {
   signal(SIGINT, on_signal); signal(SIGTERM, on_signal); signal(SIGPIPE, SIG_IGN);
   if (argc == 3 && strcmp(argv[1], "client") == 0) return client_mode(argv[2]);
+  if (argc == 4 && strcmp(argv[1], "serve") == 0) return serve_mode(argv[2], argv[3]);
   if (argc == 7 && strcmp(argv[1], "adopt") == 0) {
     return adopt_mode((pid_t)atoi(argv[2]), atoi(argv[3]), atoi(argv[4]), atoi(argv[5]), argv[6]);
   }
-  fprintf(stderr, "usage: %s client SOCKET | adopt PARENT_PID STDIN_FD STDOUT_FD STDERR_FD SOCKET\n", argv[0]);
+  fprintf(stderr, "usage: %s client SOCKET | serve EXECUTABLE SOCKET | adopt PARENT_PID STDIN_FD STDOUT_FD STDERR_FD SOCKET\n", argv[0]);
   return 2;
 }

@@ -32,10 +32,14 @@ The file contains the CC session id, rolling summary, processed boundary,
 two-phase pending record, retry timestamp, and FIFO messages that arrived
 during maintenance. It is private runtime state and must never be committed.
 
-The production CC service remains `ai-companion-brain.service`. During the
-initial isolation rollout, `ai-companion-codex-runtime.service` adopts the
-already-running app-server's stdio fds with `pidfd_getfd`, moves its unchanged
-PIDs into a separate cgroup, and exposes a companion-only Unix socket. The
-restarted channel server attaches through `codex-fd-bridge client` without a
-second protocol initialization. This preserves both Codex OS processes and
-all thread ids while allowing CC to resume independently.
+The production CC service remains `ai-companion-brain.service`. Codex's
+app-server is owned by the separate `ai-companion-codex-daemon.service` cgroup;
+the CC channel server talks to its companion-only Unix socket through
+`codex-fd-bridge client`. The brain unit only `Wants=` the daemon, so stopping
+or restarting either unit never propagates a stop to the other. Existing Codex
+thread ids remain persisted and are resumed after a daemon cold start.
+
+`ai-companion-codex-runtime.service` and the bridge's `adopt` mode are retained
+only as one-time migration tools for transferring an already-running stdio
+process. Normal boot uses bridge `serve` mode and requires a fixed executable
+at `/usr/local/bin/codex`.

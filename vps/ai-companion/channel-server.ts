@@ -4582,6 +4582,7 @@ let codexRestartInFlight = false
 let codexProcExitReason: string | null = null
 const CODEX_EXISTING_BRIDGE_SOCKET = process.env.AI_COMPANION_CODEX_BRIDGE_SOCKET ?? '/run/ai-companion-codex/existing.sock'
 const CODEX_BRIDGE_CLIENT = process.env.AI_COMPANION_CODEX_BRIDGE_CLIENT ?? join(ROOT, 'scripts', 'codex-fd-bridge')
+const CODEX_DAEMON_SOCKET = process.env.AI_COMPANION_CODEX_DAEMON_SOCKET ?? '/run/ai-companion-codex/daemon.sock'
 let codexAttachedExistingProcess = false
 
 function codexWriteLine(obj: unknown) {
@@ -5015,13 +5016,13 @@ async function codexEnsureProc(): Promise<void> {
   // Its original stdio socket is retained by codex-fd-bridge; attaching here
   // preserves the exact OS process and every existing thread while allowing
   // CC/channel-server itself to restart independently. On a cold boot there
-  // is no adopted socket, so the normal dedicated child path remains the
-  // safe fallback.
+  // is no adopted socket; the fallback is an app-server daemon in its own
+  // systemd unit, reached through the same narrow stdio bridge client.
   codexAttachedExistingProcess = existsSync(CODEX_EXISTING_BRIDGE_SOCKET)
   const proc = Bun.spawn({
     cmd: codexAttachedExistingProcess
       ? [CODEX_BRIDGE_CLIENT, 'client', CODEX_EXISTING_BRIDGE_SOCKET]
-      : ['codex', 'app-server'],
+      : [CODEX_BRIDGE_CLIENT, 'client', CODEX_DAEMON_SOCKET],
     stdin: 'pipe', stdout: 'pipe', stderr: 'pipe',
     env: { ...process.env },
   })
