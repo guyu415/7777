@@ -11,6 +11,7 @@ import LoginPage from './components/LoginPage'
 import VoiceFavorites from './components/VoiceFavorites'
 import CompanionMemory from './components/CompanionMemory'
 import DialogueCompression from './components/DialogueCompression'
+import CodexMemory from './components/CodexMemory'
 import DesktopPet from './components/DesktopPet'
 import { getSettings, saveSettings, extractSettings, saveSessionMsgs, deleteSessionMsgs, putAsset, putAssetDataUrl, loadAsset, getLetters } from './services/sync'
 import { mergeLetters } from './services/letters'
@@ -37,6 +38,7 @@ function settingsFingerprint(settings) {
 export default function App() {
   const {
     currentView, setCurrentView,
+    setCurrentSessionId,
     currentGroupChatId, setCurrentGroupChatId,
     themeId: globalThemeId,
     chatBg: globalChatBg,
@@ -45,6 +47,30 @@ export default function App() {
     customFonts,
     sessions, currentSessionId,
   } = useStore()
+
+  // Web Push notifications carry the session that generated the message.
+  // Older notifications only opened `/`, which focused whichever window was
+  // already selected (often Codex) and made a valid ordinary-session
+  // message look missing.  Navigate explicitly before rendering the chat.
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search)
+    const source = params.get('source')
+    let targetId = null
+    if (source === 'api-proactive') {
+      targetId = params.get('session')
+    } else if (source === 'cc-proactive') {
+      targetId = sessions?.find(s => s.providerName === 'claude-code-vps')?.id || null
+    } else {
+      return
+    }
+    if (!targetId || !sessions?.some(s => s.id === targetId)) return
+    setCurrentSessionId(targetId)
+    setCurrentView('chat')
+    params.delete('session')
+    params.delete('source')
+    const next = `${window.location.pathname}${params.toString() ? `?${params}` : ''}${window.location.hash}`
+    window.history.replaceState({}, '', next)
+  }, [sessions, setCurrentSessionId, setCurrentView])
 
   // ── Auth ───────────────────────────────────────────────────────
   const [loggedIn, setLoggedIn] = useState(() => !!localStorage.getItem('auth.password'))
@@ -501,7 +527,7 @@ export default function App() {
         const ttsModel = vpsSession.ttsModel || s.ttsModel
         const hasTts = ttsApiKey && ttsGroupId
         if (!hasTts) {
-          const msg = { id, conversationId: vpsSession.id, role: 'assistant', type: 'text', content: text, voiceText: text, voiceFailed: true, timestamp: ts, streaming: false, ...reasoningFields }
+          const msg = { id, conversationId: vpsSession.id, role: 'assistant', type: 'text', content: text, voiceText: text, voiceFailed: true, timestamp: ts, streaming: false, source: 'cc-proactive', ...reasoningFields }
           await saveMessage(msg)
           if (useStore.getState().currentSessionId === vpsSession.id) useStore.getState().addMessage(msg)
           return
@@ -518,19 +544,19 @@ export default function App() {
           } catch {}
           const voiceBlobId = id + '-blob'
           await saveBlob(voiceBlobId, blob)
-          const msg = { id, conversationId: vpsSession.id, role: 'assistant', type: 'voice', voiceBlobId, duration, content: '', voiceText: text, timestamp: ts, streaming: false, ...reasoningFields }
+          const msg = { id, conversationId: vpsSession.id, role: 'assistant', type: 'voice', voiceBlobId, duration, content: '', voiceText: text, timestamp: ts, streaming: false, source: 'cc-proactive', ...reasoningFields }
           await saveMessage(msg)
           if (useStore.getState().currentSessionId === vpsSession.id) useStore.getState().addMessage(msg)
         } catch (e) {
           console.error('[PROACTIVE-VOICE] 合成失败:', e?.message)
-          const msg = { id, conversationId: vpsSession.id, role: 'assistant', type: 'text', content: text, voiceText: text, voiceFailed: true, timestamp: ts, streaming: false, ...reasoningFields }
+          const msg = { id, conversationId: vpsSession.id, role: 'assistant', type: 'text', content: text, voiceText: text, voiceFailed: true, timestamp: ts, streaming: false, source: 'cc-proactive', ...reasoningFields }
           await saveMessage(msg)
           if (useStore.getState().currentSessionId === vpsSession.id) useStore.getState().addMessage(msg)
         }
         return
       }
 
-      const msg = { id, conversationId: vpsSession.id, role: 'assistant', type: 'text', content: text, timestamp: ts, streaming: false, ...reasoningFields }
+      const msg = { id, conversationId: vpsSession.id, role: 'assistant', type: 'text', content: text, timestamp: ts, streaming: false, source: 'cc-proactive', ...reasoningFields }
       await saveMessage(msg)
       if (useStore.getState().currentSessionId === vpsSession.id) {
         useStore.getState().addMessage(msg)
@@ -656,9 +682,10 @@ export default function App() {
           {currentView === 'voiceFavorites' && <VoiceFavorites theme={theme} />}
           {currentView === 'companionMemory' && <CompanionMemory theme={theme} onBack={() => setCurrentView('sessionSettings')} />}
           {currentView === 'dialogueCompression' && <DialogueCompression theme={theme} onBack={() => setCurrentView('sessionSettings')} />}
+          {currentView === 'codexMemory' && <CodexMemory theme={theme} onBack={() => setCurrentView('sessionSettings')} />}
         </div>
 
-        {currentView !== 'sessionSettings' && currentView !== 'voiceFavorites' && currentView !== 'chat' && currentView !== 'companionMemory' && currentView !== 'dialogueCompression' && currentView !== 'groupChat' && (
+        {currentView !== 'sessionSettings' && currentView !== 'voiceFavorites' && currentView !== 'chat' && currentView !== 'companionMemory' && currentView !== 'codexMemory' && currentView !== 'dialogueCompression' && currentView !== 'groupChat' && (
           <BottomNav currentView={currentView} onChange={setCurrentView} theme={theme} />
         )}
       </div>

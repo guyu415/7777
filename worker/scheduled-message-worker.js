@@ -1,7 +1,7 @@
 const CORS = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Methods': 'GET, POST, DELETE, OPTIONS',
-  'Access-Control-Allow-Headers': 'Content-Type, X-Api-Key, X-Target-Url',
+  'Access-Control-Allow-Headers': 'Content-Type, X-Api-Key, X-Target-Url, X-VPS-Key',
 }
 
 export default {
@@ -205,13 +205,14 @@ export default {
       if (!password) {
         return Response.json({ error: 'USER_PASSWORD secret not set' }, { status: 500, headers: CORS })
       }
-      const { title, body, url, tag } = await request.json().catch(() => ({}))
+      const payload = await request.json().catch(() => ({}))
+      const body = typeof payload?.body === 'string' ? payload.body.trim() : ''
       if (!body) return Response.json({ error: 'missing body' }, { status: 400, headers: CORS })
       const result = await sendPushToUser(env, password, {
-        title: title || '小满 🌸',
-        body: String(body).slice(0, 120),
-        url: url || '/',
-        tag: tag || 'eunoia-vps',
+        title: typeof payload?.title === 'string' ? payload.title : '小满 🌸',
+        body: body.slice(0, 120),
+        tag: typeof payload?.tag === 'string' ? payload.tag : 'eunoia-cc-proactive',
+        url: typeof payload?.url === 'string' ? payload.url : '/?source=cc-proactive',
       })
       return Response.json(result, { headers: CORS })
     }
@@ -916,6 +917,23 @@ function resolveTargetSession(settings) {
   return [...sessions].sort((a, b) => (b.lastMsgTime || 0) - (a.lastMsgTime || 0))[0]
 }
 
+// Fixed VPS runtimes have their own message protocols.  The ordinary API
+// worker must never generate for either one: Claude Code has the companion's
+// VPS-native proactive pipeline, while Codex has no ordinary-worker proactive
+// pipeline at all.  Keeping this as an explicit predicate prevents a
+// Codex session selected in the synced settings from becoming a target by
+// accident.
+export function isFixedVpsSession(session) {
+  const providerName = session?.providerName
+  return providerName === 'claude-code-vps' || providerName === 'codex-vps'
+}
+
+export function ordinaryProactiveEnabled(settings) {
+  // The field was added after the worker shipped.  Undefined therefore
+  // means "preserve the old behaviour" for existing synced settings.
+  return settings?.apiProactiveEnabled !== false
+}
+
 // Mirror useChat.js effective config resolution
 function resolveSessionConfig(settings, session) {
   const providers = Array.isArray(settings?.providers) ? settings.providers : []
@@ -1006,18 +1024,22 @@ async function generateProactive(env, { force }) {
     return { ...debug, error: 'no settings in KV for this user', savedToKV: false }
   }
 
+  if (!ordinaryProactiveEnabled(settings)) {
+    return { ...debug, skipped: 'ordinary API proactive messages are disabled', savedToKV: false }
+  }
+
   // 2. Target session
   const session = resolveTargetSession(settings)
   if (!session) {
     return { ...debug, error: 'no sessions found in settings', savedToKV: false }
   }
-  if (session.providerName === 'claude-code-vps') {
+  if (isFixedVpsSession(session)) {
     // This session is bound to the VPS-resident Claude Code companion, which
-    // runs its own proactive-message pipeline now (systemd timer -> 小G查岗
-    // MCP status check -> the resident session's own judgment -> its own
-    // reply tool -> companion WS/history). This worker must never build an
-    // Eunoia persona/context prompt and call a model API for this session.
-    return { ...debug, skipped: 'target session is VPS-bound (claude-code-vps) — handled by the VPS proactive pipeline instead', savedToKV: false, targetSessionId: session.id }
+    // runs its own proactive-message pipeline when applicable.  Codex is a
+    // separate fixed VPS runtime and is intentionally not handled by this
+    // worker either.  Neither one should ever receive an Eunoia
+    // persona/context prompt or an API-generated pending message.
+    return { ...debug, skipped: `target session is fixed VPS runtime (${session.providerName})`, savedToKV: false, targetSessionId: session.id }
   }
   const { apiKey, baseUrl, model, persona } = resolveSessionConfig(settings, session)
   debug.targetSessionId = session.id
@@ -1133,7 +1155,10 @@ async function generateProactive(env, { force }) {
       debug.push = await sendPushToUser(env, password, {
         title: `${aiName} 🌸`,
         body: result.text.slice(0, 120),
-        url: '/',
+        // Carry the target through the notification click.  A bare `/` used
+        // to focus whichever window happened to be open, so a notification
+        // generated for another session looked like an empty Codex/CC chat.
+        url: `/?session=${encodeURIComponent(session.id)}&source=api-proactive`,
         tag: `eunoia-${session.id}`,
       })
     } catch (e) {

@@ -3,7 +3,7 @@ import { ChevronLeft, ChevronDown, Eye, EyeOff, RefreshCw } from 'lucide-react'
 import { useStore, getMessages, deleteMessagesForSession } from '../store'
 import { putAsset, saveSettings, extractSettings, deleteSessionMsgs } from '../services/sync'
 import { fetchModels } from '../services/claude'
-import { getAuthStatus, logout as companionLogout, COMPANION_LOGIN_URL, COMPANION_RETURN_URL, getProactiveSettings, setProactiveSettings, resetCcConversation, getCodexAuthStatus, resetCodex } from '../services/companion'
+import { getAuthStatus, logout as companionLogout, COMPANION_LOGIN_URL, COMPANION_RETURN_URL, getProactiveSettings, setProactiveSettings, resetCcConversation, getCodexAuthStatus, resetCodex, saveCodexPrompt } from '../services/companion'
 import { compressImage } from '../utils/image'
 
 const VPS_PROVIDER = 'claude-code-vps'
@@ -120,6 +120,16 @@ export default function SessionSettings({ theme }) {
   const [codexStatusChecking, setCodexStatusChecking] = useState(false)
   const otherCodexSession = sessions?.find(s => s.id !== currentSessionId && s.providerName === CODEX_PROVIDER)
   const isCodexWindow = localProviderName === CODEX_PROVIDER
+
+  const persistCodexPrompt = (value) => {
+    const prompt = typeof value === 'string' ? value : ''
+    setSessionSystemPrompt(currentSessionId, prompt)
+    if (isCodexWindow) {
+      saveCodexPrompt(currentSessionId, prompt).catch(err => {
+        console.warn('[CODEX-PROMPT] companion 保存失败（本地设置已保留）:', err?.message || err)
+      })
+    }
+  }
 
   const refreshCodexStatus = async () => {
     setCodexStatusChecking(true)
@@ -510,7 +520,7 @@ export default function SessionSettings({ theme }) {
       setClearBusy(true)
       setClearError(null)
       try {
-        await resetCodex()
+        await resetCodex(currentSessionId)
         // Codex's own codex_reset broadcast (handled inside useCodexChat)
         // clears the visible messages once the server confirms it, same
         // "never optimistic" discipline as Claude Code's reset above.
@@ -795,6 +805,13 @@ export default function SessionSettings({ theme }) {
                     刷新状态
                   </button>
                 </div>
+                <button
+                  onClick={() => setCurrentView('codexMemory')}
+                  className="w-full mt-2 py-2 rounded-full text-xs font-medium"
+                  style={{ background: 'rgba(255,255,255,0.5)', color: '#4a7aaa', border: '1px solid rgba(120,160,220,0.35)' }}
+                >
+                  🧠 Codex 会话记忆管理
+                </button>
               </div>
             ) : localProviderName === VPS_PROVIDER ? (
               <div style={{
@@ -1041,6 +1058,46 @@ export default function SessionSettings({ theme }) {
           </div>
         </GlassCard>
 
+        {/* Codex conversation instructions — kept outside the normal-session
+            advanced section so a Codex window always has an obvious place to
+            edit its own prompt/custom instructions. The value is scoped to
+            this session and persists with the rest of the conversation
+            settings; an empty value means no session override. */}
+        {isCodexWindow && (
+          <GlassCard icon="🧭" title="Codex Prompt / 自定义指令">
+            <p className="text-[11px] mb-2" style={{ color: '#7a9cc0' }}>
+              为这个 Codex 对话补充角色、语气或行为要求。留空会沿用 Codex 现有默认指令。
+            </p>
+            <textarea
+              value={localSystemPrompt}
+              onChange={e => setLocalSystemPrompt(e.target.value)}
+              onBlur={() => persistCodexPrompt(localSystemPrompt)}
+              rows={6}
+              placeholder="例如：回答简洁一些，先给结论，再给必要的步骤…"
+              style={{ ...inputStyle, resize: 'vertical', lineHeight: 1.6 }}
+            />
+            <div className="flex items-center justify-between mt-2">
+              <button
+                onClick={() => {
+                  setLocalSystemPrompt('')
+                  persistCodexPrompt('')
+                }}
+                className="text-xs"
+                style={{ color: '#7a9cc0', background: 'none', border: 'none', cursor: 'pointer', padding: '2px 4px' }}
+              >
+                ↩ 使用 Codex 默认
+              </button>
+              <button
+                onClick={() => persistCodexPrompt(localSystemPrompt)}
+                className="px-3 py-1.5 rounded-full text-xs font-medium text-white"
+                style={{ background: `linear-gradient(135deg, ${primary}, ${primaryDark})`, border: 'none' }}
+              >
+                保存指令
+              </button>
+            </div>
+          </GlassCard>
+        )}
+
         {/* TTS Config */}
         <GlassCard
           icon="🎙️" title="AI 语音"
@@ -1230,9 +1287,7 @@ export default function SessionSettings({ theme }) {
         </GlassCard>
 
         {/* 高级设置 — normal sessions only: systemPrompt/summary/memory folded
-            away by default. A CC or Codex window never shows these at all
-            (none of them apply — see the module-level provider branches
-            above). */}
+            away by default. Codex has its own dedicated prompt card above. */}
         {!isVpsWindow && !isCodexWindow && (
           <>
             <button

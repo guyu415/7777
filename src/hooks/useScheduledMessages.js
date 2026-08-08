@@ -6,10 +6,17 @@ function genId() {
 }
 
 export function useScheduledMessages() {
-  const { workerUrl, currentSessionId } = useStore()
+  const { workerUrl, currentSessionId, sessions, apiProactiveEnabled } = useStore()
+  const currentSession = sessions?.find(s => s.id === currentSessionId)
+  // This hook belongs to the ordinary API proactive pipeline only.  In
+  // particular, neither fixed VPS runtime may consume the API worker's
+  // queue: Claude Code has its own server-side switch and Codex must never
+  // receive an API-generated proactive bubble.
+  const isOrdinarySession = currentSession?.providerName !== 'claude-code-vps'
+    && currentSession?.providerName !== 'codex-vps'
 
   const fetchPendingMessages = useCallback(async () => {
-    if (!workerUrl) return false
+    if (!workerUrl || !apiProactiveEnabled || !isOrdinarySession) return false
     const base = workerUrl.replace(/\/$/, '')
     const password = localStorage.getItem('auth.password')
     if (!password) return false
@@ -47,6 +54,7 @@ export function useScheduledMessages() {
           type: 'text',
           content: m.content,
           timestamp: m.timestamp,
+          source: 'api-proactive',
         })
       }
       return true
@@ -54,12 +62,15 @@ export function useScheduledMessages() {
       console.log('[PENDING] 异常:', e.name, e.message)
       return false
     }
-  }, [workerUrl, currentSessionId])
+  }, [workerUrl, currentSessionId, apiProactiveEnabled, isOrdinarySession])
 
   const updateActiveTime = useCallback(() => {
-    if (!workerUrl) return
+    // CC/Codex activity must not update the ordinary API worker's global
+    // activity clock.  Otherwise opening or using a VPS window changes the
+    // timing of a completely different proactive pipeline.
+    if (!workerUrl || !apiProactiveEnabled || !isOrdinarySession) return
     fetch(`${workerUrl.replace(/\/$/, '')}/user-active`, { method: 'POST' }).catch(() => {})
-  }, [workerUrl])
+  }, [workerUrl, apiProactiveEnabled, isOrdinarySession])
 
   return { fetchPendingMessages, updateActiveTime }
 }

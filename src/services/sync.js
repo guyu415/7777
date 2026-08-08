@@ -32,7 +32,7 @@ export async function saveSettings(password, settings) {
 // Mirrors the store's partialize — keys that are synced to cloud
 const SYNC_KEYS = [
   'apiKey', 'apiBaseUrl', 'model', 'systemPrompt', 'memoryEnabled',
-  'workerUrl', 'useWorkerProxy', 'userAvatar', 'aiAvatar', 'aiName',
+  'workerUrl', 'useWorkerProxy', 'apiProactiveEnabled', 'userAvatar', 'aiAvatar', 'aiName',
   'themeId', 'chatBg', 'fontFamily', 'defaultFontSize', 'customFonts',
   'sessions', 'currentSessionId', 'providers', 'selectedProviderId', 'selectedModelId',
   'ttsApiKey', 'ttsGroupId', 'ttsVoiceId', 'aiVoiceEnabled', 'aiVoiceFrequency',

@@ -136,6 +136,12 @@ export const useStore = create(
       memoryEnabled: false,
       workerUrl: 'https://chat.xiaoman.xyz',
       useWorkerProxy: false,
+      // Ordinary API proactive messages are a separate, account-wide
+      // feature.  The Claude Code switch lives on the VPS; Codex is never a
+      // target of this worker pipeline.  Keep the historical worker
+      // behaviour (enabled) for existing users, while making it explicit and
+      // independently controllable in Global Settings.
+      apiProactiveEnabled: true,
       userAvatar: '',
       aiAvatar: '',
       aiName: '',
@@ -224,6 +230,7 @@ export const useStore = create(
       setMemoryEnabled: (v) => set({ memoryEnabled: v }),
       setWorkerUrl: (v) => set({ workerUrl: v }),
       setUseWorkerProxy: (v) => set({ useWorkerProxy: v }),
+      setApiProactiveEnabled: (v) => set({ apiProactiveEnabled: !!v }),
       setUserAvatar: (v) => set({ userAvatar: v }),
       setAiAvatar: (v) => set({ aiAvatar: v }),
       setAiName: (name) => set({ aiName: name }),
@@ -434,7 +441,7 @@ export const useStore = create(
     }),
     {
       name: 'pink-chat-settings',
-      version: 17,
+      version: 18,
       migrate: (persisted, version) => {
         if (version < 2) {
           const providers = [
@@ -586,6 +593,11 @@ export const useStore = create(
             },
           }
         }
+        if (version < 18) {
+          // The old Worker pipeline had no explicit account-wide switch;
+          // preserve that behaviour when hydrating existing local settings.
+          persisted = { ...persisted, apiProactiveEnabled: persisted.apiProactiveEnabled !== false }
+        }
         return persisted
       },
       partialize: (state) => ({
@@ -596,6 +608,7 @@ export const useStore = create(
         memoryEnabled: state.memoryEnabled,
         workerUrl: state.workerUrl,
         useWorkerProxy: state.useWorkerProxy,
+        apiProactiveEnabled: state.apiProactiveEnabled,
         userAvatar: state.userAvatar,
         aiAvatar: state.aiAvatar,
         aiName: state.aiName,
