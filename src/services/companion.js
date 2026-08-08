@@ -1170,6 +1170,8 @@ async function companionJson(path, init) {
   if (!res.ok) {
     const err = new Error(body?.error || `companion request failed (${res.status})`)
     err.status = res.status
+    err.code = body?.error || null
+    err.currentRevision = body?.currentRevision
     throw err
   }
   return body
@@ -1225,42 +1227,21 @@ export async function deleteMemoryFile(name) {
   })
 }
 
-// ---------- Dialogue compression review (灯/memo layer, human-gated) ----------
-// The pipeline itself (extract raw session dialogue -> SiliconFlow summary)
-// runs server-side, either automatically right before Claude Code's own
-// auto-compact (PreCompact hook) or on demand via regenerateCompression()
-// below. Nothing gets written into Auto Memory until acceptCompression() is
-// called — this module only ever surfaces what's already staged for review.
+// ---------- CC fixed-window tidal memory ----------
+// These endpoints address only the authoritative rolling summary owned by
+// the resident CC session. They never read the retired compression-review
+// drafts, Codex memory, or ordinary API conversation state.
 
-export async function getCompressionStatus() {
-  return companionJson(`/compression/status?_=${Date.now()}`, { cache: 'no-store' })
+export async function getTidalMemoryStatus() {
+  return companionJson(`/tidal-memory/status?_=${Date.now()}`, { cache: 'no-store' })
 }
 
-export async function regenerateCompression() {
-  return companionJson('/compression/regenerate', { method: 'POST' })
-}
-
-export async function acceptCompression() {
-  return companionJson('/compression/accept', { method: 'POST' })
-}
-
-// Triggers a real browser download rather than returning text, since the
-// point is "give me a file I can save/inspect outside the app".
-export async function downloadCompressionDialogue() {
-  const res = await fetch(`${COMPANION_BASE}/compression/dialogue`, { credentials: 'include' })
-  if (!res.ok) throw new Error(`下载失败 (${res.status})`)
-  const blob = await res.blob()
-  const disposition = res.headers.get('content-disposition') || ''
-  const match = disposition.match(/filename="([^"]+)"/)
-  const filename = match ? match[1] : 'dialogue.md'
-  const url = URL.createObjectURL(blob)
-  const a = document.createElement('a')
-  a.href = url
-  a.download = filename
-  document.body.appendChild(a)
-  a.click()
-  a.remove()
-  URL.revokeObjectURL(url)
+export async function saveTidalMemorySummary({ sessionId, expectedRevision, summaryText }) {
+  return companionJson('/tidal-memory/summary', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ sessionId, expectedRevision, summaryText }),
+  })
 }
 
 // Codex memory is intentionally separate from the Claude Code Auto Memory

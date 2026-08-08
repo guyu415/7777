@@ -47,6 +47,15 @@ export type TidalPending = {
   compactConfirmedAt?: number
   recoveryMarker?: string
   recoveryInjectedAt?: number
+  baseSummaryRevision?: number
+}
+
+export type TidalLastRun = {
+  status: 'success' | 'retry_wait' | 'failed'
+  stage: string
+  at: number
+  retryAt?: number | null
+  model?: string | null
 }
 
 export type TidalState = {
@@ -59,7 +68,19 @@ export type TidalState = {
   queue: QueuedCcMessage[]
   retryAt: number | null
   lastContextTokens: number | null
+  summaryRevision: number
+  summaryUpdatedAt: number | null
+  summaryModel: string | null
+  summarySource: 'automatic' | 'manual' | 'legacy' | null
+  lastRun: TidalLastRun | null
   updatedAt: number
+}
+
+export type TidalPublicStatus = {
+  status: 'idle' | 'running' | 'success' | 'retry_wait' | 'failed'
+  stage: string
+  at: number | null
+  retryAt: number | null
 }
 
 export type TidalConfig = {
@@ -89,6 +110,11 @@ export function createTidalState(sessionId: string, now = Date.now()): TidalStat
     queue: [],
     retryAt: null,
     lastContextTokens: null,
+    summaryRevision: 0,
+    summaryUpdatedAt: null,
+    summaryModel: null,
+    summarySource: null,
+    lastRun: null,
     updatedAt: now,
   }
 }
@@ -205,6 +231,78 @@ export function renderRollingSummary(summary: RollingSummary | null): string {
     `待办：${summary.todos}`,
     `用户偏好：${summary.preferences}`,
   ].join('\n')
+}
+
+const ROLLING_SUMMARY_LABELS: Array<[keyof RollingSummary, string]> = [
+  ['relationshipIdentity', '关系与身份连续性'],
+  ['emotionInteraction', '重要情绪与互动状态'],
+  ['factsCommitments', '明确事实和约定'],
+  ['ongoing', '正在进行的事情'],
+  ['todos', '待办'],
+  ['preferences', '用户偏好'],
+]
+
+export function parseRollingSummaryText(value: unknown): RollingSummary | null {
+  if (typeof value !== 'string') return null
+  const text = value.replace(/\r\n?/g, '\n').trim()
+  if (!text || text.length > 8_000) return null
+  const positions = ROLLING_SUMMARY_LABELS.map(([, label]) => {
+    const match = new RegExp(`(?:^|\\n)${label}[：:]`).exec(text)
+    return match ? { start: match.index + (match[0].startsWith('\n') ? 1 : 0), bodyStart: match.index + match[0].length } : null
+  })
+  if (positions.some((position) => !position)) return null
+  for (let i = 1; i < positions.length; i++) {
+    if (positions[i]!.start <= positions[i - 1]!.start) return null
+  }
+  const parsed = {} as RollingSummary
+  for (let i = 0; i < ROLLING_SUMMARY_LABELS.length; i++) {
+    const [key] = ROLLING_SUMMARY_LABELS[i]
+    parsed[key] = text.slice(positions[i]!.bodyStart, positions[i + 1]?.start ?? text.length).trim()
+  }
+  return validateRollingSummary(parsed)
+}
+
+export function manualSummaryUpdateCandidate(
+  state: TidalState,
+  args: { sessionId: string; expectedRevision: number; summaryText: unknown; now?: number },
+): { ok: true; state: TidalState } | { ok: false; code: 'session_mismatch' | 'version_conflict' | 'tidal_active' | 'invalid_summary' } {
+  if (!args.sessionId || args.sessionId !== state.sessionId) return { ok: false, code: 'session_mismatch' }
+  if (!Number.isInteger(args.expectedRevision) || args.expectedRevision !== state.summaryRevision) return { ok: false, code: 'version_conflict' }
+  if (state.pending) return { ok: false, code: 'tidal_active' }
+  const summary = parseRollingSummaryText(args.summaryText)
+  if (!summary) return { ok: false, code: 'invalid_summary' }
+  const now = args.now ?? Date.now()
+  return {
+    ok: true,
+    state: {
+      ...state,
+      rollingSummary: summary,
+      summaryRevision: state.summaryRevision + 1,
+      summaryUpdatedAt: now,
+      summaryModel: state.summaryModel ?? 'manual',
+      summarySource: 'manual',
+      updatedAt: now,
+    },
+  }
+}
+
+export function tidalStatusSnapshot(state: TidalState, now = Date.now()): TidalPublicStatus {
+  if (state.pending) {
+    if (state.retryAt && state.retryAt > now) {
+      return { status: 'retry_wait', stage: state.lastRun?.stage ?? state.pending.phase, at: state.lastRun?.at ?? state.updatedAt, retryAt: state.retryAt }
+    }
+    return { status: 'running', stage: state.pending.phase, at: state.updatedAt, retryAt: state.retryAt }
+  }
+  if (state.retryAt && state.retryAt > now) {
+    return { status: 'retry_wait', stage: state.lastRun?.stage ?? 'retry_scheduled', at: state.lastRun?.at ?? state.updatedAt, retryAt: state.retryAt }
+  }
+  if (state.lastRun) {
+    return { status: state.lastRun.status, stage: state.lastRun.stage, at: state.lastRun.at, retryAt: state.lastRun.retryAt ?? null }
+  }
+  if (state.rollingSummary) {
+    return { status: 'success', stage: 'existing_summary', at: state.summaryUpdatedAt ?? state.updatedAt, retryAt: null }
+  }
+  return { status: 'idle', stage: 'no_summary', at: null, retryAt: null }
 }
 
 export function summaryInput(previous: RollingSummary | null, messages: VisibleCcMessage[]): string {
@@ -328,6 +426,11 @@ export function loadTidalState(path: string, sessionId: string): TidalState {
         : [],
       retryAt: typeof raw.retryAt === 'number' ? raw.retryAt : null,
       lastContextTokens: typeof raw.lastContextTokens === 'number' ? raw.lastContextTokens : null,
+      summaryRevision: Number.isInteger(raw.summaryRevision) && Number(raw.summaryRevision) >= 0 ? Number(raw.summaryRevision) : (validateRollingSummary(raw.rollingSummary) ? 1 : 0),
+      summaryUpdatedAt: typeof raw.summaryUpdatedAt === 'number' ? raw.summaryUpdatedAt : (validateRollingSummary(raw.rollingSummary) ? (typeof raw.updatedAt === 'number' ? raw.updatedAt : Date.now()) : null),
+      summaryModel: typeof raw.summaryModel === 'string' ? raw.summaryModel : null,
+      summarySource: raw.summarySource === 'automatic' || raw.summarySource === 'manual' || raw.summarySource === 'legacy' ? raw.summarySource : null,
+      lastRun: raw.lastRun && typeof raw.lastRun === 'object' ? raw.lastRun as TidalLastRun : null,
       updatedAt: typeof raw.updatedAt === 'number' ? raw.updatedAt : Date.now(),
     }
   } catch {
@@ -337,9 +440,9 @@ export function loadTidalState(path: string, sessionId: string): TidalState {
 
 export function saveTidalState(path: string, state: TidalState): void {
   mkdirSync(dirname(path), { recursive: true })
-  const next = { ...state, updatedAt: Date.now() }
+  state.updatedAt = Date.now()
   const tmp = `${path}.tmp.${process.pid}`
-  writeFileSync(tmp, JSON.stringify(next, null, 2), { mode: 0o600 })
+  writeFileSync(tmp, JSON.stringify(state, null, 2), { mode: 0o600 })
   renameSync(tmp, path)
 }
 

@@ -29,8 +29,12 @@ thread.
 
 Persistent tidal state is `/opt/ai-companion/state/cc-tidal-memory.json`.
 The file contains the CC session id, rolling summary, processed boundary,
-two-phase pending record, retry timestamp, and FIFO messages that arrived
-during maintenance. It is private runtime state and must never be committed.
+summary revision/model/update metadata, latest run status, two-phase pending
+record, retry timestamp, and FIFO messages that arrived during maintenance.
+It is private runtime state and must never be committed. The authenticated
+`GET /tidal-memory/status` and version-checked `PUT /tidal-memory/summary`
+routes are the only settings-page access to that authoritative summary; the
+retired `/compression/*` review pipeline is not consulted.
 
 The production CC service remains `ai-companion-brain.service`. Codex's
 app-server is owned by the separate `ai-companion-codex-daemon.service` cgroup;

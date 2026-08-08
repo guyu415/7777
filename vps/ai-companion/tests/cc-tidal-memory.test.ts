@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { mkdtempSync, readFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import {
@@ -12,10 +12,13 @@ import {
   guardedSummaryBeforeCompact,
   inputTokensFromMessageStart,
   loadTidalState,
+  manualSummaryUpdateCandidate,
+  renderRollingSummary,
   saveTidalState,
   sessionIdUnchanged,
   shouldEvaluateTidalSurface,
   tidalTrigger,
+  tidalStatusSnapshot,
   type RollingSummary,
   type VisibleCcMessage,
 } from '../cc-tidal-memory.ts'
@@ -89,6 +92,112 @@ describe('two-phase safety', () => {
     expect(loaded.processedBoundaryId).toBe('m-old')
     expect(loaded.queue.map((q) => q.id)).toEqual(['queued-1'])
     expect(readFileSync(path, 'utf8')).toContain('relationshipIdentity')
+  })
+})
+
+describe('authoritative rolling-summary management', () => {
+  test('reads the current tidal summary and preserves manual edits across reload/restart', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'tidal-manual-'))
+    const path = join(dir, 'state.json')
+    const initial = createTidalState('cc-session')
+    initial.rollingSummary = summary
+    initial.summaryRevision = 1
+    initial.summaryUpdatedAt = 100
+    initial.summaryModel = 'gpt-5.6-luna'
+    initial.summarySource = 'automatic'
+    saveTidalState(path, initial)
+
+    const loaded = loadTidalState(path, 'unused-default')
+    expect(renderRollingSummary(loaded.rollingSummary)).toBe(renderRollingSummary(summary))
+    const editedText = renderRollingSummary({
+      ...summary,
+      ongoing: '人工纠正后的正在进行事项，会成为后续恢复读取的权威版本。'.repeat(3),
+    })
+    const candidate = manualSummaryUpdateCandidate(loaded, {
+      sessionId: 'cc-session', expectedRevision: 1, summaryText: editedText, now: 456,
+    })
+    expect(candidate.ok).toBeTrue()
+    if (!candidate.ok) throw new Error(candidate.code)
+    saveTidalState(path, candidate.state)
+
+    const afterRestart = loadTidalState(path, 'another-default')
+    expect(renderRollingSummary(afterRestart.rollingSummary)).toBe(editedText)
+    expect(afterRestart.sessionId).toBe('cc-session')
+    expect(afterRestart.summaryRevision).toBe(2)
+    expect(afterRestart.summaryUpdatedAt).toBe(456)
+    expect(afterRestart.summarySource).toBe('manual')
+    expect(afterRestart.summaryModel).toBe('gpt-5.6-luna')
+  })
+
+  test('manual summary persistence never modifies the append-only chat history', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'tidal-history-'))
+    const statePath = join(dir, 'state.json')
+    const historyPath = join(dir, 'chat-history.json')
+    const originalHistory = JSON.stringify([{ id: 'u1', from: 'user', text: '私密原文' }, { id: 'a1', from: 'cc', text: '完整回复' }])
+    writeFileSync(historyPath, originalHistory)
+    const state = createTidalState('cc-session')
+    const candidate = manualSummaryUpdateCandidate(state, {
+      sessionId: 'cc-session', expectedRevision: 0, summaryText: renderRollingSummary(summary), now: 500,
+    })
+    expect(candidate.ok).toBeTrue()
+    if (!candidate.ok) throw new Error(candidate.code)
+    saveTidalState(statePath, candidate.state)
+    expect(readFileSync(historyPath, 'utf8')).toBe(originalHistory)
+  })
+
+  test('version and pending-state checks prevent concurrent writes from overwriting a manual revision', () => {
+    const state = createTidalState('cc-session')
+    state.rollingSummary = summary
+    state.summaryRevision = 4
+    const first = manualSummaryUpdateCandidate(state, {
+      sessionId: 'cc-session', expectedRevision: 4, summaryText: renderRollingSummary(summary), now: 600,
+    })
+    expect(first.ok).toBeTrue()
+    if (!first.ok) throw new Error(first.code)
+    const stale = manualSummaryUpdateCandidate(first.state, {
+      sessionId: 'cc-session', expectedRevision: 4, summaryText: renderRollingSummary(summary), now: 601,
+    })
+    expect(stale).toEqual({ ok: false, code: 'version_conflict' })
+
+    first.state.pending = {
+      taskId: 'automatic', phase: 'summarizing', triggerReason: 'tokens', boundaryId: 'm1', boundaryTs: 1,
+      sourceCount: 1, contextTokens: 110_000, baseSummaryRevision: first.state.summaryRevision,
+    }
+    const duringAutomatic = manualSummaryUpdateCandidate(first.state, {
+      sessionId: 'cc-session', expectedRevision: first.state.summaryRevision, summaryText: renderRollingSummary(summary), now: 602,
+    })
+    expect(duringAutomatic).toEqual({ ok: false, code: 'tidal_active' })
+  })
+
+  test('reports empty, retry, failure and successful summary states', () => {
+    const state = createTidalState('cc-session', 10)
+    expect(tidalStatusSnapshot(state, 20).status).toBe('idle')
+    state.pending = {
+      taskId: 'retry', phase: 'summarizing', triggerReason: 'tokens', boundaryId: 'm1', boundaryTs: 1,
+      sourceCount: 1, contextTokens: 110_000,
+    }
+    state.retryAt = 1_000
+    state.lastRun = { status: 'retry_wait', stage: 'summary_all_failed', at: 30, retryAt: 1_000 }
+    expect(tidalStatusSnapshot(state, 100)).toMatchObject({ status: 'retry_wait', retryAt: 1_000 })
+    state.pending = null
+    state.retryAt = null
+    state.lastRun = { status: 'failed', stage: 'summary_revision_conflict', at: 40 }
+    expect(tidalStatusSnapshot(state, 100).status).toBe('failed')
+    state.lastRun = null
+    state.rollingSummary = summary
+    state.summaryUpdatedAt = 50
+    expect(tidalStatusSnapshot(state, 100)).toMatchObject({ status: 'success', stage: 'existing_summary', at: 50 })
+  })
+
+  test('retired compression-review files are ignored and their routes are gone', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'tidal-legacy-'))
+    const legacyDir = join(dir, 'compression')
+    mkdirSync(legacyDir)
+    writeFileSync(join(legacyDir, 'summary-pending.md'), '这是一份废弃管线的摘要，不应成为潮汐权威数据。')
+    const loaded = loadTidalState(join(dir, 'state', 'cc-tidal-memory.json'), 'cc-session')
+    expect(loaded.rollingSummary).toBeNull()
+    const serverSource = readFileSync(new URL('../channel-server.ts', import.meta.url), 'utf8')
+    expect(serverSource).not.toContain("url.pathname === '/compression/")
   })
 })
 

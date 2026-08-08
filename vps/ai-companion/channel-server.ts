@@ -49,9 +49,12 @@ import {
   enqueueUnique,
   latestInputTokensFromTranscript,
   loadTidalState,
+  manualSummaryUpdateCandidate,
   queuedTurnIds,
+  renderRollingSummary,
   saveTidalState,
   summaryInput,
+  tidalStatusSnapshot,
   tidalTrigger,
   transcriptContainsMarker,
   transcriptHasCompactAfter,
@@ -768,6 +771,7 @@ function brainTranscriptPath(sessionId = readBrainSessionId()): string {
 let tidalState: TidalState = loadTidalState(TIDAL_STATE_FILE, readBrainSessionId())
 let tidalRun: Promise<void> | null = null
 let tidalRetryTimer: ReturnType<typeof setTimeout> | null = null
+let tidalStartupRestore = false
 
 function persistTidalState() {
   saveTidalState(TIDAL_STATE_FILE, tidalState)
@@ -784,7 +788,7 @@ function tidalLog(stage: string, fields: Record<string, unknown> = {}) {
 }
 
 function tidalIsActive(): boolean {
-  return !!tidalState.pending || !!tidalRun
+  return !!tidalState.pending || !!tidalRun || tidalStartupRestore
 }
 
 // Used by the image cleanup sweep (and the explicit delete-with-message
@@ -1567,7 +1571,7 @@ function corsHeadersFor(origin: string | null): Record<string, string> {
     return {
       'access-control-allow-origin': origin, // exact origin, never '*'
       'access-control-allow-credentials': 'true',
-      'access-control-allow-methods': 'GET, POST, OPTIONS',
+      'access-control-allow-methods': 'GET, POST, PUT, OPTIONS',
       'access-control-allow-headers': 'Content-Type',
     }
   }
@@ -2521,85 +2525,6 @@ function listMemoryFiles(): Array<{ name: string; size: number; mtime: number }>
   return out
 }
 
-// ---------- Dialogue compression (灯/memo layer) — review-gated ----------
-//
-// Extract + compress live in standalone scripts under scripts/compression/
-// (invoked here via Bun.spawn, same as everywhere else in this file) so the
-// PreCompact hook (see .claude/settings.json, matcher:"auto") can trigger
-// the exact same pipeline without going through HTTP at all. This section
-// is purely: expose the pipeline's output for review, let the frontend ask
-// for a redo, and — only once the human clicks "accept" — write the result
-// into the same MEMORY_DIR Auto Memory already reads on every session start.
-const COMPRESSION_DIR = join(ROOT, 'compression')
-const COMPRESSION_SCRIPTS_DIR = join(ROOT, 'scripts', 'compression')
-const COMPRESSION_PENDING_PATH = join(COMPRESSION_DIR, 'summary-pending.md')
-const COMPRESSION_DIALOGUE_PATH = join(COMPRESSION_DIR, 'latest-dialogue.md')
-const COMPRESSION_LOCK_PATH = join(COMPRESSION_DIR, '.compressing.lock')
-const COMPRESSION_ARCHIVE_DIR = join(COMPRESSION_DIR, 'summary-archive')
-
-function compressionIsGenerating(): boolean {
-  if (!existsSync(COMPRESSION_LOCK_PATH)) return false
-  const pid = Number(readFileSync(COMPRESSION_LOCK_PATH, 'utf8').trim())
-  if (!pid) return false
-  try {
-    process.kill(pid, 0) // signal 0: existence check only, never actually sent
-    return true
-  } catch {
-    return false // stale lock — the run that held it is gone
-  }
-}
-
-function parseCompressionPending(): {
-  raw: string; body: string; generatedAt: string | null; model: string | null
-  sessionId: string | null; turns: number | null; rangeStart: string | null; rangeEnd: string | null
-} | null {
-  if (!existsSync(COMPRESSION_PENDING_PATH)) return null
-  const raw = readFileSync(COMPRESSION_PENDING_PATH, 'utf8')
-  const genMatch = raw.match(/<!--\s*生成时间：(.+?)\s*-->/)
-  const modelMatch = raw.match(/<!--\s*模型：(.+?)\s*-->/)
-  const srcMatch = raw.match(/<!--\s*源对话：session\s+([\w-]+),\s*(\d+)\s*轮,\s*(.+?)\s*~\s*(.+?)\s*-->/)
-  // Body = everything after the leading run of HTML-comment metadata lines.
-  const lines = raw.split('\n')
-  let i = 0
-  while (i < lines.length && (lines[i].trim() === '' || lines[i].trim().startsWith('<!--'))) i++
-  const body = lines.slice(i).join('\n').trim()
-  return {
-    raw, body,
-    generatedAt: genMatch?.[1] ?? null,
-    model: modelMatch?.[1] ?? null,
-    sessionId: srcMatch?.[1] ?? null,
-    turns: srcMatch ? Number(srcMatch[2]) : null,
-    rangeStart: srcMatch?.[3] ?? null,
-    rangeEnd: srcMatch?.[4] ?? null,
-  }
-}
-
-// Only used by the HTTP-triggered "regenerate" button — always re-extracts
-// from whatever the CURRENT session is (extract-dialogue.mjs's own default
-// resolution via state/brain-session-id). The PreCompact hook is a
-// completely separate path (on-pre-compact.sh, run directly by Claude Code
-// itself, not through this server) that passes an explicit transcript_path
-// instead, because it needs the exact pre-compaction snapshot — this
-// function has no equivalent need for that.
-function runCompressionPipeline(): number {
-  // Fire-and-forget: the caller (an HTTP handler) must not block on this,
-  // SiliconFlow's free tier can take tens of seconds for the full
-  // map-reduce pass. Bun.spawn with stdio 'ignore' detaches cleanly; the
-  // lock file (same one the PreCompact hook uses) is how status polling
-  // knows a run is in flight.
-  const bun = '/home/companion/.bun/bin/bun'
-  const proc = Bun.spawn(
-    ['bash', '-c', `"${bun}" run "${COMPRESSION_SCRIPTS_DIR}/extract-dialogue.mjs" && "${bun}" run "${COMPRESSION_SCRIPTS_DIR}/compress-dialogue.mjs"`],
-    { stdio: ['ignore', 'ignore', 'ignore'] },
-  )
-  writeFileSync(COMPRESSION_LOCK_PATH, String(proc.pid))
-  void proc.exited.then(() => {
-    try { if (Number(readFileSync(COMPRESSION_LOCK_PATH, 'utf8').trim()) === proc.pid) unlinkSync(COMPRESSION_LOCK_PATH) } catch {}
-    log('compression_run_done', { pid: proc.pid, exitCode: proc.exitCode })
-  })
-  return proc.pid
-}
-
 // ---------- statusLine-fed status ----------
 
 function readStatus(): unknown {
@@ -2950,6 +2875,37 @@ function readCoreMemorySummary(): string {
   try { return readFileSync(join(MEMORY_DIR, 'MEMORY.md'), 'utf8').trim() } catch { return '' }
 }
 
+function publicTidalMemoryStatus() {
+  const corePath = join(MEMORY_DIR, 'MEMORY.md')
+  const coreText = readCoreMemorySummary()
+  let coreUpdatedAt: number | null = null
+  try { coreUpdatedAt = statSync(corePath).mtimeMs } catch {}
+  return {
+    sessionId: tidalState.sessionId,
+    revision: tidalState.summaryRevision,
+    rollingSummary: tidalState.rollingSummary ? {
+      text: renderRollingSummary(tidalState.rollingSummary),
+      updatedAt: tidalState.summaryUpdatedAt,
+      model: tidalState.summaryModel,
+      source: tidalState.summarySource,
+    } : null,
+    coreMemory: coreText ? { text: coreText, updatedAt: coreUpdatedAt } : null,
+    coverage: tidalState.processedBoundaryId ? {
+      boundaryId: tidalState.processedBoundaryId,
+      boundaryTs: tidalState.processedBoundaryTs,
+    } : null,
+    tide: tidalStatusSnapshot(tidalState),
+    lastContextTokens: tidalState.lastContextTokens,
+    limits: { maxSummaryChars: 8_000 },
+  }
+}
+
+function tidalSummaryModel(provider?: 'luna' | 'fallback'): string | null {
+  if (provider === 'luna') return 'gpt-5.6-luna'
+  if (provider === 'fallback') return TIDAL_FALLBACK_MODEL
+  return null
+}
+
 function scheduleTidalRetry() {
   if (tidalRetryTimer) clearTimeout(tidalRetryTimer)
   const delay = Math.max(1_000, (tidalState.retryAt ?? Date.now() + TIDAL_CONFIG.retryMs) - Date.now())
@@ -2967,8 +2923,10 @@ function scheduleTidalRetry() {
 }
 
 function tidalRetry(stage: string, keepPending: boolean) {
+  const now = Date.now()
   if (!keepPending) tidalState.pending = null
-  tidalState.retryAt = Date.now() + TIDAL_CONFIG.retryMs
+  tidalState.retryAt = now + TIDAL_CONFIG.retryMs
+  tidalState.lastRun = { status: 'retry_wait', stage, at: now, retryAt: tidalState.retryAt }
   persistTidalState()
   tidalLog(stage, { retryInMs: TIDAL_CONFIG.retryMs })
   scheduleTidalRetry()
@@ -3027,9 +2985,23 @@ async function injectTidalRecovery() {
 function finalizeTidalSuccess() {
   const pending = tidalState.pending
   if (!pending?.summary) return
+  if ((pending.baseSummaryRevision ?? tidalState.summaryRevision) !== tidalState.summaryRevision) {
+    tidalState.pending = null
+    tidalState.retryAt = null
+    tidalState.lastRun = { status: 'failed', stage: 'summary_revision_conflict', at: Date.now() }
+    persistTidalState()
+    tidalLog('summary_revision_conflict')
+    return
+  }
+  const now = Date.now()
   tidalState.rollingSummary = pending.summary
   tidalState.processedBoundaryId = pending.boundaryId
   tidalState.processedBoundaryTs = pending.boundaryTs
+  tidalState.summaryRevision += 1
+  tidalState.summaryUpdatedAt = now
+  tidalState.summaryModel = tidalSummaryModel(pending.summaryProvider)
+  tidalState.summarySource = 'automatic'
+  tidalState.lastRun = { status: 'success', stage: 'complete', at: now, model: tidalState.summaryModel }
   tidalState.pending = null
   tidalState.retryAt = null
   persistTidalState()
@@ -3038,7 +3010,13 @@ function finalizeTidalSuccess() {
 
 function tidalRecoverySettled() {
   const pending = tidalState.pending
-  if (!pending?.recoveryMarker) return
+  if (!pending?.recoveryMarker) {
+    if (tidalStartupRestore) {
+      tidalStartupRestore = false
+      setTimeout(tidalDrainQueue, 0)
+    }
+    return
+  }
   const present = transcriptContainsMarker(brainTranscriptPath(tidalState.sessionId), pending.recoveryMarker)
   if (present) {
     finalizeTidalSuccess()
@@ -3152,6 +3130,7 @@ function tidalPrepareAfterMainTurn(forceRetry = false) {
     boundaryTs: boundary.ts,
     sourceCount: source.length,
     contextTokens: contextTokens ?? 0,
+    baseSummaryRevision: tidalState.summaryRevision,
   })
   if (!claimed) return
   persistTidalState()
@@ -3187,6 +3166,48 @@ function beginMainCcTurn(input: QueuedCcMessage) {
   log('inbound', { id, chars: text.length, turnId: id, hasImage: !!imagePath, queued: input.queuedAt < Date.now() - 50 })
 }
 
+function tidalStartupMarker(): string {
+  let startupTs = 0
+  try { startupTs = Number(JSON.parse(readFileSync(SESSION_MODE_FILE, 'utf8'))?.ts) || 0 } catch {}
+  return `cc-tidal-startup:${tidalState.sessionId}:${startupTs}:r${tidalState.summaryRevision}`
+}
+
+async function injectTidalStartupRecovery(): Promise<boolean> {
+  if (!tidalState.rollingSummary || tidalState.summaryRevision < 1) return false
+  const visible = visibleCcHistory()
+  const boundaryId = tidalState.processedBoundaryId ?? visible.at(-1)?.id
+  if (!boundaryId) return false
+  const marker = tidalStartupMarker()
+  if (transcriptContainsMarker(brainTranscriptPath(tidalState.sessionId), marker)) return false
+  const packet = buildRecoveryPacket({
+    marker,
+    coreMemory: readCoreMemorySummary(),
+    rollingSummary: tidalState.rollingSummary,
+    visibleHistory: visible,
+    boundaryId,
+    recentMax: TIDAL_CONFIG.recentMax,
+    tokenBudget: TIDAL_CONFIG.recoveryTokenBudget,
+  })
+  tidalStartupRestore = true
+  startTurn(marker, 'tidal_recovery', false)
+  try {
+    await mcp.notification({
+      method: 'notifications/claude/channel',
+      params: {
+        content: packet.content,
+        meta: { chat_id: CHAT_ID, message_id: marker, user: 'user', ts: new Date().toISOString() },
+      },
+    })
+    tidalLog('startup_recovery_injected', { summaryRevision: tidalState.summaryRevision, recentCount: packet.recent.length })
+    return true
+  } catch {
+    if (currentTurn?.turnId === marker) currentTurn = null
+    tidalStartupRestore = false
+    tidalLog('startup_recovery_failed')
+    return false
+  }
+}
+
 function resumeTidalAfterStartup() {
   const liveSessionId = readBrainSessionId()
   if (liveSessionId && tidalState.sessionId !== liveSessionId) {
@@ -3202,6 +3223,7 @@ function resumeTidalAfterStartup() {
   }
   if (tidalState.pending) startTidalRun()
   else if (tidalState.retryAt && tidalState.retryAt > Date.now()) scheduleTidalRetry()
+  else if (tidalState.rollingSummary) void injectTidalStartupRecovery().then((started) => { if (!started) tidalDrainQueue() })
   else tidalDrainQueue()
 }
 
@@ -6932,100 +6954,57 @@ Bun.serve<{ authed: true }>({
       }
     }
 
-    // ---- Dialogue compression review (see section above for the pipeline itself) ----
-    if (url.pathname === '/compression/status' && req.method === 'GET') {
+    // ---- CC fixed-window tidal memory manager ----
+    // This state belongs only to the resident CC session. Codex and ordinary
+    // API conversations have separate stores and never enter these routes.
+    if (url.pathname === '/tidal-memory/status' && req.method === 'GET') {
       const gate = authGate()
       if (gate) return gate
       const cors = corsHeadersFor(origin)
-      const pending = parseCompressionPending()
-      const dialogueAvailable = existsSync(COMPRESSION_DIALOGUE_PATH)
-      return jsonResponse({
-        generating: compressionIsGenerating(),
-        pending: pending !== null,
-        summary: pending ? {
-          body: pending.body, generatedAt: pending.generatedAt, model: pending.model,
-          sessionId: pending.sessionId, turns: pending.turns, rangeStart: pending.rangeStart, rangeEnd: pending.rangeEnd,
-        } : null,
-        dialogueAvailable,
-        dialogueBytes: dialogueAvailable ? statSync(COMPRESSION_DIALOGUE_PATH).size : 0,
-      }, { headers: cors })
+      const liveSessionId = readBrainSessionId()
+      if (!liveSessionId || liveSessionId !== tidalState.sessionId) {
+        return jsonResponse({ error: 'session_mismatch' }, { status: 409, headers: cors })
+      }
+      return jsonResponse(publicTidalMemoryStatus(), { headers: { ...cors, 'cache-control': 'no-store' } })
     }
 
-    if (url.pathname === '/compression/dialogue' && req.method === 'GET') {
-      const gate = authGate()
-      if (gate) return gate
-      if (!existsSync(COMPRESSION_DIALOGUE_PATH)) return jsonResponse({ error: 'not found' }, { status: 404, headers: corsHeadersFor(origin) })
-      const content = readFileSync(COMPRESSION_DIALOGUE_PATH, 'utf8')
-      return new Response(content, {
-        headers: {
-          ...corsHeadersFor(origin),
-          'content-type': 'text/markdown; charset=utf-8',
-          'content-disposition': `attachment; filename="dialogue-${new Date().toISOString().slice(0, 10)}.md"`,
-        },
-      })
-    }
-
-    if (url.pathname === '/compression/regenerate' && req.method === 'POST') {
+    if (url.pathname === '/tidal-memory/summary' && req.method === 'PUT') {
       const gate = authGate()
       if (gate) return gate
       const cors = corsHeadersFor(origin)
-      if (compressionIsGenerating()) return jsonResponse({ error: 'already generating' }, { status: 409, headers: cors })
-      const pid = runCompressionPipeline()
-      log('compression_regenerate', { pid })
-      return jsonResponse({ ok: true, generating: true }, { headers: cors })
-    }
-
-    if (url.pathname === '/compression/accept' && req.method === 'POST') {
-      const gate = authGate()
-      if (gate) return gate
-      const cors = corsHeadersFor(origin)
-      const pending = parseCompressionPending()
-      if (!pending) return jsonResponse({ error: 'no pending summary' }, { status: 404, headers: cors })
-
-      const now = new Date()
-      const stamp = now.toISOString().replace(/[:.]/g, '-').slice(0, 16) // YYYY-MM-DDTHH-MM
-      const filename = `memo_${stamp}.md`
-      const p = safeMemoryPath(filename)
-      if (!p) return jsonResponse({ error: 'could not build a safe filename' }, { status: 500, headers: cors })
-
-      const rangeHint = pending.rangeStart && pending.rangeEnd
-        ? `${pending.rangeStart.slice(0, 16)} ~ ${pending.rangeEnd.slice(11, 16)}`
-        : now.toISOString().slice(0, 16)
-      const memoContent = [
-        '---',
-        `name: memo-${stamp.toLowerCase()}`,
-        `description: "灯：${rangeHint} 对话摘要 — 书签，不是核心记忆，读完自然衰减"`,
-        'metadata:',
-        '  node_type: memory',
-        '  type: memo',
-        `  modified: ${now.toISOString()}`,
-        ...(pending.sessionId ? [`  originSessionId: ${pending.sessionId}`] : []),
-        `  compressedBy: "${pending.model ?? 'unknown'}, via /opt/ai-companion/scripts/compression/, human-reviewed before commit"`,
-        '---',
-        '',
-        pending.body,
-        '',
-      ].join('\n')
-
+      let body: unknown
       try {
-        writeFileSync(p, memoContent, 'utf8')
-        const memoryMdPath = safeMemoryPath('MEMORY.md')
-        if (memoryMdPath && existsSync(memoryMdPath)) {
-          const indexLine = `- [灯：${rangeHint}](${filename}) — 对话摘要，书签用，会自然衰减\n`
-          const current = readFileSync(memoryMdPath, 'utf8')
-          writeFileSync(memoryMdPath, current.replace(/\n?$/, '\n') + indexLine, 'utf8')
-        }
-        // Archive rather than delete — same "never silently lose a
-        // generation" policy compress-dialogue.mjs already applies to
-        // regenerate.
-        mkdirSync(COMPRESSION_ARCHIVE_DIR, { recursive: true })
-        copyFileSync(COMPRESSION_PENDING_PATH, join(COMPRESSION_ARCHIVE_DIR, `accepted-${stamp}.md`))
-        unlinkSync(COMPRESSION_PENDING_PATH)
-        log('compression_accept', { filename })
-        return jsonResponse({ ok: true, filename }, { headers: cors })
+        body = await req.json()
+      } catch {
+        return jsonResponse({ error: 'bad_json' }, { status: 400, headers: cors })
+      }
+      const liveSessionId = readBrainSessionId()
+      const sessionId = typeof (body as any)?.sessionId === 'string' ? (body as any).sessionId : ''
+      if (!liveSessionId || sessionId !== liveSessionId || sessionId !== tidalState.sessionId) {
+        return jsonResponse({ error: 'session_mismatch' }, { status: 403, headers: cors })
+      }
+      if (tidalRun || tidalStartupRestore) {
+        return jsonResponse({ error: 'tidal_active', currentRevision: tidalState.summaryRevision }, { status: 409, headers: cors })
+      }
+      const candidate = manualSummaryUpdateCandidate(tidalState, {
+        sessionId,
+        expectedRevision: (body as any)?.expectedRevision,
+        summaryText: (body as any)?.summaryText,
+      })
+      if (!candidate.ok) {
+        const status = candidate.code === 'session_mismatch' ? 403
+          : candidate.code === 'version_conflict' || candidate.code === 'tidal_active' ? 409
+            : 400
+        return jsonResponse({ error: candidate.code, currentRevision: tidalState.summaryRevision }, { status, headers: cors })
+      }
+      try {
+        saveTidalState(TIDAL_STATE_FILE, candidate.state)
+        tidalState = candidate.state
+        tidalLog('manual_summary_saved', { summaryRevision: tidalState.summaryRevision, summaryChars: String((body as any)?.summaryText).length })
+        return jsonResponse(publicTidalMemoryStatus(), { headers: { ...cors, 'cache-control': 'no-store' } })
       } catch (err) {
-        log('compression_accept_error', { error: String(err) })
-        return jsonResponse({ error: 'accept failed' }, { status: 500, headers: cors })
+        tidalLog('manual_summary_save_failed', { error: String(err) })
+        return jsonResponse({ error: 'write_failed' }, { status: 500, headers: cors })
       }
     }
 

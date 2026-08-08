@@ -10,7 +10,7 @@ import BottomNav from './components/BottomNav'
 import LoginPage from './components/LoginPage'
 import VoiceFavorites from './components/VoiceFavorites'
 import CompanionMemory from './components/CompanionMemory'
-import DialogueCompression from './components/DialogueCompression'
+import TidalMemory from './components/TidalMemory'
 import CodexMemory from './components/CodexMemory'
 import DesktopPet from './components/DesktopPet'
 import { getSettings, saveSettings, extractSettings, saveSessionMsgs, deleteSessionMsgs, putAsset, putAssetDataUrl, loadAsset, getLetters } from './services/sync'
@@ -681,11 +681,11 @@ export default function App() {
           {currentView === 'sessionSettings' && <SessionSettings theme={theme} />}
           {currentView === 'voiceFavorites' && <VoiceFavorites theme={theme} />}
           {currentView === 'companionMemory' && <CompanionMemory theme={theme} onBack={() => setCurrentView('sessionSettings')} />}
-          {currentView === 'dialogueCompression' && <DialogueCompression theme={theme} onBack={() => setCurrentView('sessionSettings')} />}
+          {currentView === 'tidalMemory' && <TidalMemory theme={theme} onBack={() => setCurrentView('sessionSettings')} />}
           {currentView === 'codexMemory' && <CodexMemory theme={theme} onBack={() => setCurrentView('sessionSettings')} />}
         </div>
 
-        {currentView !== 'sessionSettings' && currentView !== 'voiceFavorites' && currentView !== 'chat' && currentView !== 'companionMemory' && currentView !== 'codexMemory' && currentView !== 'dialogueCompression' && currentView !== 'groupChat' && (
+        {currentView !== 'sessionSettings' && currentView !== 'voiceFavorites' && currentView !== 'chat' && currentView !== 'companionMemory' && currentView !== 'codexMemory' && currentView !== 'tidalMemory' && currentView !== 'groupChat' && (
           <BottomNav currentView={currentView} onChange={setCurrentView} theme={theme} />
         )}
       </div>
