@@ -6247,11 +6247,16 @@ async function mysteryCcEnsureSession(gameId: string, charId: string, systemProm
   }
   if (liveCount >= MYSTERY_CC_MAX_CONCURRENT) throw new Error('太多剧本杀 Claude Code 会话同时进行，请稍后再试')
   ensureMysteryWorkspace()
+  // Desktop-pet scene peeks may include one explicitly user-approved screen
+  // capture uploaded into UPLOAD_DIR.  Those isolated sessions get Read and
+  // nothing else; ordinary mystery/poker characters keep the original empty
+  // tool set, so their secrecy boundary is unchanged.
+  const allowedTools = gameId.startsWith('desktop-pet:') ? 'Read' : ''
   const cmd = [
     'claude',
     '--system-prompt', shQuote(systemPrompt),
     '--model', shQuote(model),
-    '--tools', shQuote(''),
+    '--tools', shQuote(allowedTools),
     '--strict-mcp-config', '--mcp-config', shQuote(MYSTERY_EMPTY_MCP_PATH),
     '--permission-mode', 'bypassPermissions',
     '--setting-sources', shQuote(''),
@@ -6532,11 +6537,13 @@ function mysteryCodexHandleNotification(threadId: string, method: string, params
   }
 }
 
-async function mysteryCodexSendTurn(gameId: string, charId: string, systemPrompt: string, instruction: string, model: string): Promise<{ text: string; error?: string }> {
+async function mysteryCodexSendTurn(gameId: string, charId: string, systemPrompt: string, instruction: string, model: string, imageUrl = ''): Promise<{ text: string; error?: string }> {
   const threadId = await mysteryCodexEnsureThread(gameId, charId, systemPrompt)
   if (mysteryCodexPendingByThread.has(threadId)) return { text: '', error: 'Codex 这个角色上一轮还没结束' }
+  const input: any[] = [{ type: 'text', text: instruction, text_elements: [] }]
+  if (imageUrl) input.push({ type: 'image', url: imageUrl })
   const result = await codexRequest('turn/start', {
-    threadId, input: [{ type: 'text', text: instruction, text_elements: [] }],
+    threadId, input,
     ...(model ? { model } : {}),
   })
   const turnId = result?.turn?.id
@@ -6550,7 +6557,7 @@ async function mysteryCodexSendTurn(gameId: string, charId: string, systemPrompt
 // 收到的 runtime/model/来源 和 prompt 长度，配合 mysteryCcSendTurn 里的
 // queueWaitMs/firstContentMs/totalMs/hadThinking，可以完整比对"轮到该成员
 // 的时间"到"完整响应时间"每一步耗时，而不用只靠前端的"感觉很慢"。
-async function mysteryRunTurn(gameId: string, charId: string, runtime: 'claude-code' | 'codex', model: string, systemPrompt: string, instruction: string, signal?: AbortSignal): Promise<{ text: string } | { error: string }> {
+async function mysteryRunTurn(gameId: string, charId: string, runtime: 'claude-code' | 'codex', model: string, systemPrompt: string, instruction: string, signal?: AbortSignal, imageUrl = '', imagePath = ''): Promise<{ text: string } | { error: string }> {
   const tAssigned = Date.now()
   log('mystery_turn_received', {
     gameId, charId, runtime, model,
@@ -6559,12 +6566,15 @@ async function mysteryRunTurn(gameId: string, charId: string, runtime: 'claude-c
   try {
     if (runtime === 'claude-code') {
       const tmuxName = await mysteryCcEnsureSession(gameId, charId, systemPrompt, model)
-      const text = await mysteryCcSendTurn(gameId, charId, tmuxName, instruction, signal)
+      const modelInstruction = imagePath
+        ? `先用 Read 查看用户明确授权的当前屏幕截图 ${imagePath}，再回应；不要提路径、文件或工具。\n\n${instruction}`
+        : instruction
+      const text = await mysteryCcSendTurn(gameId, charId, tmuxName, modelInstruction, signal)
       log('mystery_turn_done', { gameId, charId, runtime, totalMs: Date.now() - tAssigned })
       if (!text.trim()) return { error: 'Claude Code 没有给出有效回复' }
       return { text: text.trim() }
     }
-    const result = await mysteryCodexSendTurn(gameId, charId, systemPrompt, instruction, model)
+    const result = await mysteryCodexSendTurn(gameId, charId, systemPrompt, instruction, model, imageUrl)
     log('mystery_turn_done', { gameId, charId, runtime, totalMs: Date.now() - tAssigned })
     if (result.error || !result.text.trim()) return { error: result.error || 'Codex 没有给出有效回复' }
     return { text: result.text.trim() }
@@ -7979,6 +7989,10 @@ Bun.serve<{ authed: true }>({
       const model = typeof (body as any)?.model === 'string' ? (body as any).model : ''
       const systemPrompt = typeof (body as any)?.systemPrompt === 'string' ? (body as any).systemPrompt : ''
       const instruction = typeof (body as any)?.instruction === 'string' ? (body as any).instruction : ''
+      const rawImageUrl = typeof (body as any)?.imageUrl === 'string' ? (body as any).imageUrl : ''
+      const imageUrl = rawImageUrl.startsWith('data:image/') && rawImageUrl.length <= 4_000_000 ? rawImageUrl : ''
+      const rawImagePath = typeof (body as any)?.imagePath === 'string' ? (body as any).imagePath : ''
+      const imagePath = rawImagePath.startsWith(UPLOAD_DIR + '/') && existsSync(rawImagePath) ? rawImagePath : ''
       if (!gameId || !charId || !systemPrompt || !instruction) {
         return jsonResponse({ error: 'missing fields' }, { status: 400, headers: cors })
       }
@@ -7995,7 +8009,7 @@ Bun.serve<{ authed: true }>({
       // would mean calling Codex's own turn/interrupt RPC, out of scope for
       // this fix (Codex was never the slow one here — see mysteryCcSendTurn
       // for the actual diagnosed root causes).
-      const result = await mysteryRunTurn(gameId, charId, runtime, model, systemPrompt, instruction, req.signal)
+      const result = await mysteryRunTurn(gameId, charId, runtime, model, systemPrompt, instruction, req.signal, imageUrl, imagePath)
       log('mystery_turn', { gameId, charId, runtime, model, ok: !('error' in result) })
       if ('error' in result) return jsonResponse(result, { status: 502, headers: cors })
       return jsonResponse(result, { headers: cors })

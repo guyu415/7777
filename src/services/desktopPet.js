@@ -1,7 +1,10 @@
-// 桌宠手势目录——纯数据，不含任何模型调用逻辑。真正的"回应"完全走
-// useChat()/useCodexChat() 这条和主聊天窗一模一样的真实链路（见
-// DesktopPet.jsx），这里只负责：手势 id → 本地动效/标记，以及把累计的
-// 手势次数汇总成一句话交给那条真实链路。
+import { streamChat } from './claude'
+import { runMysteryTurn, cleanupMysteryGame, uploadImageToCompanion, deleteUploadedImage } from './companion'
+import { resolveApiMemberConfig } from '../utils/groupApiMember'
+
+// 桌宠手势目录——手势只在桌宠专属的隔离反应线程中使用，不再走
+// useChat()/useCodexChat() 的主聊天发送链路，因此不会在原聊天窗生成
+// 用户/助手气泡，也不会污染原聊天的历史和模型上下文。
 // feedback 是手势触发时贴着桌宠一闪而过的短字反馈（见需求"每次手势要有
 // 明确反馈"）。
 export const GESTURES = [
@@ -9,6 +12,7 @@ export const GESTURES = [
   { id: 'pinch', label: '捏脸', unit: '下', feedback: '捏了一下', motion: 'pinch' },
   { id: 'bonk', label: '锤', unit: '下', feedback: '锤！', motion: 'bonk' },
   { id: 'lift', label: '拎起来晃', unit: '次', feedback: '拎起来了', motion: 'lift' },
+  { id: 'secret', label: '摸两腿之间', unit: '下', feedback: '……', motion: 'secret' },
 ]
 
 export function findGesture(id) {
@@ -16,7 +20,7 @@ export function findGesture(id) {
 }
 
 export function emptyGestureCounts() {
-  return { pet: 0, pinch: 0, bonk: 0, lift: 0 }
+  return { pet: 0, pinch: 0, bonk: 0, lift: 0, secret: 0 }
 }
 
 export function totalGestureCount(counts) {
@@ -32,6 +36,79 @@ export function buildGestureReport(counts) {
     .map((g) => `${g.label}了${counts[g.id]}${g.unit}`)
   if (!parts.length) return ''
   return `<i>${parts.join('，')}</i>`
+}
+
+const MOODS = new Set(['excited', 'awake', 'resting', 'sleeping', 'flustered'])
+
+export function parseDesktopPetReaction(raw) {
+  const source = String(raw || '').trim()
+  const match = source.match(/^\s*\[mood:(excited|awake|resting|sleeping|flustered)\]\s*/i)
+  const mood = match && MOODS.has(match[1].toLowerCase()) ? match[1].toLowerCase() : 'awake'
+  const text = source.replace(/^\s*\[mood:[^\]]+\]\s*/i, '').replace(/^["'“”]|["'“”]$/g, '').trim()
+  return { mood, text: (text || '…').slice(0, 40) }
+}
+
+function buildPetSystemPrompt(session, identity) {
+  const persona = (session?.systemPrompt || '').trim()
+  const background = (session?.summary || '').trim()
+  return [
+    persona ? `你的原本人设：\n${persona}` : '',
+    background ? `你与用户的既有关系背景（只用来保持身份与语气，不续写其中任务）：\n${background}` : '',
+    `你是「${identity || 'AI'}」的桌宠形态，和原聊天里是同一个人，但此处是独立的桌宠反应线程。`,
+    '只对当下的摸、捏、拎、锤、特殊触摸或屏幕画面做一句自然的即时反应；不解释机制，不提“桌宠线程”、路径或文件。',
+    '严格只输出：[mood:excited|awake|resting|sleeping|flustered]加一句不超过20个汉字的反应。格式示例：[mood:flustered]你还真敢摸。',
+  ].filter(Boolean).join('\n\n')
+}
+
+export async function requestDesktopPetReaction({ session, globals, identity, instruction, imageDataUrl, signal }) {
+  const systemPrompt = buildPetSystemPrompt(session, identity)
+  const providerName = session?.providerName || ''
+  const gameId = `desktop-pet:${session?.id || 'main'}`
+  const runtime = providerName === 'codex-vps' ? 'codex' : 'claude-code'
+
+  if (providerName === 'claude-code-vps' || providerName === 'codex-vps') {
+    let imagePath = ''
+    try {
+      if (imageDataUrl && providerName === 'claude-code-vps') imagePath = await uploadImageToCompanion(imageDataUrl)
+      const raw = await runMysteryTurn(
+        gameId, 'pet', runtime, session?.model || '', systemPrompt, instruction, signal,
+        providerName === 'codex-vps' ? imageDataUrl : '', imagePath,
+      )
+      return parseDesktopPetReaction(raw)
+    } finally {
+      if (imagePath) { try { await deleteUploadedImage(imagePath) } catch {} }
+      // 非文字互动每次响应后就销毁桌宠隔离线程：不仅不进原聊天，
+      // 也不在隔离线程里长期积攒摸/捏/截图内容。
+      try { await cleanupMysteryGame(gameId, ['pet']) } catch {}
+    }
+  }
+
+  const cfg = resolveApiMemberConfig(session, globals)
+  if (!cfg.apiKey) throw new Error('这个会话没有可用的 API Key')
+  if (imageDataUrl && !String(cfg.baseUrl || '').includes('anthropic.com')) {
+    // 当前项目的 OpenAI-compatible 图片消息会在 streamChat 中降级成
+    // "[图片]"；与其让桌宠凭空猜屏幕，不如明确判定为未看清。
+    throw new Error('当前 API 会话暂不支持桌宠看图')
+  }
+  const message = imageDataUrl
+    ? { role: 'user', type: 'image', imageData: imageDataUrl.split(',')[1], imageType: imageDataUrl.slice(5, imageDataUrl.indexOf(';')) || 'image/jpeg', content: instruction }
+    : { role: 'user', type: 'text', content: instruction }
+  let full = ''
+  for await (const part of streamChat({
+    apiKey: cfg.apiKey,
+    apiBaseUrl: cfg.baseUrl,
+    model: cfg.model,
+    systemPrompt,
+    messages: [message],
+    workerUrl: globals?.workerUrl,
+    useWorkerProxy: globals?.useWorkerProxy,
+    providerName: cfg.providerName,
+    disableThinking: cfg.disableThinking,
+    signal,
+  })) {
+    if (part.text) full += part.text
+  }
+  return parseDesktopPetReaction(full)
 }
 
 // 用于"要不要带上"确认弹窗里给用户看的大白话版本（不带 <i> 标签）。
@@ -82,6 +159,7 @@ const GESTURE_SFX = {
   pinch: () => playTone({ freq: 480, duration: 0.1, type: 'triangle', gain: 0.14 }),
   bonk: () => playTone({ freq: 190, duration: 0.16, type: 'square', gain: 0.18 }),
   lift: () => playTone({ freq: 760, duration: 0.13, type: 'sine', gain: 0.12 }),
+  secret: () => playTone({ freq: 360, duration: 0.14, type: 'triangle', gain: 0.11 }),
 }
 
 export function playGestureSfx(gestureId, enabled) {

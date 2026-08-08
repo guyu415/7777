@@ -213,15 +213,16 @@ export const useStore = create(
       // never trigger group-model replies.
       pokerSummaries: {},
       // 全局桌宠：本质上就是当前这条会话的缩小版聊天窗，不是另开的独立
-      // 会话——它始终跟随 currentSessionId，摸/捏/锤/拖的手势和桌宠输入
-      // 框打字都走 useChat()/useCodexChat() 那条和主聊天窗完全相同的真实
-      // 链路（见 components/DesktopPet.jsx），没有自己的一套记忆或系统
+      // 会话——它始终跟随 currentSessionId。只有桌宠输入框里的真实文字
+      // 对话走原会话；摸/捏/锤/拖与屏幕感知走一次性桌宠隔离线程，
+      // 回复后立即销毁，不写入原聊天或任何长期模型上下文。没有自己
+      // 的一套长期记忆或系统
       // 提示词。active=false 时不渲染；petImage/scale/position、batchSize
       // （攒够几次手势才真的问一次模型）、sfxEnabled（手势音效开关——应用
       // 里目前没有别的全局静音设置，这个就是桌宠这块唯一的音效控制）、
       // replyMode（回复以文字气泡还是语音播出，只影响桌宠这层展示，不动
       // 会话本身的语音设置）跨页面、刷新与设备同步。
-      desktopPet: { active: false, petImage: '', x: null, y: null, scale: 1, batchSize: 5, sfxEnabled: true, replyMode: 'text' },
+      desktopPet: { active: false, petImage: '', x: null, y: null, scale: 0.8, batchSize: 15, sfxEnabled: true, replyMode: 'text', sceneAwareness: true },
 
       setApiKey: (key) => set({ apiKey: key }),
       setApiBaseUrl: (url) => set({ apiBaseUrl: url }),
@@ -422,6 +423,19 @@ export const useStore = create(
             s.systemPrompt === OLD_PROMPT ? { ...s, systemPrompt: '' } : s
           )
         }
+        if (cleaned.desktopPet) {
+          const pet = cleaned.desktopPet
+          const rawScale = Number(pet.scale)
+          const normalizedScale = [0.66, 0.8, 0.94].includes(rawScale)
+            ? rawScale
+            : rawScale >= 1.1 ? 0.94 : rawScale >= 0.9 ? 0.8 : 0.66
+          cleaned.desktopPet = {
+            ...pet,
+            scale: normalizedScale,
+            batchSize: [10, 15, 20].includes(pet.batchSize) ? pet.batchSize : 15,
+            sceneAwareness: pet.sceneAwareness !== false,
+          }
+        }
         return cleaned
       }),
 
@@ -441,7 +455,7 @@ export const useStore = create(
     }),
     {
       name: 'pink-chat-settings',
-      version: 18,
+      version: 19,
       migrate: (persisted, version) => {
         if (version < 2) {
           const providers = [
@@ -597,6 +611,20 @@ export const useStore = create(
           // The old Worker pipeline had no explicit account-wide switch;
           // preserve that behaviour when hydrating existing local settings.
           persisted = { ...persisted, apiProactiveEnabled: persisted.apiProactiveEnabled !== false }
+        }
+        if (version < 19) {
+          const oldPet = persisted.desktopPet || {}
+          const oldScale = Number(oldPet.scale)
+          const nextScale = oldScale >= 1.1 ? 0.94 : oldScale >= 0.9 ? 0.8 : 0.66
+          persisted = {
+            ...persisted,
+            desktopPet: {
+              ...oldPet,
+              scale: nextScale,
+              batchSize: [10, 15, 20].includes(oldPet.batchSize) ? oldPet.batchSize : 15,
+              sceneAwareness: oldPet.sceneAwareness !== false,
+            },
+          }
         }
         return persisted
       },

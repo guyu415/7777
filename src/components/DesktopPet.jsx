@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Settings, X, MessageCircle, Undo2, Upload, MoreHorizontal } from 'lucide-react'
+import { Settings, X, MessageCircle, Undo2, Upload, MoreHorizontal, Eye } from 'lucide-react'
 import { useStore, getBlob } from '../store'
 import { useChat } from '../hooks/useChat'
 import { useCodexChat } from '../hooks/useCodexChat'
 import {
   findGesture, emptyGestureCounts, totalGestureCount,
-  buildGestureReport, describeGestureCounts, playGestureSfx, playLightTapSfx,
+  describeGestureCounts, playGestureSfx, playLightTapSfx, requestDesktopPetReaction,
 } from '../services/desktopPet'
 import { compressImage } from '../utils/image'
 import { fetchTTSAudio } from '../services/tts'
@@ -17,6 +17,17 @@ const RAPID_TAP_MS = 420
 const RAPID_TAP_BURST = 3 // 快速连点攒够几下才算一次"锤"
 const PINCH_CLOSE_PX = 18
 const DEFAULT_PET_IMAGE = '/pets/black-haired-pet.png'
+const DEFAULT_EXPRESSION_IMAGES = {
+  excited: '/pets/black-haired-expressions/excited.png',
+  awake: '/pets/black-haired-expressions/awake.png',
+  resting: '/pets/black-haired-expressions/resting.png',
+  sleeping: '/pets/black-haired-expressions/sleeping.png',
+  flustered: '/pets/black-haired-expressions/excited.png',
+}
+const EXCITED_MS = 8_000
+const RESTING_AFTER_MS = 45_000
+const SLEEPING_AFTER_MS = 120_000
+const SECRET_STREAK_MS = 1_350
 const SWING_DEADZONE_PX = 4 // 判定方向反转前的抖动容差
 const SWING_MIN_AMPLITUDE_PX = 24 // 单次摆幅至少要达到这个距离才算数
 const SWING_MIN_SPEED_PX_MS = 0.15 // 单次摆动的最低速度（px/ms），挡住"缓慢挪动时顺手回摆一下"
@@ -50,10 +61,11 @@ function DesktopPetWindow({ theme }) {
   )
   const isCodexSession = currentSession?.providerName === 'codex-vps'
   const chat = isCodexSession ? codex : cc
-  const { sendMessage, isLoading, loadHistory, messages } = chat
+  const { sendMessage, isLoading: chatIsLoading, loadHistory, messages } = chat
 
-  // 桌宠打字/手势汇总走的是和主聊天窗一样的 sendMessage()——真实链路自己
-  // 负责把消息读进/写进这同一条会话的历史；这里只需要保证历史已经加载。
+  // 桌宠输入框里的真实文字对话仍跟随当前会话；手势和屏幕感知则走
+  // requestDesktopPetReaction() 的隔离线程，不会写进这份历史。只有文字对话
+  // 需要先保证原会话历史已加载。
   useEffect(() => { loadHistory() }, [currentSessionId, loadHistory])
 
   const [position, setPosition] = useState(() => clampPosition(
@@ -69,6 +81,12 @@ function DesktopPetWindow({ theme }) {
   const [leaveConfirmOpen, setLeaveConfirmOpen] = useState(false)
   const [replyBubble, setReplyBubble] = useState('')
   const [pendingCount, setPendingCount] = useState(0)
+  const [reactionLoading, setReactionLoading] = useState(false)
+  const [idleState, setIdleState] = useState('awake')
+  const [expressionOverride, setExpressionOverride] = useState('')
+  const [secretActive, setSecretActive] = useState(false)
+  const [peekRequestOpen, setPeekRequestOpen] = useState(false)
+  const [peekScheduleKey, setPeekScheduleKey] = useState(0)
 
   const drag = useRef(null)
   const pressTimer = useRef(null)
@@ -82,20 +100,31 @@ function DesktopPetWindow({ theme }) {
   const replyTimer = useRef(null)
   const chatInputRef = useRef(null)
   const fileInputRef = useRef(null)
+  const screenshotInputRef = useRef(null)
   const mountedAt = useRef(Date.now())
   const lastShownReplyId = useRef(null)
+  const lastActivityAt = useRef(Date.now())
+  const expressionTimer = useRef(null)
+  const secretTimer = useRef(null)
+  const secretStreak = useRef({ count: 0, at: 0 })
+  const hasRequestedPeek = useRef(false)
+  const reactionBusyRef = useRef(false)
   // 主聊天窗口跟桌宠共用同一个 useChat 会话/messages 数组——只有靠这个标记
   // 才能分清"新回复是桌宠自己发的话引出来的"还是"用户在主对话框里聊天顺带
   // 冒出来的"，桌宠语音只该在前一种情况下响，见 sendChat 和下面的回复气泡
   // effect。
   const petTriggeredRef = useRef(false)
 
-  const batchSize = desktopPet.batchSize || 5
-  const scale = desktopPet.scale || 1
+  const batchSize = desktopPet.batchSize || 15
+  const scale = desktopPet.scale || 0.8
   const petImage = desktopPet.petImage || DEFAULT_PET_IMAGE
+  const usesDefaultPet = !desktopPet.petImage || desktopPet.petImage === DEFAULT_PET_IMAGE
   const identity = currentSession?.aiName || currentSession?.name || 'AI'
   const sfxOn = !!desktopPet.sfxEnabled
   const voiceReply = desktopPet.replyMode === 'voice'
+  const sceneAwareness = desktopPet.sceneAwareness !== false
+  const expression = expressionOverride || idleState
+  const displayedPetImage = usesDefaultPet ? (DEFAULT_EXPRESSION_IMAGES[expression] || DEFAULT_EXPRESSION_IMAGES.awake) : petImage
 
   useEffect(() => {
     const fit = () => setPosition((current) => clampPosition(current.x, current.y))
@@ -103,10 +132,51 @@ function DesktopPetWindow({ theme }) {
     return () => window.removeEventListener('resize', fit)
   }, [])
 
+  const markActive = useCallback((mood = 'excited', holdMs = EXCITED_MS) => {
+    lastActivityAt.current = Date.now()
+    setIdleState('excited')
+    setExpressionOverride(mood)
+    window.clearTimeout(expressionTimer.current)
+    expressionTimer.current = window.setTimeout(() => setExpressionOverride(''), holdMs)
+  }, [])
+
+  // 兴奋 → 清醒 → 休息 → 睡眠是纯前端待机状态；它不调用模型、
+  // 不写消息，只切换表情和轻量待机动作。
+  useEffect(() => {
+    const updateIdle = () => {
+      if (document.visibilityState === 'hidden') { setIdleState('sleeping'); return }
+      const elapsed = Date.now() - lastActivityAt.current
+      if (elapsed < EXCITED_MS) setIdleState('excited')
+      else if (elapsed < RESTING_AFTER_MS) setIdleState('awake')
+      else if (elapsed < SLEEPING_AFTER_MS) setIdleState('resting')
+      else setIdleState('sleeping')
+    }
+    updateIdle()
+    const timer = window.setInterval(updateIdle, 4_000)
+    document.addEventListener('visibilitychange', updateIdle)
+    return () => { window.clearInterval(timer); document.removeEventListener('visibilitychange', updateIdle) }
+  }, [])
+
+  // 桌宠可以主动“申请偷看”，但只弹授权请求；永远不在后台静默捕捉。
+  useEffect(() => {
+    if (!sceneAwareness || peekRequestOpen) return undefined
+    const firstDelay = 55_000 + Math.random() * 35_000
+    const laterDelay = 5 * 60_000 + Math.random() * 5 * 60_000
+    const timer = window.setTimeout(() => {
+      if (document.visibilityState !== 'visible') { setPeekScheduleKey((v) => v + 1); return }
+      hasRequestedPeek.current = true
+      setPeekRequestOpen(true)
+      markActive('excited', 12_000)
+    }, hasRequestedPeek.current ? laterDelay : firstDelay)
+    return () => window.clearTimeout(timer)
+  }, [sceneAwareness, peekRequestOpen, peekScheduleKey, markActive])
+
   useEffect(() => () => {
     window.clearTimeout(pressTimer.current)
     window.clearTimeout(flashTimer.current)
     window.clearTimeout(replyTimer.current)
+    window.clearTimeout(expressionTimer.current)
+    window.clearTimeout(secretTimer.current)
   }, [])
 
   const playExistingVoice = useCallback(async (blobId) => {
@@ -142,6 +212,24 @@ function DesktopPetWindow({ theme }) {
     }
   }, [currentSession])
 
+  const showPetReply = useCallback((text, mood = 'awake') => {
+    const plain = String(text || '').trim()
+    if (!plain) return
+    markActive(mood, mood === 'flustered' ? 18_000 : 10_000)
+    const visible = plain.length > 60 ? `${plain.slice(0, 60)}…` : plain
+    window.clearTimeout(replyTimer.current)
+    if (voiceReply) {
+      synthesizeAndPlay(plain).then((ok) => {
+        setReplyBubble(ok ? '🔊' : visible)
+        window.clearTimeout(replyTimer.current)
+        replyTimer.current = window.setTimeout(() => setReplyBubble(''), 5_000)
+      })
+    } else {
+      setReplyBubble(visible)
+      replyTimer.current = window.setTimeout(() => setReplyBubble(''), 7_000)
+    }
+  }, [markActive, synthesizeAndPlay, voiceReply])
+
   // 只展示"桌宠开着之后新产生"的回复——已加载的历史最后一条不算，避免
   // 一打开桌宠就把某条旧消息当成刚发生的反应弹出来。回复方式选语音时走
   // TTS 播放（气泡只显示一个🔊），选文字（默认）就照常显示气泡文字。
@@ -161,10 +249,11 @@ function DesktopPetWindow({ theme }) {
       replyTimer.current = window.setTimeout(() => setReplyBubble(''), fadeMs)
     }
 
-    // 消费一次就复位，不管这条回复最终是不是真的走了语音——下一条回复
-    // 默认又是"不是桌宠触发的"，除非 sendChat 再次置位。
+    // 只有桌宠输入框发出的真实文字对话才在桌宠上回显。用户在原聊天
+    // 窗输入引发的回复不会“串台”到桌宠气泡。
     const isPetTriggered = petTriggeredRef.current
     petTriggeredRef.current = false
+    if (!isPetTriggered) return
 
     if (voiceReply && isPetTriggered) {
       if (isVoiceMsg && last.voiceBlobId) {
@@ -193,26 +282,42 @@ function DesktopPetWindow({ theme }) {
     flashTimer.current = window.setTimeout(() => setGestureFlash(''), 700)
     setMotion(g.motion)
     window.setTimeout(() => setMotion(''), 650)
-    navigator.vibrate?.(gestureId === 'bonk' ? 14 : 8)
+    navigator.vibrate?.(gestureId === 'bonk' ? 14 : gestureId === 'secret' ? 10 : 8)
     playGestureSfx(gestureId, sfxOn)
   }, [sfxOn])
 
   const reportGestures = useCallback(async () => {
-    const counts = gestureCounts.current
-    const report = buildGestureReport(counts)
+    if (reactionBusyRef.current) return
+    const counts = { ...gestureCounts.current }
+    const report = describeGestureCounts(counts)
     gestureCounts.current = emptyGestureCounts()
     setPendingCount(0)
     if (!report) return
+    reactionBusyRef.current = true
+    setReactionLoading(true)
     try {
-      await sendMessage(report, 'text')
+      const result = await requestDesktopPetReaction({
+        session: currentSession,
+        globals: useStore.getState(),
+        identity,
+        instruction: `用户刚才${report}。作为「${identity}」本人，给一句当下的桌宠反应。`,
+      })
+      showPetReply(result.text, result.mood)
     } catch (e) {
       console.warn('[PET] 手势汇总发送失败:', e?.message)
+      setReplyBubble('……没听清')
+      window.clearTimeout(replyTimer.current)
+      replyTimer.current = window.setTimeout(() => setReplyBubble(''), 3_000)
+    } finally {
+      reactionBusyRef.current = false
+      setReactionLoading(false)
     }
-  }, [sendMessage])
+  }, [currentSession, identity, showPetReply])
 
   // 单次手势只累加本地计数 + 播本地动效；攒够 batchSize 次才真的触发一次
   // 请求（带完整人设与上下文的真实链路），中间几次完全不联网。
   const triggerGesture = useCallback((gestureId) => {
+    markActive(gestureId === 'secret' ? 'flustered' : gestureId === 'pinch' ? 'resting' : 'excited')
     playLocalMotion(gestureId)
     gestureCounts.current[gestureId] = (gestureCounts.current[gestureId] || 0) + 1
     const total = totalGestureCount(gestureCounts.current)
@@ -221,7 +326,7 @@ function DesktopPetWindow({ theme }) {
     } else {
       setPendingCount(total)
     }
-  }, [playLocalMotion, batchSize, reportGestures])
+  }, [playLocalMotion, batchSize, reportGestures, markActive])
 
   // 轻反馈——快速连点还没攒够 RAPID_TAP_BURST 阈值的那几下，给个更轻的
   // 提示（小抖动 + 更轻的"滴"声），不算一次正式手势、不计数、不出文字。
@@ -231,6 +336,21 @@ function DesktopPetWindow({ theme }) {
     setMotion('light-pulse')
     window.setTimeout(() => setMotion(''), 160)
   }, [sfxOn])
+
+  const handleSecretTap = useCallback(() => {
+    const now = Date.now()
+    const nextCount = now - secretStreak.current.at <= SECRET_STREAK_MS ? secretStreak.current.count + 1 : 1
+    secretStreak.current = { count: nextCount, at: now }
+    triggerGesture('secret')
+    if (nextCount < 10) return
+    secretStreak.current = { count: 0, at: 0 }
+    setSecretActive(true)
+    setGestureFlash('……！')
+    markActive('flustered', 25_000)
+    navigator.vibrate?.([18, 35, 24])
+    window.clearTimeout(secretTimer.current)
+    secretTimer.current = window.setTimeout(() => setSecretActive(false), 30_000)
+  }, [triggerGesture, markActive])
 
   // 单次点击=摸；短时间内连续点击攒到第 RAPID_TAP_BURST 下才真正判定成
   // 一次"锤"——前面几下只给轻反馈，让人清楚感觉到自己点到第几下，而不是
@@ -282,7 +402,7 @@ function DesktopPetWindow({ theme }) {
 
   const sendChat = useCallback(async () => {
     const text = chatText.trim()
-    if (!text || isLoading) return
+    if (!text || chatIsLoading) return
     setChatText('')
     // 发送后立刻收起输入框，不常驻挡屏幕；回复走上面那个"新回复"气泡。
     setChatOpen(false)
@@ -292,7 +412,7 @@ function DesktopPetWindow({ theme }) {
     } catch (e) {
       console.warn('[PET] 发送失败:', e?.message)
     }
-  }, [chatText, isLoading, sendMessage])
+  }, [chatText, chatIsLoading, sendMessage])
 
   // ── 手势识别：轻点=摸／快速连点=锤／长按或双指捏=捏脸／拖起后左右往复摆动=拎起来晃 ──
 
@@ -397,7 +517,16 @@ function DesktopPetWindow({ theme }) {
       // 由 detectSwing 实时判定并触发了，这里不再重复计一次。
       updateDesktopPet({ x: finalPosition.x, y: finalPosition.y })
     } else {
-      handleTap()
+      // 黑色棉花娃的两腿之间是一个单独热区；只有每次都点在这里、
+      // 且相邻两次没超时才算“连续”，移走或点到别处会清空彩蛋连击。
+      const localX = (event.clientX - finalPosition.x) / PET_W
+      const localY = (event.clientY - finalPosition.y) / PET_H
+      if (localX >= 0.36 && localX <= 0.64 && localY >= 0.57 && localY <= 0.82) {
+        handleSecretTap()
+      } else {
+        secretStreak.current = { count: 0, at: 0 }
+        handleTap()
+      }
     }
   }
 
@@ -448,6 +577,83 @@ function DesktopPetWindow({ theme }) {
     }
   }
 
+  const reactToScreen = useCallback(async (dataUrl) => {
+    if (!dataUrl || !currentSession) return
+    setReactionLoading(true)
+    markActive('excited', 12_000)
+    try {
+      const result = await requestDesktopPetReaction({
+        session: currentSession,
+        globals: useStore.getState(),
+        identity,
+        instruction: '这是用户刚刚明确同意让你偷看的屏幕画面。只对你真正看到的内容做一句符合你身份的反应，看不清就直说，不要猜。',
+        imageDataUrl: dataUrl,
+      })
+      showPetReply(result.text, result.mood)
+    } catch (e) {
+      console.warn('[PET] 屏幕感知失败:', e?.message)
+      showPetReply('这次没看清。', 'resting')
+    } finally {
+      setReactionLoading(false)
+      setPeekScheduleKey((v) => v + 1)
+    }
+  }, [currentSession, identity, markActive, showPetReply])
+
+  const handleScreenshotFile = async (event) => {
+    const file = event.target.files?.[0]
+    event.target.value = ''
+    if (!file) { setPeekScheduleKey((v) => v + 1); return }
+    try {
+      const { dataUrl } = await compressImage(file, { maxDim: 1200, quality: 0.78, keepGif: false })
+      await reactToScreen(dataUrl)
+    } catch {
+      showPetReply('图片没打开。', 'resting')
+    }
+  }
+
+  const allowScreenPeek = useCallback(async () => {
+    setPeekRequestOpen(false)
+    // iOS PWA 暂时不提供 getDisplayMedia；这时候直接唤起系统图片选择器，
+    // 让用户选刚截的屏，仍然不会在没授权时偷偷读取任何画面。
+    if (!navigator.mediaDevices?.getDisplayMedia) {
+      screenshotInputRef.current?.click()
+      return
+    }
+    let stream
+    try {
+      stream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: false })
+      const video = document.createElement('video')
+      video.srcObject = stream
+      video.muted = true
+      video.playsInline = true
+      await new Promise((resolve, reject) => {
+        video.onloadedmetadata = resolve
+        video.onerror = reject
+        window.setTimeout(() => reject(new Error('屏幕画面超时')), 8_000)
+      })
+      await video.play()
+      const maxWidth = 1200
+      const ratio = Math.min(1, maxWidth / Math.max(1, video.videoWidth))
+      const canvas = document.createElement('canvas')
+      canvas.width = Math.max(1, Math.round(video.videoWidth * ratio))
+      canvas.height = Math.max(1, Math.round(video.videoHeight * ratio))
+      canvas.getContext('2d')?.drawImage(video, 0, 0, canvas.width, canvas.height)
+      await reactToScreen(canvas.toDataURL('image/jpeg', 0.78))
+    } catch (e) {
+      if (e?.name !== 'NotAllowedError' && e?.name !== 'AbortError') showPetReply('这次没偷看成。', 'resting')
+      setPeekScheduleKey((v) => v + 1)
+    } finally {
+      stream?.getTracks().forEach((track) => track.stop())
+    }
+  }, [reactToScreen, showPetReply])
+
+  const declineScreenPeek = useCallback(() => {
+    setPeekRequestOpen(false)
+    setExpressionOverride('awake')
+    window.setTimeout(() => setExpressionOverride(''), 2_000)
+    setPeekScheduleKey((v) => v + 1)
+  }, [])
+
   const panelLeft = Math.max(10, Math.min(position.x - 85, window.innerWidth - 290))
   const gestureSummaryPlain = describeGestureCounts(gestureCounts.current)
 
@@ -457,7 +663,7 @@ function DesktopPetWindow({ theme }) {
   const badgeSize = 20
   const badgeLeft = position.x + PET_W * 0.66
   const badgeTop = position.y + PET_H * 0.08
-  const menuWidth = 118
+  const menuWidth = 154
   const menuLeft = Math.max(8, Math.min(badgeLeft + badgeSize - menuWidth, window.innerWidth - menuWidth - 8))
   const menuTop = badgeTop + badgeSize + 6
 
@@ -467,6 +673,7 @@ function DesktopPetWindow({ theme }) {
   const bubbleWidth = 210
   const bubbleLeft = Math.max(8, Math.min(position.x + PET_W / 2 - bubbleWidth / 2, window.innerWidth - bubbleWidth - 8))
   const bubbleTop = Math.max(8, position.y - 54)
+  const isPetBusy = reactionLoading || (chatIsLoading && petTriggeredRef.current)
 
   return (
     <>
@@ -476,10 +683,19 @@ function DesktopPetWindow({ theme }) {
         @keyframes pet-bonk { 0%,100%{transform:rotate(0)} 20%{transform:rotate(-10deg)} 45%{transform:rotate(11deg)} 70%{transform:rotate(-6deg)} }
         @keyframes pet-lift { 0%,100%{transform:rotate(0)} 35%{transform:rotate(-5deg)} 70%{transform:rotate(5deg)} }
         @keyframes pet-light-pulse { 0%,100%{transform:scale(1)} 50%{transform:scale(1.035)} }
+        @keyframes pet-awake-idle { 0%,82%,100%{transform:translateY(0)} 88%{transform:translateY(-2px)} 94%{transform:translateY(0)} }
+        @keyframes pet-rest-idle { 0%,100%{transform:translateY(0) rotate(-1deg)} 50%{transform:translateY(2px) rotate(1deg)} }
+        @keyframes pet-sleep-idle { 0%,100%{transform:translateY(1px) scale(1)} 50%{transform:translateY(3px) scale(.985,1.01)} }
+        @keyframes pet-secret-pop { 0%{transform:translateX(-50%) scale(.2);opacity:0} 60%{transform:translateX(-50%) scale(1.16);opacity:1} 100%{transform:translateX(-50%) scale(1);opacity:1} }
         @keyframes pet-flash { 0%{opacity:0; transform:translate(-50%,4px)} 15%{opacity:1; transform:translate(-50%,0)} 75%{opacity:1} 100%{opacity:0; transform:translate(-50%,-6px)} }
         .desktop-pet.pet{animation:pet-bob .62s ease}.desktop-pet.pinch{animation:pet-squash .58s ease}
         .desktop-pet.bonk{animation:pet-bonk .52s ease}.desktop-pet.lift{animation:pet-lift .55s ease-in-out infinite}
+        .desktop-pet.secret{animation:pet-squash .42s ease}
         .desktop-pet.light-pulse{animation:pet-light-pulse .16s ease}
+        .desktop-pet.idle-awake{animation:pet-awake-idle 5.5s ease-in-out infinite}
+        .desktop-pet.idle-resting{animation:pet-rest-idle 3.6s ease-in-out infinite}
+        .desktop-pet.idle-sleeping{animation:pet-sleep-idle 4.8s ease-in-out infinite}
+        .pet-secret-bulge{animation:pet-secret-pop .45s cubic-bezier(.2,.9,.25,1.15) forwards}
         .pet-flash-text{animation:pet-flash .7s ease forwards}
       `}</style>
 
@@ -506,6 +722,7 @@ function DesktopPetWindow({ theme }) {
           style={{ left: menuLeft, top: menuTop, zIndex: 124, background: 'rgba(255,255,255,.9)', backdropFilter: 'blur(10px)', boxShadow: '0 4px 14px rgba(54,35,48,.14)' }}
         >
           <button onClick={() => { setChatOpen((v) => !v); setSettingsOpen(false); window.setTimeout(() => chatInputRef.current?.focus(), 30) }} className="w-8 h-8 grid place-items-center rounded-full flex-shrink-0" style={{ color: theme.primary }} aria-label="跟它说两句"><MessageCircle size={15} /></button>
+          <button onClick={() => { setPeekRequestOpen(true); setToolbarOpen(false); markActive('excited', 12_000) }} className="w-8 h-8 grid place-items-center rounded-full flex-shrink-0" style={{ color: theme.primary }} aria-label="请求偷看屏幕"><Eye size={15} /></button>
           <button onClick={() => { setSettingsOpen((v) => !v); setChatOpen(false) }} className="w-8 h-8 grid place-items-center rounded-full flex-shrink-0" style={{ color: theme.primary }} aria-label="桌宠设置"><Settings size={15} /></button>
           <button onClick={requestClose} className="w-8 h-8 grid place-items-center rounded-full flex-shrink-0" style={{ color: theme.primary }} aria-label="返回聊天窗"><Undo2 size={15} /></button>
         </div>
@@ -522,7 +739,7 @@ function DesktopPetWindow({ theme }) {
         </div>
       )}
 
-      {(isLoading || replyBubble) && (
+      {(isPetBusy || replyBubble) && (
         // 外层只负责定位/防止跑出屏幕（宽度固定 bubbleWidth，纯用来算居中锚点），
         // 真正的气泡用 flex 居中在里面、宽度随内容走（最多到 bubbleWidth）——
         // 短反应（"…"/"？"/"！"）不会被撑成一个大空盒子，长回复摘录也不会跑偏。
@@ -534,14 +751,14 @@ function DesktopPetWindow({ theme }) {
             className="px-3 py-2 rounded-2xl text-sm font-medium text-center"
             style={{ maxWidth: bubbleWidth, color: theme.text, background: 'rgba(255,255,255,.92)', boxShadow: '0 5px 20px rgba(54,35,48,.16)', backdropFilter: 'blur(10px)' }}
           >
-            {isLoading && !replyBubble ? '…' : replyBubble}
+            {isPetBusy && !replyBubble ? '…' : replyBubble}
           </div>
         </div>
       )}
 
       {/* 手势区——只做摸/捏/锤/拖，不再是一排文字按钮 */}
       <div
-        className={`desktop-pet ${motion}`}
+        className={`desktop-pet ${motion || `idle-${idleState}`}`}
         style={{ position: 'fixed', left: position.x, top: position.y, width: PET_W, height: PET_H, zIndex: 120, touchAction: 'none', cursor: drag.current?.moved ? 'grabbing' : 'grab', transformOrigin: '50% 25%' }}
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
@@ -552,8 +769,12 @@ function DesktopPetWindow({ theme }) {
         onTouchEnd={onTouchEnd}
         title="轻点=摸，快速连点=锤，长按或双指捏=捏脸，拖动=拎起"
       >
-        <img src={petImage} alt={identity} draggable="false" style={{ width: '100%', height: '100%', objectFit: 'contain', transform: `scale(${scale})`, transformOrigin: 'bottom center', filter: 'drop-shadow(0 5px 5px rgba(35,25,31,.22))', userSelect: 'none', WebkitUserDrag: 'none' }} />
+        <img src={displayedPetImage} alt={identity} draggable="false" style={{ width: '100%', height: '100%', objectFit: 'contain', transform: `scale(${scale})`, transformOrigin: 'bottom center', filter: 'drop-shadow(0 5px 5px rgba(35,25,31,.22))', userSelect: 'none', WebkitUserDrag: 'none' }} />
+        {secretActive && usesDefaultPet && <div className="pet-secret-bulge" style={{ position: 'absolute', left: '50%', top: '65%', width: '12px', height: '18px', borderRadius: '55% 55% 48% 48%', background: 'radial-gradient(ellipse at 38% 28%, rgba(94,90,99,.96), rgba(24,22,27,.98) 58%, rgba(8,8,10,.98))', boxShadow: '0 1px 3px rgba(0,0,0,.42)', pointerEvents: 'none' }} />}
+        {expression === 'flustered' && usesDefaultPet && <><span style={{ position: 'absolute', left: '32%', top: '31%', width: 8, height: 4, borderRadius: '50%', background: 'rgba(234,120,145,.35)', filter: 'blur(1px)', pointerEvents: 'none' }} /><span style={{ position: 'absolute', right: '30%', top: '31%', width: 8, height: 4, borderRadius: '50%', background: 'rgba(234,120,145,.35)', filter: 'blur(1px)', pointerEvents: 'none' }} /></>}
       </div>
+
+      <input ref={screenshotInputRef} type="file" accept="image/*" hidden onChange={handleScreenshotFile} />
 
       {chatOpen && (
         <div
@@ -569,7 +790,20 @@ function DesktopPetWindow({ theme }) {
             className="flex-1 min-w-0 rounded-xl px-3 py-2 text-sm outline-none"
             style={{ background: theme.primary + '12', color: theme.text }}
           />
-          <button onClick={sendChat} disabled={!chatText.trim() || isLoading} className="px-3 py-2 rounded-xl text-xs flex-shrink-0" style={{ background: theme.primary, color: 'white', opacity: (!chatText.trim() || isLoading) ? 0.5 : 1 }}>发送</button>
+          <button onClick={sendChat} disabled={!chatText.trim() || chatIsLoading} className="px-3 py-2 rounded-xl text-xs flex-shrink-0" style={{ background: theme.primary, color: 'white', opacity: (!chatText.trim() || chatIsLoading) ? 0.5 : 1 }}>发送</button>
+        </div>
+      )}
+
+      {peekRequestOpen && (
+        <div className="fixed inset-0 flex items-center justify-center px-8" style={{ zIndex: 190, background: 'rgba(20,14,18,.32)' }} onClick={declineScreenPeek}>
+          <div className="w-full max-w-xs rounded-3xl p-4" style={{ background: 'rgba(255,255,255,.97)', color: theme.text, boxShadow: '0 16px 48px rgba(0,0,0,.25)', backdropFilter: 'blur(16px)' }} onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center gap-2 font-semibold"><Eye size={17} style={{ color: theme.primary }} />「{identity}」想偷看一眼屏幕</div>
+            <div className="text-xs opacity-60 mt-2 leading-5">只会在你同意后读取这一张画面，不持续录屏，反应也不发回原聊天。</div>
+            <div className="flex gap-2 mt-3">
+              <button onClick={declineScreenPeek} className="flex-1 py-2 rounded-xl text-sm" style={{ background: theme.primary + '12', color: theme.text }}>不给看</button>
+              <button onClick={allowScreenPeek} className="flex-1 py-2 rounded-xl text-sm font-semibold" style={{ background: theme.primary, color: 'white' }}>给你看一眼</button>
+            </div>
+          </div>
         </div>
       )}
 
@@ -601,14 +835,14 @@ function DesktopPetWindow({ theme }) {
           <div className="mt-3 flex items-center justify-between">
             <span className="text-xs opacity-65">大小</span>
             <div className="flex gap-1">
-              {[.82, 1, 1.16].map((value, index) => <button key={value} onClick={() => updateDesktopPet({ scale: value })} className="px-3 py-1.5 rounded-lg text-xs" style={{ background: scale === value ? theme.primary : theme.primary + '12', color: scale === value ? 'white' : theme.text }}>{['小', '中', '大'][index]}</button>)}
+              {[.66, .8, .94].map((value, index) => <button key={value} onClick={() => updateDesktopPet({ scale: value })} className="px-3 py-1.5 rounded-lg text-xs" style={{ background: scale === value ? theme.primary : theme.primary + '12', color: scale === value ? 'white' : theme.text }}>{['小', '中', '大'][index]}</button>)}
             </div>
           </div>
 
           <div className="mt-3 flex items-center justify-between">
             <div><span className="text-xs opacity-65">攒几次手势问一次</span><div className="text-[10px] opacity-45 mt-0.5">中间几次只有动效，不联网</div></div>
             <div className="flex gap-1">
-              {[3, 5, 8].map((value) => <button key={value} onClick={() => updateDesktopPet({ batchSize: value })} className="px-3 py-1.5 rounded-lg text-xs" style={{ background: batchSize === value ? theme.primary : theme.primary + '12', color: batchSize === value ? 'white' : theme.text }}>{value}</button>)}
+              {[10, 15, 20].map((value) => <button key={value} onClick={() => updateDesktopPet({ batchSize: value })} className="px-3 py-1.5 rounded-lg text-xs" style={{ background: batchSize === value ? theme.primary : theme.primary + '12', color: batchSize === value ? 'white' : theme.text }}>{value}</button>)}
             </div>
           </div>
 
@@ -624,16 +858,22 @@ function DesktopPetWindow({ theme }) {
             <span className="text-xs opacity-65">手势音效</span>
             <button onClick={() => updateDesktopPet({ sfxEnabled: !sfxOn })} className="px-3 py-1.5 rounded-lg text-xs" style={{ background: sfxOn ? theme.primary : theme.primary + '12', color: sfxOn ? 'white' : theme.text }}>{sfxOn ? '开' : '关'}</button>
           </div>
+
+          <div className="mt-3 flex items-center justify-between">
+            <div><span className="text-xs opacity-65">场景感知</span><div className="text-[10px] opacity-45 mt-0.5">只申请，同意后才看一张</div></div>
+            <button onClick={() => updateDesktopPet({ sceneAwareness: !sceneAwareness })} className="px-3 py-1.5 rounded-lg text-xs" style={{ background: sceneAwareness ? theme.primary : theme.primary + '12', color: sceneAwareness ? 'white' : theme.text }}>{sceneAwareness ? '开' : '关'}</button>
+          </div>
         </div>
       )}
 
       {leaveConfirmOpen && (
         <div className="fixed inset-0 flex items-center justify-center px-8" style={{ zIndex: 200, background: 'rgba(20,14,18,.4)' }} onClick={confirmDiscard}>
           <div className="w-full max-w-xs rounded-2xl p-4" style={{ background: 'rgba(255,255,255,.98)', color: theme.text, boxShadow: '0 16px 48px rgba(0,0,0,.28)' }} onClick={(e) => e.stopPropagation()}>
-            <div className="text-sm leading-5">要告诉「{identity}」刚才被{gestureSummaryPlain}吗？</div>
+            <div className="text-sm leading-5">要让「{identity}」对刚才被{gestureSummaryPlain}回应一句吗？</div>
+            <div className="text-[11px] opacity-50 mt-1">只在桌宠气泡里回应，不发回原聊天。</div>
             <div className="flex gap-2 mt-3">
               <button onClick={confirmDiscard} className="flex-1 py-2 rounded-xl text-sm" style={{ background: theme.primary + '12', color: theme.text }}>不用</button>
-              <button onClick={confirmBringAlong} className="flex-1 py-2 rounded-xl text-sm font-semibold" style={{ background: theme.primary, color: 'white' }}>带上</button>
+              <button onClick={confirmBringAlong} className="flex-1 py-2 rounded-xl text-sm font-semibold" style={{ background: theme.primary, color: 'white' }}>让他回应</button>
             </div>
           </div>
         </div>

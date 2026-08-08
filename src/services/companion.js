@@ -1362,11 +1362,11 @@ export async function getMysteryCcModels() {
 // the network request (and the underlying VPS-side wait) keeps running in
 // the background, which is what used to let a stale reply for an abandoned
 // turn silently reappear later.
-export async function runMysteryTurn(gameId, charId, runtime, model, systemPrompt, instruction, signal) {
+export async function runMysteryTurn(gameId, charId, runtime, model, systemPrompt, instruction, signal, imageUrl = '', imagePath = '') {
   const data = await companionJson('/mystery/turn', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ gameId, charId, runtime, model, systemPrompt, instruction }),
+    body: JSON.stringify({ gameId, charId, runtime, model, systemPrompt, instruction, imageUrl, imagePath }),
     signal,
   })
   return data.text
