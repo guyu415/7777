@@ -139,8 +139,8 @@ function MenuItem({ icon, label, sub, onClick, disabled }) {
 // 跑 effect cleanup，恰好切走页面（整个 ChatWindow 卸载）时 getText() 已经
 // 拿不到内容——所以换成这里的写穿（write-through）方案，不依赖卸载时机。
 // 草稿现在是 {text, segments} 一起存的 JSON——segments 是回车分条后还没点
-// 发送的排队消息。旧草稿是纯文本字符串，JSON.parse 失败就当成旧格式的纯
-// 文本正文、segments 为空，向后兼容。
+// 发送的排队消息。旧草稿是纯文本字符串，JSON.parse 失败就按旧格式读取，
+// 这样升级后不会丢掉已有输入。
 function readDraft(storageKey) {
   if (!storageKey) return { text: '', segments: [] }
   try {
@@ -149,17 +149,20 @@ function readDraft(storageKey) {
     try {
       const parsed = JSON.parse(raw)
       if (parsed && typeof parsed === 'object' && Array.isArray(parsed.segments)) {
-        return { text: parsed.text || '', segments: parsed.segments }
+        return { text: typeof parsed.text === 'string' ? parsed.text : '', segments: parsed.segments.filter(s => typeof s === 'string' && s.trim()) }
       }
-    } catch { /* 不是 JSON——旧格式纯文本草稿 */ }
+    } catch { /* 旧版本把草稿直接存成纯文本 */ }
     return { text: raw, segments: [] }
   } catch { return { text: '', segments: [] } }
 }
 
 const MessageInput = forwardRef(function MessageInput({ onSend, onSendBatch, onStartCall, onSendImage, onOpenGomoku, gomokuEnabled, onOpenFocus, onOpenDivination, disabled, theme, isLoading, onStop, draftKey }, ref) {
   const draftStorageKey = draftKey ? `chat.draft.${draftKey}` : null
-  const [text, setTextRaw] = useState(() => readDraft(draftStorageKey).text)
-  const [segments, setSegmentsRaw] = useState(() => readDraft(draftStorageKey).segments)
+  const initialDraft = readDraft(draftStorageKey)
+  const [text, setTextRaw] = useState(initialDraft.text)
+  const [segments, setSegmentsRaw] = useState(initialDraft.segments)
+  const textRef = useRef(initialDraft.text)
+  const segmentsRef = useRef(initialDraft.segments)
   // useCallback'd on draftStorageKey so fill()'s useImperativeHandle closure
   // (below) always writes to whichever session is CURRENT when fill() is
   // actually invoked, not whichever session was active when the ref was
@@ -175,18 +178,18 @@ const MessageInput = forwardRef(function MessageInput({ onSend, onSendBatch, onS
     } catch { /* 存储满/隐私模式——草稿只活在本次挂载内，不影响输入本身 */ }
   }, [draftStorageKey])
   const setText = useCallback((value) => {
+    textRef.current = value
     setTextRaw(value)
-    writeDraft(value, segments)
-  }, [writeDraft, segments])
-  // 回车分条排队——见下方 handleKeyDown。传入函数式 updater 时用 prev 算出
-  // next 再写草稿，避免闭包里的 segments 落后一拍。
+    writeDraft(value, segmentsRef.current)
+  }, [writeDraft])
+  // 函数式 updater 先用 ref 算出 next 再更新 React state，避免同一个事件
+  // 里先清空 segments、再清空 text 时，localStorage 还写着旧队列。
   const setSegments = useCallback((updater) => {
-    setSegmentsRaw(prev => {
-      const next = typeof updater === 'function' ? updater(prev) : updater
-      writeDraft(text, next)
-      return next
-    })
-  }, [writeDraft, text])
+    const next = typeof updater === 'function' ? updater(segmentsRef.current) : updater
+    segmentsRef.current = next
+    setSegmentsRaw(next)
+    writeDraft(textRef.current, next)
+  }, [writeDraft])
   const [menuOpen, setMenuOpen] = useState(false)
   // A picked image sits here as a draft — thumbnail + cancel, still editable
   // alongside the text field — until Send is actually pressed. Shared by
@@ -220,6 +223,8 @@ const MessageInput = forwardRef(function MessageInput({ onSend, onSendBatch, onS
   // useState 的初始化已经读过一遍，这里重复读到同样的值，无副作用。
   useEffect(() => {
     const restored = readDraft(draftStorageKey)
+    textRef.current = restored.text
+    segmentsRef.current = restored.segments
     setTextRaw(restored.text)
     setSegmentsRaw(restored.segments)
     const timer = setTimeout(() => {
@@ -252,36 +257,24 @@ const MessageInput = forwardRef(function MessageInput({ onSend, onSendBatch, onS
     if (!canSend) return
     const finalText = text.trim()
     if (imageDraft) {
-      // Rare combo: segments were queued, then an image got attached before
-      // Send. Keep the existing image+caption path byte-for-byte unchanged
-      // (never two sends for one attach) — just flush any queued text
-      // segments first, each as its own ordinary send.
-      segments.forEach(seg => onSend(seg))
-      // Only the fields the send pipeline actually expects — originalBytes/
-      // compressedBytes/compressed are purely for this draft preview's own
-      // "原图 X → 压缩后 Y" label, no reason for them to ride along onto the
-      // stored message.
-      onSendImage({ imageData: imageDraft.imageData, imageType: imageDraft.imageType, imageUrl: imageDraft.imageUrl, text: finalText })
+      // Keep a staged image and all queued text in one turn.
+      const imageCaption = [...segments, finalText].filter(Boolean).join('\n')
+      onSendImage({ imageData: imageDraft.imageData, imageType: imageDraft.imageType, imageUrl: imageDraft.imageUrl, text: imageCaption })
       setImageDraft(null)
     } else {
       const batch = finalText ? [...segments, finalText] : segments
-      if (batch.length > 1) {
-        onSendBatch(batch)
-      } else if (batch.length === 1) {
-        onSend(batch[0])
-      }
+      if (batch.length > 1) onSendBatch?.(batch)
+      else if (batch.length === 1) onSend(batch[0])
     }
     setSegments([])
     setText('')
-    if (textareaRef.current) {
-      textareaRef.current.style.height = 'auto'
-    }
+    if (textareaRef.current) textareaRef.current.style.height = 'auto'
   }
 
-  // 回车＝分条排队（不真正发送），Shift+回车＝普通换行（同一条内多行）。
-  // isComposing 是关键：中文拼音候选词也用回车确认，不能截胡那次回车。
+  // 回车＝分条排队（不真正发送），Shift+回车＝普通换行。isComposing 是关键：
+  // 中文输入法用回车确认候选词时，不能被这里截成一条消息。
   const handleKeyDown = (e) => {
-    if (e.key !== 'Enter' || e.shiftKey || e.nativeEvent.isComposing) return
+    if (e.key !== 'Enter' || e.shiftKey || e.nativeEvent?.isComposing) return
     e.preventDefault()
     const trimmed = text.trim()
     if (!trimmed) return
@@ -381,21 +374,16 @@ const MessageInput = forwardRef(function MessageInput({ onSend, onSendBatch, onS
       {segments.length > 0 && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 6, padding: '6px 12px 0' }}>
           {segments.map((seg, i) => (
-            <div key={i} style={{
+            <div key={`${i}-${seg}`} style={{
               display: 'flex', alignItems: 'flex-start', gap: 8,
               background: 'rgba(255,182,209,0.18)',
-              border: `1px solid ${primaryColor}25`,
-              borderRadius: 14,
-              padding: '6px 10px',
+              border: `1px solid ${primaryColor}25`, borderRadius: 14, padding: '6px 10px',
             }}>
               <span style={{ flex: 1, minWidth: 0, fontSize: 14, lineHeight: '1.4', color: '#8b5060', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{seg}</span>
               <button
                 onClick={() => setSegments(prev => prev.filter((_, idx) => idx !== i))}
                 title="移除这一条"
-                style={{
-                  background: 'none', border: 'none', cursor: 'pointer', color: '#c47a8a',
-                  flexShrink: 0, display: 'flex', alignItems: 'center', padding: 2, marginTop: 1,
-                }}
+                style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#c47a8a', flexShrink: 0, display: 'flex', alignItems: 'center', padding: 2, marginTop: 1 }}
               >
                 <CloseIcon size={14} />
               </button>

@@ -429,20 +429,6 @@ export default function ChatWindow({ theme }) {
               {isFixedVpsSession && (
                 <RuntimeStatusBall theme={theme} isLoading={isLoading} runtime={isCodexSession ? 'codex' : 'claude-code'} />
               )}
-              {/* Codex's own task-status pill — reuses this exact same
-                  name-row position/style xinchao's tag and the status ball
-                  already use (never the signature row below, which stays
-                  dedicated to the user's real signature — see the Signature
-                  component just below, untouched by this). */}
-              {isCodexSession && codex.statusLabel && (
-                <span style={{
-                  fontSize: 10, color: primaryColor, background: `${primaryColor}12`,
-                  border: `1px solid ${primaryColor}30`, borderRadius: 8,
-                  padding: '1px 6px', lineHeight: 1.5, flexShrink: 0, whiteSpace: 'nowrap', marginLeft: 4,
-                }}>
-                  {codex.statusLabel}
-                </span>
-              )}
             </div>
             <div className="flex items-center gap-1.5">
               <Signature text={effectiveSignature || '在线'} color={primaryColor} shadow={`0 0 6px ${primaryColor}aa, 0 0 14px ${primaryColor}60`} />
@@ -691,16 +677,9 @@ export default function ChatWindow({ theme }) {
             updateActiveTime()
             sendMessage(text, 'text').catch(e => console.error('[PAW] sendMessage error:', e.message))
           }}
-          onSendBatch={(texts) => {
-            console.log('[PAW] onSendBatch received, count:', texts.length)
+          onSendBatch={(contents) => {
             updateActiveTime()
-            // Codex sessions don't have a batch turn concept yet — fall back to
-            // sequential ordinary sends (each its own turn) rather than losing
-            // the queued segments outright.
-            const batch = sendMessageBatch || (async (list) => {
-              for (const t of list) await sendMessage(t, 'text')
-            })
-            batch(texts).catch(e => console.error('[PAW] sendMessageBatch error:', e.message))
+            sendMessageBatch(contents).catch(e => console.error('[PAW] sendMessageBatch error:', e.message))
           }}
           onStartCall={handleStartCall}
           onSendImage={handleSendImage}

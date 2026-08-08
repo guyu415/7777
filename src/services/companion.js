@@ -1,3 +1,5 @@
+import { DEFAULT_CODEX_SESSION_ID, normalizeCodexSessionId, buildCodexMessagePayload } from '../utils/codexProtocol'
+
 // Claude Code (VPS) transport — talks to the companion channel server over a
 // single persistent WebSocket, cookie-authenticated. This module never reads,
 // receives, or stores the raw companion token: authentication happens entirely
@@ -50,6 +52,7 @@ let reconnectAttempt = 0
 let reconnectTimer = null
 let authFailed = false // definitive: stop auto-reconnecting until explicit ensureConnected() after re-login
 const listeners = new Set() // Set<(evt) => void>
+let selectedCodexSessionId = DEFAULT_CODEX_SESSION_ID
 
 // ---------- app-level heartbeat ----------
 // A browser WebSocket can report itself as 'open' for a long time after the
@@ -177,6 +180,10 @@ function connect() {
     authFailed = false
     startHeartbeat()
     notify({ kind: 'open' })
+    // The server sends a main-session snapshot on open for backwards
+    // compatibility; immediately selecting the active Eunoia conversation
+    // makes reconnects restore the right per-session Codex history.
+    sendRaw({ type: 'codex_session', sessionId: selectedCodexSessionId })
   }
 
   socket.onmessage = ev => {
@@ -196,7 +203,8 @@ function connect() {
       return
     }
     if (m.type === 'history') {
-      notify({ kind: 'history', openTurnId: m.openTurnId, items: m.items, resetAt: m.resetAt })
+      notify({ kind: 'history', openTurnId: m.openTurnId, items: m.items, resetAt: m.resetAt,
+        codexSessionId: m.codexSessionId || 'main', codexPrompt: m.codexPrompt || '' })
       return
     }
     notify({ kind: 'wire', wire: m })
@@ -675,8 +683,16 @@ function announceCodex(evt) {
   }
 }
 
-export async function getCodexState() {
-  return companionJson('/codex/state')
+export function selectCodexSession(sessionId) {
+  selectedCodexSessionId = normalizeCodexSessionId(sessionId)
+  const sent = sendRaw({ type: 'codex_session', sessionId: selectedCodexSessionId })
+  if (!sent) ensureConnected()
+  return sent
+}
+
+export async function getCodexState(sessionId = selectedCodexSessionId) {
+  const id = normalizeCodexSessionId(sessionId)
+  return companionJson(`/codex/state?sessionId=${encodeURIComponent(id)}`)
 }
 // Lightweight, poll-friendly status for the header's model/usage widget —
 // real current model + real usage + real model catalog (via Codex's own
@@ -696,16 +712,33 @@ export async function switchCodexModel(modelId) {
 export async function getCodexAuthStatus() {
   return companionJson('/codex/auth-status')
 }
-export async function stopCodex() {
-  return companionJson('/codex/stop', { method: 'POST' })
+export async function saveCodexPrompt(sessionId, prompt) {
+  return companionJson('/codex/prompt', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ sessionId: normalizeCodexSessionId(sessionId), prompt: typeof prompt === 'string' ? prompt : '' }),
+  })
 }
-export async function resetCodex() {
-  return companionJson('/codex/reset', { method: 'POST' })
+export async function stopCodex(sessionId = selectedCodexSessionId) {
+  return companionJson('/codex/stop', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ sessionId: normalizeCodexSessionId(sessionId) }),
+  })
+}
+export async function resetCodex(sessionId = selectedCodexSessionId) {
+  return companionJson('/codex/reset', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ sessionId: normalizeCodexSessionId(sessionId) }),
+  })
 }
 let codexSeq = 0
-export function sendCodexMessage(text, imageUrl) {
+export function sendCodexMessage(text, imageUrl, options = {}) {
+  const sessionId = normalizeCodexSessionId(options?.sessionId || selectedCodexSessionId)
+  const prompt = typeof options?.prompt === 'string' ? options.prompt : ''
   const id = `codex-eunoia-${Date.now()}-${++codexSeq}`
-  return sendRaw({ runtime: 'codex', id, text, clientTime: clientTimeContext(), ...(imageUrl ? { imageUrl } : {}) })
+  return sendRaw(buildCodexMessagePayload({ id, text, imageUrl, sessionId, prompt, clientTime: clientTimeContext() }))
 }
 
 listeners.add(evt => {
@@ -744,7 +777,8 @@ listeners.add(evt => {
       return
     }
     if (m.type === 'codex_msg' || m.type === 'codex_status' || m.type === 'codex_notice' || m.type === 'codex_turn_end'
-      || m.type === 'codex_turn_busy' || m.type === 'codex_reset_busy' || m.type === 'codex_reset') {
+      || m.type === 'codex_turn_busy' || m.type === 'codex_reset_busy' || m.type === 'codex_reset'
+      || m.type === 'codex_history_snapshot') {
       announceCodex(m)
       return
     }
@@ -763,9 +797,11 @@ listeners.add(evt => {
     }
     announceCodex({
       type: 'codex_history_snapshot',
+      sessionId: evt.codexSessionId || 'main',
       codexHistory: evt.codexHistory || [],
       codexOpenTurnId: evt.codexOpenTurnId ?? null,
       codexStatus: evt.codexStatus || 'idle',
+      codexPrompt: evt.codexPrompt || '',
     })
   }
 })
@@ -1225,6 +1261,36 @@ export async function downloadCompressionDialogue() {
   a.click()
   a.remove()
   URL.revokeObjectURL(url)
+}
+
+// Codex memory is intentionally separate from the Claude Code Auto Memory
+// endpoints above. Every request carries the active Eunoia session id, so a
+// file edited in one Codex conversation cannot appear in another.
+export async function listCodexMemoryFiles(sessionId = selectedCodexSessionId) {
+  const id = normalizeCodexSessionId(sessionId)
+  const data = await companionJson(`/codex/memory/list?sessionId=${encodeURIComponent(id)}`)
+  return data.files
+}
+
+export async function getCodexMemoryFile(sessionId, name) {
+  const id = normalizeCodexSessionId(sessionId)
+  return companionJson(`/codex/memory/get?sessionId=${encodeURIComponent(id)}&name=${encodeURIComponent(name)}`)
+}
+
+export async function putCodexMemoryFile(sessionId, name, content) {
+  return companionJson('/codex/memory/put', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ sessionId: normalizeCodexSessionId(sessionId), name, content }),
+  })
+}
+
+export async function deleteCodexMemoryFile(sessionId, name) {
+  return companionJson('/codex/memory/delete', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ sessionId: normalizeCodexSessionId(sessionId), name }),
+  })
 }
 
 // ---------- statusLine-fed usage/model status ----------

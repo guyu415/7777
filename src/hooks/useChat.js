@@ -1017,18 +1017,11 @@ export function useChat() {
     await streamResponse([...messages, userMsg])
   }, [CONVERSATION_ID, effectiveApiKey, effectiveBaseUrl, isLoading, messages, addMessage, streamResponse, updateSession, currentSession, selectedProvider, apiKey])
 
-  // "分条发送" — MessageInput.jsx lets the user stage several Enter-split
-  // segments before actually pressing Send; this fires all of them at once.
-  // Each segment still becomes its own local bubble (added sequentially, in
-  // order), but only ONE streamResponse call goes out for the whole batch —
-  // built from a fresh useStore.getState().messages snapshot (same pattern
-  // regenerateRound uses below) rather than the closed-over `messages`, since
-  // that closure wouldn't yet reflect the addMessage calls made earlier in
-  // this same synchronous batch. streamResponse's own VPS branch (see
-  // vpsBatchText above) then joins the trailing run of user bubbles it finds
-  // in that snapshot, so CC sees the whole batch as one turn.
+  // 回车分条只在输入框里排队；点击发送时把所有气泡一次性加入上下文，
+  // 只调用一次 streamResponse。这样 API 运行时是一轮请求，Claude Code
+  // 运行时也会在 streamResponse 内把尾部用户消息合并成一个 turn。
   const sendMessageBatch = useCallback(async (contents) => {
-    const trimmed = contents.map(c => c.trim()).filter(Boolean)
+    const trimmed = (contents || []).map(c => (c || '').trim()).filter(Boolean)
     if (trimmed.length === 0) return
     if (trimmed.length === 1) return sendMessage(trimmed[0], 'text')
 
@@ -1042,13 +1035,14 @@ export function useChat() {
       if (autoName) updateSession(CONVERSATION_ID, { name: autoName })
     }
 
-    const userMsgs = trimmed.map(content => ({
+    const batchTimestamp = Date.now()
+    const userMsgs = trimmed.map((content, index) => ({
       id: genId(),
       conversationId: CONVERSATION_ID,
       role: 'user',
       type: 'text',
       content,
-      timestamp: Date.now(),
+      timestamp: batchTimestamp + index,
     }))
 
     for (const userMsg of userMsgs) {

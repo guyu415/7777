@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useShallow } from 'zustand/react/shallow'
 import {
-  getCodexState, sendCodexMessage, stopCodex, resetCodex, onCodexEvent, ensureConnected,
+  getCodexState, sendCodexMessage, stopCodex, resetCodex, onCodexEvent, ensureConnected, selectCodexSession,
 } from '../services/companion'
 import { fetchTTSAudio } from '../services/tts'
 import { useStore, saveBlob, getBlob } from '../store'
+import { DEFAULT_CODEX_SESSION_ID } from '../utils/codexProtocol'
 
 // Codex (codex-vps) — an entirely separate chat runtime from Claude Code.
 // This hook only ever reads/writes Codex's own wire messages (codex_*) and
@@ -17,18 +18,6 @@ import { useStore, saveBlob, getBlob } from '../store'
 // so the shared ChatWindow.jsx can use either hook interchangeably via one
 // small runtime switch, instead of maintaining a second full page shell —
 // see ChatWindow.jsx's own top-of-file comment.
-
-// Only the two IN-PROGRESS states get a header label — the server's own
-// codexStatus is now structurally never anything else (see
-// channel-server.ts's CodexStatus comment: 'done' resolves straight back to
-// 'idle', so there is no "已完成" value to ever render, live or on refresh).
-// stopped/error are delivered separately as a one-shot codex_notice (see
-// below) and shown as a toast, never a lingering header pill.
-export const CODEX_STATUS_LABELS = {
-  idle: '',
-  thinking: '正在思考',
-  working: '正在工作',
-}
 
 // Maps the server's own CodexMsg shape into exactly what MessageBubble
 // already knows how to render — no new bubble type, no fabricated fields.
@@ -83,9 +72,17 @@ export function useCodexChat() {
   // A one-shot stopped/error notice for ChatWindow.jsx to show as a brief
   // toast — a fresh object identity every time (even for a repeated
   // message), never persisted/replayed on refresh, and never folded into
-  // `status` (which only ever holds idle/thinking/working — see
-  // CODEX_STATUS_LABELS's own comment).
+  // `status` (which only ever holds idle/thinking/working for the input
+  // control; it is not rendered as a text status badge).
   const [notice, setNotice] = useState(null)
+  // Stopping is optimistic in the UI: the partial answer remains visible but
+  // is frozen immediately, while the companion interrupt request catches up.
+  // Late deltas/finalization for that same turn are ignored until the server
+  // confirms codex_turn_end, so the pause button really stops output instead
+  // of merely stopping the spinner.
+  const stopRequestedRef = useRef(false)
+  const activeTurnIdRef = useRef(null)
+  const stoppedTurnIdRef = useRef(null)
 
   // Same session-then-global TTS config fallback useChat.js uses — Codex's
   // voice reuses the CURRENT session's own configured voice, never a
@@ -98,6 +95,16 @@ export function useCodexChat() {
     aiVoiceEnabled: s.aiVoiceEnabled,
   })))
   const currentSession = sessions?.find(s => s.id === currentSessionId)
+  // useCodexChat is called unconditionally by the shared ChatWindow to obey
+  // the Rules of Hooks.  Only a Codex session may select a per-conversation
+  // Codex thread; ordinary/CC sessions must keep the legacy main id and an
+  // empty prompt so merely viewing another window cannot create or mutate a
+  // Codex thread.
+  const isCodexSession = currentSession?.providerName === 'codex-vps'
+  const codexSessionId = isCodexSession ? (currentSessionId || DEFAULT_CODEX_SESSION_ID) : DEFAULT_CODEX_SESSION_ID
+  const codexPrompt = isCodexSession ? (currentSession?.systemPrompt || '') : ''
+  const codexSessionIdRef = useRef(codexSessionId)
+  codexSessionIdRef.current = codexSessionId
   const effectiveTtsApiKey = currentSession?.ttsApiKey || ttsApiKey
   const effectiveTtsGroupId = currentSession?.ttsGroupId || ttsGroupId
   const effectiveTtsVoiceId = currentSession?.ttsVoiceId || ttsVoiceId
@@ -181,12 +188,15 @@ export function useCodexChat() {
 
   const refresh = useCallback(async () => {
     ensureConnected()
+    const sessionId = codexSessionIdRef.current
+    selectCodexSession(sessionId)
     try {
-      const s = await getCodexState()
+      const s = await getCodexState(sessionId)
       const history = s.history || []
       setMessages(history.map(toBubble))
       setStatus(s.status || 'idle')
       setOpenTurnId(s.openTurnId ?? null)
+      activeTurnIdRef.current = s.openTurnId ?? null
       for (const m of history) {
         if (m.kind === 'voice') resolveCodexVoiceMsg(m, false)
       }
@@ -205,6 +215,8 @@ export function useCodexChat() {
 
     const unsub = onCodexEvent((evt) => {
       if (cancelled) return
+      const eventSessionId = evt.sessionId || 'main'
+      if (eventSessionId !== codexSessionIdRef.current) return
       switch (evt.type) {
         // Fires once per (re)connect — this is what restores history after a
         // refresh AND resumes seeing an in-progress task's status/turnId
@@ -212,14 +224,31 @@ export function useCodexChat() {
         // state, not something replayed from local storage.
         case 'codex_history_snapshot':
           setMessages(evt.codexHistory.map(toBubble))
-          setStatus(evt.codexStatus)
-          setOpenTurnId(evt.codexOpenTurnId)
+          setStatus(stopRequestedRef.current ? 'idle' : evt.codexStatus)
+          setOpenTurnId(stopRequestedRef.current ? null : evt.codexOpenTurnId)
+          activeTurnIdRef.current = evt.codexOpenTurnId ?? null
           setLoaded(true)
           for (const m of evt.codexHistory) {
             if (m.kind === 'voice') resolveCodexVoiceMsg(m, false)
           }
           break
         case 'codex_msg': {
+          const msgTurnId = evt.msg.turnId || null
+          const isAssistantStream = evt.msg.from === 'codex'
+          if (msgTurnId && isAssistantStream && evt.msg.streaming && !stopRequestedRef.current) {
+            // The accepted-turn path does not emit codex_turn_busy (that
+            // event is reserved for a rejected second send), so learn the
+            // active turn from the first streamed assistant message too.
+            activeTurnIdRef.current = msgTurnId
+            setOpenTurnId(msgTurnId)
+          }
+          if (stopRequestedRef.current && isAssistantStream
+            && (!stoppedTurnIdRef.current || !msgTurnId || msgTurnId === stoppedTurnIdRef.current)) {
+            // Keep the partial bubble already on screen, but do not let a
+            // trailing delta or the server's final streaming:false update
+            // revive it after the user pressed stop.
+            break
+          }
           setMessages((prev) => {
             const idx = prev.findIndex((m) => m.id === evt.msg.id)
             const bubble = toBubble(evt.msg)
@@ -234,6 +263,7 @@ export function useCodexChat() {
           break
         }
         case 'codex_status':
+          if (stopRequestedRef.current && evt.status !== 'idle') break
           setStatus(evt.status)
           break
         case 'codex_notice':
@@ -241,14 +271,23 @@ export function useCodexChat() {
           break
         case 'codex_turn_end':
           setOpenTurnId(null)
+          if (!stoppedTurnIdRef.current || evt.turnId === stoppedTurnIdRef.current) {
+            activeTurnIdRef.current = null
+            stopRequestedRef.current = false
+            stoppedTurnIdRef.current = null
+          }
           break
         case 'codex_turn_busy':
           setOpenTurnId(evt.turnId)
+          activeTurnIdRef.current = evt.turnId
           break
         case 'codex_reset':
           setMessages([])
           setStatus('idle')
           setOpenTurnId(null)
+          activeTurnIdRef.current = null
+          stopRequestedRef.current = false
+          stoppedTurnIdRef.current = null
           break
         default:
           break
@@ -278,20 +317,37 @@ export function useCodexChat() {
     const text = (content || '').trim()
     const imageUrl = extra?.imageUrl
     if (!text && !imageUrl) return
+    stopRequestedRef.current = false
+    stoppedTurnIdRef.current = null
     setSendError(null)
-    const ok = sendCodexMessage(text, imageUrl)
+    const ok = sendCodexMessage(text, imageUrl, { sessionId: codexSessionId, prompt: codexPrompt })
     if (!ok) setSendError('未连接，请稍后重试')
-  }, [])
+  }, [codexPrompt, codexSessionId])
+
+  // The input may contain several Enter-split segments, but Codex's main
+  // thread only supports one active turn. Join the queued text and make
+  // exactly one websocket send, which produces exactly one Codex reply.
+  const sendMessageBatch = useCallback(async (contents) => {
+    const trimmed = (contents || []).map(c => (c || '').trim()).filter(Boolean)
+    if (trimmed.length === 0) return
+    return sendMessage(trimmed.join('\n'), 'text')
+  }, [sendMessage])
 
   const loadHistory = useCallback(() => { refresh() }, [refresh])
 
   const stopStreaming = useCallback(() => {
-    stopCodex().catch(() => {})
-  }, [])
+    const turnId = openTurnId || activeTurnIdRef.current
+    stopRequestedRef.current = true
+    stoppedTurnIdRef.current = turnId || null
+    setStatus('idle')
+    setOpenTurnId(null)
+    setMessages(prev => prev.map(m => m.streaming ? { ...m, streaming: false } : m))
+    stopCodex(codexSessionId).catch(() => {})
+  }, [openTurnId, codexSessionId])
 
   const reset = useCallback(async () => {
-    await resetCodex()
-  }, [])
+    await resetCodex(codexSessionId)
+  }, [codexSessionId])
 
   // No per-message edit/delete/regenerate backend for Codex (only real
   // send/stop/reset/history exist) — same honest "not supported" pattern
@@ -309,6 +365,6 @@ export function useCodexChat() {
     deleteMsg: notSupported, editMessage: notSupported,
     stopStreaming,
     // Codex-only extras ChatWindow.jsx reads directly (not part of useChat()'s shape)
-    status, statusLabel: CODEX_STATUS_LABELS[status] || '', openTurnId, loaded, sendError, reset, notice,
+    status, openTurnId, loaded, sendError, reset, notice,
   }
 }

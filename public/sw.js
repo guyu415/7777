@@ -30,12 +30,18 @@ self.addEventListener('push', (event) => {
 self.addEventListener('notificationclick', (event) => {
   event.notification.close()
   const url = event.notification.data?.url || '/'
+  const targetUrl = new URL(url, self.location.origin).href
   event.waitUntil(
     self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((list) => {
       for (const client of list) {
-        if ('focus' in client) return client.focus()
+        // An existing tab may currently be showing another session.  A bare
+        // focus() loses the notification's target; navigate it first so App
+        // can select the session encoded by the Worker push payload.
+        if ('navigate' in client && 'focus' in client) {
+          return client.navigate(targetUrl).then(next => next?.focus?.() || client.focus())
+        }
       }
-      return self.clients.openWindow(url)
+      return self.clients.openWindow(targetUrl)
     })
   )
 })
