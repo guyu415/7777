@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { useShallow } from 'zustand/react/shallow'
 import {
   getCodexState, sendCodexMessage, stopCodex, resetCodex, onCodexEvent, ensureConnected, selectCodexSession,
+  deleteCodexMessage, editCodexMessage,
 } from '../services/companion'
 import { fetchTTSAudio } from '../services/tts'
 import { useStore, saveBlob, getBlob } from '../store'
@@ -262,6 +263,9 @@ export function useCodexChat() {
           if (evt.msg.kind === 'voice') resolveCodexVoiceMsg(evt.msg, true)
           break
         }
+        case 'codex_msg_deleted':
+          setMessages((prev) => prev.filter((message) => message.id !== evt.id))
+          break
         case 'codex_status':
           if (stopRequestedRef.current && evt.status !== 'idle') break
           setStatus(evt.status)
@@ -324,14 +328,32 @@ export function useCodexChat() {
     if (!ok) setSendError('未连接，请稍后重试')
   }, [codexPrompt, codexSessionId])
 
-  // The input may contain several Enter-split segments, but Codex's main
-  // thread only supports one active turn. Join the queued text and make
-  // exactly one websocket send, which produces exactly one Codex reply.
+  // Keep each Enter-split segment as its own visible user bubble while still
+  // starting exactly one Codex turn (Codex only permits one active turn per
+  // thread). The server persists/broadcasts the ordered segments separately
+  // and joins them only for the model input.
   const sendMessageBatch = useCallback(async (contents) => {
     const trimmed = (contents || []).map(c => (c || '').trim()).filter(Boolean)
     if (trimmed.length === 0) return
-    return sendMessage(trimmed.join('\n'), 'text')
-  }, [sendMessage])
+    if (trimmed.length === 1) return sendMessage(trimmed[0], 'text')
+    stopRequestedRef.current = false
+    stoppedTurnIdRef.current = null
+    setSendError(null)
+    const ok = sendCodexMessage(trimmed.join('\n'), undefined, {
+      sessionId: codexSessionId, prompt: codexPrompt, segments: trimmed,
+    })
+    if (!ok) setSendError('未连接，请稍后重试')
+  }, [codexPrompt, codexSessionId, sendMessage])
+
+  const deleteMsg = useCallback(async (id) => {
+    await deleteCodexMessage(codexSessionId, id)
+    setMessages((prev) => prev.filter((message) => message.id !== id))
+  }, [codexSessionId])
+
+  const editMessage = useCallback(async (id, text) => {
+    const result = await editCodexMessage(codexSessionId, id, text)
+    updateMsg(id, { content: result?.text ?? text, edited: true, editedAt: Date.now() })
+  }, [codexSessionId, updateMsg])
 
   const loadHistory = useCallback(() => { refresh() }, [refresh])
 
@@ -349,10 +371,8 @@ export function useCodexChat() {
     await resetCodex(codexSessionId)
   }, [codexSessionId])
 
-  // No per-message edit/delete/regenerate backend for Codex (only real
-  // send/stop/reset/history exist) — same honest "not supported" pattern
-  // ChatWindow.jsx already uses for the Claude Code VPS session, reused
-  // here rather than silently no-op-ing.
+  // A stateful Codex thread cannot genuinely regenerate an earlier answer;
+  // display-history edit/delete is supported separately above, matching CC.
   const notSupported = useCallback(() => {
     throw new Error('Codex 常驻会话暂不支持该操作')
   }, [])
@@ -360,9 +380,9 @@ export function useCodexChat() {
   const isLoading = status === 'thinking' || status === 'working'
 
   return {
-    messages, sendMessage, loadHistory, isLoading,
+    messages, sendMessage, sendMessageBatch, loadHistory, isLoading,
     regenerate: notSupported, regenerateRound: notSupported,
-    deleteMsg: notSupported, editMessage: notSupported,
+    deleteMsg, editMessage,
     stopStreaming,
     // Codex-only extras ChatWindow.jsx reads directly (not part of useChat()'s shape)
     status, openTurnId, loaded, sendError, reset, notice,

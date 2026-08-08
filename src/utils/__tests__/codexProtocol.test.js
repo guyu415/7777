@@ -12,4 +12,10 @@ describe('Codex session request protocol', () => {
     expect(normalizeCodexSessionId('')).toBe('main')
     expect(buildCodexMessagePayload({ id: 'm2', text: 'hello', clientTime: null }).sessionId).toBe('main')
   })
+
+  it('carries split user bubbles as one ordered turn payload', () => {
+    expect(buildCodexMessagePayload({ id: 'm3', text: '一\n二', segments: ['一', '二'], sessionId: 's1' })).toMatchObject({
+      text: '一\n二', segments: ['一', '二'], sessionId: 's1',
+    })
+  })
 })

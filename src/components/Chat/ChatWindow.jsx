@@ -20,7 +20,7 @@ import { useScheduledMessages } from '../../hooks/useScheduledMessages'
 import { useFocusRuntime } from '../../hooks/useFocusRuntime'
 import { useStore, deleteMessageFromDB, getBlob } from '../../store'
 import { putAsset } from '../../services/sync'
-import { getXinchaoStatus, onXinchaoUpdate } from '../../services/companion'
+import { getXinchaoStatus, onXinchaoUpdate, getCodexMemoryFile, putCodexMemoryFile } from '../../services/companion'
 
 const SYNC_BASE = 'https://chat.xiaoman.xyz'
 const FAV_LIST_KEY = 'user:xiaoman2.26:voice_fav_list'
@@ -266,11 +266,17 @@ export default function ChatWindow({ theme }) {
     setMenuMsg(null)
     const idx = messages.findIndex(m => m.id === msg.id)
     if (idx === -1) return
-    for (const m of messages.slice(idx)) {
-      await deleteMessageFromDB(m.id)
+    try {
+      if (isCodexSession) {
+        for (const m of messages.slice(idx)) await deleteMsg(m.id)
+      } else {
+        for (const m of messages.slice(idx)) await deleteMessageFromDB(m.id)
+        deleteMessagesFrom(msg.id)
+      }
+      inputRef.current?.fill(msg.type === 'text' ? msg.content : '')
+    } catch (error) {
+      showToast(`编辑失败：${error.message}`)
     }
-    deleteMessagesFrom(msg.id)
-    inputRef.current?.fill(msg.type === 'text' ? msg.content : '')
   }
 
   // AI text message: in-place content edit (not the user "撤回重发" flow above)
@@ -289,7 +295,11 @@ export default function ChatWindow({ theme }) {
 
   const handleDelete = async (msg) => {
     setMenuMsg(null)
-    await deleteMsg(msg.id)
+    try {
+      await deleteMsg(msg.id)
+    } catch (error) {
+      showToast(`删除失败：${error.message}`)
+    }
   }
 
   const handleFavoriteVoice = async (msg) => {
@@ -334,6 +344,19 @@ export default function ChatWindow({ theme }) {
     } catch (e) {
       showToast('收藏失败：' + e.message)
     }
+  }
+
+  const saveCodexQuickMemory = async ({ subject, predicate, value }) => {
+    const name = 'saved-messages.md'
+    let existing = ''
+    try {
+      existing = (await getCodexMemoryFile(currentSessionId, name))?.content || ''
+    } catch (error) {
+      if (error?.status !== 404) throw error
+    }
+    const label = [subject, predicate].filter(Boolean).join(' · ')
+    const line = `- ${label ? `**${label}**：` : ''}${value}`
+    await putCodexMemoryFile(currentSessionId, name, [existing.trim(), line].filter(Boolean).join('\n'))
   }
 
   // Find the last assistant message id (the only one that gets a regenerate
@@ -524,16 +547,9 @@ export default function ChatWindow({ theme }) {
             }}
             onClick={e => e.stopPropagation()}
           >
-            {/* Codex has no per-message edit/delete/memory backend (only
-                real send/stop/reset/history — see useCodexChat.js) — its
-                messages live purely server-side, not in the zustand/
-                IndexedDB store these actions operate on, so acting on them
-                here would silently do nothing to what's displayed. 复制 and
-                收藏语音 (below) have no such dependency — they only ever
-                touch message.content / message.voiceBlobId, which Codex's
-                own bubbles genuinely have — so both stay available for
-                every provider. */}
-            {!isCodexSession && menuMsg.role === 'user' && menuMsg.type === 'text' && (
+            {/* CC and Codex expose the same message actions. Their hooks own
+                the runtime-specific persistence behind these shared buttons. */}
+            {menuMsg.role === 'user' && menuMsg.type === 'text' && (
               <button
                 onClick={() => handleEdit(menuMsg)}
                 className="w-full flex items-center gap-3 px-5 py-3.5 text-sm hover:bg-pink-50 transition-colors"
@@ -542,7 +558,7 @@ export default function ChatWindow({ theme }) {
                 ✏️ 编辑
               </button>
             )}
-            {!isCodexSession && menuMsg.role === 'assistant' && menuMsg.type === 'text' && (
+            {menuMsg.role === 'assistant' && menuMsg.type === 'text' && (
               <button
                 onClick={() => handleEditAI(menuMsg)}
                 className="w-full flex items-center gap-3 px-5 py-3.5 text-sm hover:bg-pink-50 transition-colors"
@@ -564,7 +580,7 @@ export default function ChatWindow({ theme }) {
                 📋 复制
               </button>
             )}
-            {!isCodexSession && menuMsg.type === 'text' && menuMsg.content && (
+            {menuMsg.type === 'text' && menuMsg.content && (
               <button
                 onClick={() => { setMenuMsg(null); setMemoryMsg(menuMsg) }}
                 className="w-full flex items-center gap-3 px-5 py-3.5 text-sm hover:bg-pink-50 transition-colors"
@@ -587,15 +603,13 @@ export default function ChatWindow({ theme }) {
                 ⭐ 收藏语音
               </button>
             )}
-            {!isCodexSession && (
-              <button
-                onClick={() => handleDelete(menuMsg)}
-                className="w-full flex items-center gap-3 px-5 py-3.5 text-sm hover:bg-red-50 transition-colors"
-                style={{ color: '#e07070' }}
-              >
-                🗑️ 删除
-              </button>
-            )}
+            <button
+              onClick={() => handleDelete(menuMsg)}
+              className="w-full flex items-center gap-3 px-5 py-3.5 text-sm hover:bg-red-50 transition-colors"
+              style={{ color: '#e07070' }}
+            >
+              🗑️ 删除
+            </button>
           </div>
         </div>
       )}
@@ -700,6 +714,7 @@ export default function ChatWindow({ theme }) {
         <MemoryModal
           message={memoryMsg}
           endpoint={workerUrl}
+          onSave={isCodexSession ? saveCodexQuickMemory : undefined}
           onClose={() => setMemoryMsg(null)}
           onSuccess={showToast}
         />

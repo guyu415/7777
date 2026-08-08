@@ -39,6 +39,7 @@ import {
   codexSessionStorageKey,
   effectiveCodexDeveloperInstructions,
   buildCodexContextMigrationText,
+  codexSessionNeedsRecovery,
   codexRuntimeRestartDecision,
 } from './codex-session.ts'
 import {
@@ -66,6 +67,7 @@ import {
   type TidalState,
   type VisibleCcMessage,
 } from './cc-tidal-memory.ts'
+import { splitCompletedCodexMessage } from './codex-chat-history.ts'
 
 const ROOT = dirname(new URL(import.meta.url).pathname)
 const PORT = Number(process.env.AI_COMPANION_PORT ?? 8788)
@@ -569,6 +571,7 @@ type XinchaoUpdateWire = { type: 'xinchao_update'; runtime: 'claude-code' | 'cod
 // mistake one runtime's events for the other's — this is the structural
 // form of the "runtime tag" the isolation requirement asks for.
 type CodexMsgWire = { type: 'codex_msg'; msg: CodexMsg; sessionId?: string }
+type CodexMsgDeletedWire = { type: 'codex_msg_deleted'; id: string; sessionId?: string }
 type CodexStatusWire = { type: 'codex_status'; status: CodexStatus; sessionId?: string }
 // One-shot, non-persisted notice for a turn that ended in stopped/error —
 // deliberately NOT part of codexStatus (which only ever holds
@@ -723,7 +726,7 @@ type GroupUpdateWire = { type: 'group_update'; chat: GroupChat }
 type GroupListWire = { type: 'group_list'; chats: Array<{ id: string; name: string; members: GroupMemberId[]; updatedAt: number }> }
 
 type LiveWire = MsgWire | TurnStartWire | TurnEndWire | TurnErrorWire | ResetBusyWire | ResetWire | ThinkingWire | GomokuWire | GomokuTurnEndWire | XinchaoUpdateWire
-  | CodexMsgWire | CodexStatusWire | CodexNoticeWire | CodexTurnEndWire | CodexTurnBusyWire | CodexResetBusyWire | CodexResetWire
+  | CodexMsgWire | CodexMsgDeletedWire | CodexStatusWire | CodexNoticeWire | CodexTurnEndWire | CodexTurnBusyWire | CodexResetBusyWire | CodexResetWire
   | FocusUpdateWire | FocusFinishedWire | GroupUpdateWire | GroupListWire
 // resetAt lets a client that reconnects (or opens a brand new tab) long
 // after a reset happened — and so never saw the live ResetWire broadcast —
@@ -3531,7 +3534,7 @@ let codexFocusResolve: ((r: { text: string; error?: string }) => void) | null = 
 const codexActiveWorkItems = new Set<string>()
 let codexResetInFlight = false
 
-function broadcastCodex(m: CodexMsgWire | CodexStatusWire | CodexNoticeWire | CodexTurnEndWire | CodexResetWire) {
+function broadcastCodex(m: CodexMsgWire | CodexMsgDeletedWire | CodexStatusWire | CodexNoticeWire | CodexTurnEndWire | CodexResetWire) {
   sendRaw({ ...m, sessionId: (m as any).sessionId || DEFAULT_CODEX_SESSION_ID } as LiveWire)
 }
 function codexAppendMsg(msg: CodexMsg) {
@@ -3547,12 +3550,22 @@ function codexUpdateMsg(id: string, updates: Partial<CodexMsg>) {
   saveCodexHistory()
   broadcastCodex({ type: 'codex_msg', msg: codexHistory[idx] })
 }
+function finalizeCodexReply(id: string) {
+  const idx = codexHistory.findIndex((message) => message.id === id)
+  if (idx === -1) return
+  const completed = { ...codexHistory[idx], streaming: false }
+  const parts = splitCompletedCodexMessage(completed, nextId)
+  codexHistory.splice(idx, 1, ...parts)
+  if (codexHistory.length > CODEX_HISTORY_LIMIT) codexHistory.splice(0, codexHistory.length - CODEX_HISTORY_LIMIT)
+  saveCodexHistory()
+  for (const message of parts) broadcastCodex({ type: 'codex_msg', msg: message })
+}
 function setCodexStatus(status: CodexStatus) {
   codexStatus = status
   broadcastCodex({ type: 'codex_status', status })
 }
 
-function broadcastExtraCodex(state: CodexSessionState, message: CodexMsgWire | CodexStatusWire | CodexNoticeWire | CodexTurnEndWire | CodexResetWire | CodexTurnBusyWire | CodexResetBusyWire) {
+function broadcastExtraCodex(state: CodexSessionState, message: CodexMsgWire | CodexMsgDeletedWire | CodexStatusWire | CodexNoticeWire | CodexTurnEndWire | CodexResetWire | CodexTurnBusyWire | CodexResetBusyWire) {
   sendRaw({ ...message, sessionId: state.sessionId } as LiveWire)
 }
 function extraAppendMsg(state: CodexSessionState, msg: CodexMsg) {
@@ -3567,6 +3580,16 @@ function extraUpdateMsg(state: CodexSessionState, id: string, updates: Partial<C
   state.history[idx] = { ...state.history[idx], ...updates }
   saveExtraCodexSession(state)
   broadcastExtraCodex(state, { type: 'codex_msg', msg: state.history[idx] })
+}
+function finalizeExtraCodexReply(state: CodexSessionState, id: string) {
+  const idx = state.history.findIndex((message) => message.id === id)
+  if (idx === -1) return
+  const completed = { ...state.history[idx], streaming: false }
+  const parts = splitCompletedCodexMessage(completed, nextId)
+  state.history.splice(idx, 1, ...parts)
+  if (state.history.length > CODEX_HISTORY_LIMIT) state.history.splice(0, state.history.length - CODEX_HISTORY_LIMIT)
+  saveExtraCodexSession(state)
+  for (const message of parts) broadcastExtraCodex(state, { type: 'codex_msg', msg: message })
 }
 function setExtraCodexStatus(state: CodexSessionState, status: CodexStatus) {
   state.status = status
@@ -3587,7 +3610,7 @@ function extraFinishTurn(state: CodexSessionState, turnId: string | null, outcom
   state.activeWorkItems.clear()
   state.currentTurnId = null
   if (state.streamMsgId) {
-    extraUpdateMsg(state, state.streamMsgId, { streaming: false })
+    finalizeExtraCodexReply(state, state.streamMsgId)
     state.streamMsgId = null
   }
   setExtraCodexStatus(state, 'idle')
@@ -4704,7 +4727,7 @@ function codexFinishTurn(turnId: string | null, outcome: CodexTurnOutcome, error
   codexActiveWorkItems.clear()
   codexCurrentTurnId = null
   if (codexStreamMsgId) {
-    codexUpdateMsg(codexStreamMsgId, { streaming: false })
+    finalizeCodexReply(codexStreamMsgId)
     codexStreamMsgId = null
   }
   // The header status always returns to idle the instant the turn ends —
@@ -5135,12 +5158,22 @@ async function codexRestartProcess(force = false): Promise<Record<string, unknow
       return { ok: false, reason: 'process_did_not_exit', previousPid }
     }
 
-    // Recreate the app-server immediately when one was already running. Its
-    // persisted thread ids/history remain intact; the next turn resumes them.
+    // Recreate the bridge immediately, then proactively recover every chat
+    // session already loaded by this server. This makes an operator restart
+    // complete only after the conversation is usable again instead of making
+    // the user's next message discover whether resume works.
     await codexEnsureProc()
+    const recovery = await codexRecoverKnownChatThreads()
     const newPid = codexProc?.pid ?? null
-    log('codex_restart_complete', { previousPid, newPid, activeTurns, elapsedMs: Date.now() - startedAt })
-    return { ok: true, status: 'restarted', previousPid, newPid, activeTurnsInterrupted: activeTurns }
+    log('codex_restart_complete', { previousPid, newPid, activeTurns, ...recovery, elapsedMs: Date.now() - startedAt })
+    return {
+      ok: recovery.failedSessions.length === 0,
+      status: recovery.failedSessions.length === 0 ? 'restarted' : 'restarted_recovery_failed',
+      previousPid,
+      newPid,
+      activeTurnsInterrupted: activeTurns,
+      ...recovery,
+    }
   } catch (err) {
     log('codex_restart_failed', { previousPid, error: String(err), elapsedMs: Date.now() - startedAt })
     return { ok: false, reason: 'restart_failed', previousPid, error: String(err) }
@@ -5263,7 +5296,7 @@ async function codexEnsureThread(): Promise<string> {
   return codexThreadId
 }
 
-async function codexSendUserTurn(text: string, imageUrl?: string, clientTime?: unknown, promptOverride?: unknown): Promise<void> {
+async function codexSendUserTurn(text: string, imageUrl?: string, clientTime?: unknown, promptOverride?: unknown, displaySegments?: string[]): Promise<void> {
   if (typeof promptOverride === 'string') setCodexPrompt(DEFAULT_CODEX_SESSION_ID, promptOverride)
   const threadId = await codexEnsureThread()
   const input: any[] = []
@@ -5276,7 +5309,12 @@ async function codexSendUserTurn(text: string, imageUrl?: string, clientTime?: u
   const modelText = [clientTimeContextLine(clientTime), migration, recap, text].filter(Boolean).join('\n\n')
   if (modelText.trim()) input.push({ type: 'text', text: modelText, text_elements: [] })
   if (imageUrl) input.push({ type: 'image', url: imageUrl })
-  codexAppendMsg({ id: nextId(), from: 'user', text, ts: Date.now(), ...(imageUrl ? { imageUrl } : {}) })
+  const visibleParts = Array.isArray(displaySegments) && displaySegments.length ? displaySegments : [text]
+  const visibleTs = Date.now()
+  visibleParts.forEach((part, index) => codexAppendMsg({
+    id: nextId(), from: 'user', text: part, ts: visibleTs + index,
+    ...(imageUrl && index === visibleParts.length - 1 ? { imageUrl } : {}),
+  }))
   codexCurrentTurnKind = 'chat'
   setCodexStatus('thinking')
   const result = await codexRequest('turn/start', { threadId, input, ...(codexSelectedModel ? { model: codexSelectedModel } : {}) })
@@ -5335,7 +5373,34 @@ async function codexEnsureExtraThread(state: CodexSessionState): Promise<string>
   return state.threadId
 }
 
-async function codexSendExtraUserTurn(state: CodexSessionState, text: string, imageUrl?: string, clientTime?: unknown, promptOverride?: unknown): Promise<void> {
+async function codexRecoverKnownChatThreads(): Promise<{
+  recoveredSessions: string[]
+  failedSessions: Array<{ sessionId: string; error: string }>
+}> {
+  const recoveredSessions: string[] = []
+  const failedSessions: Array<{ sessionId: string; error: string }> = []
+  const recover = async (sessionId: string, action: () => Promise<string>) => {
+    try {
+      await action()
+      recoveredSessions.push(sessionId)
+    } catch (err) {
+      const error = String(err)
+      failedSessions.push({ sessionId, error })
+      log('codex_restart_session_recovery_failed', { sessionId, error })
+    }
+  }
+
+  if (codexSessionNeedsRecovery(codexThreadId, codexHistory)) {
+    await recover(DEFAULT_CODEX_SESSION_ID, () => codexEnsureThread())
+  }
+  for (const state of extraCodexSessions.values()) {
+    if (!codexSessionNeedsRecovery(state.threadId, state.history)) continue
+    await recover(state.sessionId, () => codexEnsureExtraThread(state))
+  }
+  return { recoveredSessions, failedSessions }
+}
+
+async function codexSendExtraUserTurn(state: CodexSessionState, text: string, imageUrl?: string, clientTime?: unknown, promptOverride?: unknown, displaySegments?: string[]): Promise<void> {
   if (typeof promptOverride === 'string') {
     state.prompt = setCodexPrompt(state.sessionId, promptOverride)
     saveExtraCodexSession(state)
@@ -5346,7 +5411,12 @@ async function codexSendExtraUserTurn(state: CodexSessionState, text: string, im
   const modelText = [clientTimeContextLine(clientTime), migration, text].filter(Boolean).join('\n\n')
   if (modelText.trim()) input.push({ type: 'text', text: modelText, text_elements: [] })
   if (imageUrl) input.push({ type: 'image', url: imageUrl })
-  extraAppendMsg(state, { id: nextId(), from: 'user', text, ts: Date.now(), ...(imageUrl ? { imageUrl } : {}) })
+  const visibleParts = Array.isArray(displaySegments) && displaySegments.length ? displaySegments : [text]
+  const visibleTs = Date.now()
+  visibleParts.forEach((part, index) => extraAppendMsg(state, {
+    id: nextId(), from: 'user', text: part, ts: visibleTs + index,
+    ...(imageUrl && index === visibleParts.length - 1 ? { imageUrl } : {}),
+  }))
   setExtraCodexStatus(state, 'thinking')
   const result = await codexRequest('turn/start', { threadId, input, ...(codexSelectedModel ? { model: codexSelectedModel } : {}) })
   const turnId = result?.turn?.id ?? null
@@ -6678,6 +6748,55 @@ Bun.serve<{ authed: true }>({
       return jsonResponse({ ok: true, sessionId, prompt, threadId, appliesFrom: 'next_message' }, { headers: cors })
     }
 
+    // Display-history parity with the CC window. These mutations change the
+    // persisted chat transcript shown in Eunoia; like CC's existing delete/
+    // edit controls, they do not pretend to erase words already present in a
+    // stateful model thread.
+    if (url.pathname === '/codex/message/delete' && req.method === 'POST') {
+      const gate = authGate()
+      if (gate) return gate
+      const cors = corsHeadersFor(origin)
+      let body: unknown
+      try { body = await req.json() } catch { return jsonResponse({ error: 'bad json' }, { status: 400, headers: cors }) }
+      const sessionId = normalizeCodexSessionId((body as any)?.sessionId)
+      const messageId = typeof (body as any)?.messageId === 'string' ? (body as any).messageId : ''
+      if (!messageId) return jsonResponse({ error: 'missing message id' }, { status: 400, headers: cors })
+      const state = sessionId === DEFAULT_CODEX_SESSION_ID ? null : getExtraCodexSession(sessionId)
+      const targetHistory = state ? state.history : codexHistory
+      const idx = targetHistory.findIndex((message) => message.id === messageId)
+      if (idx === -1) return jsonResponse({ error: 'not found' }, { status: 404, headers: cors })
+      if (targetHistory[idx].streaming) return jsonResponse({ error: 'message is still streaming' }, { status: 409, headers: cors })
+      targetHistory.splice(idx, 1)
+      if (state) {
+        saveExtraCodexSession(state)
+        broadcastExtraCodex(state, { type: 'codex_msg_deleted', id: messageId })
+      } else {
+        saveCodexHistory()
+        broadcastCodex({ type: 'codex_msg_deleted', id: messageId })
+      }
+      return jsonResponse({ ok: true, sessionId, messageId }, { headers: cors })
+    }
+
+    if (url.pathname === '/codex/message/edit' && req.method === 'POST') {
+      const gate = authGate()
+      if (gate) return gate
+      const cors = corsHeadersFor(origin)
+      let body: unknown
+      try { body = await req.json() } catch { return jsonResponse({ error: 'bad json' }, { status: 400, headers: cors }) }
+      const sessionId = normalizeCodexSessionId((body as any)?.sessionId)
+      const messageId = typeof (body as any)?.messageId === 'string' ? (body as any).messageId : ''
+      const text = typeof (body as any)?.text === 'string' ? (body as any).text.trim() : ''
+      if (!messageId || !text) return jsonResponse({ error: 'missing message id or text' }, { status: 400, headers: cors })
+      const state = sessionId === DEFAULT_CODEX_SESSION_ID ? null : getExtraCodexSession(sessionId)
+      const targetHistory = state ? state.history : codexHistory
+      const message = targetHistory.find((item) => item.id === messageId)
+      if (!message) return jsonResponse({ error: 'not found' }, { status: 404, headers: cors })
+      if (message.streaming) return jsonResponse({ error: 'message is still streaming' }, { status: 409, headers: cors })
+      if (state) extraUpdateMsg(state, messageId, { text })
+      else codexUpdateMsg(messageId, { text })
+      return jsonResponse({ ok: true, sessionId, messageId, text }, { headers: cors })
+    }
+
     // Codex memory is a separate, per-session Markdown store. It is never
     // read from or written to Claude Code's MEMORY_DIR; its contents are
     // appended to that session's developer instructions on the next Codex
@@ -7946,7 +8065,7 @@ Bun.serve<{ authed: true }>({
     },
     message(ws, raw) {
       try {
-        const parsed = JSON.parse(String(raw)) as { id?: string; text?: string; type?: string; turnId?: string; runtime?: string; imageUrl?: string; imagePath?: string; clientTime?: unknown; sessionId?: string; prompt?: string }
+        const parsed = JSON.parse(String(raw)) as { id?: string; text?: string; segments?: string[]; type?: string; turnId?: string; runtime?: string; imageUrl?: string; imagePath?: string; clientTime?: unknown; sessionId?: string; prompt?: string }
 
         // App-level heartbeat — a WS can look "open" to the browser for a
         // long time after the underlying network path has actually died
@@ -8004,8 +8123,12 @@ Bun.serve<{ authed: true }>({
         if (parsed.runtime === 'codex') {
           const sessionId = normalizeCodexSessionId(parsed.sessionId || ws.data.codexSessionId)
           const codexText = (parsed.text ?? '').trim()
+          const codexSegments = Array.isArray(parsed.segments)
+            ? parsed.segments.map((part) => typeof part === 'string' ? part.trim() : '').filter(Boolean).slice(0, 50)
+            : undefined
+          const codexTurnText = codexSegments?.length ? codexSegments.join('\n') : codexText
           const codexImageUrl = parsed.imageUrl
-          if (!codexText && !codexImageUrl) return
+          if (!codexTurnText && !codexImageUrl) return
           if (typeof parsed.prompt === 'string') setCodexPrompt(sessionId, parsed.prompt)
           const extraState = sessionId === DEFAULT_CODEX_SESSION_ID ? null : getExtraCodexSession(sessionId)
           if (codexResetInFlight || extraState?.resetInFlight) {
@@ -8018,8 +8141,8 @@ Bun.serve<{ authed: true }>({
             return
           }
           const send = extraState
-            ? codexSendExtraUserTurn(extraState, codexText, codexImageUrl, parsed.clientTime, parsed.prompt)
-            : codexSendUserTurn(codexText, codexImageUrl, parsed.clientTime, parsed.prompt)
+            ? codexSendExtraUserTurn(extraState, codexTurnText, codexImageUrl, parsed.clientTime, parsed.prompt, codexSegments)
+            : codexSendUserTurn(codexTurnText, codexImageUrl, parsed.clientTime, parsed.prompt, codexSegments)
           send.catch((err) => {
             log('codex_send_error', { error: String(err) })
             if (extraState) {

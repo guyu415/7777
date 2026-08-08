@@ -31,6 +31,18 @@ export function buildCodexContextMigrationText(history: Array<{ from?: string; t
   return recent ? `【上下文迁移】以下是原对话中最近的内容，请保持上下文连续，不要主动复述：\n${recent}` : ''
 }
 
+// A persisted thread is the strongest recovery anchor. The visible chat log
+// is the fallback anchor when an app-server update/corruption makes that
+// thread impossible to resume or fork. System-only notices do not create a
+// conversation worth eagerly rebuilding after a restart.
+export function codexSessionNeedsRecovery(
+  threadId: unknown,
+  history: Array<{ from?: string }> = [],
+): boolean {
+  if (typeof threadId === 'string' && threadId.trim()) return true
+  return history.some((item) => item?.from === 'user' || item?.from === 'codex')
+}
+
 export type CodexRuntimeRestartSnapshot = {
   processRunning: boolean
   activeTurns: number

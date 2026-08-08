@@ -5,6 +5,7 @@ import {
   codexSessionStorageKey,
   effectiveCodexDeveloperInstructions,
   buildCodexContextMigrationText,
+  codexSessionNeedsRecovery,
   codexRuntimeRestartDecision,
 } from '../codex-session.ts'
 
@@ -54,5 +55,13 @@ describe('Codex session prompt protocol helpers', () => {
       allowed: true,
       reason: 'forced',
     })
+  })
+
+  test('restart recovery uses either the persisted thread or visible conversation', () => {
+    expect(codexSessionNeedsRecovery('thread-123')).toBe(true)
+    expect(codexSessionNeedsRecovery(null, [{ from: 'user' }])).toBe(true)
+    expect(codexSessionNeedsRecovery(null, [{ from: 'codex' }])).toBe(true)
+    expect(codexSessionNeedsRecovery(null, [{ from: 'system' }])).toBe(false)
+    expect(codexSessionNeedsRecovery(null, [])).toBe(false)
   })
 })

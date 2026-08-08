@@ -13,7 +13,7 @@ const inputStyle = {
   fontFamily: 'inherit',
 }
 
-export default function MemoryModal({ message, endpoint, onClose, onSuccess }) {
+export default function MemoryModal({ message, endpoint, onSave, onClose, onSuccess }) {
   const [subject, setSubject] = useState('')
   const [predicate, setPredicate] = useState('')
   const [value, setValue] = useState(message?.content || '')
@@ -25,11 +25,13 @@ export default function MemoryModal({ message, endpoint, onClose, onSuccess }) {
     setSaving(true)
     setError('')
     try {
-      await g1Remember(endpoint, { subject: subject.trim(), predicate: predicate.trim(), value: value.trim() })
+      const memory = { subject: subject.trim(), predicate: predicate.trim(), value: value.trim() }
+      if (onSave) await onSave(memory)
+      else await g1Remember(endpoint, memory)
       onSuccess()
       onClose()
     } catch (e) {
-      setError('保存失败，请检查记忆服务连接')
+      setError(e?.message || '保存失败，请检查记忆服务连接')
     } finally {
       setSaving(false)
     }

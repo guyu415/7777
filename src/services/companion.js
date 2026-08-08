@@ -719,6 +719,20 @@ export async function saveCodexPrompt(sessionId, prompt) {
     body: JSON.stringify({ sessionId: normalizeCodexSessionId(sessionId), prompt: typeof prompt === 'string' ? prompt : '' }),
   })
 }
+export async function deleteCodexMessage(sessionId, messageId) {
+  return companionJson('/codex/message/delete', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ sessionId: normalizeCodexSessionId(sessionId), messageId }),
+  })
+}
+export async function editCodexMessage(sessionId, messageId, text) {
+  return companionJson('/codex/message/edit', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ sessionId: normalizeCodexSessionId(sessionId), messageId, text }),
+  })
+}
 export async function stopCodex(sessionId = selectedCodexSessionId) {
   return companionJson('/codex/stop', {
     method: 'POST',
@@ -738,7 +752,7 @@ export function sendCodexMessage(text, imageUrl, options = {}) {
   const sessionId = normalizeCodexSessionId(options?.sessionId || selectedCodexSessionId)
   const prompt = typeof options?.prompt === 'string' ? options.prompt : ''
   const id = `codex-eunoia-${Date.now()}-${++codexSeq}`
-  return sendRaw(buildCodexMessagePayload({ id, text, imageUrl, sessionId, prompt, clientTime: clientTimeContext() }))
+  return sendRaw(buildCodexMessagePayload({ id, text, segments: options?.segments, imageUrl, sessionId, prompt, clientTime: clientTimeContext() }))
 }
 
 listeners.add(evt => {
@@ -776,7 +790,7 @@ listeners.add(evt => {
       announceGroupUpdate(m.chat)
       return
     }
-    if (m.type === 'codex_msg' || m.type === 'codex_status' || m.type === 'codex_notice' || m.type === 'codex_turn_end'
+    if (m.type === 'codex_msg' || m.type === 'codex_msg_deleted' || m.type === 'codex_status' || m.type === 'codex_notice' || m.type === 'codex_turn_end'
       || m.type === 'codex_turn_busy' || m.type === 'codex_reset_busy' || m.type === 'codex_reset'
       || m.type === 'codex_history_snapshot') {
       announceCodex(m)
