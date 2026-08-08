@@ -203,7 +203,7 @@ function connect() {
       return
     }
     if (m.type === 'history') {
-      notify({ kind: 'history', openTurnId: m.openTurnId, items: m.items, resetAt: m.resetAt,
+      notify({ kind: 'history', openTurnId: m.openTurnId, queuedTurnIds: m.queuedTurnIds || [], items: m.items, resetAt: m.resetAt,
         codexSessionId: m.codexSessionId || 'main', codexPrompt: m.codexPrompt || '' })
       return
     }
@@ -983,7 +983,7 @@ export async function* streamChatViaCompanion({ text, imagePath, signal }) {
       // Reconnected mid-turn. If the server no longer considers our turn
       // open, we missed the live turn_end/turn_error while disconnected —
       // recover from the replayed message history instead of hanging.
-      if (evt.openTurnId === turnId) return // still open server-side, keep waiting
+      if (evt.openTurnId === turnId || evt.queuedTurnIds?.includes(turnId)) return // still open/queued server-side, keep waiting
       const isOurs = it => it.turnId === turnId
       const ccReplies = evt.items.filter(it => isOurs(it) && it.from === 'cc')
       recoveredFromHistory = true

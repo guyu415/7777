@@ -1,0 +1,13 @@
+{
+  "name": "ai-companion",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "start": "bun run channel-server.ts",
+    "test": "bun test"
+  },
+  "type": "module",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.0"
+  }
+}

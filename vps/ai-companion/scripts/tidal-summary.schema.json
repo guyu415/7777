@@ -1,0 +1,21 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "relationshipIdentity",
+    "emotionInteraction",
+    "factsCommitments",
+    "ongoing",
+    "todos",
+    "preferences"
+  ],
+  "properties": {
+    "relationshipIdentity": { "type": "string", "minLength": 1, "maxLength": 1200 },
+    "emotionInteraction": { "type": "string", "minLength": 1, "maxLength": 1200 },
+    "factsCommitments": { "type": "string", "minLength": 1, "maxLength": 1200 },
+    "ongoing": { "type": "string", "minLength": 1, "maxLength": 1200 },
+    "todos": { "type": "string", "minLength": 1, "maxLength": 1200 },
+    "preferences": { "type": "string", "minLength": 1, "maxLength": 1200 }
+  }
+}

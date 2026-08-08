@@ -1,0 +1,15 @@
+[Unit]
+Description=ai-companion brain session (detached tmux, interactive claude --channels)
+After=network.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+User=companion
+Group=companion
+WorkingDirectory=/opt/ai-companion
+ExecStart=/opt/ai-companion/scripts/start-brain.sh
+ExecStop=/opt/ai-companion/scripts/stop-brain.sh
+
+[Install]
+WantedBy=multi-user.target

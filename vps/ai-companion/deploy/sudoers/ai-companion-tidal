@@ -1,0 +1,3 @@
+# Narrow bridge to root's existing ChatGPT login. No arguments are allowed;
+# the root-owned script reads/writes fixed paths and invokes Codex ephemeral.
+companion ALL=(root) NOPASSWD: /opt/ai-companion/scripts/tidal-luna-summary.sh
