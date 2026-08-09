@@ -11,6 +11,7 @@ import CarryOutPetModal from './CarryOutPetModal'
 import VoiceCall from '../Voice/VoiceCall'
 import GomokuBoard from './GomokuBoard'
 import DiceDuel from './DiceDuel'
+import SpicyMonopolyBoard from './SpicyMonopolyBoard'
 import XinchaoPanel from './XinchaoPanel'
 import FocusPomodoroSheet from '../Focus/FocusPomodoroSheet'
 import FocusSession from '../Focus/FocusSession'
@@ -116,6 +117,7 @@ export default function ChatWindow({ theme }) {
   const [showCall, setShowCall] = useState(false)
   const [showGomoku, setShowGomoku] = useState(false)
   const [showDice, setShowDice] = useState(false)
+  const [showSpicy, setShowSpicy] = useState(false)
   const [showDivination, setShowDivination] = useState(false)
   const [showCarryOut, setShowCarryOut] = useState(false)
   // Focus (专注) — ONE real global task, server-authoritative (see
@@ -813,6 +815,8 @@ export default function ChatWindow({ theme }) {
           onCancelReply={() => setReplyTarget(null)}
           onOpenGomoku={() => setShowGomoku(true)}
           onOpenDice={() => setShowDice(true)}
+          onOpenSpicy={() => setShowSpicy(true)}
+          spicyEnabled={isVpsSession}
           gomokuEnabled={isFixedVpsSession}
           onOpenFocus={() => setShowFocusSheet(true)}
           onOpenDivination={() => setShowDivination(true)}
@@ -891,6 +895,18 @@ export default function ChatWindow({ theme }) {
           aiAvatar={effectiveAiAvatar}
           userAvatar={effectiveUserAvatar}
           onClose={() => setShowDice(false)}
+        />
+      )}
+
+      {showSpicy && isVpsSession && (
+        <SpicyMonopolyBoard
+          theme={theme}
+          isLoading={isLoading}
+          onRequestRoll={() => {
+            updateActiveTime()
+            sendMessage('掷骰子', 'text').catch((e) => console.error('[SPICY] roll request failed:', e.message))
+          }}
+          onClose={() => setShowSpicy(false)}
         />
       )}
 

@@ -60,6 +60,15 @@ function DiceIcon() {
   )
 }
 
+function MonopolyIcon() {
+  return (
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M4 4h16v16H4z"/><path d="M8 4v4H4M16 4v4h4M20 16h-4v4M8 20v-4H4"/>
+      <circle cx="12" cy="12" r="2"/><path d="m10.5 10.5-2-2m5 5 2 2"/>
+    </svg>
+  )
+}
+
 function FocusIcon() {
   return (
     <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -177,7 +186,7 @@ function readDraft(storageKey) {
   } catch { return { text: '', segments: [] } }
 }
 
-const MessageInput = forwardRef(function MessageInput({ onSend, onSendBatch, onStartCall, onSendImage, onSendFile, replyDraft, onCancelReply, onOpenGomoku, onOpenDice, gomokuEnabled, onOpenFocus, onOpenDivination, disabled, theme, isLoading, onStop, draftKey }, ref) {
+const MessageInput = forwardRef(function MessageInput({ onSend, onSendBatch, onStartCall, onSendImage, onSendFile, replyDraft, onCancelReply, onOpenGomoku, onOpenDice, onOpenSpicy, spicyEnabled, gomokuEnabled, onOpenFocus, onOpenDivination, disabled, theme, isLoading, onStop, draftKey }, ref) {
   const draftStorageKey = draftKey ? `chat.draft.${draftKey}` : null
   const initialDraft = readDraft(draftStorageKey)
   const [text, setTextRaw] = useState(initialDraft.text)
@@ -383,6 +392,10 @@ const MessageInput = forwardRef(function MessageInput({ onSend, onSendBatch, onS
   const handleMenuDice = () => {
     setMenuOpen(false)
     onOpenDice?.()
+  }
+  const handleMenuSpicy = () => {
+    setMenuOpen(false)
+    onOpenSpicy?.()
   }
 
   const handleMenuFocus = () => {
@@ -645,6 +658,13 @@ const MessageInput = forwardRef(function MessageInput({ onSend, onSendBatch, onS
             sub={gomokuEnabled ? undefined : '仅VPS会话支持'}
             onClick={handleMenuDice}
             disabled={!gomokuEnabled}
+          />
+          <MenuItem
+            icon={<MonopolyIcon />}
+            label="大富翁"
+            sub={spicyEnabled ? undefined : '仅CC窗支持'}
+            onClick={handleMenuSpicy}
+            disabled={!spicyEnabled}
           />
           <MenuItem icon={<FocusIcon />} label="专注" onClick={handleMenuFocus} />
           <MenuItem icon={<DivinationIcon />} label="抽签" onClick={handleMenuDivination} />

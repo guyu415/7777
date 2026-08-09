@@ -240,6 +240,7 @@ const RESET_MARKER_FILE = process.env.AI_COMPANION_RESET_MARKER_FILE ?? join(ROO
 const GOMOKU_FILE = process.env.AI_COMPANION_GOMOKU_FILE ?? join(ROOT, 'state', 'gomoku-game.json')
 const GOMOKU_BOARD_SIZE = 15
 const DICE_DUEL_FILE = process.env.AI_COMPANION_DICE_DUEL_FILE ?? join(ROOT, 'state', 'dice-duel.json')
+const SPICY_VISUAL_STATE_FILE = process.env.AI_COMPANION_SPICY_VISUAL_STATE_FILE ?? join(ROOT, 'state', 'spicy-monopoly-cc.json')
 
 // 心潮 (xinchao-dynamic-mind) — a separate, independently-deployed dynamic
 // state layer (Docker Compose, 127.0.0.1:18110 only, SHADOW_MODE=true,
@@ -7944,6 +7945,17 @@ Bun.serve<{ authed: true }>({
       if (gate) return gate
       const runtime: GomokuRuntime = url.searchParams.get('runtime') === 'codex' ? 'codex' : 'claude-code'
       return jsonResponse({ state: diceDuelStates[runtime] }, { headers: corsHeadersFor(origin) })
+    }
+
+    if (url.pathname === '/spicy/visual-state' && req.method === 'GET') {
+      const gate = authGate()
+      if (gate) return gate
+      try {
+        const saved = JSON.parse(readFileSync(SPICY_VISUAL_STATE_FILE, 'utf8'))
+        return jsonResponse({ state: saved?.visual ?? null }, { headers: corsHeadersFor(origin) })
+      } catch {
+        return jsonResponse({ state: null }, { headers: corsHeadersFor(origin) })
+      }
     }
 
     if (url.pathname === '/dice/roll' && req.method === 'POST') {

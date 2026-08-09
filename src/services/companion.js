@@ -665,6 +665,9 @@ export async function getGomokuState(runtime = 'claude-code') {
 export async function getDiceDuelState(runtime = 'claude-code') {
   return companionJson(`/dice/state?runtime=${encodeURIComponent(runtime)}`)
 }
+export async function getSpicyVisualState() {
+  return companionJson('/spicy/visual-state')
+}
 export async function rollDiceDuel(runtime = 'claude-code') {
   return companionJson('/dice/roll', {
     method: 'POST',
