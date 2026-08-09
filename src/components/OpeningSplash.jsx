@@ -307,21 +307,19 @@ export default function OpeningSplash() {
           white-space: nowrap;
           background:
             linear-gradient(180deg,
-              rgba(255,255,255,.72) 0%,
-              rgba(255,255,255,.2) 20%,
-              rgba(255,255,255,.06) 52%,
-              rgba(218,250,255,.34) 76%,
-              rgba(255,255,255,.58) 100%);
+              rgba(255,255,255,.3) 0%,
+              rgba(255,255,255,.07) 20%,
+              rgba(255,255,255,.012) 52%,
+              rgba(218,250,255,.08) 76%,
+              rgba(255,255,255,.2) 100%);
           background-clip: text;
           -webkit-background-clip: text;
           -webkit-text-fill-color: transparent;
-          -webkit-text-stroke: 1.4px rgba(255,255,255,.7);
+          -webkit-text-stroke: 1.9px rgba(255,255,255,.52);
           text-shadow:
-            0 -1px 0 rgba(255,255,255,.9),
-            0 2px 0 rgba(214,250,255,.28),
-            0 5px 0 rgba(83,151,166,.2),
-            0 9px 15px rgba(19,73,83,.28);
-          filter: drop-shadow(0 12px 15px rgba(18,61,77,.24));
+            0 6px 0 rgba(61,134,151,.11),
+            0 10px 14px rgba(10,52,65,.22);
+          filter: drop-shadow(0 9px 12px rgba(18,61,77,.17));
           animation: opening-splash-brand 1.1s cubic-bezier(.2,.75,.2,1) both;
         }
 
@@ -335,39 +333,36 @@ export default function OpeningSplash() {
 
         .opening-splash__brand::before {
           z-index: -1;
-          color: rgba(127,211,223,.18);
-          -webkit-text-fill-color: rgba(127,211,223,.18);
-          -webkit-text-stroke: 2.4px rgba(232,255,255,.28);
+          color: rgba(127,211,223,.025);
+          -webkit-text-fill-color: rgba(127,211,223,.025);
+          -webkit-text-stroke: 2.8px rgba(220,251,255,.21);
           transform: translateY(5px);
-          filter: blur(.35px);
         }
 
         .opening-splash__brand::after {
           color: transparent;
           -webkit-text-fill-color: transparent;
-          -webkit-text-stroke: 1.5px rgba(255,255,255,.88);
-          clip-path: inset(0 0 58% 0);
+          -webkit-text-stroke: 1.25px rgba(255,255,255,.72);
+          clip-path: inset(0 0 64% 0);
           transform: translateY(-1px);
           filter: drop-shadow(0 2px 2px rgba(255,255,255,.5));
         }
 
         .opening-splash--night .opening-splash__brand {
-          background: linear-gradient(180deg, rgba(255,255,255,.78), rgba(255,229,244,.12) 42%, rgba(235,207,255,.16) 68%, rgba(255,244,249,.62));
+          background: linear-gradient(180deg, rgba(255,255,255,.3), rgba(255,229,244,.055) 35%, rgba(235,207,255,.012) 61%, rgba(255,244,249,.18));
           background-clip: text;
           -webkit-background-clip: text;
           -webkit-text-fill-color: transparent;
-          -webkit-text-stroke-color: rgba(255,238,249,.74);
+          -webkit-text-stroke-color: rgba(255,238,249,.52);
           text-shadow:
-            0 -1px 0 rgba(255,255,255,.92),
-            0 3px 0 rgba(244,203,239,.25),
-            0 6px 0 rgba(94,68,126,.24),
-            0 11px 18px rgba(29,22,61,.36);
+            0 6px 0 rgba(81,57,112,.13),
+            0 11px 16px rgba(20,15,50,.28);
         }
 
         .opening-splash--night .opening-splash__brand::before {
-          color: rgba(220,181,244,.2);
-          -webkit-text-fill-color: rgba(220,181,244,.2);
-          -webkit-text-stroke-color: rgba(255,232,250,.3);
+          color: rgba(220,181,244,.04);
+          -webkit-text-fill-color: rgba(220,181,244,.04);
+          -webkit-text-stroke-color: rgba(255,232,250,.2);
         }
 
         @keyframes opening-splash-arrive {

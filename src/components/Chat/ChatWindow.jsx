@@ -588,30 +588,48 @@ export default function ChatWindow({ theme }) {
         </svg>
       </div>
 
-      {/* Messages + particle layer */}
-      <div className="flex-1 relative overflow-hidden">
-        {/* Falling + stacking accessory particles — clipped to this area */}
-        <FallingParticles />
-        <MessageList
-          ref={messageListRef}
-          messages={messages}
-          sessionId={currentSessionId}
-          onLongPress={setMenuMsg}
-          lastAiId={lastAiId}
-          onRegenerate={effectiveOnRegenerate}
-          onRegenerateRound={effectiveOnRegenerateRound}
-          onRetry={retryFailed}
-          isLoading={isLoading}
-          userAvatar={effectiveUserAvatar}
-          aiAvatar={effectiveAiAvatar}
-          theme={theme}
-          selectionMode={selectedMessageIds.size > 0}
-          selectedIds={selectedMessageIds}
-          onToggleSelect={toggleMessageSelection}
-          emptyAiName={effectiveAiName}
-          emptyHasApiKey={isCodexSession ? true : !!effectiveApiKey}
-          onEmptyConfigureClick={goToGlobalSettings}
-        />
+      {/* The Monopoly board lives inside the real chat rather than taking
+          over the whole viewport: board above, original message history
+          below, original composer untouched at the bottom. Dice requests
+          therefore enter this same conversation and CC's replies remain
+          visible while the board animation is running. */}
+      <div className="flex-1 relative overflow-hidden flex flex-col min-h-0">
+        {showSpicy && isVpsSession && (
+          <SpicyMonopolyBoard
+            theme={theme}
+            isLoading={isLoading}
+            onRequestRoll={() => {
+              updateActiveTime()
+              sendMessage('掷骰子', 'text').catch((e) => console.error('[SPICY] roll request failed:', e.message))
+            }}
+            onClose={() => setShowSpicy(false)}
+          />
+        )}
+
+        <div className="flex-1 min-h-0 relative overflow-hidden">
+          {/* Falling + stacking accessory particles — clipped to chat only. */}
+          <FallingParticles />
+          <MessageList
+            ref={messageListRef}
+            messages={messages}
+            sessionId={currentSessionId}
+            onLongPress={setMenuMsg}
+            lastAiId={lastAiId}
+            onRegenerate={effectiveOnRegenerate}
+            onRegenerateRound={effectiveOnRegenerateRound}
+            onRetry={retryFailed}
+            isLoading={isLoading}
+            userAvatar={effectiveUserAvatar}
+            aiAvatar={effectiveAiAvatar}
+            theme={theme}
+            selectionMode={selectedMessageIds.size > 0}
+            selectedIds={selectedMessageIds}
+            onToggleSelect={toggleMessageSelection}
+            emptyAiName={effectiveAiName}
+            emptyHasApiKey={isCodexSession ? true : !!effectiveApiKey}
+            onEmptyConfigureClick={goToGlobalSettings}
+          />
+        </div>
       </div>
 
       {/* Long-press message menu */}
@@ -895,18 +913,6 @@ export default function ChatWindow({ theme }) {
           aiAvatar={effectiveAiAvatar}
           userAvatar={effectiveUserAvatar}
           onClose={() => setShowDice(false)}
-        />
-      )}
-
-      {showSpicy && isVpsSession && (
-        <SpicyMonopolyBoard
-          theme={theme}
-          isLoading={isLoading}
-          onRequestRoll={() => {
-            updateActiveTime()
-            sendMessage('掷骰子', 'text').catch((e) => console.error('[SPICY] roll request failed:', e.message))
-          }}
-          onClose={() => setShowSpicy(false)}
         />
       )}
 
