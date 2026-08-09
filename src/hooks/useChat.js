@@ -866,7 +866,7 @@ export function useChat() {
           reset_in_progress: '（正在清空对话，请稍候再试）',
         }[err.code]
         const displayMsg = companionHint ? `${err.message} ${companionHint}` : err.message
-        updateMessage(assistantId, { content: `❌ ${displayMsg}`, streaming: false, error: true })
+        updateMessage(assistantId, { content: `❌ ${displayMsg}`, streaming: false, error: true, errorCode: err.code || 'unknown' })
       }
     } finally {
       abortRef.current = null
@@ -1115,6 +1115,20 @@ export function useChat() {
     await streamResponse(contextMessages)
   }, [isLoading, deleteMessagesFrom, streamResponse, effectiveProviderName])
 
+  // Unlike regenerate, this is allowed for a failed VPS turn: there is no
+  // completed assistant answer to replace. Only the final error bubble is
+  // retryable, so retrying can never erase or replay later conversation.
+  const retryFailed = useCallback(async (assistantMsgId) => {
+    if (isLoading) return
+    const liveMessages = useStore.getState().messages
+    const idx = liveMessages.findIndex(m => m.id === assistantMsgId)
+    if (idx !== liveMessages.length - 1 || !liveMessages[idx]?.error) return
+    const contextMessages = liveMessages.slice(0, idx)
+    await deleteMessageFromDB(assistantMsgId)
+    deleteMessage(assistantMsgId)
+    await streamResponse(contextMessages)
+  }, [isLoading, deleteMessage, streamResponse])
+
   const deleteMsg = useCallback(async (id) => {
     // The VPS's Claude session is stateful and persistent (same limitation
     // documented on regenerate above) — deleting a bubble here only removes
@@ -1152,5 +1166,5 @@ export function useChat() {
     scheduleMsgSync(CONVERSATION_ID)
   }, [updateMessage, scheduleMsgSync, CONVERSATION_ID])
 
-  return { messages, sendMessage, sendMessageBatch, loadHistory, isLoading, regenerate, regenerateRound, deleteMsg, editMessage, stopStreaming }
+  return { messages, sendMessage, sendMessageBatch, loadHistory, isLoading, regenerate, regenerateRound, retryFailed, deleteMsg, editMessage, stopStreaming }
 }

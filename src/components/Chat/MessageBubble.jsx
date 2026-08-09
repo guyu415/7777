@@ -79,17 +79,25 @@ function formatTime(ts) {
   return new Date(ts).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
 }
 
+function parseReplyQuote(content) {
+  if (typeof content !== 'string') return null
+  const match = content.match(/^> 回复(?: ([^：\n]+))?：([^\n]*)\n\n([\s\S]*)$/)
+  if (!match) return null
+  return { label: match[1] || '', preview: match[2], body: match[3] }
+}
+
 function formatFileBytes(bytes) {
   if (bytes >= 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)}MB`
   return `${Math.max(1, Math.round(bytes / 1024))}KB`
 }
 
-function MessageBubble({ message, onLongPress, onRegenerate, onRegenerateRound, isLoading, userAvatar, aiAvatar, theme }) {
+function MessageBubble({ message, onLongPress, onRegenerate, onRegenerateRound, onRetry, isLoading, userAvatar, aiAvatar, theme }) {
   const [viewerSrc, setViewerSrc] = useState(null)
   const [pressed, setPressed] = useState(false)
   const [showVoiceText, setShowVoiceText] = useState(false)
   const [showReasoning, setShowReasoning] = useState(false)
   const isUser = message.role === 'user'
+  const replyQuote = message.type === 'text' ? parseReplyQuote(message.content) : null
   const pressTimer = useRef(null)
   const pressAnimTimer = useRef(null)
 
@@ -293,8 +301,31 @@ function MessageBubble({ message, onLongPress, onRegenerate, onRegenerateRound, 
             {message.streaming && !message.content ? (
               <TypingIndicator />
             ) : (
-              <span className="whitespace-pre-wrap break-words">{hasLetter(message.content) ? renderContentNodes(message.content) : (isUser ? message.content : renderWithActions(message.content))}
-                {onRegenerate && !message.streaming && (
+              <span className="whitespace-pre-wrap break-words">
+                {replyQuote && (
+                  <span style={{
+                    display: 'block', marginBottom: 7, padding: '5px 8px',
+                    borderLeft: '3px solid currentColor', borderRadius: '3px 8px 8px 3px',
+                    background: 'rgba(255,255,255,0.18)', fontSize: 12, opacity: 0.8,
+                  }}>
+                    <span style={{ display: 'block', fontSize: 10, fontWeight: 600, marginBottom: 1 }}>回复 {replyQuote.label}</span>
+                    <span style={{ display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{replyQuote.preview}</span>
+                  </span>
+                )}
+                {hasLetter(replyQuote?.body ?? message.content) ? renderContentNodes(replyQuote?.body ?? message.content) : (isUser ? (replyQuote?.body ?? message.content) : renderWithActions(replyQuote?.body ?? message.content))}
+                {message.error && onRetry && !message.streaming && (
+                  <button
+                    onClick={e => { e.stopPropagation(); onRetry(message.id) }}
+                    disabled={isLoading}
+                    style={{
+                      display: 'block', marginTop: 8, padding: '4px 12px', borderRadius: 12,
+                      background: 'rgba(224,112,112,0.12)', border: '1px solid rgba(224,112,112,0.3)',
+                      color: isLoading ? 'rgba(224,112,112,0.35)' : '#c45f5f',
+                      cursor: isLoading ? 'not-allowed' : 'pointer', fontFamily: 'inherit', fontSize: 12,
+                    }}
+                  >↻ 重试</button>
+                )}
+                {onRegenerate && !message.error && !message.streaming && (
                   <span className="inline-flex gap-1 ml-2" style={{ verticalAlign: 'middle' }}>
                     <button
                       onClick={e => { e.stopPropagation(); onRegenerate(message.id) }}

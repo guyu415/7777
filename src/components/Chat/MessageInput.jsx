@@ -167,7 +167,7 @@ function readDraft(storageKey) {
   } catch { return { text: '', segments: [] } }
 }
 
-const MessageInput = forwardRef(function MessageInput({ onSend, onSendBatch, onStartCall, onSendImage, onSendFile, onOpenGomoku, gomokuEnabled, onOpenFocus, onOpenDivination, disabled, theme, isLoading, onStop, draftKey }, ref) {
+const MessageInput = forwardRef(function MessageInput({ onSend, onSendBatch, onStartCall, onSendImage, onSendFile, replyDraft, onCancelReply, onOpenGomoku, gomokuEnabled, onOpenFocus, onOpenDivination, disabled, theme, isLoading, onStop, draftKey }, ref) {
   const draftStorageKey = draftKey ? `chat.draft.${draftKey}` : null
   const initialDraft = readDraft(draftStorageKey)
   const [text, setTextRaw] = useState(initialDraft.text)
@@ -219,6 +219,9 @@ const MessageInput = forwardRef(function MessageInput({ onSend, onSendBatch, onS
   const canSend = text.trim().length > 0 || segments.length > 0 || !!imageDraft || !!fileDraft
 
   useImperativeHandle(ref, () => ({
+    focus() {
+      textareaRef.current?.focus()
+    },
     fill(content) {
       setText(content)
       setTimeout(() => {
@@ -269,20 +272,25 @@ const MessageInput = forwardRef(function MessageInput({ onSend, onSendBatch, onS
     console.log('[PAW] handleSend: canSend=', canSend, 'textLen=', text.trim().length, 'segments=', segments.length, 'hasImageDraft=', !!imageDraft, 'hasFileDraft=', !!fileDraft)
     if (!canSend) return
     const finalText = text.trim()
+    const quotePrefix = replyDraft
+      ? `> 回复${replyDraft.label ? ` ${replyDraft.label}` : ''}：${replyDraft.preview}\n\n`
+      : ''
     if (fileDraft) {
-      const caption = [...segments, finalText].filter(Boolean).join('\n')
+      const caption = quotePrefix + [...segments, finalText].filter(Boolean).join('\n')
       onSendFile?.({ file: fileDraft, text: caption })
       setFileDraft(null)
     } else if (imageDraft) {
       // Keep a staged image and all queued text in one turn.
-      const imageCaption = [...segments, finalText].filter(Boolean).join('\n')
+      const imageCaption = quotePrefix + [...segments, finalText].filter(Boolean).join('\n')
       onSendImage({ imageData: imageDraft.imageData, imageType: imageDraft.imageType, imageUrl: imageDraft.imageUrl, text: imageCaption })
       setImageDraft(null)
     } else {
       const batch = finalText ? [...segments, finalText] : segments
+      if (quotePrefix && batch.length) batch[0] = quotePrefix + batch[0]
       if (batch.length > 1) onSendBatch?.(batch)
       else if (batch.length === 1) onSend(batch[0])
     }
+    onCancelReply?.()
     setSegments([])
     setText('')
     if (textareaRef.current) textareaRef.current.style.height = 'auto'
@@ -373,6 +381,27 @@ const MessageInput = forwardRef(function MessageInput({ onSend, onSendBatch, onS
 
   return (
     <div style={{ flexShrink: 0 }}>
+      {replyDraft && (
+        <div style={{ padding: '6px 12px 0' }}>
+          <div style={{
+            display: 'flex', alignItems: 'center', gap: 8, padding: '7px 10px',
+            borderLeft: `3px solid ${primaryColor}`, borderRadius: '4px 12px 12px 4px',
+            background: 'rgba(255,255,255,0.42)', color: '#8b5060',
+          }}>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontSize: 11, fontWeight: 600, color: primaryColor }}>回复 {replyDraft.label}</div>
+              <div style={{ fontSize: 12, marginTop: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', opacity: 0.82 }}>{replyDraft.preview}</div>
+            </div>
+            <button
+              onClick={onCancelReply}
+              title="取消回复"
+              style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#c47a8a', display: 'flex', padding: 3 }}
+            >
+              <CloseIcon size={15} />
+            </button>
+          </div>
+        </div>
+      )}
       {imageDraft && (
         <div style={{
           display: 'flex', alignItems: 'center', gap: 8,

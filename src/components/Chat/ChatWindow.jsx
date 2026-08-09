@@ -96,7 +96,7 @@ export default function ChatWindow({ theme }) {
   // the file. cc/codex above are BOTH always called (Rules of Hooks); only
   // one is ever actually used per render.
   const active = isCodexSession ? codex : cc
-  const { messages, sendMessage, sendMessageBatch, loadHistory, isLoading, regenerate, regenerateRound, deleteMsg, editMessage, stopStreaming } = active
+  const { messages, sendMessage, sendMessageBatch, loadHistory, isLoading, regenerate, regenerateRound, retryFailed, deleteMsg, editMessage, stopStreaming } = active
 
   const effectiveAiName = currentSession?.aiName ?? globalAiName
   const effectiveAiAvatar = currentSession?.aiAvatar ?? globalAiAvatar
@@ -106,6 +106,7 @@ export default function ChatWindow({ theme }) {
 
   const inputRef = useRef(null)
   const [menuMsg, setMenuMsg] = useState(null)
+  const [replyTarget, setReplyTarget] = useState(null)
   const [memoryMsg, setMemoryMsg] = useState(null)
   const [editMsg, setEditMsg] = useState(null)
   const [editText, setEditText] = useState('')
@@ -128,6 +129,8 @@ export default function ChatWindow({ theme }) {
   const focusRuntime = useFocusRuntime()
   const focusSessionVisible = !!focusRuntime.state?.active || !!focusRuntime.justFinished
   const [xinchaoState, setXinchaoState] = useState(null)
+
+  useEffect(() => setReplyTarget(null), [currentSessionId])
   const [showXinchaoPanel, setShowXinchaoPanel] = useState(false)
   const [showSearch, setShowSearch] = useState(false)
   const callAudioRef = useRef(null)
@@ -315,6 +318,24 @@ export default function ChatWindow({ theme }) {
     } catch (error) {
       showToast(`删除失败：${error.message}`)
     }
+  }
+
+  const handleReply = (msg) => {
+    const raw = msg.type === 'voice'
+      ? (msg.voiceText || '语音消息')
+      : msg.type === 'image'
+        ? (msg.content || '图片')
+        : msg.type === 'file'
+          ? (msg.fileName || '文件')
+          : (msg.content || '')
+    const preview = raw.replace(/\s+/g, ' ').trim().slice(0, 80)
+    setReplyTarget({
+      id: msg.id,
+      label: msg.role === 'user' ? '我' : effectiveAiName,
+      preview: preview || '消息',
+    })
+    setMenuMsg(null)
+    setTimeout(() => inputRef.current?.focus?.(), 0)
   }
 
   const handleFavoriteVoice = async (msg) => {
@@ -534,6 +555,7 @@ export default function ChatWindow({ theme }) {
           lastAiId={lastAiId}
           onRegenerate={effectiveOnRegenerate}
           onRegenerateRound={effectiveOnRegenerateRound}
+          onRetry={retryFailed}
           isLoading={isLoading}
           userAvatar={effectiveUserAvatar}
           aiAvatar={effectiveAiAvatar}
@@ -564,6 +586,13 @@ export default function ChatWindow({ theme }) {
           >
             {/* CC and Codex expose the same message actions. Their hooks own
                 the runtime-specific persistence behind these shared buttons. */}
+            <button
+              onClick={() => handleReply(menuMsg)}
+              className="w-full flex items-center gap-3 px-5 py-3.5 text-sm hover:bg-pink-50 transition-colors"
+              style={{ color: '#8b5060', borderBottom: '1px solid rgba(255,182,209,0.25)' }}
+            >
+              ↩️ 回复
+            </button>
             {menuMsg.role === 'user' && menuMsg.type === 'text' && (
               <button
                 onClick={() => handleEdit(menuMsg)}
@@ -697,7 +726,13 @@ export default function ChatWindow({ theme }) {
         }}
       >
         {isCodexSession && codex.sendError && (
-          <div className="px-4 pt-1.5 text-xs" style={{ color: '#e07070' }}>{codex.sendError}</div>
+          <div className="px-4 pt-1.5 text-xs flex items-center gap-2" style={{ color: '#e07070' }}>
+            <span>{codex.sendError}</span>
+            <button
+              onClick={codex.retryFailed}
+              style={{ border: 'none', background: 'rgba(224,112,112,0.12)', color: '#c45f5f', borderRadius: 10, padding: '2px 8px', fontFamily: 'inherit' }}
+            >重试</button>
+          </div>
         )}
         <MessageInput
           ref={inputRef}
@@ -713,6 +748,8 @@ export default function ChatWindow({ theme }) {
           onStartCall={handleStartCall}
           onSendImage={handleSendImage}
           onSendFile={isFixedVpsSession ? handleSendFile : undefined}
+          replyDraft={replyTarget}
+          onCancelReply={() => setReplyTarget(null)}
           onOpenGomoku={() => setShowGomoku(true)}
           gomokuEnabled={isFixedVpsSession}
           onOpenFocus={() => setShowFocusSheet(true)}

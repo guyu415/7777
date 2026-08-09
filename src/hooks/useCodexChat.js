@@ -74,6 +74,7 @@ export function useCodexChat() {
   const [openTurnId, setOpenTurnId] = useState(null)
   const [loaded, setLoaded] = useState(false)
   const [sendError, setSendError] = useState(null)
+  const lastFailedSendRef = useRef(null)
   // A one-shot stopped/error notice for ChatWindow.jsx to show as a brief
   // toast — a fresh object identity every time (even for a repeated
   // message), never persisted/replayed on refresh, and never folded into
@@ -330,7 +331,12 @@ export function useCodexChat() {
     stoppedTurnIdRef.current = null
     setSendError(null)
     const ok = sendCodexMessage(text, imageUrl, { sessionId: codexSessionId, prompt: codexPrompt, file })
-    if (!ok) setSendError('未连接，请稍后重试')
+    if (!ok) {
+      lastFailedSendRef.current = { kind: 'single', content, type: _type, extra }
+      setSendError('未连接，请稍后重试')
+    } else {
+      lastFailedSendRef.current = null
+    }
   }, [codexPrompt, codexSessionId])
 
   // Keep each Enter-split segment as its own visible user bubble while still
@@ -347,8 +353,20 @@ export function useCodexChat() {
     const ok = sendCodexMessage(trimmed.join('\n'), undefined, {
       sessionId: codexSessionId, prompt: codexPrompt, segments: trimmed,
     })
-    if (!ok) setSendError('未连接，请稍后重试')
+    if (!ok) {
+      lastFailedSendRef.current = { kind: 'batch', contents: trimmed }
+      setSendError('未连接，请稍后重试')
+    } else {
+      lastFailedSendRef.current = null
+    }
   }, [codexPrompt, codexSessionId, sendMessage])
+
+  const retryFailed = useCallback(async () => {
+    const attempt = lastFailedSendRef.current
+    if (!attempt) return
+    if (attempt.kind === 'batch') await sendMessageBatch(attempt.contents)
+    else await sendMessage(attempt.content, attempt.type, attempt.extra)
+  }, [sendMessage, sendMessageBatch])
 
   const deleteMsg = useCallback(async (id) => {
     await deleteCodexMessage(codexSessionId, id)
@@ -386,7 +404,7 @@ export function useCodexChat() {
 
   return {
     messages, sendMessage, sendMessageBatch, loadHistory, isLoading,
-    regenerate: notSupported, regenerateRound: notSupported,
+    regenerate: notSupported, regenerateRound: notSupported, retryFailed,
     deleteMsg, editMessage,
     stopStreaming,
     // Codex-only extras ChatWindow.jsx reads directly (not part of useChat()'s shape)

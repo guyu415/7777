@@ -31,7 +31,7 @@ const ESTIMATED_ITEM_HEIGHT = 88
  */
 const MessageList = forwardRef(function MessageList({
   messages, sessionId,
-  onLongPress, lastAiId, onRegenerate, onRegenerateRound,
+  onLongPress, lastAiId, onRegenerate, onRegenerateRound, onRetry,
   isLoading, userAvatar, aiAvatar, theme,
   emptyAiName, emptyHasApiKey, onEmptyConfigureClick,
 }, ref) {
@@ -188,6 +188,7 @@ const MessageList = forwardRef(function MessageList({
                   onLongPress={onLongPress}
                   onRegenerate={isLastAi ? onRegenerate : null}
                   onRegenerateRound={isLastAi ? onRegenerateRound : null}
+                  onRetry={msg.error && vi.index === messages.length - 1 ? onRetry : null}
                   isLoading={isLoading}
                   userAvatar={userAvatar}
                   aiAvatar={aiAvatar}
