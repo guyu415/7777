@@ -41,12 +41,14 @@ const MessageList = forwardRef(function MessageList({
   const isNearBottomRef = useRef(true)
   const prevSessionIdRef = useRef(sessionId)
   const prevLastIdRef = useRef(null)
+  const prevMessageCountRef = useRef(messages.length)
   const hasScrolledInitiallyRef = useRef(false)
   // These two ARE state (unlike the ref above) because they drive the jump
   // buttons' visibility — but only ever setState on a threshold *crossing*,
   // never per scroll pixel, so they stay just as cheap in practice.
   const [nearTop, setNearTop] = useState(true)
   const [nearBottom, setNearBottom] = useState(true)
+  const [newBelowCount, setNewBelowCount] = useState(0)
 
   const virtualizer = useVirtualizer({
     count: messages.length,
@@ -75,6 +77,7 @@ const MessageList = forwardRef(function MessageList({
     const atBottom = distance < BOTTOM_THRESHOLD_PX
     isNearBottomRef.current = atBottom
     setNearBottom((prev) => (prev === atBottom ? prev : atBottom))
+    if (atBottom) setNewBelowCount(0)
     const atTop = el.scrollTop < TOP_THRESHOLD_PX
     setNearTop((prev) => (prev === atTop ? prev : atTop))
   }, [])
@@ -87,6 +90,8 @@ const MessageList = forwardRef(function MessageList({
     if (switched) {
       prevSessionIdRef.current = sessionId
       hasScrolledInitiallyRef.current = false
+      prevMessageCountRef.current = messages.length
+      setNewBelowCount(0)
     }
     if (!hasScrolledInitiallyRef.current && messages.length > 0) {
       hasScrolledInitiallyRef.current = true
@@ -95,6 +100,17 @@ const MessageList = forwardRef(function MessageList({
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessionId, messages.length > 0])
+
+  // Count only newly appended bubbles while the reader is away from the
+  // bottom. Streaming growth inside the current bubble does not inflate it.
+  useLayoutEffect(() => {
+    if (prevSessionIdRef.current !== sessionId) return
+    const added = messages.length - prevMessageCountRef.current
+    if (added > 0 && !isNearBottomRef.current) {
+      setNewBelowCount((count) => count + added)
+    }
+    prevMessageCountRef.current = messages.length
+  }, [messages.length, sessionId])
 
   // New message arrives, or the in-progress (streaming) message's own
   // content/reasoning grows — auto-follow ONLY if the user was already at
@@ -201,6 +217,7 @@ const MessageList = forwardRef(function MessageList({
         <button
           onClick={() => {
             isNearBottomRef.current = true
+            setNewBelowCount(0)
             virtualizer.scrollToIndex(messages.length - 1, { align: 'end' })
           }}
           title="回到底部"
@@ -208,6 +225,17 @@ const MessageList = forwardRef(function MessageList({
           style={{ ...jumpButtonStyle, bottom: 12 }}
         >
           <ChevronDown size={18} />
+          {newBelowCount > 0 && (
+            <span style={{
+              position: 'absolute', top: -7, right: -7,
+              minWidth: 18, height: 18, padding: '0 4px', borderRadius: 9,
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              background: primaryColor, color: '#fff', fontSize: 10, fontWeight: 700,
+              border: '2px solid rgba(255,255,255,0.95)', boxSizing: 'border-box',
+            }}>
+              {newBelowCount > 99 ? '99+' : newBelowCount}
+            </span>
+          )}
         </button>
       )}
     </>
