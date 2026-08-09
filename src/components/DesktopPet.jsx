@@ -79,6 +79,7 @@ function DesktopPetWindow({ theme }) {
     Number.isFinite(desktopPet?.x) ? desktopPet.x : window.innerWidth - 102,
     Number.isFinite(desktopPet?.y) ? desktopPet.y : window.innerHeight - 300,
   ))
+  const [gestureFlash, setGestureFlash] = useState('')
   const [motion, setMotion] = useState('')
   const [toolbarOpen, setToolbarOpen] = useState(false)
   const [chatOpen, setChatOpen] = useState(false)
@@ -103,6 +104,7 @@ function DesktopPetWindow({ theme }) {
   const tapDecisionTimer = useRef(null)
   const tapBurst = useRef({ count: 0, lastAt: 0 })
   const gestureCounts = useRef(emptyGestureCounts())
+  const flashTimer = useRef(null)
   const replyTimer = useRef(null)
   const chatInputRef = useRef(null)
   const fileInputRef = useRef(null)
@@ -179,6 +181,7 @@ function DesktopPetWindow({ theme }) {
 
   useEffect(() => () => {
     window.clearTimeout(pressTimer.current)
+    window.clearTimeout(flashTimer.current)
     window.clearTimeout(replyTimer.current)
     window.clearTimeout(expressionTimer.current)
     window.clearTimeout(secretTimer.current)
@@ -284,6 +287,9 @@ function DesktopPetWindow({ theme }) {
   // 是否要真的问一次模型是另一件独立的事——见下面 reportGestures。
   const playLocalMotion = useCallback((gestureId) => {
     const g = findGesture(gestureId)
+    setGestureFlash(g.feedback)
+    window.clearTimeout(flashTimer.current)
+    flashTimer.current = window.setTimeout(() => setGestureFlash(''), 550)
     setMotion(g.motion)
     window.setTimeout(() => setMotion(''), 650)
     navigator.vibrate?.(gestureId === 'bonk' ? 14 : gestureId === 'secret' ? 10 : 8)
@@ -873,6 +879,16 @@ function DesktopPetWindow({ theme }) {
           <button onClick={() => { setPeekRequestOpen(true); setToolbarOpen(false); markActive('excited', 12_000) }} className="w-8 h-8 grid place-items-center rounded-full flex-shrink-0" style={{ color: theme.primary }} aria-label="请求偷看屏幕"><Eye size={15} /></button>
           <button onClick={() => { setSettingsOpen((v) => !v); setChatOpen(false) }} className="w-8 h-8 grid place-items-center rounded-full flex-shrink-0" style={{ color: theme.primary }} aria-label="桌宠设置"><Settings size={15} /></button>
           <button onClick={requestClose} className="w-8 h-8 grid place-items-center rounded-full flex-shrink-0" style={{ color: theme.primary }} aria-label="返回聊天窗"><Undo2 size={15} /></button>
+        </div>
+      )}
+
+      {gestureFlash && (
+        <div
+          key={gestureFlash + Date.now()}
+          className="fixed pet-flash-text"
+          style={{ left: position.x + PET_W / 2, top: position.y - 12, zIndex: 122, pointerEvents: 'none', color: theme.primary, fontSize: 10, fontWeight: 500, opacity: .72, textShadow: '0 1px 4px rgba(255,255,255,.95)' }}
+        >
+          {gestureFlash}
         </div>
       )}
 

@@ -5,11 +5,11 @@ import { resolveApiMemberConfig } from '../utils/groupApiMember'
 // 桌宠手势目录。模型反应仍走隔离线程，但完成的一问一答会由
 // DesktopPet 写回“抱走它的那条会话”的显示历史，方便多窗口时认清来源。
 export const GESTURES = [
-  { id: 'pet', label: '摸', unit: '下', motion: 'pet' },
-  { id: 'pinch', label: '捏脸', unit: '下', motion: 'pinch' },
-  { id: 'bonk', label: '锤', unit: '下', motion: 'bonk' },
-  { id: 'lift', label: '拎起来晃', unit: '次', motion: 'lift' },
-  { id: 'secret', label: '调戏', unit: '次', motion: 'secret' },
+  { id: 'pet', label: '摸', unit: '下', feedback: '摸', motion: 'pet' },
+  { id: 'pinch', label: '捏脸', unit: '下', feedback: '捏', motion: 'pinch' },
+  { id: 'bonk', label: '锤', unit: '下', feedback: '锤', motion: 'bonk' },
+  { id: 'lift', label: '拎起来晃', unit: '次', feedback: '晃', motion: 'lift' },
+  { id: 'secret', label: '调戏', unit: '次', feedback: '调戏', motion: 'secret' },
 ]
 
 export function findGesture(id) {
