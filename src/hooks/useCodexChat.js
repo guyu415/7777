@@ -94,11 +94,10 @@ export function useCodexChat() {
   // voice reuses the CURRENT session's own configured voice, never a
   // Codex-specific voice system.
   const {
-    sessions, currentSessionId, ttsApiKey, ttsGroupId, ttsVoiceId, ttsModel, aiVoiceEnabled,
+    sessions, currentSessionId, ttsApiKey, ttsGroupId, ttsVoiceId, ttsModel,
   } = useStore(useShallow(s => ({
     sessions: s.sessions, currentSessionId: s.currentSessionId,
     ttsApiKey: s.ttsApiKey, ttsGroupId: s.ttsGroupId, ttsVoiceId: s.ttsVoiceId, ttsModel: s.ttsModel,
-    aiVoiceEnabled: s.aiVoiceEnabled,
   })))
   const currentSession = sessions?.find(s => s.id === currentSessionId)
   // useCodexChat is called unconditionally by the shared ChatWindow to obey
@@ -119,7 +118,7 @@ export function useCodexChat() {
   // LATEST config without needing to be a dependency of the WS-subscribing
   // effect (that effect must only run once per mount — see its own comment).
   const ttsConfigRef = useRef(null)
-  ttsConfigRef.current = { effectiveTtsApiKey, effectiveTtsGroupId, effectiveTtsVoiceId, effectiveTtsModel, aiVoiceEnabled }
+  ttsConfigRef.current = { effectiveTtsApiKey, effectiveTtsGroupId, effectiveTtsVoiceId, effectiveTtsModel }
 
   const updateMsg = useCallback((id, updates) => {
     setMessages((prev) => {
@@ -168,8 +167,10 @@ export function useCodexChat() {
       updateMsg(codexMsg.id, { type: 'text', content: codexMsg.text, voiceText: codexMsg.text, voiceFailed: true, voiceLoading: false })
       return
     }
-    const { effectiveTtsApiKey: apiKey, effectiveTtsGroupId: groupId, effectiveTtsVoiceId: voiceId, effectiveTtsModel: model, aiVoiceEnabled: enabled } = ttsConfigRef.current
-    const hasTts = apiKey && groupId && enabled
+    const { effectiveTtsApiKey: apiKey, effectiveTtsGroupId: groupId, effectiveTtsVoiceId: voiceId, effectiveTtsModel: model } = ttsConfigRef.current
+    // kind:'voice' is an explicit send_voice tool call, not an automatic
+    // voice-frequency choice. The auto-voice toggle must never veto it.
+    const hasTts = apiKey && groupId
     if (!hasTts) {
       updateMsg(codexMsg.id, { type: 'text', content: codexMsg.text, voiceText: codexMsg.text, voiceFailed: true, voiceLoading: false })
       return
