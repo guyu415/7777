@@ -846,7 +846,7 @@ function DesktopPetWindow({ theme }) {
         title="点按开菜单，按住拖动桌宠"
       >
         <span className={`pet-silver-ring${toolbarOpen ? ' open' : ''}`} style={{ width: badgeVisualSize, height: badgeVisualSize }}>
-          <img src="/pets/silver-filigree-ring-hollow.png" alt="" draggable="false" />
+          <img src="/pets/silver-leaf-ring-hollow-v2.png" alt="" draggable="false" />
           {pendingCount > 0 && <span className="pet-ring-count">{pendingCount}</span>}
         </span>
       </button>
