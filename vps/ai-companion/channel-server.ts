@@ -6601,21 +6601,13 @@ async function mysteryCodexEnsureThread(gameId: string, charId: string, systemPr
 // contend with each other, only with a second concurrent turn on that exact
 // same character's own thread, which the frontend's own turn-based engine
 // never actually attempts.
-const mysteryCodexPendingByThread = new Map<string, { turnId: string; resolve: (r: { text: string; error?: string; usedWebSearch?: boolean }) => void; agentText: string; usedWebSearch: boolean; gameId: string }>()
+const mysteryCodexPendingByThread = new Map<string, { turnId: string; resolve: (r: { text: string; error?: string }) => void; agentText: string }>()
 
 function mysteryCodexHandleNotification(threadId: string, method: string, params: any) {
   const pending = mysteryCodexPendingByThread.get(threadId)
   if (!pending) return
-  if (pending.gameId === 'care-hub' && (method === 'item/started' || method === 'item/completed')) {
-    log('care_codex_item', { method, itemType: String(params?.item?.type || '') })
-  }
   switch (method) {
-    case 'item/started': {
-      if (params?.item?.type === 'webSearch' || params?.item?.type === 'web_search') pending.usedWebSearch = true
-      break
-    }
     case 'item/completed': {
-      if (params?.item?.type === 'webSearch' || params?.item?.type === 'web_search') pending.usedWebSearch = true
       if (params?.item?.type === 'agentMessage') pending.agentText = params.item.text ?? pending.agentText
       break
     }
@@ -6625,7 +6617,7 @@ function mysteryCodexHandleNotification(threadId: string, method: string, params
       const status = params?.turn?.status
       if (status === 'failed') pending.resolve({ text: '', error: params?.turn?.error?.message ? codexFriendlyError(params.turn.error) : 'Codex 出错了' })
       else if (status === 'interrupted') pending.resolve({ text: '', error: '已中断' })
-      else pending.resolve({ text: pending.agentText, usedWebSearch: pending.usedWebSearch })
+      else pending.resolve({ text: pending.agentText })
       break
     }
     case 'error': {
@@ -6646,7 +6638,7 @@ function mysteryCodexHandleNotification(threadId: string, method: string, params
   }
 }
 
-async function mysteryCodexSendTurn(gameId: string, charId: string, systemPrompt: string, instruction: string, model: string, imageUrl = ''): Promise<{ text: string; error?: string; usedWebSearch?: boolean }> {
+async function mysteryCodexSendTurn(gameId: string, charId: string, systemPrompt: string, instruction: string, model: string, imageUrl = ''): Promise<{ text: string; error?: string }> {
   const threadId = await mysteryCodexEnsureThread(gameId, charId, systemPrompt)
   if (mysteryCodexPendingByThread.has(threadId)) return { text: '', error: 'Codex 这个角色上一轮还没结束' }
   const input: any[] = [{ type: 'text', text: instruction, text_elements: [] }]
@@ -6658,7 +6650,7 @@ async function mysteryCodexSendTurn(gameId: string, charId: string, systemPrompt
   const turnId = result?.turn?.id
   if (!turnId) return { text: '', error: 'Codex 没有返回 turn id' }
   return new Promise((resolve) => {
-    mysteryCodexPendingByThread.set(threadId, { turnId, resolve, agentText: '', usedWebSearch: false, gameId })
+    mysteryCodexPendingByThread.set(threadId, { turnId, resolve, agentText: '' })
   })
 }
 
@@ -6666,7 +6658,7 @@ async function mysteryCodexSendTurn(gameId: string, charId: string, systemPrompt
 // 收到的 runtime/model/来源 和 prompt 长度，配合 mysteryCcSendTurn 里的
 // queueWaitMs/firstContentMs/totalMs/hadThinking，可以完整比对"轮到该成员
 // 的时间"到"完整响应时间"每一步耗时，而不用只靠前端的"感觉很慢"。
-async function mysteryRunTurn(gameId: string, charId: string, runtime: 'claude-code' | 'codex', model: string, systemPrompt: string, instruction: string, signal?: AbortSignal, imageUrl = '', imagePath = ''): Promise<{ text: string; usedWebSearch?: boolean } | { error: string }> {
+async function mysteryRunTurn(gameId: string, charId: string, runtime: 'claude-code' | 'codex', model: string, systemPrompt: string, instruction: string, signal?: AbortSignal, imageUrl = '', imagePath = ''): Promise<{ text: string } | { error: string }> {
   const tAssigned = Date.now()
   log('mystery_turn_received', {
     gameId, charId, runtime, model,
@@ -6686,7 +6678,7 @@ async function mysteryRunTurn(gameId: string, charId: string, runtime: 'claude-c
     const result = await mysteryCodexSendTurn(gameId, charId, systemPrompt, instruction, model, imageUrl)
     log('mystery_turn_done', { gameId, charId, runtime, totalMs: Date.now() - tAssigned })
     if (result.error || !result.text.trim()) return { error: result.error || 'Codex 没有给出有效回复' }
-    return { text: result.text.trim(), usedWebSearch: result.usedWebSearch }
+    return { text: result.text.trim() }
   } catch (err) {
     log('mystery_turn_error', { gameId, charId, runtime, totalMs: Date.now() - tAssigned, error: String(err) })
     return { error: String((err as Error)?.message || err) }
@@ -6751,15 +6743,60 @@ const CARE_ROLE_NAMES: Record<CareRoleId, string> = {
   news: '晨间新闻', ledger: '记账员', almanac: '黄历运势', study: '学习监督',
 }
 
-function careRolePrompt(role: CareRoleId, today: string): { system: string; instruction: string } {
+function careDecodeMarkup(value: string): string {
+  return value
+    .replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, '$1')
+    .replace(/&amp;/g, '&').replace(/&quot;/g, '"').replace(/&#39;|&apos;/g, "'")
+    .replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&nbsp;/g, ' ')
+}
+
+async function careFetchText(url: string): Promise<string> {
+  const response = await fetch(url, { signal: AbortSignal.timeout(12_000), headers: { 'user-agent': 'Mozilla/5.0 ai-companion-care-hub/1.0' } })
+  if (!response.ok) throw new Error(`联网来源返回 ${response.status}`)
+  return response.text()
+}
+
+async function careNewsEvidence(): Promise<string> {
+  const base = 'https://news.google.com/rss?hl=zh-CN&gl=CN&ceid=CN:zh-Hans'
+  const urls = [base, ...['WORLD', 'NATION', 'BUSINESS', 'TECHNOLOGY'].map((topic) => `https://news.google.com/rss/headlines/section/topic/${topic}?hl=zh-CN&gl=CN&ceid=CN:zh-Hans`)]
+  const pages = await Promise.allSettled(urls.map(careFetchText))
+  const seen = new Set<string>()
+  const items: Array<{ title: string; source: string; date: string; url: string }> = []
+  for (const page of pages) {
+    if (page.status !== 'fulfilled') continue
+    for (const match of page.value.matchAll(/<item>([\s\S]*?)<\/item>/gi)) {
+      const block = match[1]
+      const field = (tag: string) => careDecodeMarkup(block.match(new RegExp(`<${tag}(?:\\s[^>]*)?>([\\s\\S]*?)<\\/${tag}>`, 'i'))?.[1] || '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim()
+      const title = field('title'), url = field('link')
+      if (!title || !/^https?:\/\//.test(url) || seen.has(title)) continue
+      seen.add(title)
+      items.push({ title, source: field('source') || 'Google 新闻聚合', date: field('pubDate'), url })
+      if (items.length >= 50) break
+    }
+  }
+  if (items.length < 10) throw new Error('实时新闻源不足，暂不生成早报')
+  return items.map((item, i) => `[候选${i + 1}] ${item.title}\n媒体：${item.source}\n发布时间：${item.date}\n原始链接：${item.url}`).join('\n\n')
+}
+
+async function careAlmanacEvidence(today: string): Promise<string> {
+  const sourceUrl = `https://www.wannianlipro.com/huangli/${today}`
+  const html = await careFetchText(sourceUrl)
+  const text = careDecodeMarkup(html)
+    .replace(/<script[\s\S]*?<\/script>/gi, ' ').replace(/<style[\s\S]*?<\/style>/gi, ' ')
+    .replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 14_000)
+  if (text.length < 300 || !text.includes(today.slice(0, 4))) throw new Error('黄历来源内容无效，暂不生成播报')
+  return `查询来源：${sourceUrl}\n来源页面正文：${text}`
+}
+
+function careRolePrompt(role: CareRoleId, today: string, evidence = ''): { system: string; instruction: string } {
   const common = `你是固定生活关怀群里的“${CARE_ROLE_NAMES[role]}”。只用中文输出，语气自然、温和、利落。今天是中国时区 ${today}。不要展示思考过程。`
   if (role === 'news') return {
-    system: `${common}\n你的职责是每日联网检索新闻。必须在本轮真实使用联网搜索；不能凭记忆写“今日新闻”，不能虚构标题、事实或链接。`,
-    instruction: `现在必须在本轮重新调用联网搜索，检索 ${today} 的最新消息，筛选恰好 5 条真正值得知道的新闻。兼顾国内、国际、科技、经济与社会影响，避免五条都来自同一领域。\n\n每条按“1. 标题 / 摘要 / 为什么值得关注 / 来源”写，摘要 1—2 句；每条最后单独写“来源：媒体名 + 完整 https:// URL”，URL 必须直接出现在正文，不能只给内部引用标记。末尾用一句话概括今天值得持续关注的主线。若无法联网或找不到五条可核验来源，明确说明失败，不得用旧闻或常识补齐。`,
+    system: `${common}\n服务端已在本轮实时抓取多个新闻频道。你只能从提供的候选中筛选，不能凭记忆补新闻，不能改写或虚构链接。`,
+    instruction: `下面是服务端刚刚联网取得的实时新闻候选。请筛选恰好 5 条真正值得知道的新闻，兼顾国内、国际、科技、经济与社会影响，避免五条都来自同一领域。\n\n每条按“1. 标题 / 摘要 / 为什么值得关注 / 来源”写，摘要 1—2 句；来源必须原样保留候选里的媒体名和完整 URL。末尾用一句话概括今天值得持续关注的主线。\n\n${evidence}`,
   }
   if (role === 'almanac') return {
-    system: `${common}\n你负责实用型每日黄历与轻量运势。黄历属于民俗参考，不能冒充科学结论；不要制造恐惧或下确定性断言。当天信息必须联网核验。`,
-    instruction: `必须在本轮重新调用联网搜索，查询并核验 ${today} 的中国黄历信息，播报：日期与农历、宜与忌、今日生活注意事项、轻量整体运势。正文直接写出至少一个完整 https:// 来源 URL，不能只给内部引用标记；并明确“民俗内容仅供参考”。内容短而有用，不要按生肖逐个展开。`,
+    system: `${common}\n你负责实用型每日黄历与轻量运势。服务端已实时取得当天黄历来源；只能依据来源整理。黄历属于民俗参考，不能冒充科学结论；不要制造恐惧或下确定性断言。`,
+    instruction: `根据下面本轮联网取得的来源，播报 ${today} 的日期与农历、宜与忌、今日生活注意事项、轻量整体运势。正文直接保留完整来源 URL，并明确“民俗内容仅供参考”。内容短而有用，不要按生肖逐个展开。\n\n${evidence}`,
   }
   if (role === 'ledger') {
     const month = today.slice(0, 7)
@@ -6790,12 +6827,12 @@ async function careRunRole(role: CareRoleId, manual = false): Promise<{ ok: bool
     // Start every role run with a fresh isolated runtime session so “联网”
     // means a new search in this run and model changes take effect immediately.
     await mysteryCleanupGame('care-hub', [role])
-    const prompt = careRolePrompt(role, date)
+    const evidence = role === 'news' ? await careNewsEvidence() : role === 'almanac' ? await careAlmanacEvidence(date) : ''
+    const prompt = careRolePrompt(role, date, evidence)
     const selectedModel = config.model || (config.runtime === 'codex' ? (codexSelectedModel || codexModelList.find((item) => item.isDefault)?.id || '') : 'claude-sonnet-4-6')
     const result = await mysteryRunTurn('care-hub', role, config.runtime, selectedModel, prompt.system, prompt.instruction)
     if ('error' in result) throw new Error(result.error)
-    if ((role === 'news' || role === 'almanac') && config.runtime === 'codex' && !result.usedWebSearch) throw new Error('本轮未实际调用联网搜索，已拒绝发布')
-    if (role === 'news' && ((result.text.match(/(?:^|\n)\s*[1-5][.、)]/g) || []).length < 5 || !/https?:\/\//.test(result.text))) throw new Error('联网早报未完整返回五条新闻及来源，已拒绝发布')
+    if (role === 'news' && ((result.text.match(/(?:^|\n)\s*[1-5][.、)]/g) || []).length < 5 || (result.text.match(/https?:\/\/[^\s)]+/g) || []).length < 5)) throw new Error('联网早报未完整返回五条新闻及来源，已拒绝发布')
     if (role === 'almanac' && !/https?:\/\//.test(result.text)) throw new Error('黄历结果缺少可核验来源，已拒绝发布')
     careAppend(role, result.text, role === 'ledger' || role === 'study' ? 'reminder' : 'report')
     config.lastRunDate = date
