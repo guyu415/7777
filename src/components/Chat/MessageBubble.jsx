@@ -1,5 +1,5 @@
 import { useState, useRef, memo } from 'react'
-import { CheckCheck } from 'lucide-react'
+import { CheckCheck, FileText } from 'lucide-react'
 import VoicePlayer from '../Voice/VoicePlayer'
 import ImageViewer from '../ImageViewer'
 import AcCard from './AcCard'
@@ -77,6 +77,11 @@ function TypingIndicator() {
 
 function formatTime(ts) {
   return new Date(ts).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
+}
+
+function formatFileBytes(bytes) {
+  if (bytes >= 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)}MB`
+  return `${Math.max(1, Math.round(bytes / 1024))}KB`
 }
 
 function MessageBubble({ message, onLongPress, onRegenerate, onRegenerateRound, isLoading, userAvatar, aiAvatar, theme }) {
@@ -424,6 +429,32 @@ function MessageBubble({ message, onLongPress, onRegenerate, onRegenerateRound, 
                 {message.content}
               </div>
             )}
+          </div>
+        )}
+
+        {message.type === 'file' && (
+          <div
+            className="rounded-[18px] max-w-[260px] select-none"
+            style={{
+              padding: '10px 12px',
+              background: isUser ? `${theme?.userBubble || 'rgba(255,133,179,0.5)'}` : 'rgba(255,255,255,0.7)',
+              color: isUser ? (theme?.userBubbleText || '#C78FCA') : (theme?.aiBubbleText || '#3d6b52'),
+              boxShadow: `0 4px 16px ${theme?.userBubbleShadow || 'rgba(255,133,179,0.2)'}`,
+            }}
+            {...pressProps}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+              <div style={{ width: 40, height: 40, borderRadius: 11, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(255,255,255,0.35)', flexShrink: 0 }}>
+                <FileText size={21} />
+              </div>
+              <div style={{ minWidth: 0 }}>
+                <div style={{ fontSize: 14, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{message.fileName || '文件'}</div>
+                <div style={{ fontSize: 11, opacity: 0.72, marginTop: 2 }}>
+                  {typeof message.fileSize === 'number' ? formatFileBytes(message.fileSize) : '已发送文件'}
+                </div>
+              </div>
+            </div>
+            {message.content && <div className="mt-2 pt-2 text-sm whitespace-pre-wrap" style={{ borderTop: '1px solid rgba(255,255,255,0.28)' }}>{message.content}</div>}
           </div>
         )}
 

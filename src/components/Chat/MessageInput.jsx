@@ -25,6 +25,17 @@ function ImageIcon() {
   )
 }
 
+function FileIcon() {
+  return (
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+      <polyline points="14 2 14 8 20 8"/>
+      <line x1="8" y1="13" x2="16" y2="13"/>
+      <line x1="8" y1="17" x2="14" y2="17"/>
+    </svg>
+  )
+}
+
 function GomokuIcon() {
   return (
     <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
@@ -156,7 +167,7 @@ function readDraft(storageKey) {
   } catch { return { text: '', segments: [] } }
 }
 
-const MessageInput = forwardRef(function MessageInput({ onSend, onSendBatch, onStartCall, onSendImage, onOpenGomoku, gomokuEnabled, onOpenFocus, onOpenDivination, disabled, theme, isLoading, onStop, draftKey }, ref) {
+const MessageInput = forwardRef(function MessageInput({ onSend, onSendBatch, onStartCall, onSendImage, onSendFile, onOpenGomoku, gomokuEnabled, onOpenFocus, onOpenDivination, disabled, theme, isLoading, onStop, draftKey }, ref) {
   const draftStorageKey = draftKey ? `chat.draft.${draftKey}` : null
   const initialDraft = readDraft(draftStorageKey)
   const [text, setTextRaw] = useState(initialDraft.text)
@@ -199,11 +210,13 @@ const MessageInput = forwardRef(function MessageInput({ onSend, onSendBatch, onS
   // whatever text was typed as its caption (text-only when no draft, per
   // onSendImage's own contract) — never two separate sends for one attach.
   const [imageDraft, setImageDraft] = useState(null)
+  const [fileDraft, setFileDraft] = useState(null)
   const fileRef = useRef(null)
+  const attachmentFileRef = useRef(null)
   const textareaRef = useRef(null)
   const menuRef = useRef(null)
   const plusBtnRef = useRef(null)
-  const canSend = text.trim().length > 0 || segments.length > 0 || !!imageDraft
+  const canSend = text.trim().length > 0 || segments.length > 0 || !!imageDraft || !!fileDraft
 
   useImperativeHandle(ref, () => ({
     fill(content) {
@@ -253,10 +266,14 @@ const MessageInput = forwardRef(function MessageInput({ onSend, onSendBatch, onS
   }, [menuOpen])
 
   const handleSend = () => {
-    console.log('[PAW] handleSend: canSend=', canSend, 'textLen=', text.trim().length, 'segments=', segments.length, 'hasImageDraft=', !!imageDraft)
+    console.log('[PAW] handleSend: canSend=', canSend, 'textLen=', text.trim().length, 'segments=', segments.length, 'hasImageDraft=', !!imageDraft, 'hasFileDraft=', !!fileDraft)
     if (!canSend) return
     const finalText = text.trim()
-    if (imageDraft) {
+    if (fileDraft) {
+      const caption = [...segments, finalText].filter(Boolean).join('\n')
+      onSendFile?.({ file: fileDraft, text: caption })
+      setFileDraft(null)
+    } else if (imageDraft) {
       // Keep a staged image and all queued text in one turn.
       const imageCaption = [...segments, finalText].filter(Boolean).join('\n')
       onSendImage({ imageData: imageDraft.imageData, imageType: imageDraft.imageType, imageUrl: imageDraft.imageUrl, text: imageCaption })
@@ -289,6 +306,7 @@ const MessageInput = forwardRef(function MessageInput({ onSend, onSendBatch, onS
     const file = e.target.files?.[0]
     if (!file) return
     e.target.value = ''
+    setFileDraft(null)
     try {
       const { dataUrl, base64, mimeType, originalBytes, compressedBytes, compressed } = await compressChatImage(file)
       setImageDraft({ imageData: base64, imageType: mimeType, imageUrl: dataUrl, originalBytes, compressedBytes, compressed })
@@ -303,6 +321,23 @@ const MessageInput = forwardRef(function MessageInput({ onSend, onSendBatch, onS
   const handleMenuImage = () => {
     setMenuOpen(false)
     fileRef.current?.click()
+  }
+
+  const handleFile = (e) => {
+    const file = e.target.files?.[0]
+    e.target.value = ''
+    if (!file) return
+    if (file.size > 10 * 1024 * 1024) {
+      alert('文件不能超过 10MB')
+      return
+    }
+    setImageDraft(null)
+    setFileDraft(file)
+  }
+
+  const handleMenuFile = () => {
+    setMenuOpen(false)
+    attachmentFileRef.current?.click()
   }
 
   const handleMenuCall = () => {
@@ -369,6 +404,23 @@ const MessageInput = forwardRef(function MessageInput({ onSend, onSendBatch, onS
         </div>
       )}
 
+      {fileDraft && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '6px 12px 0' }}>
+          <div style={{
+            width: 48, height: 48, borderRadius: 12, flexShrink: 0,
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            color: primaryColor, background: `${primaryColor}18`, border: `1px solid ${primaryColor}35`,
+          }}><FileIcon /></div>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontSize: 13, color: '#8b5060', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{fileDraft.name}</div>
+            <div style={{ fontSize: 11, color: '#b98a96', marginTop: 2 }}>{formatImageBytes(fileDraft.size)} · 可继续输入文字一起发送</div>
+          </div>
+          <button onClick={() => setFileDraft(null)} title="移除文件" style={{ background: 'none', border: 'none', color: '#c47a8a', cursor: 'pointer', padding: 4 }}>
+            <CloseIcon size={16} />
+          </button>
+        </div>
+      )}
+
       {/* 回车分条排队——每条都是点发送后会各自独立成一条消息的预览，点 ×
           可以单独撤回某一条，真正发出前还能反悔。 */}
       {segments.length > 0 && (
@@ -430,6 +482,7 @@ const MessageInput = forwardRef(function MessageInput({ onSend, onSendBatch, onS
         </div>
 
         <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={handleImage} />
+        <input ref={attachmentFileRef} type="file" className="hidden" onChange={handleFile} />
 
         {/* "+"/"×" 始终在发送按钮左侧——切换只改变展开状态和图标（+ 旋转 45°
             即成 ×），绝不与发送按钮换位置。 */}
@@ -515,6 +568,7 @@ const MessageInput = forwardRef(function MessageInput({ onSend, onSendBatch, onS
           }}
         >
           <MenuItem icon={<ImageIcon />} label="图片" onClick={handleMenuImage} />
+          {onSendFile && <MenuItem icon={<FileIcon />} label="文件" sub="最大10MB" onClick={handleMenuFile} />}
           <MenuItem icon={<PhoneIcon />} label="语音通话" onClick={handleMenuCall} />
           {/* 对手是当前聊天里真实的 Claude Code 或 Codex（各自独立棋局），
               落子由各自的常驻 VPS 会话真实决定——普通 API 会话没有对应的

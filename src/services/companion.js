@@ -752,7 +752,7 @@ export function sendCodexMessage(text, imageUrl, options = {}) {
   const sessionId = normalizeCodexSessionId(options?.sessionId || selectedCodexSessionId)
   const prompt = typeof options?.prompt === 'string' ? options.prompt : ''
   const id = `codex-eunoia-${Date.now()}-${++codexSeq}`
-  return sendRaw(buildCodexMessagePayload({ id, text, segments: options?.segments, imageUrl, sessionId, prompt, clientTime: clientTimeContext() }))
+  return sendRaw(buildCodexMessagePayload({ id, text, segments: options?.segments, imageUrl, file: options?.file, sessionId, prompt, clientTime: clientTimeContext() }))
 }
 
 listeners.add(evt => {
@@ -924,7 +924,7 @@ export function sendDeleteNotice(text) {
  * the module-level `deliveredIds` set, so a reconnect-triggered history
  * replay can never re-yield something already seen live, or vice versa.
  */
-export async function* streamChatViaCompanion({ text, imagePath, signal }) {
+export async function* streamChatViaCompanion({ text, imagePath, file, signal }) {
   if (signal?.aborted) return
 
   await waitUntilOpenOrFail()
@@ -1100,7 +1100,11 @@ export async function* streamChatViaCompanion({ text, imagePath, signal }) {
   signal?.addEventListener('abort', onAbort)
 
   try {
-    const sent = sendRaw({ id, text, ...(imagePath ? { imagePath } : {}), clientTime: clientTimeContext() })
+    const sent = sendRaw({
+      id, text, ...(imagePath ? { imagePath } : {}),
+      ...(file?.path ? { filePath: file.path, fileName: file.name, fileSize: file.size, fileType: file.mimeType } : {}),
+      clientTime: clientTimeContext(),
+    })
     if (!sent) {
       throw Object.assign(new Error('companion 未连接'), { code: 'not_connected', turnId })
     }
@@ -1219,6 +1223,31 @@ export async function uploadImageToCompanion(dataUrl) {
     body: JSON.stringify({ dataUrl }),
   })
   return data.path
+}
+
+export async function uploadFileToCompanion(file) {
+  if (!file) throw new Error('没有选择文件')
+  if (file.size > 10 * 1024 * 1024) throw new Error('文件不能超过 10MB')
+  const dataUrl = await new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => resolve(reader.result)
+    reader.onerror = () => reject(reader.error || new Error('读取文件失败'))
+    reader.readAsDataURL(file)
+  })
+  return companionJson('/upload/file', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name: file.name, dataUrl }),
+  })
+}
+
+export async function deleteUploadedFile(path) {
+  if (!path) return
+  return companionJson('/upload/file/delete', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ path }),
+  })
 }
 
 // Removes an image previously uploaded via uploadImageToCompanion — called

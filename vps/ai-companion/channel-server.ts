@@ -134,6 +134,9 @@ const UPLOAD_IMAGE_MIME_EXT: Record<string, string> = {
   'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp', 'image/gif': 'gif',
 }
 const UPLOAD_DATA_URL_RE = /^data:(image\/(?:jpeg|png|webp|gif));base64,([A-Za-z0-9+/]+=*)$/
+const UPLOAD_FILE_MAX_BYTES = 10 * 1024 * 1024
+const UPLOAD_FILE_NAME_MAX_CHARS = 180
+const UPLOAD_FILE_DATA_URL_RE = /^data:([^;,]{1,200});base64,([A-Za-z0-9+/]+=*)$/
 
 // ---------- upload cleanup (tiered retention for UPLOAD_DIR) ----------
 // Three independent policies, run together on one hourly sweep:
@@ -487,6 +490,12 @@ type Msg = {
   // Read tool looked at. Purely informational for other connected clients;
   // the sending client already has the image locally and renders from that.
   imagePath?: string
+  // Ordinary file attachment. Like imagePath, this is a server-created path
+  // under UPLOAD_DIR, never an arbitrary browser-supplied filesystem path.
+  filePath?: string
+  fileName?: string
+  fileSize?: number
+  fileType?: string
 }
 type MsgWire = { type: 'msg' } & Msg
 type TurnStartWire = { type: 'turn_start'; turnId: string; replyTo?: string; ts: number }
@@ -863,7 +872,9 @@ async function sweepImageAge(): Promise<{ shrunk: number; skipped: number }> {
     return { shrunk, skipped }
   }
   for (const name of names) {
-    if (name.endsWith('.gif') || name.endsWith('.shrink-tmp')) continue
+    // Ordinary attachments share the quota/oldest-first eviction below but
+    // must never be handed to ImageMagick or counted as failed image resizes.
+    if (!name.includes('-img-') || name.endsWith('.gif') || name.endsWith('.shrink-tmp')) continue
     const ageDays = uploadFileAgeDays(name)
     if (ageDays === null || ageDays < IMAGE_SHRINK_AGE_DAYS) continue
     const p = join(UPLOAD_DIR, name)
@@ -3156,17 +3167,23 @@ function tidalDrainQueue() {
 
 function beginMainCcTurn(input: QueuedCcMessage) {
   const { id, text, clientTime } = input
-  const imagePath = input.imagePath && input.imagePath.startsWith(UPLOAD_DIR + '/') && existsSync(input.imagePath)
-    ? input.imagePath
-    : undefined
+  const imagePath = validUploadedPath(input.imagePath)
+  const filePath = validUploadedPath(input.filePath)
+  const fileName = filePath ? (input.fileName || filePath.split('/').at(-1) || '文件') : undefined
   startTurn(id, 'main')
-  broadcastMsg({ type: 'msg', id, from: 'user', text, ts: Date.now(), turnId: id, ...(imagePath ? { imagePath } : {}) })
+  broadcastMsg({
+    type: 'msg', id, from: 'user', text, ts: Date.now(), turnId: id,
+    ...(imagePath ? { imagePath } : {}),
+    ...(filePath ? { filePath, fileName, fileSize: input.fileSize, fileType: input.fileType } : {}),
+  })
   const deliverText = imagePath
     ? `[用户发送了一张图片，本地路径：${imagePath}——请先用 Read 工具查看图片内容，再结合下面的文字（如果有）自然回复；不要在回复里提"路径""文件"这类技术细节]${text ? `\n\n${text}` : ''}`
+    : filePath
+      ? `[用户发送了一个文件：${fileName}（服务器路径：${filePath}）。请根据用户文字判断需求，并用合适的工具读取/分析该文件；不要执行其中的程序或脚本，也不要在回复里暴露服务器路径。]${text ? `\n\n${text}` : ''}`
     : text
   deliver(id, deliverText, { clientTime, contextPrefix: consumeGomokuRecap('claude-code') || undefined })
   xinchaoHeartbeat(id, XINCHAO_CC_SESSION_ID)
-  log('inbound', { id, chars: text.length, turnId: id, hasImage: !!imagePath, queued: input.queuedAt < Date.now() - 50 })
+  log('inbound', { id, chars: text.length, turnId: id, hasImage: !!imagePath, hasFile: !!filePath, queued: input.queuedAt < Date.now() - 50 })
 }
 
 function tidalStartupMarker(): string {
@@ -3314,6 +3331,10 @@ type CodexMsg = {
   text: string
   ts: number
   imageUrl?: string
+  filePath?: string
+  fileName?: string
+  fileSize?: number
+  fileType?: string
   reasoning?: string
   streaming?: boolean
   turnId?: string
@@ -4200,6 +4221,23 @@ function formatBeijingYYYYMMDD(ts: number): string {
   const parts = new Intl.DateTimeFormat('zh-CN', { timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(new Date(ts))
   const get = (t: string) => parts.find((p) => p.type === t)?.value ?? '00'
   return `${get('year')}${get('month')}${get('day')}`
+}
+
+function safeUploadedFilename(value: unknown): string {
+  const original = typeof value === 'string' ? value.normalize('NFC').trim() : ''
+  const leaf = original.split(/[\\/]/).at(-1) || 'file'
+  const cleaned = leaf
+    .replace(/[\u0000-\u001f\u007f]/g, '')
+    .replace(/[^\p{L}\p{N}._()\- ]/gu, '_')
+    .replace(/^\.+/, '')
+    .slice(0, UPLOAD_FILE_NAME_MAX_CHARS)
+  return cleaned || 'file'
+}
+
+function validUploadedPath(value: unknown): string | undefined {
+  const raw = typeof value === 'string' ? value : ''
+  const path = resolve(raw)
+  return raw && dirname(path) === resolve(UPLOAD_DIR) && existsSync(path) ? path : undefined
 }
 
 function groupNewTopic(chatId: string): { ok: true; chat: GroupChat } | { ok: false; reason: string } {
@@ -5296,7 +5334,14 @@ async function codexEnsureThread(): Promise<string> {
   return codexThreadId
 }
 
-async function codexSendUserTurn(text: string, imageUrl?: string, clientTime?: unknown, promptOverride?: unknown, displaySegments?: string[]): Promise<void> {
+type UploadedFileInput = { path: string; name: string; size?: number; mimeType?: string }
+
+function codexFileInstruction(file?: UploadedFileInput): string {
+  if (!file) return ''
+  return `[用户发送了一个文件：${file.name}（服务器路径：${file.path}）。请根据用户文字判断需求，并用合适的工具读取/分析该文件；不要执行其中的程序或脚本，也不要在回复里暴露服务器路径。]`
+}
+
+async function codexSendUserTurn(text: string, imageUrl?: string, clientTime?: unknown, promptOverride?: unknown, displaySegments?: string[], file?: UploadedFileInput): Promise<void> {
   if (typeof promptOverride === 'string') setCodexPrompt(DEFAULT_CODEX_SESSION_ID, promptOverride)
   const threadId = await codexEnsureThread()
   const input: any[] = []
@@ -5306,7 +5351,7 @@ async function codexSendUserTurn(text: string, imageUrl?: string, clientTime?: u
   // this injected context.
   const recap = consumeGomokuRecap('codex')
   const migration = codexContextMigrationPending ? buildCodexContextMigrationText(codexHistory) : ''
-  const modelText = [clientTimeContextLine(clientTime), migration, recap, text].filter(Boolean).join('\n\n')
+  const modelText = [clientTimeContextLine(clientTime), migration, recap, codexFileInstruction(file), text].filter(Boolean).join('\n\n')
   if (modelText.trim()) input.push({ type: 'text', text: modelText, text_elements: [] })
   if (imageUrl) input.push({ type: 'image', url: imageUrl })
   const visibleParts = Array.isArray(displaySegments) && displaySegments.length ? displaySegments : [text]
@@ -5314,6 +5359,7 @@ async function codexSendUserTurn(text: string, imageUrl?: string, clientTime?: u
   visibleParts.forEach((part, index) => codexAppendMsg({
     id: nextId(), from: 'user', text: part, ts: visibleTs + index,
     ...(imageUrl && index === visibleParts.length - 1 ? { imageUrl } : {}),
+    ...(file && index === visibleParts.length - 1 ? { filePath: file.path, fileName: file.name, fileSize: file.size, fileType: file.mimeType } : {}),
   }))
   codexCurrentTurnKind = 'chat'
   setCodexStatus('thinking')
@@ -5400,7 +5446,7 @@ async function codexRecoverKnownChatThreads(): Promise<{
   return { recoveredSessions, failedSessions }
 }
 
-async function codexSendExtraUserTurn(state: CodexSessionState, text: string, imageUrl?: string, clientTime?: unknown, promptOverride?: unknown, displaySegments?: string[]): Promise<void> {
+async function codexSendExtraUserTurn(state: CodexSessionState, text: string, imageUrl?: string, clientTime?: unknown, promptOverride?: unknown, displaySegments?: string[], file?: UploadedFileInput): Promise<void> {
   if (typeof promptOverride === 'string') {
     state.prompt = setCodexPrompt(state.sessionId, promptOverride)
     saveExtraCodexSession(state)
@@ -5408,7 +5454,7 @@ async function codexSendExtraUserTurn(state: CodexSessionState, text: string, im
   const threadId = await codexEnsureExtraThread(state)
   const input: any[] = []
   const migration = state.contextMigrationPending ? buildCodexContextMigrationText(state.history) : ''
-  const modelText = [clientTimeContextLine(clientTime), migration, text].filter(Boolean).join('\n\n')
+  const modelText = [clientTimeContextLine(clientTime), migration, codexFileInstruction(file), text].filter(Boolean).join('\n\n')
   if (modelText.trim()) input.push({ type: 'text', text: modelText, text_elements: [] })
   if (imageUrl) input.push({ type: 'image', url: imageUrl })
   const visibleParts = Array.isArray(displaySegments) && displaySegments.length ? displaySegments : [text]
@@ -5416,6 +5462,7 @@ async function codexSendExtraUserTurn(state: CodexSessionState, text: string, im
   visibleParts.forEach((part, index) => extraAppendMsg(state, {
     id: nextId(), from: 'user', text: part, ts: visibleTs + index,
     ...(imageUrl && index === visibleParts.length - 1 ? { imageUrl } : {}),
+    ...(file && index === visibleParts.length - 1 ? { filePath: file.path, fileName: file.name, fileSize: file.size, fileType: file.mimeType } : {}),
   }))
   setExtraCodexStatus(state, 'thinking')
   const result = await codexRequest('turn/start', { threadId, input, ...(codexSelectedModel ? { model: codexSelectedModel } : {}) })
@@ -6776,6 +6823,7 @@ Bun.serve<{ authed: true }>({
       const idx = targetHistory.findIndex((message) => message.id === messageId)
       if (idx === -1) return jsonResponse({ error: 'not found' }, { status: 404, headers: cors })
       if (targetHistory[idx].streaming) return jsonResponse({ error: 'message is still streaming' }, { status: 409, headers: cors })
+      const attachedFilePath = targetHistory[idx].filePath
       targetHistory.splice(idx, 1)
       if (state) {
         saveExtraCodexSession(state)
@@ -6783,6 +6831,9 @@ Bun.serve<{ authed: true }>({
       } else {
         saveCodexHistory()
         broadcastCodex({ type: 'codex_msg_deleted', id: messageId })
+      }
+      if (attachedFilePath?.startsWith(UPLOAD_DIR + '/') && attachedFilePath.split('/').at(-1)?.includes('-file-')) {
+        try { if (existsSync(attachedFilePath)) unlinkSync(attachedFilePath) } catch (err) { log('file_delete_error', { path: attachedFilePath, error: String(err) }) }
       }
       return jsonResponse({ ok: true, sessionId, messageId }, { headers: cors })
     }
@@ -7168,6 +7219,42 @@ Bun.serve<{ authed: true }>({
       }
     }
 
+    // Ordinary attachments use the same authenticated, server-local handoff
+    // as chat images, but keep their original filename for the model/UI. The
+    // bytes never travel through WebSocket/model context; both resident
+    // runtimes receive only this server-created path and read on demand.
+    if (url.pathname === '/upload/file' && req.method === 'POST') {
+      const gate = authGate()
+      if (gate) return gate
+      const cors = corsHeadersFor(origin)
+      let body: unknown
+      try {
+        body = await req.json()
+      } catch {
+        return jsonResponse({ error: 'bad json' }, { status: 400, headers: cors })
+      }
+      const originalName = safeUploadedFilename((body as any)?.name)
+      const dataUrl = typeof (body as any)?.dataUrl === 'string' ? (body as any).dataUrl : ''
+      const match = dataUrl.match(UPLOAD_FILE_DATA_URL_RE)
+      if (!match) return jsonResponse({ error: 'expected a base64 data URL' }, { status: 400, headers: cors })
+      const [, declaredMime, base64] = match
+      const bytes = Buffer.from(base64, 'base64')
+      if (!bytes.length) return jsonResponse({ error: 'empty file' }, { status: 400, headers: cors })
+      if (bytes.length > UPLOAD_FILE_MAX_BYTES) {
+        return jsonResponse({ error: 'file too large', maxBytes: UPLOAD_FILE_MAX_BYTES }, { status: 413, headers: cors })
+      }
+      const filename = `${formatBeijingYYYYMMDD(Date.now())}-file-${nextId()}-${originalName}`
+      const p = join(UPLOAD_DIR, filename)
+      try {
+        writeFileSync(p, bytes, { mode: 0o600 })
+        log('file_uploaded', { filename, originalName, bytes: bytes.length, mime: declaredMime })
+        return jsonResponse({ ok: true, path: p, name: originalName, size: bytes.length, mimeType: declaredMime }, { headers: cors })
+      } catch (err) {
+        log('file_upload_error', { error: String(err) })
+        return jsonResponse({ error: 'write failed' }, { status: 500, headers: cors })
+      }
+    }
+
     // Fired when the user deletes a message that had an image attached (see
     // deleteMsg in useChat.js) — removes the on-disk file so a deleted
     // message doesn't leave an orphaned upload behind forever.
@@ -7192,6 +7279,26 @@ Bun.serve<{ authed: true }>({
         return jsonResponse({ ok: true }, { headers: cors })
       } catch (err) {
         log('image_delete_error', { path: p, error: String(err) })
+        return jsonResponse({ error: 'delete failed' }, { status: 500, headers: cors })
+      }
+    }
+
+    if (url.pathname === '/upload/file/delete' && req.method === 'POST') {
+      const gate = authGate()
+      if (gate) return gate
+      const cors = corsHeadersFor(origin)
+      let body: unknown
+      try { body = await req.json() } catch { return jsonResponse({ error: 'bad json' }, { status: 400, headers: cors }) }
+      const p = validUploadedPath((body as any)?.path)
+      if (!p || !p.split('/').at(-1)?.includes('-file-')) return jsonResponse({ error: 'invalid path' }, { status: 400, headers: cors })
+      try {
+        unlinkSync(p)
+        for (const m of history) if (m.filePath === p) delete m.filePath
+        saveHistory()
+        log('file_deleted_with_message', { path: p })
+        return jsonResponse({ ok: true }, { headers: cors })
+      } catch (err) {
+        log('file_delete_error', { path: p, error: String(err) })
         return jsonResponse({ error: 'delete failed' }, { status: 500, headers: cors })
       }
     }
@@ -8079,7 +8186,7 @@ Bun.serve<{ authed: true }>({
     },
     message(ws, raw) {
       try {
-        const parsed = JSON.parse(String(raw)) as { id?: string; text?: string; segments?: string[]; type?: string; turnId?: string; runtime?: string; imageUrl?: string; imagePath?: string; clientTime?: unknown; sessionId?: string; prompt?: string }
+        const parsed = JSON.parse(String(raw)) as { id?: string; text?: string; segments?: string[]; type?: string; turnId?: string; runtime?: string; imageUrl?: string; imagePath?: string; filePath?: string; fileName?: string; fileSize?: number; fileType?: string; clientTime?: unknown; sessionId?: string; prompt?: string }
 
         // App-level heartbeat — a WS can look "open" to the browser for a
         // long time after the underlying network path has actually died
@@ -8142,7 +8249,14 @@ Bun.serve<{ authed: true }>({
             : undefined
           const codexTurnText = codexSegments?.length ? codexSegments.join('\n') : codexText
           const codexImageUrl = parsed.imageUrl
-          if (!codexTurnText && !codexImageUrl) return
+          const codexFilePath = validUploadedPath(parsed.filePath)
+          const codexFile = codexFilePath && codexFilePath.split('/').at(-1)?.includes('-file-') ? {
+            path: codexFilePath,
+            name: safeUploadedFilename(parsed.fileName || codexFilePath.split('/').at(-1)),
+            size: typeof parsed.fileSize === 'number' ? parsed.fileSize : undefined,
+            mimeType: typeof parsed.fileType === 'string' ? parsed.fileType.slice(0, 200) : undefined,
+          } : undefined
+          if (!codexTurnText && !codexImageUrl && !codexFile) return
           if (typeof parsed.prompt === 'string') setCodexPrompt(sessionId, parsed.prompt)
           const extraState = sessionId === DEFAULT_CODEX_SESSION_ID ? null : getExtraCodexSession(sessionId)
           if (codexResetInFlight || extraState?.resetInFlight) {
@@ -8155,8 +8269,8 @@ Bun.serve<{ authed: true }>({
             return
           }
           const send = extraState
-            ? codexSendExtraUserTurn(extraState, codexTurnText, codexImageUrl, parsed.clientTime, parsed.prompt, codexSegments)
-            : codexSendUserTurn(codexTurnText, codexImageUrl, parsed.clientTime, parsed.prompt, codexSegments)
+            ? codexSendExtraUserTurn(extraState, codexTurnText, codexImageUrl, parsed.clientTime, parsed.prompt, codexSegments, codexFile)
+            : codexSendUserTurn(codexTurnText, codexImageUrl, parsed.clientTime, parsed.prompt, codexSegments, codexFile)
           send.catch((err) => {
             log('codex_send_error', { error: String(err) })
             if (extraState) {
@@ -8178,10 +8292,12 @@ Bun.serve<{ authed: true }>({
         // /upload/image — never trust an arbitrary client-supplied path, CC's
         // Read tool would happily open anything readable by the companion
         // OS user otherwise.
-        const rawImagePath = typeof parsed.imagePath === 'string' ? parsed.imagePath : ''
-        const imagePath = rawImagePath && rawImagePath.startsWith(UPLOAD_DIR + '/') && existsSync(rawImagePath) ? rawImagePath : undefined
+        const imagePath = validUploadedPath(parsed.imagePath)
+        const rawFilePath = validUploadedPath(parsed.filePath)
+        const filePath = rawFilePath && rawFilePath.split('/').at(-1)?.includes('-file-') ? rawFilePath : undefined
+        const fileName = filePath ? safeUploadedFilename(parsed.fileName || filePath.split('/').at(-1)) : undefined
         const id = parsed.id || nextId()
-        if (!text && !imagePath) return
+        if (!text && !imagePath && !filePath) return
 
         // Confirms the message physically reached the server, independent
         // of what happens to it next (accepted / turn_busy / reset_busy all
@@ -8208,7 +8324,7 @@ Bun.serve<{ authed: true }>({
         }
 
         if (tidalIsActive()) {
-          tidalEnqueueMessage({ id, text, ...(imagePath ? { imagePath } : {}), clientTime: parsed.clientTime, queuedAt: Date.now() })
+          tidalEnqueueMessage({ id, text, ...(imagePath ? { imagePath } : {}), ...(filePath ? { filePath, fileName, fileSize: parsed.fileSize, fileType: parsed.fileType } : {}), clientTime: parsed.clientTime, queuedAt: Date.now() })
           return
         }
 
@@ -8224,7 +8340,7 @@ Bun.serve<{ authed: true }>({
           return
         }
 
-        beginMainCcTurn({ id, text, ...(imagePath ? { imagePath } : {}), clientTime: parsed.clientTime, queuedAt: Date.now() })
+        beginMainCcTurn({ id, text, ...(imagePath ? { imagePath } : {}), ...(filePath ? { filePath, fileName, fileSize: parsed.fileSize, fileType: parsed.fileType } : {}), clientTime: parsed.clientTime, queuedAt: Date.now() })
       } catch (err) {
         log('ws_message_error', { error: String(err) })
       }

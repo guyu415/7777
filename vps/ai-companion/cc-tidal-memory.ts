@@ -12,6 +12,10 @@ export type QueuedCcMessage = {
   id: string
   text: string
   imagePath?: string
+  filePath?: string
+  fileName?: string
+  fileSize?: number
+  fileType?: string
   clientTime?: unknown
   queuedAt: number
 }

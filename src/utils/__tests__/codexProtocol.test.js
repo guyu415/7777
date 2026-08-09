@@ -18,4 +18,15 @@ describe('Codex session request protocol', () => {
       text: '一\n二', segments: ['一', '二'], sessionId: 's1',
     })
   })
+
+  it('carries a server-uploaded file without embedding its bytes', () => {
+    const payload = buildCodexMessagePayload({
+      id: 'm4', text: '帮我看看', sessionId: 's1',
+      file: { path: '/opt/ai-companion/uploads/a.pdf', name: '报告.pdf', size: 321, mimeType: 'application/pdf' },
+    })
+    expect(payload).toMatchObject({
+      filePath: '/opt/ai-companion/uploads/a.pdf', fileName: '报告.pdf', fileSize: 321, fileType: 'application/pdf',
+    })
+    expect(JSON.stringify(payload)).not.toContain('base64')
+  })
 })

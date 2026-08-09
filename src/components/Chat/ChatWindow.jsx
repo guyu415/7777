@@ -20,7 +20,7 @@ import { useScheduledMessages } from '../../hooks/useScheduledMessages'
 import { useFocusRuntime } from '../../hooks/useFocusRuntime'
 import { useStore, deleteMessageFromDB, getBlob } from '../../store'
 import { putAsset } from '../../services/sync'
-import { getXinchaoStatus, onXinchaoUpdate, getCodexMemoryFile, putCodexMemoryFile } from '../../services/companion'
+import { getXinchaoStatus, onXinchaoUpdate, getCodexMemoryFile, putCodexMemoryFile, uploadFileToCompanion } from '../../services/companion'
 
 const SYNC_BASE = 'https://chat.xiaoman.xyz'
 const FAV_LIST_KEY = 'user:xiaoman2.26:voice_fav_list'
@@ -245,6 +245,21 @@ export default function ChatWindow({ theme }) {
   const handleSendImage = ({ imageData, imageType, imageUrl, text }) => {
     updateActiveTime()
     sendMessage(text || '', 'image', { imageData, imageType, imageUrl })
+  }
+
+  const handleSendFile = async ({ file, text }) => {
+    updateActiveTime()
+    try {
+      const uploaded = await uploadFileToCompanion(file)
+      await sendMessage(text || '', 'file', {
+        filePath: uploaded.path,
+        fileName: uploaded.name || file.name,
+        fileSize: uploaded.size ?? file.size,
+        fileType: uploaded.mimeType || file.type || 'application/octet-stream',
+      })
+    } catch (error) {
+      showToast(`文件发送失败：${error.message}`)
+    }
   }
 
   // Neither VPS session (Claude Code or Codex) can "un-say" a reply the way
@@ -697,6 +712,7 @@ export default function ChatWindow({ theme }) {
           }}
           onStartCall={handleStartCall}
           onSendImage={handleSendImage}
+          onSendFile={isFixedVpsSession ? handleSendFile : undefined}
           onOpenGomoku={() => setShowGomoku(true)}
           gomokuEnabled={isFixedVpsSession}
           onOpenFocus={() => setShowFocusSheet(true)}

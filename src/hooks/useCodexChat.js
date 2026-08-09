@@ -44,9 +44,13 @@ function toBubble(codexMsg) {
   return {
     id: codexMsg.id,
     role: codexMsg.from === 'user' ? 'user' : 'assistant',
-    type: codexMsg.imageUrl ? 'image' : 'text',
+    type: codexMsg.imageUrl ? 'image' : codexMsg.filePath ? 'file' : 'text',
     content: codexMsg.text || '',
     imageUrl: codexMsg.imageUrl,
+    filePath: codexMsg.filePath,
+    fileName: codexMsg.fileName,
+    fileSize: codexMsg.fileSize,
+    fileType: codexMsg.fileType,
     timestamp: codexMsg.ts,
     streaming: !!codexMsg.streaming,
     reasoning: codexMsg.reasoning || undefined,
@@ -320,11 +324,12 @@ export function useCodexChat() {
   const sendMessage = useCallback(async (content, _type = 'text', extra = {}) => {
     const text = (content || '').trim()
     const imageUrl = extra?.imageUrl
-    if (!text && !imageUrl) return
+    const file = extra?.filePath ? { path: extra.filePath, name: extra.fileName, size: extra.fileSize, mimeType: extra.fileType } : undefined
+    if (!text && !imageUrl && !file) return
     stopRequestedRef.current = false
     stoppedTurnIdRef.current = null
     setSendError(null)
-    const ok = sendCodexMessage(text, imageUrl, { sessionId: codexSessionId, prompt: codexPrompt })
+    const ok = sendCodexMessage(text, imageUrl, { sessionId: codexSessionId, prompt: codexPrompt, file })
     if (!ok) setSendError('未连接，请稍后重试')
   }, [codexPrompt, codexSessionId])
 

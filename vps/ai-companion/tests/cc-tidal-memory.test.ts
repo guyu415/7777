@@ -83,7 +83,7 @@ describe('two-phase safety', () => {
       taskId: 'task-1', phase: 'compacted', triggerReason: 'tokens', boundaryId: 'm-new', boundaryTs: 2,
       sourceCount: 150, summary, summaryProvider: 'luna', contextTokens: 120_000, recoveryMarker: 'marker-1',
     }
-    state.queue.push({ id: 'queued-1', text: 'later', queuedAt: 3 })
+    state.queue.push({ id: 'queued-1', text: 'later', filePath: '/opt/ai-companion/uploads/example.pdf', fileName: 'example.pdf', fileSize: 123, fileType: 'application/pdf', queuedAt: 3 })
     saveTidalState(path, state)
     const loaded = loadTidalState(path, 'different-default')
     expect(loaded.sessionId).toBe('session-a')
@@ -91,6 +91,7 @@ describe('two-phase safety', () => {
     expect(loaded.pending?.recoveryMarker).toBe('marker-1')
     expect(loaded.processedBoundaryId).toBe('m-old')
     expect(loaded.queue.map((q) => q.id)).toEqual(['queued-1'])
+    expect(loaded.queue[0]).toMatchObject({ fileName: 'example.pdf', fileSize: 123, fileType: 'application/pdf' })
     expect(readFileSync(path, 'utf8')).toContain('relationshipIdentity')
   })
 })

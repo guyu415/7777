@@ -2,7 +2,7 @@ import { useCallback, useRef } from 'react'
 import { useShallow } from 'zustand/react/shallow'
 import { useStore, saveMessage, saveBlob, getMessages, deleteMessageFromDB } from '../store'
 import { streamChat, generateSummary } from '../services/claude'
-import { streamChatViaCompanion, sendDeleteNotice, uploadImageToCompanion, deleteUploadedImage } from '../services/companion'
+import { streamChatViaCompanion, sendDeleteNotice, uploadImageToCompanion, deleteUploadedImage, deleteUploadedFile } from '../services/companion'
 import { listMemories, formatMemories } from '../services/memory'
 import { executeAcCommand } from '../services/ac'
 
@@ -247,7 +247,7 @@ export function useChat() {
     if (history.length > 0) {
       const last = history[history.length - 1]
       updateSession(CONVERSATION_ID, {
-        lastMsgPreview: last.type === 'text' ? (last.content || '').slice(0, 40) : '[图片]',
+        lastMsgPreview: last.type === 'text' ? (last.content || '').slice(0, 40) : last.type === 'file' ? `[文件] ${last.fileName || ''}`.trim() : '[图片]',
         lastMsgTime: last.timestamp,
       })
     }
@@ -544,8 +544,11 @@ export function useChat() {
           console.error('[IMG-UPLOAD] 图片上传到 companion 失败:', e.message)
         }
       }
+      const vpsFile = isVpsProvider && lastUserMsg?.type === 'file' && lastUserMsg.filePath
+        ? { path: lastUserMsg.filePath, name: lastUserMsg.fileName, size: lastUserMsg.fileSize, mimeType: lastUserMsg.fileType }
+        : undefined
       const chunkSource = isVpsProvider
-        ? streamChatViaCompanion({ text: vpsBatchText, imagePath: vpsImagePath, signal: controller.signal })
+        ? streamChatViaCompanion({ text: vpsBatchText, imagePath: vpsImagePath, file: vpsFile, signal: controller.signal })
         : streamChat({ apiKey: effectiveApiKey, apiBaseUrl: effectiveBaseUrl, model: effectiveModel, systemPrompt: builtSystemPrompt, messages: trimmedMsgs, workerUrl, useWorkerProxy, signal: controller.signal, disableThinking: effectiveDisableThinking, webSearch: effectiveWebSearch, providerName: effectiveProviderName })
 
       try {
@@ -962,7 +965,7 @@ export function useChat() {
   const sendMessage = useCallback(async (content, type = 'text', extra = {}) => {
     console.log('[SEND] sendMessage called | keyLen=', effectiveApiKey?.length ?? 0, '| baseUrl=', effectiveBaseUrl, '| isLoading=', isLoading)
     const isVpsProvider = effectiveProviderName === 'claude-code-vps'
-    if (isVpsProvider && type !== 'text' && type !== 'image') {
+    if (isVpsProvider && type !== 'text' && type !== 'image' && type !== 'file') {
       throw new Error('VPS Companion 暂不支持此消息类型')
     }
     if (!isVpsProvider && !effectiveApiKey) {
@@ -992,13 +995,13 @@ export function useChat() {
 
     // Auto-name session from first message
     if (messages.length === 0) {
-      const autoName = type === 'text' ? content.slice(0, 20).trim() : '[图片]'
+      const autoName = type === 'text' ? content.slice(0, 20).trim() : type === 'file' ? (extra.fileName || '[文件]') : '[图片]'
       if (autoName) updateSession(CONVERSATION_ID, { name: autoName })
     }
 
     addMessage(userMsg)
     updateSession(CONVERSATION_ID, {
-      lastMsgPreview: type === 'text' ? (content || '').slice(0, 40) : '[图片]',
+      lastMsgPreview: type === 'text' ? (content || '').slice(0, 40) : type === 'file' ? `[文件] ${extra.fileName || ''}`.trim() : '[图片]',
       lastMsgTime: Date.now(),
     })
     console.log('[SEND] saving to IDB...')
@@ -1127,6 +1130,7 @@ export function useChat() {
       // referenced (see uploadImageToCompanion above) — otherwise every
       // deleted image message leaves an orphaned file on the VPS forever.
       if (msg?.imagePath) deleteUploadedImage(msg.imagePath).catch(e => console.error('[IMG-DELETE] 删除服务器图片失败:', e.message))
+      if (msg?.filePath) deleteUploadedFile(msg.filePath).catch(e => console.error('[FILE-DELETE] 删除服务器文件失败:', e.message))
     }
     await deleteMessageFromDB(id)
     deleteMessage(id)
