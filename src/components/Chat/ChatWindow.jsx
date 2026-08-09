@@ -794,11 +794,11 @@ export default function ChatWindow({ theme }) {
         </div>
       )}
 
-      {/* 输入区：主导航现在常驻聊天页下方，因此安全区由主导航统一承接。
+      {/* 输入区：聊天页不显示主导航，输入区自己承接底部安全区。
           backdropFilter 会自成一个层叠上下文，必须显式给 position+z-index，
           否则会被消息区 zIndex:1 的定位元素盖住（"+"菜单弹层因此被压在消息区下面）。 */}
       <div
-        className="flex-shrink-0"
+        className="flex-shrink-0 safe-bottom"
         style={{
           position: 'relative',
           zIndex: 5,
@@ -939,6 +939,10 @@ export default function ChatWindow({ theme }) {
           >
             <SessionList
               theme={theme}
+              onBackHome={() => {
+                setShowSessionDrawer(false)
+                setCurrentView('sessions')
+              }}
               onSelectSession={() => setShowSessionDrawer(false)}
               onOpenGroupChat={(id) => {
                 setShowSessionDrawer(false)

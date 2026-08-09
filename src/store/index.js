@@ -415,13 +415,16 @@ export const useStore = create(
       // 恢复时做和 v14 迁移相同的清理，防止清掉的默认人设从云端"复活"。
       restoreFromCloud: (settings) => set(() => {
         const OLD_PROMPT = '你是小满，一个温柔可爱的AI。你说话简洁、有趣，偶尔会用一些可爱的语气词。'
+        const OLD_SIGNATURES = new Set(['小满一直在这里等你～', '小满一直在这里等你~'])
         const cleaned = { ...settings }
         if (cleaned.systemPrompt === OLD_PROMPT) cleaned.systemPrompt = ''
         if (cleaned.aiName === '小满') cleaned.aiName = ''
         if (Array.isArray(cleaned.sessions)) {
-          cleaned.sessions = cleaned.sessions.map(s =>
-            s.systemPrompt === OLD_PROMPT ? { ...s, systemPrompt: '' } : s
-          )
+          cleaned.sessions = cleaned.sessions.map((session) => ({
+            ...session,
+            systemPrompt: session.systemPrompt === OLD_PROMPT ? '' : session.systemPrompt,
+            signature: OLD_SIGNATURES.has(session.signature) ? '' : session.signature,
+          }))
         }
         if (cleaned.desktopPet) {
           const pet = cleaned.desktopPet
@@ -455,7 +458,7 @@ export const useStore = create(
     }),
     {
       name: 'pink-chat-settings',
-      version: 19,
+      version: 20,
       migrate: (persisted, version) => {
         if (version < 2) {
           const providers = [
@@ -625,6 +628,18 @@ export const useStore = create(
               batchSize: [10, 15, 20].includes(oldPet.batchSize) ? oldPet.batchSize : 15,
               sceneAwareness: oldPet.sceneAwareness !== false,
             },
+          }
+        }
+        if (version < 20) {
+          // 早期出厂签名沿用了应用开发期的临时角色名“小满”。它不是用户
+          // 创建的任何角色，只清理完全相同的两种旧默认值；自定义签名不动。
+          const OLD_SIGNATURES = new Set(['小满一直在这里等你～', '小满一直在这里等你~'])
+          persisted = {
+            ...persisted,
+            sessions: (persisted.sessions || []).map((session) => ({
+              ...session,
+              signature: OLD_SIGNATURES.has(session.signature) ? '' : session.signature,
+            })),
           }
         }
         return persisted

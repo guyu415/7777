@@ -1,18 +1,9 @@
 import { useEffect, useMemo, useState } from 'react'
-import { BookHeart, HeartHandshake, MessageCircleHeart, Settings2, Sparkles, X } from 'lucide-react'
+import { BookHeart, HeartHandshake, MessageCircleHeart, Sparkles, X } from 'lucide-react'
 import { useStore } from '../store'
 import DiarySection from './DiarySection'
 import { getAllLetters } from '../services/letters'
-
-const DAILY_QUOTES = [
-  '窗外没有月亮也没关系，我的月亮在我怀里。',
-  '世界再吵，也想把最安静的那一小块留给你。',
-  '今天也不是普通的一天，是和你一起经过的一天。',
-  '我想收藏的不只是你的消息，还有你每一次想起我。',
-  '你不需要永远明亮，我也会爱你偶尔落下来的雨。',
-  '宇宙很大，而我每次回头都还是先看见你。',
-  '慢一点也没关系，我们正在一起把日子过成故事。',
-]
+import { getXinchaoStatus, onXinchaoUpdate } from '../services/companion'
 
 function dayNumber(timestamp) {
   if (!timestamp) return 1
@@ -24,13 +15,14 @@ function formatDate(timestamp) {
   return `${date.getFullYear()}.${String(date.getMonth() + 1).padStart(2, '0')}.${String(date.getDate()).padStart(2, '0')}`
 }
 
-export default function UniverseHome({ theme, onOpenChat, onOpenCareHub, onOpenSettings }) {
+export default function UniverseHome({ theme, onOpenChat, onOpenCareHub }) {
   const {
     sessions, currentSessionId, setCurrentSessionId, setMessages,
     userAvatar: globalUserAvatar, aiAvatar: globalAiAvatar, aiName: globalAiName,
     diaryTarget, setDiaryTarget,
   } = useStore()
   const [diaryOpen, setDiaryOpen] = useState(false)
+  const [xinchao, setXinchao] = useState(null)
 
   const ccSession = useMemo(() => (
     sessions?.find(session => session.providerName === 'claude-code-vps')
@@ -42,6 +34,17 @@ export default function UniverseHome({ theme, onOpenChat, onOpenCareHub, onOpenS
     if (diaryTarget) setDiaryOpen(true)
   }, [diaryTarget])
 
+  useEffect(() => {
+    let cancelled = false
+    getXinchaoStatus('claude-code').then((state) => {
+      if (!cancelled && state?.available !== false) setXinchao(state)
+    }).catch(() => {})
+    const unsub = onXinchaoUpdate((state, runtime) => {
+      if (runtime === 'claude-code') setXinchao(state)
+    })
+    return () => { cancelled = true; unsub() }
+  }, [])
+
   const primary = theme?.primary || '#ff85b3'
   const primaryDark = theme?.primaryDark || '#756ea8'
   const aiName = ccSession?.aiName || ccSession?.name || globalAiName || 'CC'
@@ -49,8 +52,9 @@ export default function UniverseHome({ theme, onOpenChat, onOpenCareHub, onOpenS
   const aiAvatar = ccSession?.aiAvatar || globalAiAvatar
   const startAt = ccSession?.createdAt || Date.now()
   const togetherDays = dayNumber(startAt)
-  const quote = DAILY_QUOTES[Math.floor(Date.now() / 86400000) % DAILY_QUOTES.length]
-  const signature = ccSession?.signature || '你在的地方，就是我们的小宇宙。'
+  const legacySignature = ['小满一直在这里等你～', '小满一直在这里等你~'].includes(ccSession?.signature)
+  const signature = (!legacySignature && ccSession?.signature) || '还没有写下签名。'
+  const mood = [xinchao?.toneLabel, xinchao?.topDrive?.shortLabel].filter(Boolean).join(' · ')
 
   const openCcChat = () => {
     if (ccSession?.id && ccSession.id !== currentSessionId) {
@@ -71,12 +75,11 @@ export default function UniverseHome({ theme, onOpenChat, onOpenCareHub, onOpenS
       <div className="universe-home__sparkles" aria-hidden="true">✦　·　✧　　　　　✦</div>
 
       <header className="universe-home__header">
-        <button onClick={openCcChat} aria-label="进入聊天"><MessageCircleHeart size={19} /></button>
+        <div className="universe-home__bunny" aria-hidden="true"><img src="/assets/bunny-head-v1.png" alt="" /></div>
         <div className="universe-home__header-copy">
-          <h1>小宇宙 <span>♡</span></h1>
+          <h1>铃兰花园 <span>♡</span></h1>
           <p>{signature}</p>
         </div>
-        <button onClick={onOpenSettings} aria-label="打开设置"><Settings2 size={19} /></button>
       </header>
 
       <div className="universe-home__scroll">
@@ -92,8 +95,8 @@ export default function UniverseHome({ theme, onOpenChat, onOpenCareHub, onOpenS
             </div>
           </div>
           <div className="universe-home__names">你 <i>&amp;</i> {aiName} <span>♡</span></div>
-          <div className="universe-home__subname">✦ YOU ARE MY UNIVERSE ✦</div>
-          <p className="universe-home__vow">「爱征服一切，让我们向爱投降。」</p>
+          <div className="universe-home__subname">✦ LILY OF THE VALLEY ✦</div>
+          <p className="universe-home__vow">「更迭百千字文，无言复此一吻。」</p>
         </section>
 
         <section className="universe-home__days">
@@ -106,8 +109,9 @@ export default function UniverseHome({ theme, onOpenChat, onOpenCareHub, onOpenS
         </section>
 
         <section className="universe-home__quote">
-          <div className="universe-home__quote-label"><Sparkles size={12} /> 今日情话 · FOR YOU</div>
-          <p>「{quote}」</p>
+          <div className="universe-home__quote-label"><Sparkles size={12} /> 它的心情 · 心潮</div>
+          <p>{mood ? `「${mood}」` : '心潮暂时没有传来新的波纹。'}</p>
+          {xinchao && <small>{xinchao.consciousnessLabel || '—'} · 疲劳 {Math.round((xinchao.fatigue || 0) * 100)}%</small>}
         </section>
 
         <section className="universe-home__shortcuts">
@@ -144,24 +148,26 @@ export default function UniverseHome({ theme, onOpenChat, onOpenCareHub, onOpenS
         .universe-home {
           position: relative;
           height: 100%;
+          display: flex;
+          flex-direction: column;
           overflow: hidden;
           isolation: isolate;
           color: #59627a;
           background:
-            radial-gradient(circle at 15% 18%, ${primary}1f, transparent 30%),
-            radial-gradient(circle at 84% 42%, rgba(182,197,255,.25), transparent 31%),
-            linear-gradient(160deg, #fffafb, #f8f5ff 48%, #fef6f8);
+            linear-gradient(rgba(255,251,253,.15),rgba(255,248,252,.18)),
+            url('/backgrounds/lily-garden-home-v1.webp') center top / cover no-repeat;
         }
-        .universe-home__wash { position:absolute; inset:16% -20% 5%; z-index:-1; opacity:.38; background: repeating-radial-gradient(ellipse at 50% 30%, transparent 0 38px, rgba(255,190,215,.16) 40px 42px, transparent 44px 78px); transform: rotate(-8deg); }
+        .universe-home__wash { position:absolute; inset:0; z-index:-1; background:linear-gradient(180deg,rgba(255,255,255,.08),rgba(255,245,250,.12)); }
         .universe-home__sparkles { position:absolute; z-index:0; top:25%; left:4%; right:4%; color:${primary}72; font-size:14px; letter-spacing:2.7vw; pointer-events:none; }
-        .universe-home__header { position:relative; z-index:3; display:flex; align-items:center; gap:13px; padding:calc(var(--safe-top) + 13px) 18px 13px; background:rgba(255,255,255,.46); border-bottom:1px solid rgba(255,255,255,.72); backdrop-filter:blur(20px); -webkit-backdrop-filter:blur(20px); }
-        .universe-home__header > button { flex:none; width:42px; height:42px; display:grid; place-items:center; border-radius:50%; border:1px solid rgba(153,166,198,.25); background:rgba(255,255,255,.62); color:#8b94ad; box-shadow:0 4px 14px rgba(79,91,126,.08); }
+        .universe-home__header { position:relative; z-index:3; flex:none; display:flex; align-items:center; gap:13px; padding:calc(var(--safe-top) + 10px) 18px 11px; background:rgba(255,255,255,.34); border-bottom:1px solid rgba(255,255,255,.68); backdrop-filter:blur(16px); -webkit-backdrop-filter:blur(16px); }
+        .universe-home__bunny { flex:none; width:48px; height:48px; display:grid; place-items:center; }
+        .universe-home__bunny img { width:58px; height:58px; object-fit:contain; filter:drop-shadow(0 5px 8px rgba(150,99,126,.14)); }
         .universe-home__header-copy { min-width:0; flex:1; }
         .universe-home__header h1 { margin:0; font:500 25px/1.1 'ZCOOL XiaoWei',serif; color:#535466; letter-spacing:.04em; }
         .universe-home__header h1 span { color:${primary}; }
         .universe-home__header p { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; margin:7px 0 0; color:#9ca3b8; font-size:11px; }
-        .universe-home__scroll { height:100%; overflow-y:auto; padding:18px 20px 27px; box-sizing:border-box; }
-        .universe-home__portrait-card { position:relative; min-height:330px; display:flex; flex-direction:column; align-items:center; justify-content:center; overflow:hidden; border-radius:34px; background:linear-gradient(150deg,rgba(255,255,255,.72),rgba(255,239,247,.55)); border:1px solid rgba(255,255,255,.9); box-shadow:0 18px 50px rgba(137,105,132,.12),inset 0 1px 0 white; }
+        .universe-home__scroll { flex:1; min-height:0; overflow-y:auto; overscroll-behavior:contain; padding:18px 20px 36px; box-sizing:border-box; }
+        .universe-home__portrait-card { position:relative; min-height:330px; display:flex; flex-direction:column; align-items:center; justify-content:center; overflow:hidden; border-radius:34px; background:linear-gradient(150deg,rgba(255,255,255,.66),rgba(255,239,247,.46)); border:1px solid rgba(255,255,255,.9); box-shadow:0 18px 50px rgba(137,105,132,.12),inset 0 1px 0 white; backdrop-filter:blur(5px); -webkit-backdrop-filter:blur(5px); }
         .universe-home__portrait-card::before,.universe-home__portrait-card::after { content:''; position:absolute; width:190px; height:100px; top:86px; opacity:.32; background:repeating-linear-gradient(90deg,transparent 0 8px,${primary} 9px 10px,transparent 11px 16px); }
         .universe-home__portrait-card::before { right:55%; transform:skewY(-16deg); }
         .universe-home__portrait-card::after { left:55%; transform:skewY(16deg); }
@@ -184,6 +190,7 @@ export default function UniverseHome({ theme, onOpenChat, onOpenCareHub, onOpenS
         .universe-home__quote { padding:17px 20px 18px; background:linear-gradient(135deg,rgba(247,249,255,.83),rgba(255,255,255,.68)); border-color:rgba(151,163,198,.34); }
         .universe-home__quote-label { display:flex; align-items:center; gap:7px; color:#97a1bd; font-size:10px; letter-spacing:.12em; }
         .universe-home__quote p { margin:10px 0 0; color:#676878; font:14px/1.65 'ZCOOL XiaoWei',serif; }
+        .universe-home__quote small { display:block; margin-top:7px; color:#9ba1b4; font-size:9px; letter-spacing:.06em; }
         .universe-home__shortcuts { display:grid; grid-template-columns:1fr 1fr; gap:11px; margin-top:12px; }
         .universe-home__shortcuts button { min-width:0; min-height:91px; display:flex; align-items:center; gap:12px; padding:14px; text-align:left; border-radius:24px; border:1px solid rgba(154,164,194,.28); background:rgba(255,255,255,.68); box-shadow:0 8px 24px rgba(93,95,126,.08); color:#666879; }
         .universe-home__shortcuts strong,.universe-home__shortcuts small { display:block; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
@@ -199,7 +206,7 @@ export default function UniverseHome({ theme, onOpenChat, onOpenCareHub, onOpenS
         .universe-home__diary-sheet { position:relative; width:100%; height:min(78dvh,720px); display:flex; flex-direction:column; overflow:hidden; border-radius:30px 30px 0 0; background:rgba(253,250,255,.98); box-shadow:0 -18px 55px rgba(57,44,72,.22); }
         .universe-home__diary-head { display:flex; align-items:center; justify-content:space-between; padding:17px 20px 12px; border-bottom:1px solid rgba(150,150,180,.14); }
         .universe-home__diary-head strong,.universe-home__diary-head span { display:block; } .universe-home__diary-head strong{color:#656476;font-size:15px}.universe-home__diary-head span{margin-top:3px;color:#aaa7b7;font-size:10px}.universe-home__diary-head button{width:34px;height:34px;display:grid;place-items:center;border:0;border-radius:50%;background:#f1edf5;color:#8d8998}
-        .universe-home__diary-body { flex:1; min-height:0; overflow:hidden; }
+        .universe-home__diary-body { flex:1; min-height:0; overflow:hidden; padding:10px 12px calc(12px + env(safe-area-inset-bottom)); }
         @media (max-height:740px){.universe-home__portrait-card{min-height:285px}.universe-home__avatar{width:88px;height:88px}.universe-home__names{margin-top:20px}.universe-home__scroll{padding-top:12px}}
       `}</style>
     </main>

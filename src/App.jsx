@@ -683,7 +683,6 @@ export default function App() {
               theme={theme}
               onOpenChat={() => setCurrentView('chat')}
               onOpenCareHub={() => setCurrentView('careHub')}
-              onOpenSettings={() => setCurrentView('globalSettings')}
             />
           )}
           {currentView === 'globalSettings' && <GlobalSettings theme={theme} onLogout={handleLogout} onForceSync={handleForceSync} />}
@@ -694,7 +693,7 @@ export default function App() {
           {currentView === 'codexMemory' && <CodexMemory theme={theme} onBack={() => setCurrentView('sessionSettings')} />}
         </div>
 
-        {['sessions', 'chat', 'globalSettings'].includes(currentView) && (
+        {['sessions', 'globalSettings'].includes(currentView) && (
           <BottomNav currentView={currentView} onChange={setCurrentView} theme={theme} />
         )}
       </div>

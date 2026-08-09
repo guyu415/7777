@@ -1,9 +1,7 @@
-import { MessageCircleHeart, Settings2, Sparkles } from 'lucide-react'
-
 const TABS = [
-  { id: 'sessions', label: '宇宙', Icon: Sparkles },
-  { id: 'chat', label: '聊天', Icon: MessageCircleHeart },
-  { id: 'globalSettings', label: '设置', Icon: Settings2 },
+  { id: 'sessions', label: '花园', img: '/assets/bunny.png' },
+  { id: 'chat', label: '聊天', img: '/assets/capybara-acorn.png' },
+  { id: 'globalSettings', label: '设置', img: '/assets/capybara-apple.png' },
 ]
 
 export default function BottomNav({ currentView, onChange, theme, bare = false }) {
@@ -15,53 +13,37 @@ export default function BottomNav({ currentView, onChange, theme, bare = false }
       className={bare ? 'flex-shrink-0' : 'flex-shrink-0 safe-bottom'}
       aria-label="主导航"
       style={{
-        padding: bare ? '5px 14px' : '6px 14px 7px',
-        background: bare ? 'transparent' : 'rgba(255,255,255,.2)',
-        backdropFilter: bare ? undefined : 'blur(18px)',
-        WebkitBackdropFilter: bare ? undefined : 'blur(18px)',
+        display: 'flex', alignItems: 'center', justifyContent: 'space-around',
+        minHeight: 82, padding: '1px 4px',
+        background: bare ? 'transparent' : 'linear-gradient(to bottom,rgba(255,255,255,.22),rgba(255,240,247,.42))',
+        backdropFilter: bare ? undefined : 'blur(18px)', WebkitBackdropFilter: bare ? undefined : 'blur(18px)',
+        borderTop: bare ? 'none' : `1px solid ${primary}14`,
       }}
     >
-      <div style={{
-        height: 62,
-        display: 'flex',
-        alignItems: 'stretch',
-        padding: 4,
-        borderRadius: 25,
-        border: '1px solid rgba(255,255,255,.72)',
-        background: 'linear-gradient(135deg,rgba(255,255,255,.68),rgba(255,239,247,.52))',
-        boxShadow: '0 10px 28px rgba(81,69,97,.13),inset 0 1px 0 rgba(255,255,255,.9)',
-      }}>
-        {TABS.map(({ id, label, Icon }) => {
-          const active = currentView === id
-          return (
-            <button
-              key={id}
-              onClick={() => onChange(id)}
-              aria-current={active ? 'page' : undefined}
-              style={{
-                position: 'relative',
-                flex: 1,
-                display: 'flex',
-                flexDirection: 'column',
-                alignItems: 'center',
-                justifyContent: 'center',
-                gap: 3,
-                padding: 0,
-                border: 0,
-                borderRadius: 21,
-                background: active ? `linear-gradient(145deg,${primary}20,rgba(255,255,255,.55))` : 'transparent',
-                color: active ? primaryDark : '#a4a4b1',
-                cursor: 'pointer',
-                transition: 'all .22s ease',
-              }}
-            >
-              <Icon size={active ? 20 : 18} strokeWidth={active ? 2 : 1.6} />
-              <span style={{ fontSize: 10, lineHeight: 1, fontWeight: active ? 700 : 500, letterSpacing: '.06em' }}>{label}</span>
-              {active && <i style={{ position: 'absolute', bottom: 2, width: 4, height: 4, borderRadius: '50%', background: primary, boxShadow: `0 0 7px ${primary}` }} />}
-            </button>
-          )
-        })}
-      </div>
+      {TABS.map((tab) => {
+        const active = currentView === tab.id
+        return (
+          <button
+            key={tab.id}
+            onClick={() => onChange(tab.id)}
+            aria-current={active ? 'page' : undefined}
+            style={{ flex:1, display:'grid', placeItems:'center', padding:0, border:0, background:'none', cursor:'pointer' }}
+          >
+            <div style={{ position:'relative', width:78, height:78 }}>
+              <img
+                src={tab.img}
+                alt=""
+                style={{
+                  width:'100%', height:'100%', objectFit:'contain',
+                  filter: active ? `drop-shadow(0 0 7px ${primary}) drop-shadow(0 0 14px ${primary}88) brightness(1.08)` : 'opacity(.5) saturate(.62)',
+                  transform: active ? 'scale(1.06)' : 'scale(.98)', transition:'all .28s ease',
+                }}
+              />
+              <span style={{ position:'absolute', inset:0, display:'grid', placeItems:'center', color:active?primaryDark:'#aaa6af', fontSize:11, fontWeight:active?700:500, textShadow:'0 1px 4px rgba(255,255,255,.95)', pointerEvents:'none' }}>{tab.label}</span>
+            </div>
+          </button>
+        )
+      })}
     </nav>
   )
 }

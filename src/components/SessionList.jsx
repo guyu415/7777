@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { Plus, Trash2, Edit3, Check, ChevronDown, Users, HeartHandshake } from 'lucide-react'
+import { Plus, Trash2, Edit3, Check, ChevronDown, ChevronLeft, Users, HeartHandshake } from 'lucide-react'
 import { useStore, deleteMessagesForSession } from '../store'
 import { deleteSessionMsgs } from '../services/sync'
 import DiarySection from './DiarySection'
@@ -23,7 +23,7 @@ function genId() {
   return Date.now().toString(36) + Math.random().toString(36).slice(2)
 }
 
-export default function SessionList({ theme, onSelectSession, onOpenGroupChat, onOpenCareHub }) {
+export default function SessionList({ theme, onSelectSession, onOpenGroupChat, onOpenCareHub, onBackHome }) {
   const {
     sessions, currentSessionId, setCurrentSessionId,
     addSession, updateSession, deleteSession,
@@ -136,7 +136,10 @@ export default function SessionList({ theme, onSelectSession, onOpenGroupChat, o
           boxShadow: '0 2px 12px rgba(74,172,240,0.08)',
         }}
       >
-        <span className="font-semibold text-sm" style={{ color: '#2c5282' }}>会话列表</span>
+        <div className="flex items-center gap-1.5">
+          {onBackHome && <button onClick={onBackHome} className="w-7 h-7 rounded-full grid place-items-center" style={{ color: primaryDark, background: `${primary}12` }} aria-label="返回铃兰花园"><ChevronLeft size={15} /></button>}
+          <span className="font-semibold text-sm" style={{ color: '#2c5282' }}>会话列表</span>
+        </div>
         <button
           onClick={handleNew}
           className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium text-white transition-all duration-200"
