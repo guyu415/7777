@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Settings, X, MessageCircle, Undo2, Upload, MoreHorizontal, Eye } from 'lucide-react'
+import { Settings, X, MessageCircle, Undo2, Upload, Move, Eye } from 'lucide-react'
 import { useStore, getBlob } from '../store'
 import { useChat } from '../hooks/useChat'
 import { useCodexChat } from '../hooks/useCodexChat'
@@ -32,6 +32,7 @@ const RUB_MIN_AMPLITUDE_PX = 12
 const SWING_DEADZONE_PX = 4 // 判定方向反转前的抖动容差
 const SWING_MIN_AMPLITUDE_PX = 24 // 单次摆幅至少要达到这个距离才算数
 const SWING_MIN_SPEED_PX_MS = 0.15 // 单次摆动的最低速度（px/ms），挡住"缓慢挪动时顺手回摆一下"
+const BADGE_DRAG_HOLD_MS = 220 // 角标短按开菜单，按住后才接管桌宠移动
 
 function clampPosition(x, y) {
   const shellWidth = Math.min(window.innerWidth, 448)
@@ -90,6 +91,7 @@ function DesktopPetWindow({ theme }) {
   const [peekScheduleKey, setPeekScheduleKey] = useState(0)
 
   const drag = useRef(null)
+  const badgeDragTimer = useRef(null)
   const pressTimer = useRef(null)
   const longPressFired = useRef(false)
   const touchPinch = useRef(null) // { startDist, fired }
@@ -180,6 +182,7 @@ function DesktopPetWindow({ theme }) {
     window.clearTimeout(secretTimer.current)
     window.clearTimeout(tapDecisionTimer.current)
     window.clearTimeout(tapBurst.current.endTimer)
+    window.clearTimeout(badgeDragTimer.current)
   }, [])
 
   const playExistingVoice = useCallback(async (blobId) => {
@@ -427,7 +430,7 @@ function DesktopPetWindow({ theme }) {
     }
   }, [chatText, chatIsLoading, sendMessage])
 
-  // ── 手势识别：轻点=摸／快速连点=锤／长按或双指捏=捏脸／拖起后左右往复摆动=拎起来晃 ──
+  // ── 手势识别：身体只接互动，位置移动只允许从右上角标按住后开始。 ──
 
   const onPointerDown = (event) => {
     if (isPinchingRef.current) return
@@ -437,11 +440,10 @@ function DesktopPetWindow({ theme }) {
     const localX = (event.clientX - position.x) / PET_W
     const localY = (event.clientY - position.y) / PET_H
     drag.current = {
+      mode: 'interaction',
       pointerId: event.pointerId,
       startX: event.clientX,
       startY: event.clientY,
-      originX: position.x,
-      originY: position.y,
       moved: false,
       // 摆动判定：swingDir 记录当前这一段的水平方向（0=还没定下来），
       // segStartX/segStartTime 是这一段的起点，extremumX 是目前为止在这个
@@ -464,7 +466,7 @@ function DesktopPetWindow({ theme }) {
     }
     window.clearTimeout(pressTimer.current)
     pressTimer.current = window.setTimeout(() => {
-      if (drag.current && !drag.current.moved) {
+      if (drag.current?.mode === 'interaction' && !drag.current.moved) {
         longPressFired.current = true
         triggerGesture('pinch')
       }
@@ -551,10 +553,10 @@ function DesktopPetWindow({ theme }) {
   }, [handleSecretStroke])
 
   const onPointerMove = (event) => {
-    if (!drag.current || drag.current.pointerId !== event.pointerId) return
+    if (!drag.current || drag.current.pointerId !== event.pointerId || drag.current.mode !== 'interaction') return
     const dx = event.clientX - drag.current.startX
     const dy = event.clientY - drag.current.startY
-    if (drag.current.rubCandidate && Math.abs(dy) <= 20) {
+    if (drag.current.rubCandidate && (drag.current.rubbing || Math.abs(dy) <= 36)) {
       if (Math.abs(dx) > RUB_DEADZONE_PX) {
         drag.current.moved = true
         drag.current.rubbing = true
@@ -568,23 +570,15 @@ function DesktopPetWindow({ theme }) {
       drag.current.moved = true
       window.clearTimeout(pressTimer.current)
     }
-    if (drag.current.moved) {
-      setMotion('lift')
-      detectSwing(event.clientX, event.timeStamp)
-      const next = clampPosition(drag.current.originX + dx, drag.current.originY + dy)
-      drag.current.latest = next
-      setPosition(next)
-    }
   }
 
   const onPointerUp = (event) => {
     window.clearTimeout(pressTimer.current)
-    if (!drag.current || drag.current.pointerId !== event.pointerId) return
+    if (!drag.current || drag.current.pointerId !== event.pointerId || drag.current.mode !== 'interaction') return
     const wasMoved = drag.current.moved
     const wasLongPress = longPressFired.current
     const wasRubbing = drag.current.rubbing
     const rubCycles = drag.current.rubCycles
-    const finalPosition = drag.current.latest || position
     drag.current = null
     setMotion('')
     if (wasLongPress) return // 捏脸已经在长按计时器里触发过了
@@ -593,11 +587,65 @@ function DesktopPetWindow({ theme }) {
       if (rubCycles === 0) lightTapPulse()
       return
     }
-    if (wasMoved) {
-      // 单纯挪位置不算互动，只落位；真正的"拎起来晃"手势已经在拖动过程中
-      // 由 detectSwing 实时判定并触发了，这里不再重复计一次。
-      updateDesktopPet({ x: finalPosition.x, y: finalPosition.y })
-    } else handleTap()
+    if (!wasMoved) handleTap()
+  }
+
+  const onBadgePointerDown = (event) => {
+    if (event.button !== undefined && event.button !== 0) return
+    event.preventDefault()
+    event.stopPropagation()
+    window.clearTimeout(pressTimer.current)
+    event.currentTarget.setPointerCapture?.(event.pointerId)
+    window.clearTimeout(badgeDragTimer.current)
+    drag.current = {
+      mode: 'badge-pending', pointerId: event.pointerId,
+      startX: event.clientX, startY: event.clientY,
+      originX: position.x, originY: position.y,
+      moved: false, latest: position,
+      swingDir: 0, segStartX: event.clientX, segStartTime: event.timeStamp, extremumX: event.clientX,
+    }
+    badgeDragTimer.current = window.setTimeout(() => {
+      if (drag.current?.mode === 'badge-pending' && drag.current.pointerId === event.pointerId) {
+        drag.current.mode = 'badge-move'
+        setToolbarOpen(false)
+        setMotion('lift')
+      }
+    }, BADGE_DRAG_HOLD_MS)
+  }
+
+  const onBadgePointerMove = (event) => {
+    const d = drag.current
+    if (!d || d.pointerId !== event.pointerId) return
+    event.preventDefault()
+    if (d.mode !== 'badge-move') return
+    const dx = event.clientX - d.startX
+    const dy = event.clientY - d.startY
+    if (Math.hypot(dx, dy) > 4) d.moved = true
+    detectSwing(event.clientX, event.timeStamp)
+    const next = clampPosition(d.originX + dx, d.originY + dy)
+    d.latest = next
+    setPosition(next)
+  }
+
+  const onBadgePointerUp = (event) => {
+    const d = drag.current
+    if (!d || d.pointerId !== event.pointerId) return
+    event.preventDefault()
+    event.stopPropagation()
+    window.clearTimeout(badgeDragTimer.current)
+    drag.current = null
+    setMotion('')
+    if (d.mode === 'badge-pending') {
+      setToolbarOpen((v) => !v)
+      return
+    }
+    if (d.moved) updateDesktopPet({ x: d.latest.x, y: d.latest.y })
+  }
+
+  const cancelBadgeDrag = () => {
+    window.clearTimeout(badgeDragTimer.current)
+    drag.current = null
+    setMotion('')
   }
 
   // 双指捏合——原生 touch 事件，和上面的指针手势并行；一旦检测到第二根手
@@ -605,6 +653,7 @@ function DesktopPetWindow({ theme }) {
   const onTouchStart = (event) => {
     if (event.touches.length === 2) {
       window.clearTimeout(pressTimer.current)
+      window.clearTimeout(badgeDragTimer.current)
       drag.current = null
       isPinchingRef.current = true
       const [a, b] = event.touches
@@ -728,11 +777,11 @@ function DesktopPetWindow({ theme }) {
   const gestureSummaryPlain = describeGestureCounts(gestureCounts.current)
 
   // 菜单入口合并进右上角角标——不再有常驻的底部工具条。角标本身始终可点：
-  // 有待汇报手势时显示数字，没有时显示一个小“更多”图标；点一下在角标旁
-  // 展开菜单（说两句/设置/返回），再点一下收起。
-  const badgeSize = 20
-  const badgeLeft = position.x + PET_W * 0.66
-  const badgeTop = position.y + PET_H * 0.08
+  // 有待汇报手势时显示数字，没有时显示移动图标；点一下在角标旁展开菜单，
+  // 按住后拖动才会改变桌宠位置。
+  const badgeSize = 28
+  const badgeLeft = position.x + PET_W * 0.64
+  const badgeTop = position.y + PET_H * 0.06
   const menuWidth = 154
   const menuLeft = Math.max(8, Math.min(badgeLeft + badgeSize - menuWidth, window.innerWidth - menuWidth - 8))
   const menuTop = badgeTop + badgeSize + 6
@@ -773,20 +822,25 @@ function DesktopPetWindow({ theme }) {
         .pet-flash-text{animation:pet-flash .7s ease forwards}
       `}</style>
 
-      {/* 手势计数角标——紧贴桌宠肩侧、跟随桌宠位置移动，同时也是菜单入口：
-          有待汇报手势时显示数字，没有时显示“更多”图标，点一下展开/收起菜单 */}
+      {/* 手势计数角标——紧贴桌宠肩侧、跟随桌宠位置移动，同时也是菜单入口与
+          唯一移动把手：短按展开/收起菜单，按住后拖动桌宠。 */}
       <button
-        onClick={() => setToolbarOpen((v) => !v)}
+        onPointerDown={onBadgePointerDown}
+        onPointerMove={onBadgePointerMove}
+        onPointerUp={onBadgePointerUp}
+        onPointerCancel={cancelBadgeDrag}
+        onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') setToolbarOpen((v) => !v) }}
         className="fixed grid place-items-center rounded-full"
         style={{
           left: badgeLeft, top: badgeTop,
           width: badgeSize, height: badgeSize, zIndex: 125, border: 'none', padding: 0,
           background: theme.primary, color: 'white', fontSize: 10, fontWeight: 700,
-          boxShadow: '0 2px 6px rgba(0,0,0,.18)',
+          boxShadow: '0 2px 6px rgba(0,0,0,.18)', touchAction: 'none', cursor: 'grab',
         }}
-        aria-label={toolbarOpen ? '收起菜单' : (pendingCount > 0 ? `${pendingCount} 次待汇报，展开菜单` : '展开菜单')}
+        aria-label={toolbarOpen ? '收起菜单；按住可移动桌宠' : (pendingCount > 0 ? `${pendingCount} 次待汇报；点按展开，按住移动桌宠` : '点按展开菜单，按住移动桌宠')}
+        title="点按开菜单，按住拖动桌宠"
       >
-        {toolbarOpen ? <X size={11} /> : (pendingCount > 0 ? pendingCount : <MoreHorizontal size={11} />)}
+        {toolbarOpen ? <X size={13} /> : (pendingCount > 0 ? pendingCount : <Move size={13} />)}
       </button>
 
       {/* 菜单——从角标展开，桌宠下方不再保留任何常驻控件 */}
@@ -830,10 +884,10 @@ function DesktopPetWindow({ theme }) {
         </div>
       )}
 
-      {/* 手势区——只做摸/捏/锤/拖，不再是一排文字按钮 */}
+      {/* 身体手势区只做互动；移动只能按住上面的角标，避免滑动彩蛋被抢成拖拽。 */}
       <div
         className={`desktop-pet ${motion || `idle-${idleState}`}`}
-        style={{ position: 'fixed', left: position.x, top: position.y, width: PET_W, height: PET_H, zIndex: 120, touchAction: 'none', cursor: drag.current?.moved ? 'grabbing' : 'grab', transformOrigin: '50% 25%' }}
+        style={{ position: 'fixed', left: position.x, top: position.y, width: PET_W, height: PET_H, zIndex: 120, touchAction: 'none', cursor: 'pointer', transformOrigin: '50% 25%' }}
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
@@ -841,7 +895,7 @@ function DesktopPetWindow({ theme }) {
         onTouchStart={onTouchStart}
         onTouchMove={onTouchMove}
         onTouchEnd={onTouchEnd}
-        title="点一下=摸，快速连点=锤，身上来回滑=搓，长按或双指捏=捏脸，拖动=拎起"
+        title="点一下=摸，快速连点=锤，身上来回滑=搓，长按或双指捏=捏脸；移动请按住右上角标"
       >
         <img src={displayedPetImage} alt={identity} draggable="false" style={{ width: '100%', height: '100%', objectFit: 'contain', transform: `scale(${scale})`, transformOrigin: 'bottom center', filter: 'drop-shadow(0 5px 5px rgba(35,25,31,.22))', userSelect: 'none', WebkitUserDrag: 'none' }} />
         {secretActive && usesDefaultPet && <div className="pet-secret-bulge" style={{ position: 'absolute', left: '50%', top: '65%', width: '12px', height: '18px', borderRadius: '55% 55% 48% 48%', background: 'radial-gradient(ellipse at 38% 28%, rgba(94,90,99,.96), rgba(24,22,27,.98) 58%, rgba(8,8,10,.98))', boxShadow: '0 1px 3px rgba(0,0,0,.42)', pointerEvents: 'none' }} />}

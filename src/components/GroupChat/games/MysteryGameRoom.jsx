@@ -1,11 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { ArrowLeft, ChevronRight, Pause, Play, ScrollText, Send, Trash2 } from 'lucide-react'
+import { ArrowLeft, ChevronRight, FileJson, Pause, Play, ScrollText, Send, Trash2, Upload } from 'lucide-react'
 import { useStore } from '../../../store'
 import { streamChat } from '../../../services/claude'
 import { runMysteryTurn, getMysteryCcModels, getCodexModelStatus, cleanupMysteryGame } from '../../../services/companion'
 import { resolveGroupMemberInfo, isVpsMemberId } from '../../../utils/groupMembers'
 import { resolveApiMemberConfig } from '../../../utils/groupApiMember'
-import { MYSTERY_SCRIPTS, getScript, getCharacter } from './scripts'
+import { MYSTERY_SCRIPTS, getScript, getCharacter, importMysteryScript, removeCustomMysteryScript } from './scripts'
 import {
   SEAT_AI, SEAT_NPC, SEAT_USER,
   createGame, currentChapter, nextActor, isChapterComplete, appendSpeech, appendVote,
@@ -726,6 +726,8 @@ function SetupPanel({ theme, chat, chatId, sessions }) {
   const [error, setError] = useState('')
   const [ccModels, setCcModels] = useState([DEFAULT_CC_MODEL])
   const [codexModels, setCodexModels] = useState([])
+  const [scripts, setScripts] = useState(() => [...MYSTERY_SCRIPTS])
+  const importFileRef = useRef(null)
   const script = getScript(scriptId)
 
   useEffect(() => {
@@ -782,6 +784,42 @@ function SetupPanel({ theme, chat, chatId, sessions }) {
     }
   }
 
+  const importScriptFile = async (event) => {
+    const file = event.target.files?.[0]
+    event.target.value = ''
+    if (!file) return
+    setError('')
+    if (file.size > 700 * 1024) { setError('剧本文件不能超过 700KB'); return }
+    try {
+      const imported = importMysteryScript(await file.text())
+      setScripts([...MYSTERY_SCRIPTS])
+      setScriptId(imported.id)
+      setSeats({})
+    } catch (e) {
+      setError(e?.message || '导入失败，请检查 JSON 格式')
+    }
+  }
+
+  const downloadScriptTemplate = () => {
+    const source = MYSTERY_SCRIPTS[0]
+    const blob = new Blob([JSON.stringify(source, null, 2)], { type: 'application/json' })
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = '剧本杀导入模板.json'
+    link.click()
+    window.setTimeout(() => URL.revokeObjectURL(url), 1_000)
+  }
+
+  const removeImportedScript = (event, id) => {
+    event.stopPropagation()
+    if (!window.confirm('删除这个自定义剧本？其他群里正在玩的同名存档将无法继续。')) return
+    removeCustomMysteryScript(id)
+    const next = [...MYSTERY_SCRIPTS]
+    setScripts(next)
+    if (scriptId === id) { setScriptId(next[0].id); setSeats({}) }
+  }
+
   const aiCount = Object.values(seats).filter((s) => s.kind === SEAT_AI).length
   const npcCount = script.characters.length - Object.keys(seats).length
   const allCandidates = [...vpsCandidates, ...candidates]
@@ -790,12 +828,21 @@ function SetupPanel({ theme, chat, chatId, sessions }) {
     <main className="flex-1 overflow-y-auto px-4 py-4" style={{ minHeight: 0 }}>
       <div className="text-[11px] mb-3" style={{ color: '#b294a1' }}>选一个本，再给每个角色安排上人。没安排的角色会由主持人代为出演（NPC），所以一个人也能开。</div>
 
-      {MYSTERY_SCRIPTS.map((s) => {
+      <div className="grid grid-cols-2 gap-2 mb-3">
+        <button onClick={() => importFileRef.current?.click()} className="flex items-center justify-center gap-1.5" style={{ borderRadius: 16, padding: 10, border: '1px dashed rgba(238,185,205,.45)', background: 'rgba(255,255,255,.05)', color: '#edc7d5', fontSize: 11.5, fontWeight: 600 }}><Upload size={13} />导入 JSON</button>
+        <button onClick={downloadScriptTemplate} className="flex items-center justify-center gap-1.5" style={{ borderRadius: 16, padding: 10, border: '1px solid rgba(255,255,255,.1)', background: 'rgba(255,255,255,.04)', color: '#cdb6c1', fontSize: 11.5 }}><FileJson size={13} />下载模板</button>
+      </div>
+      <input ref={importFileRef} type="file" accept="application/json,.json" hidden onChange={importScriptFile} />
+
+      {scripts.map((s) => {
         const active = s.id === scriptId
         return (
-          <button
+          <div
             key={s.id}
+            role="button"
+            tabIndex={0}
             onClick={() => { setScriptId(s.id); setSeats({}) }}
+            onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') { setScriptId(s.id); setSeats({}) } }}
             className="w-full text-left mb-2.5"
             style={{ borderRadius: 18, padding: 14, border: active ? `1.5px solid ${primary}` : '1px solid rgba(255,255,255,0.1)', background: active ? 'rgba(255,255,255,0.11)' : 'rgba(255,255,255,0.05)' }}
           >
@@ -803,10 +850,12 @@ function SetupPanel({ theme, chat, chatId, sessions }) {
               <span style={{ fontSize: 20 }}>{s.icon}</span>
               <span style={{ fontSize: 15, fontWeight: 700, color: '#f4e9ed' }}>《{s.title}》</span>
               {s.hasCulprit && <span className="text-[9.5px] px-1.5 py-0.5 rounded-full" style={{ background: 'rgba(224,120,120,0.2)', color: '#f0b9b9' }}>有凶手</span>}
+              {s.custom && <span className="text-[9.5px] px-1.5 py-0.5 rounded-full flex items-center gap-1" style={{ background: 'rgba(170,150,220,.18)', color: '#d8c8f1' }}><FileJson size={9} />自定义</span>}
+              {s.custom && <button type="button" onClick={(event) => removeImportedScript(event, s.id)} className="ml-auto w-6 h-6 grid place-items-center rounded-full" style={{ color: '#d4a6b4', background: 'rgba(255,255,255,.06)', border: 0 }} aria-label={`删除《${s.title}》`}><Trash2 size={11} /></button>}
             </div>
             <div className="text-[11.5px] mt-1.5" style={{ color: '#d3bfc7' }}>{s.tagline}</div>
             <div className="text-[10px] mt-1" style={{ color: '#9d8a93' }}>{s.genre} · {s.seats} 角色 · {s.duration}</div>
-          </button>
+          </div>
         )
       })}
 

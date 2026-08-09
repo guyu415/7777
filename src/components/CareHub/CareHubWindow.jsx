@@ -104,7 +104,10 @@ export default function CareHubWindow({ theme, onClose }) {
   ]
 
   return (
-    <div className="h-full flex flex-col" style={{ background: 'linear-gradient(180deg, rgba(241,248,255,.94), rgba(250,246,255,.95))' }}>
+    <div className="h-full flex flex-col" style={{
+      backgroundImage: 'linear-gradient(180deg, rgba(255,247,251,.48), rgba(255,244,249,.34)), url(/backgrounds/care-hub-pink.webp)',
+      backgroundSize: 'cover', backgroundPosition: 'center', backgroundAttachment: 'fixed',
+    }}>
       <header className="px-4 pt-3 pb-2 shrink-0" style={{ background: 'rgba(255,255,255,.72)', backdropFilter: 'blur(18px)', borderBottom: '1px solid rgba(120,160,210,.13)' }}>
         <div className="flex items-center gap-3">
           <button onClick={onClose} className="w-9 h-9 rounded-full flex items-center justify-center" style={{ background: `${primary}14`, color: primary }}><ArrowLeft size={18} /></button>
