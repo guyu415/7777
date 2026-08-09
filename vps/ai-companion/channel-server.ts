@@ -6601,11 +6601,14 @@ async function mysteryCodexEnsureThread(gameId: string, charId: string, systemPr
 // contend with each other, only with a second concurrent turn on that exact
 // same character's own thread, which the frontend's own turn-based engine
 // never actually attempts.
-const mysteryCodexPendingByThread = new Map<string, { turnId: string; resolve: (r: { text: string; error?: string; usedWebSearch?: boolean }) => void; agentText: string; usedWebSearch: boolean }>()
+const mysteryCodexPendingByThread = new Map<string, { turnId: string; resolve: (r: { text: string; error?: string; usedWebSearch?: boolean }) => void; agentText: string; usedWebSearch: boolean; gameId: string }>()
 
 function mysteryCodexHandleNotification(threadId: string, method: string, params: any) {
   const pending = mysteryCodexPendingByThread.get(threadId)
   if (!pending) return
+  if (pending.gameId === 'care-hub' && (method === 'item/started' || method === 'item/completed')) {
+    log('care_codex_item', { method, itemType: String(params?.item?.type || '') })
+  }
   switch (method) {
     case 'item/started': {
       if (params?.item?.type === 'webSearch' || params?.item?.type === 'web_search') pending.usedWebSearch = true
@@ -6655,7 +6658,7 @@ async function mysteryCodexSendTurn(gameId: string, charId: string, systemPrompt
   const turnId = result?.turn?.id
   if (!turnId) return { text: '', error: 'Codex 没有返回 turn id' }
   return new Promise((resolve) => {
-    mysteryCodexPendingByThread.set(threadId, { turnId, resolve, agentText: '', usedWebSearch: false })
+    mysteryCodexPendingByThread.set(threadId, { turnId, resolve, agentText: '', usedWebSearch: false, gameId })
   })
 }
 
