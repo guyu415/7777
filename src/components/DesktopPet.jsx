@@ -5,9 +5,9 @@ import { useChat } from '../hooks/useChat'
 import { useCodexChat } from '../hooks/useCodexChat'
 import {
   findGesture, emptyGestureCounts, totalGestureCount, buildGestureReport,
-  describeGestureCounts, playGestureSfx, playLightTapSfx, requestDesktopPetReaction,
+  describeGestureCounts, playGestureSfx, playLightTapSfx, requestDesktopPetReaction, requestBoundApiPetTurn,
 } from '../services/desktopPet'
-import { recordVpsDesktopPetExchange } from '../services/companion'
+import { sendVpsDesktopPetAction } from '../services/companion'
 import { saveSessionMsgs } from '../services/sync'
 import { compressImage } from '../utils/image'
 import { fetchTTSAudio } from '../services/tts'
@@ -79,7 +79,6 @@ function DesktopPetWindow({ theme }) {
     Number.isFinite(desktopPet?.x) ? desktopPet.x : window.innerWidth - 102,
     Number.isFinite(desktopPet?.y) ? desktopPet.y : window.innerHeight - 300,
   ))
-  const [gestureFlash, setGestureFlash] = useState('')
   const [motion, setMotion] = useState('')
   const [toolbarOpen, setToolbarOpen] = useState(false)
   const [chatOpen, setChatOpen] = useState(false)
@@ -102,9 +101,8 @@ function DesktopPetWindow({ theme }) {
   const touchPinch = useRef(null) // { startDist, fired }
   const isPinchingRef = useRef(false)
   const tapDecisionTimer = useRef(null)
-  const tapBurst = useRef({ active: false, lastAt: 0, endTimer: null })
+  const tapBurst = useRef({ count: 0, lastAt: 0 })
   const gestureCounts = useRef(emptyGestureCounts())
-  const flashTimer = useRef(null)
   const replyTimer = useRef(null)
   const chatInputRef = useRef(null)
   const fileInputRef = useRef(null)
@@ -181,12 +179,10 @@ function DesktopPetWindow({ theme }) {
 
   useEffect(() => () => {
     window.clearTimeout(pressTimer.current)
-    window.clearTimeout(flashTimer.current)
     window.clearTimeout(replyTimer.current)
     window.clearTimeout(expressionTimer.current)
     window.clearTimeout(secretTimer.current)
     window.clearTimeout(tapDecisionTimer.current)
-    window.clearTimeout(tapBurst.current.endTimer)
     window.clearTimeout(badgeDragTimer.current)
   }, [])
 
@@ -288,9 +284,6 @@ function DesktopPetWindow({ theme }) {
   // 是否要真的问一次模型是另一件独立的事——见下面 reportGestures。
   const playLocalMotion = useCallback((gestureId) => {
     const g = findGesture(gestureId)
-    setGestureFlash(g.feedback)
-    window.clearTimeout(flashTimer.current)
-    flashTimer.current = window.setTimeout(() => setGestureFlash(''), 700)
     setMotion(g.motion)
     window.setTimeout(() => setMotion(''), 650)
     navigator.vibrate?.(gestureId === 'bonk' ? 14 : gestureId === 'secret' ? 10 : 8)
@@ -307,38 +300,34 @@ function DesktopPetWindow({ theme }) {
     reactionBusyRef.current = true
     setReactionLoading(true)
     try {
-      const result = await requestDesktopPetReaction({
-        session: currentSession,
-        globals: useStore.getState(),
-        identity,
-        instruction: `用户刚才${report}。作为「${identity}」本人，给一句当下的桌宠反应。`,
-      })
-      const action = buildGestureReport(counts)
+      const action = buildGestureReport(counts, identity)
       if (currentSession?.providerName === 'claude-code-vps' || currentSession?.providerName === 'codex-vps') {
-        await recordVpsDesktopPetExchange({
+        await sendVpsDesktopPetAction({
           runtime: currentSession.providerName === 'codex-vps' ? 'codex' : 'claude-code',
           sessionId: petSessionId,
           action,
-          reply: result.text,
         })
+      } else if (currentSessionId === petSessionId) {
+        petTriggeredRef.current = true
+        await sendMessage(action, 'text')
       } else {
         const now = Date.now()
-        const exchange = [
-          { id: `pet-user-${now}`, conversationId: petSessionId, role: 'user', type: 'text', content: action, timestamp: now },
-          { id: `pet-ai-${now}`, conversationId: petSessionId, role: 'assistant', type: 'text', content: result.text, timestamp: now + 1 },
-        ]
-        for (const message of exchange) await saveMessage(message)
+        const userMessage = { id: `pet-user-${now}`, conversationId: petSessionId, role: 'user', type: 'text', content: action, timestamp: now }
+        await saveMessage(userMessage)
+        const history = await getMessages(petSessionId)
+        history.sort((a, b) => a.timestamp - b.timestamp)
+        const reply = await requestBoundApiPetTurn({ session: currentSession, globals: useStore.getState(), messages: history })
+        const assistantMessage = { id: `pet-ai-${Date.now()}`, conversationId: petSessionId, role: 'assistant', type: 'text', content: reply, timestamp: Date.now() }
+        await saveMessage(assistantMessage)
         const store = useStore.getState()
-        if (store.currentSessionId === petSessionId) exchange.forEach(store.addMessage)
-        store.updateSession(petSessionId, { lastMsgPreview: result.text.slice(0, 40), lastMsgTime: now + 1 })
+        store.updateSession(petSessionId, { lastMsgPreview: reply.slice(0, 40), lastMsgTime: assistantMessage.timestamp })
         const password = localStorage.getItem('auth.password')
         if (password) {
-          const history = await getMessages(petSessionId)
-          history.sort((a, b) => a.timestamp - b.timestamp)
-          await saveSessionMsgs(password, petSessionId, history.filter((message) => !message.streaming))
+          const completed = [...history, assistantMessage].filter((message) => !message.streaming)
+          await saveSessionMsgs(password, petSessionId, completed)
         }
+        showPetReply(reply, 'awake')
       }
-      showPetReply(result.text, result.mood)
     } catch (e) {
       console.warn('[PET] 手势汇总发送失败:', e?.message)
       setReplyBubble('……没听清')
@@ -348,14 +337,13 @@ function DesktopPetWindow({ theme }) {
       reactionBusyRef.current = false
       setReactionLoading(false)
     }
-  }, [currentSession, identity, petSessionId, showPetReply])
+  }, [currentSession, currentSessionId, identity, petSessionId, sendMessage, showPetReply])
 
   // 单次手势只累加本地计数 + 播本地动效；攒够 batchSize 次才真的触发一次
   // 请求（带完整人设与上下文的真实链路），中间几次完全不联网。
   const triggerGesture = useCallback((gestureId, amount = 1, forceReport = false) => {
     markActive(gestureId === 'bonk' ? 'angry' : gestureId === 'secret' ? 'teased' : gestureId === 'pinch' ? 'resting' : 'excited')
     playLocalMotion(gestureId)
-    if (amount > 1) setGestureFlash(`锤×${amount}`)
     gestureCounts.current[gestureId] = (gestureCounts.current[gestureId] || 0) + amount
     const total = totalGestureCount(gestureCounts.current)
     if (total >= batchSize || forceReport) {
@@ -382,40 +370,31 @@ function DesktopPetWindow({ theme }) {
     if (nextCount < 10) return
     secretStreak.current = { count: 0, at: 0 }
     setSecretActive(true)
-    setGestureFlash('……！')
     markActive('flustered', 25_000)
     navigator.vibrate?.([18, 35, 24])
     window.clearTimeout(secretTimer.current)
     secretTimer.current = window.setTimeout(() => setSecretActive(false), 30_000)
   }, [triggerGesture, markActive])
 
-  // 第一下先暂存：RAPID_TAP_MS 内没有第二下才落为“摸”。
-  // 只要有第二下，整串连点从第一下起全部追溯为“锤”，
-  // 不再出现“想锤却先积了一堆摸”。
+  // 三连点才折算成一次“锤”。单点停下=摸一下，双点停下=摸两下；
+  // 六连点才是锤两下。阈值累计的是锤击次数，不是原始点击次数。
   const handleTap = useCallback(() => {
     const now = Date.now()
-    if (tapDecisionTimer.current) {
-      window.clearTimeout(tapDecisionTimer.current)
-      tapDecisionTimer.current = null
-      tapBurst.current.active = true
-      tapBurst.current.lastAt = now
-      window.clearTimeout(tapBurst.current.endTimer)
-      tapBurst.current.endTimer = window.setTimeout(() => { tapBurst.current.active = false }, RAPID_TAP_MS)
-      triggerGesture('bonk', 2)
-      return
-    }
-    if (tapBurst.current.active && now - tapBurst.current.lastAt < RAPID_TAP_MS) {
-      tapBurst.current.lastAt = now
-      window.clearTimeout(tapBurst.current.endTimer)
-      tapBurst.current.endTimer = window.setTimeout(() => { tapBurst.current.active = false }, RAPID_TAP_MS)
-      triggerGesture('bonk')
-      return
-    }
-    tapBurst.current.active = false
     lightTapPulse()
+    if (now - tapBurst.current.lastAt > RAPID_TAP_MS) tapBurst.current.count = 0
+    tapBurst.current.count += 1
+    tapBurst.current.lastAt = now
+    window.clearTimeout(tapDecisionTimer.current)
+    if (tapBurst.current.count >= 3) {
+      tapBurst.current.count = 0
+      triggerGesture('bonk', 1)
+      return
+    }
     tapDecisionTimer.current = window.setTimeout(() => {
       tapDecisionTimer.current = null
-      triggerGesture('pet')
+      const count = tapBurst.current.count
+      tapBurst.current.count = 0
+      if (count > 0) triggerGesture('pet', count)
     }, RAPID_TAP_MS)
   }, [triggerGesture, lightTapPulse])
 
@@ -466,6 +445,7 @@ function DesktopPetWindow({ theme }) {
   const onPointerDown = (event) => {
     if (isPinchingRef.current) return
     if (event.button !== undefined && event.button !== 0) return
+    event.preventDefault()
     event.currentTarget.setPointerCapture?.(event.pointerId)
     longPressFired.current = false
     const localX = (event.clientX - position.x) / PET_W
@@ -849,6 +829,7 @@ function DesktopPetWindow({ theme }) {
         .desktop-pet.idle-awake{animation:pet-awake-idle 6.5s ease-in-out infinite}
         .desktop-pet.idle-resting{animation:pet-rest-idle 4.2s ease-in-out infinite}
         .desktop-pet.idle-sleeping{animation:pet-sleep-idle 5.2s ease-in-out infinite}
+        .desktop-pet,.desktop-pet *{-webkit-user-select:none;user-select:none;-webkit-touch-callout:none}
         .pet-idle-cue{animation:pet-cue-float 2.2s ease-in-out infinite}
         .pet-secret-bulge{animation:pet-secret-pop .45s cubic-bezier(.2,.9,.25,1.15) forwards}
         .pet-flash-text{animation:pet-flash .7s ease forwards}
@@ -895,17 +876,6 @@ function DesktopPetWindow({ theme }) {
         </div>
       )}
 
-      {/* 手势反馈——每次手势一闪而过的短字，贴着头顶 */}
-      {gestureFlash && (
-        <div
-          key={gestureFlash + Date.now()}
-          className="fixed text-sm font-bold pet-flash-text"
-          style={{ left: position.x + PET_W / 2, top: position.y - 24, zIndex: 122, pointerEvents: 'none', color: theme.primary, textShadow: '0 0 6px rgba(255,255,255,.95), 0 0 10px rgba(255,255,255,.8)' }}
-        >
-          {gestureFlash}
-        </div>
-      )}
-
       {(isPetBusy || replyBubble) && (
         // 外层只负责定位/防止跑出屏幕（宽度固定 bubbleWidth，纯用来算居中锚点），
         // 真正的气泡用 flex 居中在里面、宽度随内容走（最多到 bubbleWidth）——
@@ -926,7 +896,7 @@ function DesktopPetWindow({ theme }) {
       {/* 身体手势区只做互动；移动只能按住上面的角标，避免滑动彩蛋被抢成拖拽。 */}
       <div
         className={`desktop-pet ${motion || `idle-${idleState}`}`}
-        style={{ position: 'fixed', left: position.x, top: position.y, width: PET_W, height: PET_H, zIndex: 120, touchAction: 'none', cursor: 'pointer', transformOrigin: '50% 25%' }}
+        style={{ position: 'fixed', left: position.x, top: position.y, width: PET_W, height: PET_H, zIndex: 120, touchAction: 'none', cursor: 'pointer', transformOrigin: '50% 25%', userSelect: 'none', WebkitUserSelect: 'none', WebkitTouchCallout: 'none' }}
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
@@ -934,6 +904,8 @@ function DesktopPetWindow({ theme }) {
         onTouchStart={onTouchStart}
         onTouchMove={onTouchMove}
         onTouchEnd={onTouchEnd}
+        onSelectStart={(event) => event.preventDefault()}
+        onDragStart={(event) => event.preventDefault()}
         onContextMenu={(event) => event.preventDefault()}
         title="点一下=摸，快速连点=锤，身上来回滑=搓，长按或双指捏=捏脸；移动请按住右上角标"
       >
@@ -1040,8 +1012,8 @@ function DesktopPetWindow({ theme }) {
       {leaveConfirmOpen && (
         <div className="fixed inset-0 flex items-center justify-center px-8" style={{ zIndex: 200, background: 'rgba(20,14,18,.4)' }} onClick={confirmDiscard}>
           <div className="w-full max-w-xs rounded-2xl p-4" style={{ background: 'rgba(255,255,255,.98)', color: theme.text, boxShadow: '0 16px 48px rgba(0,0,0,.28)' }} onClick={(e) => e.stopPropagation()}>
-            <div className="text-sm leading-5">要让「{identity}」对刚才被{gestureSummaryPlain}回应一句吗？</div>
-            <div className="text-[11px] opacity-50 mt-1">只在桌宠气泡里回应，不发回原聊天。</div>
+            <div className="text-sm leading-5">要把刚才的互动（{gestureSummaryPlain}）发给「{identity}」吗？</div>
+            <div className="text-[11px] opacity-50 mt-1">会作为真实动作发进抱走它的原聊天窗，由它本人回应。</div>
             <div className="flex gap-2 mt-3">
               <button onClick={confirmDiscard} className="flex-1 py-2 rounded-xl text-sm" style={{ background: theme.primary + '12', color: theme.text }}>不用</button>
               <button onClick={confirmBringAlong} className="flex-1 py-2 rounded-xl text-sm font-semibold" style={{ background: theme.primary, color: 'white' }}>让他回应</button>

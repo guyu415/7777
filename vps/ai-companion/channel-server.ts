@@ -5636,6 +5636,44 @@ async function codexSendExtraUserTurn(state: CodexSessionState, text: string, im
   saveExtraCodexSession(state)
 }
 
+// Desktop-pet gestures are genuine user turns in the exact Codex chat the
+// pet was carried out from. If that thread is busy, retain the action until
+// it is idle instead of fabricating a reply in a throwaway pet thread.
+const codexPetActionQueues = new Map<string, string[]>()
+let codexPetActionDraining = false
+function queueCodexPetAction(sessionId: string, action: string): boolean {
+  const normalized = normalizeCodexSessionId(sessionId)
+  const queue = codexPetActionQueues.get(normalized) || []
+  queue.push(action)
+  codexPetActionQueues.set(normalized, queue.slice(-20))
+  const state = normalized === DEFAULT_CODEX_SESSION_ID ? null : getExtraCodexSession(normalized)
+  return !!(codexResetInFlight || state?.resetInFlight || (state ? state.currentTurnId : codexCurrentTurnId))
+}
+async function drainCodexPetActions() {
+  if (codexPetActionDraining) return
+  codexPetActionDraining = true
+  try {
+    for (const [sessionId, queue] of codexPetActionQueues) {
+      if (!queue.length) { codexPetActionQueues.delete(sessionId); continue }
+      const state = sessionId === DEFAULT_CODEX_SESSION_ID ? null : getExtraCodexSession(sessionId)
+      if (codexResetInFlight || state?.resetInFlight || (state ? state.currentTurnId : codexCurrentTurnId)) continue
+      const action = queue.shift()!
+      if (!queue.length) codexPetActionQueues.delete(sessionId)
+      try {
+        if (state) await codexSendExtraUserTurn(state, action)
+        else await codexSendUserTurn(action)
+      } catch (err) {
+        const pending = codexPetActionQueues.get(sessionId) || []
+        codexPetActionQueues.set(sessionId, [action, ...pending].slice(0, 20))
+        log('pet_codex_action_error', { sessionId, error: String(err) })
+      }
+    }
+  } finally {
+    codexPetActionDraining = false
+  }
+}
+setInterval(() => void drainCodexPetActions(), 1_000)
+
 async function codexStopExtra(state: CodexSessionState): Promise<{ ok: boolean; reason?: string }> {
   if (!state.currentTurnId || !state.threadId) return { ok: false, reason: 'no_active_turn' }
   try {
@@ -7234,26 +7272,27 @@ Bun.serve<{ authed: true }>({
     // Opening this (GET /codex/state) is what lazily spawns/resumes the
     // real codex app-server process and thread — nothing runs before the
     // window is actually opened.
-    if (url.pathname === '/pet/exchange' && req.method === 'POST') {
+    if (url.pathname === '/pet/action' && req.method === 'POST') {
       const gate = authGate()
       if (gate) return gate
       const cors = corsHeadersFor(origin)
       let body: any = {}
       try { body = await req.json() } catch { return jsonResponse({ error: 'bad json' }, { status: 400, headers: cors }) }
       const action = typeof body?.action === 'string' ? body.action.trim().slice(0, 500) : ''
-      const reply = typeof body?.reply === 'string' ? body.reply.trim().slice(0, 1000) : ''
-      if (!action || !reply) return jsonResponse({ error: 'missing action or reply' }, { status: 400, headers: cors })
+      if (!action) return jsonResponse({ error: 'missing action' }, { status: 400, headers: cors })
       if (body?.runtime === 'codex') {
         const sessionId = normalizeCodexSessionId(body?.sessionId)
-        const state = sessionId === DEFAULT_CODEX_SESSION_ID ? null : getExtraCodexSession(sessionId)
-        const append = state ? (msg: CodexMsg) => extraAppendMsg(state, msg) : codexAppendMsg
-        append({ id: nextId(), from: 'user', text: action, ts: Date.now() })
-        append({ id: nextId(), from: 'model', text: reply, ts: Date.now() + 1 })
+        const queued = queueCodexPetAction(sessionId, action)
+        void drainCodexPetActions()
+        return jsonResponse({ ok: true, queued, sessionId }, { headers: cors })
       } else {
-        broadcastMsg({ type: 'msg', id: nextId(), from: 'user', text: action, ts: Date.now() })
-        broadcastMsg({ type: 'msg', id: nextId(), from: 'cc', text: reply, ts: Date.now() + 1 })
+        const id = nextId()
+        const input = { id, text: action, queuedAt: Date.now() }
+        const queued = !!(resetInFlight || currentTurn || tidalIsActive())
+        if (queued) tidalEnqueueMessage(input)
+        else beginMainCcTurn(input)
+        return jsonResponse({ ok: true, queued, sessionId: body?.sessionId || '' }, { headers: cors })
       }
-      return jsonResponse({ ok: true }, { headers: cors })
     }
 
     if (url.pathname === '/codex/state' && req.method === 'GET') {

@@ -4,14 +4,12 @@ import { resolveApiMemberConfig } from '../utils/groupApiMember'
 
 // 桌宠手势目录。模型反应仍走隔离线程，但完成的一问一答会由
 // DesktopPet 写回“抱走它的那条会话”的显示历史，方便多窗口时认清来源。
-// feedback 是手势触发时贴着桌宠一闪而过的短字反馈（见需求"每次手势要有
-// 明确反馈"）。
 export const GESTURES = [
-  { id: 'pet', label: '摸', unit: '下', feedback: '摸摸', motion: 'pet' },
-  { id: 'pinch', label: '捏脸', unit: '下', feedback: '捏了一下', motion: 'pinch' },
-  { id: 'bonk', label: '锤', unit: '下', feedback: '锤！', motion: 'bonk' },
-  { id: 'lift', label: '拎起来晃', unit: '次', feedback: '拎起来了', motion: 'lift' },
-  { id: 'secret', label: '调戏', unit: '次', feedback: '调戏了你', motion: 'secret' },
+  { id: 'pet', label: '摸', unit: '下', motion: 'pet' },
+  { id: 'pinch', label: '捏脸', unit: '下', motion: 'pinch' },
+  { id: 'bonk', label: '锤', unit: '下', motion: 'bonk' },
+  { id: 'lift', label: '拎起来晃', unit: '次', motion: 'lift' },
+  { id: 'secret', label: '调戏', unit: '次', motion: 'secret' },
 ]
 
 export function findGesture(id) {
@@ -29,12 +27,17 @@ export function totalGestureCount(counts) {
 // 用于真实发给模型那条消息——主聊天窗里 <i>动作内容</i> 已经是被
 // MessageBubble 支持的"动作描写"格式（见 ChatWindow 的 renderWithActions），
 // 这里直接复用，不需要新样式。
-export function buildGestureReport(counts) {
+export function buildGestureReport(counts, identity = '桌宠') {
   const parts = GESTURES
     .filter((g) => counts[g.id] > 0)
-    .map((g) => g.id === 'secret'
-      ? '调戏了你'
-      : `${g.label}了${counts[g.id]}${g.unit}`)
+    .map((g) => {
+      const count = counts[g.id]
+      if (g.id === 'secret') return `调戏了「${identity}」${count}次`
+      if (g.id === 'pet') return `摸了「${identity}」${count}下`
+      if (g.id === 'pinch') return `捏了「${identity}」${count}下`
+      if (g.id === 'bonk') return `锤了「${identity}」${count}下`
+      return `拎起「${identity}」晃了${count}次`
+    })
   if (!parts.length) return ''
   return `<i>${parts.join('，')}</i>`
 }
@@ -112,13 +115,43 @@ export async function requestDesktopPetReaction({ session, globals, identity, in
   return parseDesktopPetReaction(full)
 }
 
+// A background API chat cannot use the currently visible window's useChat
+// hook when the pet belongs to another session. Run a normal turn with the
+// bound session's real provider/persona/history instead; the caller persists
+// the user action and returned reply into that same conversation.
+export async function requestBoundApiPetTurn({ session, globals, messages, signal }) {
+  const cfg = resolveApiMemberConfig(session, globals)
+  if (!cfg.apiKey) throw new Error('绑定会话没有可用的 API Key')
+  let systemPrompt = (session?.systemPrompt || globals?.systemPrompt || '').trim()
+  if (session?.summary) systemPrompt += `${systemPrompt ? '\n\n' : ''}【早期对话摘要】\n${session.summary}`
+  let context = (messages || []).filter((m) => !m.streaming && (m.role === 'user' || m.role === 'assistant')).slice(-80)
+  while (context[0]?.role === 'assistant') context = context.slice(1)
+  let full = ''
+  for await (const part of streamChat({
+    apiKey: cfg.apiKey,
+    apiBaseUrl: cfg.baseUrl,
+    model: cfg.model,
+    systemPrompt,
+    messages: context,
+    workerUrl: globals?.workerUrl,
+    useWorkerProxy: globals?.useWorkerProxy,
+    providerName: cfg.providerName,
+    disableThinking: session?.disableThinking ?? false,
+    webSearch: session?.webSearch ?? false,
+    signal,
+  })) {
+    if (part.text) full += part.text
+  }
+  const text = full.replace(/\[VOICE\]|\[\/VOICE\]/g, '').trim()
+  if (!text) throw new Error('绑定会话没有返回内容')
+  return text
+}
+
 // 用于"要不要带上"确认弹窗里给用户看的大白话版本（不带 <i> 标签）。
 export function describeGestureCounts(counts) {
   const parts = GESTURES
     .filter((g) => counts[g.id] > 0)
-    .map((g) => g.id === 'secret'
-      ? '调戏了你'
-      : `${g.label}了${counts[g.id]}${g.unit}`)
+    .map((g) => `${g.label}${counts[g.id]}${g.unit}`)
   return parts.join('、')
 }
 

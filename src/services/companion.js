@@ -1349,11 +1349,11 @@ async function companionJson(path, init) {
   return body
 }
 
-export async function recordVpsDesktopPetExchange({ runtime, sessionId, action, reply }) {
-  return companionJson('/pet/exchange', {
+export async function sendVpsDesktopPetAction({ runtime, sessionId, action }) {
+  return companionJson('/pet/action', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ runtime, sessionId, action, reply }),
+    body: JSON.stringify({ runtime, sessionId, action }),
   })
 }
 

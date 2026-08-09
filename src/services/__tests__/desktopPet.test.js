@@ -3,6 +3,7 @@ import { beforeAll, describe, expect, it } from 'vitest'
 let emptyGestureCounts
 let totalGestureCount
 let describeGestureCounts
+let buildGestureReport
 let parseDesktopPetReaction
 
 beforeAll(async () => {
@@ -12,14 +13,15 @@ beforeAll(async () => {
     removeItem: () => {},
   }
   const module = await import('../desktopPet')
-  ;({ emptyGestureCounts, totalGestureCount, describeGestureCounts, parseDesktopPetReaction } = module)
+  ;({ emptyGestureCounts, totalGestureCount, describeGestureCounts, buildGestureReport, parseDesktopPetReaction } = module)
 })
 
 describe('desktop pet isolated reactions', () => {
   it('counts the secret hotspot without dropping ordinary gestures', () => {
     const counts = { ...emptyGestureCounts(), pet: 2, secret: 10 }
     expect(totalGestureCount(counts)).toBe(12)
-    expect(describeGestureCounts(counts)).toBe('摸了2下、调戏了你')
+    expect(describeGestureCounts(counts)).toBe('摸2下、调戏10次')
+    expect(buildGestureReport(counts, '小满')).toBe('<i>摸了「小满」2下，调戏了「小满」10次</i>')
   })
 
   it('extracts the model mood marker before showing the bubble', () => {
