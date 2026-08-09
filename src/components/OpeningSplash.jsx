@@ -64,7 +64,9 @@ export default function OpeningSplash() {
       )}
 
       <div className="opening-splash__grain" aria-hidden="true" />
-      <div className="opening-splash__brand" data-text="Eunoia" aria-hidden="true">Eunoia</div>
+      <div className="opening-splash__brand" aria-hidden="true">
+        <img src="/backgrounds/eunoia-crystal-title-v1.webp" alt="" />
+      </div>
 
       <style>{`
         .opening-splash {
@@ -108,13 +110,27 @@ export default function OpeningSplash() {
 
         .opening-splash__scene-photo--day {
           background-image: url('/backgrounds/eunoia-splash-day.webp');
-          animation: opening-splash-water-drift 6.8s ease-in-out infinite;
+          animation: opening-splash-water-drift 3.9s cubic-bezier(.42,0,.58,1) infinite;
         }
 
         .opening-splash__scene-photo--night {
-          inset: -4% -9%;
+          inset: -14% -24%;
           background-image: url('/backgrounds/eunoia-splash-night.webp');
-          animation: opening-splash-sky-drift 12s ease-in-out infinite alternate;
+          animation: opening-splash-sky-drift 4.1s cubic-bezier(.42,0,.58,1) infinite alternate;
+        }
+
+        .opening-splash__scene-photo--night::after {
+          content: '';
+          position: absolute;
+          inset: -12%;
+          background: inherit;
+          background-position: 50% 38%;
+          background-size: cover;
+          opacity: .3;
+          mix-blend-mode: screen;
+          -webkit-mask-image: linear-gradient(180deg, #000 0 62%, transparent 88%);
+          mask-image: linear-gradient(180deg, #000 0 62%, transparent 88%);
+          animation: opening-splash-cloud-rush 3.6s cubic-bezier(.45,0,.55,1) infinite alternate;
         }
 
         .opening-splash__sunlight {
@@ -125,7 +141,7 @@ export default function OpeningSplash() {
             repeating-linear-gradient(108deg, transparent 0 28px, rgba(255,255,255,.055) 31px 33px, transparent 37px 70px),
             radial-gradient(ellipse at 50% 25%, rgba(218,255,240,.34), transparent 47%);
           filter: blur(2px);
-          animation: opening-splash-shimmer 5s ease-in-out infinite alternate;
+          animation: opening-splash-shimmer 3.2s ease-in-out infinite alternate;
         }
 
         .opening-splash__sea {
@@ -145,7 +161,7 @@ export default function OpeningSplash() {
           background:
             radial-gradient(ellipse at 26% 96%, rgba(255,255,255,.16) 0 10%, transparent 28%),
             linear-gradient(180deg, rgba(7,90,102,.74), rgba(19,154,156,.4));
-          animation: opening-splash-tide-back 6.8s ease-in-out infinite;
+          animation: opening-splash-tide-back 3.9s ease-in-out infinite;
         }
 
         .opening-splash__sea--front {
@@ -158,7 +174,7 @@ export default function OpeningSplash() {
           box-shadow: 0 22px 28px rgba(229,255,246,.28);
           opacity: .14;
           mix-blend-mode: screen;
-          animation: opening-splash-tide-front 6.8s ease-in-out infinite;
+          animation: opening-splash-tide-front 3.9s ease-in-out infinite;
         }
 
         .opening-splash__foam {
@@ -184,13 +200,13 @@ export default function OpeningSplash() {
         .opening-splash__foam--back {
           top: 40%;
           opacity: .18;
-          animation: opening-splash-foam-back 6.8s ease-in-out infinite;
+          animation: opening-splash-foam-back 3.9s ease-in-out infinite;
         }
 
         .opening-splash__foam--front {
           opacity: .3;
           top: 57%;
-          animation: opening-splash-foam-front 6.8s ease-in-out infinite;
+          animation: opening-splash-foam-front 3.9s ease-in-out infinite;
         }
 
         .opening-splash__shallows {
@@ -203,7 +219,7 @@ export default function OpeningSplash() {
           filter: blur(1px);
           opacity: .18;
           mix-blend-mode: screen;
-          animation: opening-splash-shallows 6.8s ease-in-out infinite;
+          animation: opening-splash-shallows 3.9s ease-in-out infinite;
         }
 
         .opening-splash__night {
@@ -296,73 +312,17 @@ export default function OpeningSplash() {
           left: 50%;
           top: 50%;
           transform: translate(-50%, -50%);
-          padding: .08em .22em .16em;
-          color: transparent;
-          font-family: ui-rounded, "SF Pro Rounded", "Nunito", "Avenir Next", system-ui, sans-serif;
-          font-size: clamp(56px, 18vw, 112px);
-          font-weight: 800;
-          font-style: normal;
-          letter-spacing: -.075em;
-          line-height: 1;
-          white-space: nowrap;
-          background:
-            linear-gradient(180deg,
-              rgba(255,255,255,.3) 0%,
-              rgba(255,255,255,.07) 20%,
-              rgba(255,255,255,.012) 52%,
-              rgba(218,250,255,.08) 76%,
-              rgba(255,255,255,.2) 100%);
-          background-clip: text;
-          -webkit-background-clip: text;
-          -webkit-text-fill-color: transparent;
-          -webkit-text-stroke: 1.9px rgba(255,255,255,.52);
-          text-shadow:
-            0 6px 0 rgba(61,134,151,.11),
-            0 10px 14px rgba(10,52,65,.22);
-          filter: drop-shadow(0 9px 12px rgba(18,61,77,.17));
+          width: min(82vw, 520px);
+          line-height: 0;
+          mix-blend-mode: screen;
+          filter: drop-shadow(0 13px 18px rgba(9,34,51,.3));
           animation: opening-splash-brand 1.1s cubic-bezier(.2,.75,.2,1) both;
         }
 
-        .opening-splash__brand::before,
-        .opening-splash__brand::after {
-          content: attr(data-text);
-          position: absolute;
-          inset: .08em .22em .16em;
-          pointer-events: none;
-        }
-
-        .opening-splash__brand::before {
-          z-index: -1;
-          color: rgba(127,211,223,.025);
-          -webkit-text-fill-color: rgba(127,211,223,.025);
-          -webkit-text-stroke: 2.8px rgba(220,251,255,.21);
-          transform: translateY(5px);
-        }
-
-        .opening-splash__brand::after {
-          color: transparent;
-          -webkit-text-fill-color: transparent;
-          -webkit-text-stroke: 1.25px rgba(255,255,255,.72);
-          clip-path: inset(0 0 64% 0);
-          transform: translateY(-1px);
-          filter: drop-shadow(0 2px 2px rgba(255,255,255,.5));
-        }
-
-        .opening-splash--night .opening-splash__brand {
-          background: linear-gradient(180deg, rgba(255,255,255,.3), rgba(255,229,244,.055) 35%, rgba(235,207,255,.012) 61%, rgba(255,244,249,.18));
-          background-clip: text;
-          -webkit-background-clip: text;
-          -webkit-text-fill-color: transparent;
-          -webkit-text-stroke-color: rgba(255,238,249,.52);
-          text-shadow:
-            0 6px 0 rgba(81,57,112,.13),
-            0 11px 16px rgba(20,15,50,.28);
-        }
-
-        .opening-splash--night .opening-splash__brand::before {
-          color: rgba(220,181,244,.04);
-          -webkit-text-fill-color: rgba(220,181,244,.04);
-          -webkit-text-stroke-color: rgba(255,232,250,.2);
+        .opening-splash__brand img {
+          display: block;
+          width: 100%;
+          height: auto;
         }
 
         @keyframes opening-splash-arrive {
@@ -378,36 +338,40 @@ export default function OpeningSplash() {
           100% { opacity: 1; transform: translate(-50%, -50%) scale(1); filter: drop-shadow(0 13px 17px rgba(28,47,68,.22)); }
         }
         @keyframes opening-splash-tide-front {
-          0%, 100% { transform: rotate(-5deg) translateY(-7%); }
-          50% { transform: rotate(-5deg) translateY(8%); }
+          0%, 100% { transform: rotate(-7deg) translate3d(-3%, -24%, 0) scale(1.08); }
+          52% { transform: rotate(-2deg) translate3d(4%, 24%, 0) scale(1.2); }
         }
         @keyframes opening-splash-tide-back {
-          0%, 100% { transform: rotate(-5deg) translateY(-2%); }
-          50% { transform: rotate(-5deg) translateY(5%); }
+          0%, 100% { transform: rotate(-7deg) translate3d(3%, -16%, 0) scale(1.05); }
+          52% { transform: rotate(-2deg) translate3d(-4%, 18%, 0) scale(1.16); }
         }
         @keyframes opening-splash-foam-front {
-          0%, 100% { transform: rotate(-5deg) translateY(-19%); opacity: .14; }
-          50% { transform: rotate(-5deg) translateY(32%); opacity: .34; }
+          0%, 100% { transform: rotate(-8deg) translate3d(-4%, -58%, 0) scale(.92); opacity: .08; }
+          52% { transform: rotate(-1deg) translate3d(5%, 92%, 0) scale(1.28); opacity: .4; }
         }
         @keyframes opening-splash-foam-back {
-          0%, 100% { transform: rotate(-5deg) translateY(-9%); }
-          50% { transform: rotate(-5deg) translateY(23%); }
+          0%, 100% { transform: rotate(-8deg) translate3d(5%, -42%, 0) scale(.96); opacity: .08; }
+          52% { transform: rotate(-1deg) translate3d(-5%, 70%, 0) scale(1.2); opacity: .28; }
         }
         @keyframes opening-splash-shallows {
-          0%, 100% { transform: translateY(-9%); opacity: .1; }
-          50% { transform: translateY(10%); opacity: .22; }
+          0%, 100% { transform: translate3d(0, -34%, 0) scaleY(.8); opacity: .04; }
+          52% { transform: translate3d(0, 27%, 0) scaleY(1.28); opacity: .3; }
         }
         @keyframes opening-splash-shimmer {
-          from { transform: translate3d(-1%, -1%, 0) rotate(0deg); }
-          to { transform: translate3d(2%, 1%, 0) rotate(.7deg); }
+          from { transform: translate3d(-8%, -6%, 0) rotate(-2deg) scale(.94); }
+          to { transform: translate3d(10%, 8%, 0) rotate(3deg) scale(1.14); }
         }
         @keyframes opening-splash-water-drift {
-          0%, 100% { transform: translate3d(0, -1.2%, 0) scale(1.035); }
-          50% { transform: translate3d(-.7%, 1.1%, 0) scale(1.055); }
+          0%, 100% { transform: translate3d(7%, -11%, 0) scale(1.17); }
+          52% { transform: translate3d(-8%, 10%, 0) scale(1.34); }
         }
         @keyframes opening-splash-sky-drift {
-          from { transform: translate3d(-1.8%, 0, 0) scale(1.035); }
-          to { transform: translate3d(1.8%, -.5%, 0) scale(1.055); }
+          from { transform: translate3d(-12%, -7%, 0) scale(1.22); filter: saturate(.9) brightness(.88); }
+          to { transform: translate3d(13%, 8%, 0) scale(1.43); filter: saturate(1.35) brightness(1.1); }
+        }
+        @keyframes opening-splash-cloud-rush {
+          from { transform: translate3d(13%, -8%, 0) scale(1.34); opacity: .12; }
+          to { transform: translate3d(-16%, 11%, 0) scale(1.08); opacity: .42; }
         }
         @keyframes opening-splash-cloud-left {
           from { transform: translate3d(-5%, 0, 0) scale(1); }
