@@ -6752,11 +6752,11 @@ function careRolePrompt(role: CareRoleId, today: string): { system: string; inst
   const common = `你是固定生活关怀群里的“${CARE_ROLE_NAMES[role]}”。只用中文输出，语气自然、温和、利落。今天是中国时区 ${today}。不要展示思考过程。`
   if (role === 'news') return {
     system: `${common}\n你的职责是每日联网检索新闻。必须在本轮真实使用联网搜索；不能凭记忆写“今日新闻”，不能虚构标题、事实或链接。`,
-    instruction: `现在联网检索 ${today} 的最新消息，筛选恰好 5 条真正值得知道的新闻。兼顾国内、国际、科技、经济与社会影响，避免五条都来自同一领域。\n\n每条按“1. 标题 / 摘要 / 为什么值得关注 / 来源”写，摘要 1—2 句；来源必须给出媒体名和可点击的原文 URL。末尾用一句话概括今天值得持续关注的主线。若无法联网或找不到五条可核验来源，明确说明失败，不得用旧闻或常识补齐。`,
+    instruction: `现在必须在本轮重新调用联网搜索，检索 ${today} 的最新消息，筛选恰好 5 条真正值得知道的新闻。兼顾国内、国际、科技、经济与社会影响，避免五条都来自同一领域。\n\n每条按“1. 标题 / 摘要 / 为什么值得关注 / 来源”写，摘要 1—2 句；每条最后单独写“来源：媒体名 + 完整 https:// URL”，URL 必须直接出现在正文，不能只给内部引用标记。末尾用一句话概括今天值得持续关注的主线。若无法联网或找不到五条可核验来源，明确说明失败，不得用旧闻或常识补齐。`,
   }
   if (role === 'almanac') return {
     system: `${common}\n你负责实用型每日黄历与轻量运势。黄历属于民俗参考，不能冒充科学结论；不要制造恐惧或下确定性断言。当天信息必须联网核验。`,
-    instruction: `联网查询并核验 ${today} 的中国黄历信息，播报：日期与农历、宜与忌、今日生活注意事项、轻量整体运势。附至少一个实际查询来源 URL，并明确“民俗内容仅供参考”。内容短而有用，不要按生肖逐个展开。`,
+    instruction: `必须在本轮重新调用联网搜索，查询并核验 ${today} 的中国黄历信息，播报：日期与农历、宜与忌、今日生活注意事项、轻量整体运势。正文直接写出至少一个完整 https:// 来源 URL，不能只给内部引用标记；并明确“民俗内容仅供参考”。内容短而有用，不要按生肖逐个展开。`,
   }
   if (role === 'ledger') {
     const month = today.slice(0, 7)
@@ -6783,6 +6783,10 @@ async function careRunRole(role: CareRoleId, manual = false): Promise<{ ok: bool
   saveCareHub()
   broadcastCareHub()
   try {
+    // A scheduled report must never coast on yesterday's thread context.
+    // Start every role run with a fresh isolated runtime session so “联网”
+    // means a new search in this run and model changes take effect immediately.
+    await mysteryCleanupGame('care-hub', [role])
     const prompt = careRolePrompt(role, date)
     const selectedModel = config.model || (config.runtime === 'codex' ? (codexSelectedModel || codexModelList.find((item) => item.isDefault)?.id || '') : 'claude-sonnet-4-6')
     const result = await mysteryRunTurn('care-hub', role, config.runtime, selectedModel, prompt.system, prompt.instruction)
@@ -6806,6 +6810,7 @@ async function careRunRole(role: CareRoleId, manual = false): Promise<{ ok: bool
     log('care_role_error', { role, manual, error })
     return { ok: false, error }
   } finally {
+    try { await mysteryCleanupGame('care-hub', [role]) } catch (err) { log('care_role_cleanup_error', { role, error: String(err) }) }
     careRunningRole = null
     broadcastCareHub()
   }
