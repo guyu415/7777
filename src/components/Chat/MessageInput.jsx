@@ -211,12 +211,14 @@ const MessageInput = forwardRef(function MessageInput({ onSend, onSendBatch, onS
   // onSendImage's own contract) — never two separate sends for one attach.
   const [imageDraft, setImageDraft] = useState(null)
   const [fileDraft, setFileDraft] = useState(null)
+  const [isSendingAttachment, setIsSendingAttachment] = useState(false)
   const fileRef = useRef(null)
   const attachmentFileRef = useRef(null)
   const textareaRef = useRef(null)
   const menuRef = useRef(null)
   const plusBtnRef = useRef(null)
-  const canSend = text.trim().length > 0 || segments.length > 0 || !!imageDraft || !!fileDraft
+  const hasSendableContent = text.trim().length > 0 || segments.length > 0 || !!imageDraft || !!fileDraft
+  const canSend = hasSendableContent && !isSendingAttachment
 
   useImperativeHandle(ref, () => ({
     focus() {
@@ -243,6 +245,9 @@ const MessageInput = forwardRef(function MessageInput({ onSend, onSendBatch, onS
     segmentsRef.current = restored.segments
     setTextRaw(restored.text)
     setSegmentsRaw(restored.segments)
+    setImageDraft(null)
+    setFileDraft(null)
+    setMenuOpen(false)
     const timer = setTimeout(() => {
       const el = textareaRef.current
       if (!el) return
@@ -268,7 +273,7 @@ const MessageInput = forwardRef(function MessageInput({ onSend, onSendBatch, onS
     }
   }, [menuOpen])
 
-  const handleSend = () => {
+  const handleSend = async () => {
     console.log('[PAW] handleSend: canSend=', canSend, 'textLen=', text.trim().length, 'segments=', segments.length, 'hasImageDraft=', !!imageDraft, 'hasFileDraft=', !!fileDraft)
     if (!canSend) return
     const finalText = text.trim()
@@ -277,12 +282,20 @@ const MessageInput = forwardRef(function MessageInput({ onSend, onSendBatch, onS
       : ''
     if (fileDraft) {
       const caption = quotePrefix + [...segments, finalText].filter(Boolean).join('\n')
-      onSendFile?.({ file: fileDraft, text: caption })
+      setIsSendingAttachment(true)
+      const sent = await onSendFile?.({ file: fileDraft, text: caption })
+        .catch(() => false)
+        .finally(() => setIsSendingAttachment(false))
+      if (sent === false) return
       setFileDraft(null)
     } else if (imageDraft) {
       // Keep a staged image and all queued text in one turn.
       const imageCaption = quotePrefix + [...segments, finalText].filter(Boolean).join('\n')
-      onSendImage({ imageData: imageDraft.imageData, imageType: imageDraft.imageType, imageUrl: imageDraft.imageUrl, text: imageCaption })
+      setIsSendingAttachment(true)
+      const sent = await Promise.resolve(onSendImage({ imageData: imageDraft.imageData, imageType: imageDraft.imageType, imageUrl: imageDraft.imageUrl, text: imageCaption }))
+        .catch(() => false)
+        .finally(() => setIsSendingAttachment(false))
+      if (sent === false) return
       setImageDraft(null)
     } else {
       const batch = finalText ? [...segments, finalText] : segments
@@ -442,7 +455,9 @@ const MessageInput = forwardRef(function MessageInput({ onSend, onSendBatch, onS
           }}><FileIcon /></div>
           <div style={{ flex: 1, minWidth: 0 }}>
             <div style={{ fontSize: 13, color: '#8b5060', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{fileDraft.name}</div>
-            <div style={{ fontSize: 11, color: '#b98a96', marginTop: 2 }}>{formatImageBytes(fileDraft.size)} · 可继续输入文字一起发送</div>
+            <div style={{ fontSize: 11, color: '#b98a96', marginTop: 2 }}>
+              {formatImageBytes(fileDraft.size)} · {isSendingAttachment ? '上传中…' : '可继续输入文字一起发送'}
+            </div>
           </div>
           <button onClick={() => setFileDraft(null)} title="移除文件" style={{ background: 'none', border: 'none', color: '#c47a8a', cursor: 'pointer', padding: 4 }}>
             <CloseIcon size={16} />
@@ -545,6 +560,7 @@ const MessageInput = forwardRef(function MessageInput({ onSend, onSendBatch, onS
         ) : (
           <button
             onClick={() => { console.log('[PAW] paw clicked'); handleSend() }}
+            disabled={!canSend}
             style={{
               width: 56, height: 56,
               borderRadius: '50%',

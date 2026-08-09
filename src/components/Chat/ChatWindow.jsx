@@ -245,9 +245,15 @@ export default function ChatWindow({ theme }) {
   // separate sends. Claude Code's VPS session now uploads the image to
   // /upload/image and lets CC Read the file (see useChat.js sendMessage/
   // streamResponse) — used to hard-block here too, that block is stale now.
-  const handleSendImage = ({ imageData, imageType, imageUrl, text }) => {
+  const handleSendImage = async ({ imageData, imageType, imageUrl, text }) => {
     updateActiveTime()
-    sendMessage(text || '', 'image', { imageData, imageType, imageUrl })
+    try {
+      await sendMessage(text || '', 'image', { imageData, imageType, imageUrl })
+      return true
+    } catch (error) {
+      showToast(`图片发送失败：${error.message}`)
+      return false
+    }
   }
 
   const handleSendFile = async ({ file, text }) => {
@@ -260,8 +266,10 @@ export default function ChatWindow({ theme }) {
         fileSize: uploaded.size ?? file.size,
         fileType: uploaded.mimeType || file.type || 'application/octet-stream',
       })
+      return true
     } catch (error) {
       showToast(`文件发送失败：${error.message}`)
+      return false
     }
   }
 
