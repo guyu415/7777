@@ -14,7 +14,6 @@ const PET_W = 88
 const PET_H = 136
 const LONG_PRESS_MS = 500
 const RAPID_TAP_MS = 420
-const RAPID_TAP_BURST = 3 // 快速连点攒够几下才算一次"锤"
 const PINCH_CLOSE_PX = 18
 const DEFAULT_PET_IMAGE = '/pets/black-haired-pet.png'
 const DEFAULT_EXPRESSION_IMAGES = {
@@ -27,7 +26,9 @@ const DEFAULT_EXPRESSION_IMAGES = {
 const EXCITED_MS = 8_000
 const RESTING_AFTER_MS = 45_000
 const SLEEPING_AFTER_MS = 120_000
-const SECRET_STREAK_MS = 1_350
+const SECRET_STREAK_MS = 2_500
+const RUB_DEADZONE_PX = 5
+const RUB_MIN_AMPLITUDE_PX = 12
 const SWING_DEADZONE_PX = 4 // 判定方向反转前的抖动容差
 const SWING_MIN_AMPLITUDE_PX = 24 // 单次摆幅至少要达到这个距离才算数
 const SWING_MIN_SPEED_PX_MS = 0.15 // 单次摆动的最低速度（px/ms），挡住"缓慢挪动时顺手回摆一下"
@@ -93,8 +94,8 @@ function DesktopPetWindow({ theme }) {
   const longPressFired = useRef(false)
   const touchPinch = useRef(null) // { startDist, fired }
   const isPinchingRef = useRef(false)
-  const lastTapAt = useRef(0)
-  const rapidStreak = useRef(0)
+  const tapDecisionTimer = useRef(null)
+  const tapBurst = useRef({ active: false, lastAt: 0, endTimer: null })
   const gestureCounts = useRef(emptyGestureCounts())
   const flashTimer = useRef(null)
   const replyTimer = useRef(null)
@@ -177,6 +178,8 @@ function DesktopPetWindow({ theme }) {
     window.clearTimeout(replyTimer.current)
     window.clearTimeout(expressionTimer.current)
     window.clearTimeout(secretTimer.current)
+    window.clearTimeout(tapDecisionTimer.current)
+    window.clearTimeout(tapBurst.current.endTimer)
   }, [])
 
   const playExistingVoice = useCallback(async (blobId) => {
@@ -316,10 +319,11 @@ function DesktopPetWindow({ theme }) {
 
   // 单次手势只累加本地计数 + 播本地动效；攒够 batchSize 次才真的触发一次
   // 请求（带完整人设与上下文的真实链路），中间几次完全不联网。
-  const triggerGesture = useCallback((gestureId) => {
+  const triggerGesture = useCallback((gestureId, amount = 1) => {
     markActive(gestureId === 'secret' ? 'flustered' : gestureId === 'pinch' ? 'resting' : 'excited')
     playLocalMotion(gestureId)
-    gestureCounts.current[gestureId] = (gestureCounts.current[gestureId] || 0) + 1
+    if (amount > 1) setGestureFlash(`锤×${amount}`)
+    gestureCounts.current[gestureId] = (gestureCounts.current[gestureId] || 0) + amount
     const total = totalGestureCount(gestureCounts.current)
     if (total >= batchSize) {
       reportGestures()
@@ -328,8 +332,8 @@ function DesktopPetWindow({ theme }) {
     }
   }, [playLocalMotion, batchSize, reportGestures, markActive])
 
-  // 轻反馈——快速连点还没攒够 RAPID_TAP_BURST 阈值的那几下，给个更轻的
-  // 提示（小抖动 + 更轻的"滴"声），不算一次正式手势、不计数、不出文字。
+  // 轻反馈——第一下尚在等待“摸/锤”判定时给一个小抖动和轻提示音；
+  // 它本身不算正式手势、不计数、不出文字。
   const lightTapPulse = useCallback(() => {
     navigator.vibrate?.(4)
     playLightTapSfx(sfxOn)
@@ -337,7 +341,7 @@ function DesktopPetWindow({ theme }) {
     window.setTimeout(() => setMotion(''), 160)
   }, [sfxOn])
 
-  const handleSecretTap = useCallback(() => {
+  const handleSecretStroke = useCallback(() => {
     const now = Date.now()
     const nextCount = now - secretStreak.current.at <= SECRET_STREAK_MS ? secretStreak.current.count + 1 : 1
     secretStreak.current = { count: nextCount, at: now }
@@ -352,25 +356,34 @@ function DesktopPetWindow({ theme }) {
     secretTimer.current = window.setTimeout(() => setSecretActive(false), 30_000)
   }, [triggerGesture, markActive])
 
-  // 单次点击=摸；短时间内连续点击攒到第 RAPID_TAP_BURST 下才真正判定成
-  // 一次"锤"——前面几下只给轻反馈，让人清楚感觉到自己点到第几下，而不是
-  // 从第二下就突然变成锤。
+  // 第一下先暂存：RAPID_TAP_MS 内没有第二下才落为“摸”。
+  // 只要有第二下，整串连点从第一下起全部追溯为“锤”，
+  // 不再出现“想锤却先积了一堆摸”。
   const handleTap = useCallback(() => {
     const now = Date.now()
-    const rapid = now - lastTapAt.current < RAPID_TAP_MS
-    lastTapAt.current = now
-    if (!rapid) {
-      rapidStreak.current = 1
-      triggerGesture('pet')
+    if (tapDecisionTimer.current) {
+      window.clearTimeout(tapDecisionTimer.current)
+      tapDecisionTimer.current = null
+      tapBurst.current.active = true
+      tapBurst.current.lastAt = now
+      window.clearTimeout(tapBurst.current.endTimer)
+      tapBurst.current.endTimer = window.setTimeout(() => { tapBurst.current.active = false }, RAPID_TAP_MS)
+      triggerGesture('bonk', 2)
       return
     }
-    rapidStreak.current += 1
-    if (rapidStreak.current >= RAPID_TAP_BURST) {
-      rapidStreak.current = 0
+    if (tapBurst.current.active && now - tapBurst.current.lastAt < RAPID_TAP_MS) {
+      tapBurst.current.lastAt = now
+      window.clearTimeout(tapBurst.current.endTimer)
+      tapBurst.current.endTimer = window.setTimeout(() => { tapBurst.current.active = false }, RAPID_TAP_MS)
       triggerGesture('bonk')
-    } else {
-      lightTapPulse()
+      return
     }
+    tapBurst.current.active = false
+    lightTapPulse()
+    tapDecisionTimer.current = window.setTimeout(() => {
+      tapDecisionTimer.current = null
+      triggerGesture('pet')
+    }, RAPID_TAP_MS)
   }, [triggerGesture, lightTapPulse])
 
   const requestClose = useCallback(() => {
@@ -421,6 +434,8 @@ function DesktopPetWindow({ theme }) {
     if (event.button !== undefined && event.button !== 0) return
     event.currentTarget.setPointerCapture?.(event.pointerId)
     longPressFired.current = false
+    const localX = (event.clientX - position.x) / PET_W
+    const localY = (event.clientY - position.y) / PET_H
     drag.current = {
       pointerId: event.pointerId,
       startX: event.clientX,
@@ -436,6 +451,16 @@ function DesktopPetWindow({ theme }) {
       segStartX: event.clientX,
       segStartTime: event.timeStamp,
       extremumX: event.clientX,
+      // 从身体区域落指、且主要水平往复时识别为“搓动”；
+      // 头部起手或明显纵向拖动仍是原来的拎起/移位。
+      rubCandidate: localX >= 0.18 && localX <= 0.82 && localY >= 0.28 && localY <= 0.9,
+      rubbing: false,
+      rubDir: 0,
+      rubPhase: 'outbound',
+      rubOriginX: event.clientX,
+      rubExtremumX: event.clientX,
+      rubReturnStartX: event.clientX,
+      rubCycles: 0,
     }
     window.clearTimeout(pressTimer.current)
     pressTimer.current = window.setTimeout(() => {
@@ -486,10 +511,59 @@ function DesktopPetWindow({ theme }) {
     d.extremumX = x
   }, [triggerGesture])
 
+  const detectRub = useCallback((x) => {
+    const d = drag.current
+    if (!d) return
+    if (d.rubDir === 0) {
+      if (x - d.rubOriginX > RUB_DEADZONE_PX) { d.rubDir = 1; d.rubExtremumX = x }
+      else if (d.rubOriginX - x > RUB_DEADZONE_PX) { d.rubDir = -1; d.rubExtremumX = x }
+      return
+    }
+
+    if (d.rubPhase === 'outbound') {
+      const extendsOutward = d.rubDir === 1 ? x > d.rubExtremumX : x < d.rubExtremumX
+      if (extendsOutward) { d.rubExtremumX = x; return }
+      const reversal = Math.abs(d.rubExtremumX - x)
+      if (reversal <= RUB_DEADZONE_PX) return
+      const outboundAmplitude = Math.abs(d.rubExtremumX - d.rubOriginX)
+      if (outboundAmplitude < RUB_MIN_AMPLITUDE_PX) {
+        d.rubDir = 0
+        d.rubOriginX = x
+        d.rubExtremumX = x
+        return
+      }
+      d.rubPhase = 'returning'
+      d.rubReturnStartX = d.rubExtremumX
+      d.rubDir *= -1
+    }
+
+    // 从最远点往回滑够一个有效摆幅，立即算一次完整“来回”；
+    // 随后的连续滑动从当前位置重新开始下一轮，不要求多拐一次弯。
+    if (Math.abs(x - d.rubReturnStartX) >= RUB_MIN_AMPLITUDE_PX) {
+      d.rubCycles += 1
+      handleSecretStroke()
+      d.rubPhase = 'outbound'
+      d.rubDir = 0
+      d.rubOriginX = x
+      d.rubExtremumX = x
+      d.rubReturnStartX = x
+    }
+  }, [handleSecretStroke])
+
   const onPointerMove = (event) => {
     if (!drag.current || drag.current.pointerId !== event.pointerId) return
     const dx = event.clientX - drag.current.startX
     const dy = event.clientY - drag.current.startY
+    if (drag.current.rubCandidate && Math.abs(dy) <= 20) {
+      if (Math.abs(dx) > RUB_DEADZONE_PX) {
+        drag.current.moved = true
+        drag.current.rubbing = true
+        window.clearTimeout(pressTimer.current)
+        detectRub(event.clientX)
+      }
+      return
+    }
+    drag.current.rubCandidate = false
     if (Math.hypot(dx, dy) > 6) {
       drag.current.moved = true
       window.clearTimeout(pressTimer.current)
@@ -508,26 +582,22 @@ function DesktopPetWindow({ theme }) {
     if (!drag.current || drag.current.pointerId !== event.pointerId) return
     const wasMoved = drag.current.moved
     const wasLongPress = longPressFired.current
+    const wasRubbing = drag.current.rubbing
+    const rubCycles = drag.current.rubCycles
     const finalPosition = drag.current.latest || position
     drag.current = null
     setMotion('')
     if (wasLongPress) return // 捏脸已经在长按计时器里触发过了
+    if (wasRubbing) {
+      // 有完整往复才计彩蛋；只蹭了一下也不会被误算成摸或锤。
+      if (rubCycles === 0) lightTapPulse()
+      return
+    }
     if (wasMoved) {
       // 单纯挪位置不算互动，只落位；真正的"拎起来晃"手势已经在拖动过程中
       // 由 detectSwing 实时判定并触发了，这里不再重复计一次。
       updateDesktopPet({ x: finalPosition.x, y: finalPosition.y })
-    } else {
-      // 黑色棉花娃的两腿之间是一个单独热区；只有每次都点在这里、
-      // 且相邻两次没超时才算“连续”，移走或点到别处会清空彩蛋连击。
-      const localX = (event.clientX - finalPosition.x) / PET_W
-      const localY = (event.clientY - finalPosition.y) / PET_H
-      if (localX >= 0.36 && localX <= 0.64 && localY >= 0.57 && localY <= 0.82) {
-        handleSecretTap()
-      } else {
-        secretStreak.current = { count: 0, at: 0 }
-        handleTap()
-      }
-    }
+    } else handleTap()
   }
 
   // 双指捏合——原生 touch 事件，和上面的指针手势并行；一旦检测到第二根手
@@ -683,18 +753,22 @@ function DesktopPetWindow({ theme }) {
         @keyframes pet-bonk { 0%,100%{transform:rotate(0)} 20%{transform:rotate(-10deg)} 45%{transform:rotate(11deg)} 70%{transform:rotate(-6deg)} }
         @keyframes pet-lift { 0%,100%{transform:rotate(0)} 35%{transform:rotate(-5deg)} 70%{transform:rotate(5deg)} }
         @keyframes pet-light-pulse { 0%,100%{transform:scale(1)} 50%{transform:scale(1.035)} }
-        @keyframes pet-awake-idle { 0%,82%,100%{transform:translateY(0)} 88%{transform:translateY(-2px)} 94%{transform:translateY(0)} }
-        @keyframes pet-rest-idle { 0%,100%{transform:translateY(0) rotate(-1deg)} 50%{transform:translateY(2px) rotate(1deg)} }
-        @keyframes pet-sleep-idle { 0%,100%{transform:translateY(1px) scale(1)} 50%{transform:translateY(3px) scale(.985,1.01)} }
+        @keyframes pet-excited-idle { 0%,100%{transform:translateY(0) rotate(0)} 18%{transform:translateY(-8px) rotate(-4deg)} 36%{transform:translateY(0) rotate(3deg)} 52%{transform:translateY(-4px) rotate(-2deg)} 68%{transform:translateY(0) rotate(0)} }
+        @keyframes pet-awake-idle { 0%,22%,100%{transform:translateX(0) rotate(0)} 32%,44%{transform:translateX(-4px) rotate(-3deg)} 57%,69%{transform:translateX(4px) rotate(3deg)} 80%{transform:translateX(0) rotate(0)} }
+        @keyframes pet-rest-idle { 0%,100%{transform:translateY(4px) rotate(-4deg)} 50%{transform:translateY(7px) rotate(4deg)} }
+        @keyframes pet-sleep-idle { 0%,100%{transform:translateY(9px) rotate(6deg) scale(.96)} 50%{transform:translateY(12px) rotate(7deg) scale(.94,.98)} }
+        @keyframes pet-cue-float { 0%,100%{transform:translateY(0);opacity:.42} 50%{transform:translateY(-5px);opacity:.9} }
         @keyframes pet-secret-pop { 0%{transform:translateX(-50%) scale(.2);opacity:0} 60%{transform:translateX(-50%) scale(1.16);opacity:1} 100%{transform:translateX(-50%) scale(1);opacity:1} }
         @keyframes pet-flash { 0%{opacity:0; transform:translate(-50%,4px)} 15%{opacity:1; transform:translate(-50%,0)} 75%{opacity:1} 100%{opacity:0; transform:translate(-50%,-6px)} }
         .desktop-pet.pet{animation:pet-bob .62s ease}.desktop-pet.pinch{animation:pet-squash .58s ease}
         .desktop-pet.bonk{animation:pet-bonk .52s ease}.desktop-pet.lift{animation:pet-lift .55s ease-in-out infinite}
         .desktop-pet.secret{animation:pet-squash .42s ease}
         .desktop-pet.light-pulse{animation:pet-light-pulse .16s ease}
-        .desktop-pet.idle-awake{animation:pet-awake-idle 5.5s ease-in-out infinite}
-        .desktop-pet.idle-resting{animation:pet-rest-idle 3.6s ease-in-out infinite}
-        .desktop-pet.idle-sleeping{animation:pet-sleep-idle 4.8s ease-in-out infinite}
+        .desktop-pet.idle-excited{animation:pet-excited-idle 1.8s ease-in-out infinite}
+        .desktop-pet.idle-awake{animation:pet-awake-idle 6.5s ease-in-out infinite}
+        .desktop-pet.idle-resting{animation:pet-rest-idle 4.2s ease-in-out infinite}
+        .desktop-pet.idle-sleeping{animation:pet-sleep-idle 5.2s ease-in-out infinite}
+        .pet-idle-cue{animation:pet-cue-float 2.2s ease-in-out infinite}
         .pet-secret-bulge{animation:pet-secret-pop .45s cubic-bezier(.2,.9,.25,1.15) forwards}
         .pet-flash-text{animation:pet-flash .7s ease forwards}
       `}</style>
@@ -763,15 +837,18 @@ function DesktopPetWindow({ theme }) {
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
-        onPointerCancel={() => { drag.current = null; setMotion('') }}
+        onPointerCancel={() => { window.clearTimeout(pressTimer.current); drag.current = null; setMotion('') }}
         onTouchStart={onTouchStart}
         onTouchMove={onTouchMove}
         onTouchEnd={onTouchEnd}
-        title="轻点=摸，快速连点=锤，长按或双指捏=捏脸，拖动=拎起"
+        title="点一下=摸，快速连点=锤，身上来回滑=搓，长按或双指捏=捏脸，拖动=拎起"
       >
         <img src={displayedPetImage} alt={identity} draggable="false" style={{ width: '100%', height: '100%', objectFit: 'contain', transform: `scale(${scale})`, transformOrigin: 'bottom center', filter: 'drop-shadow(0 5px 5px rgba(35,25,31,.22))', userSelect: 'none', WebkitUserDrag: 'none' }} />
         {secretActive && usesDefaultPet && <div className="pet-secret-bulge" style={{ position: 'absolute', left: '50%', top: '65%', width: '12px', height: '18px', borderRadius: '55% 55% 48% 48%', background: 'radial-gradient(ellipse at 38% 28%, rgba(94,90,99,.96), rgba(24,22,27,.98) 58%, rgba(8,8,10,.98))', boxShadow: '0 1px 3px rgba(0,0,0,.42)', pointerEvents: 'none' }} />}
         {expression === 'flustered' && usesDefaultPet && <><span style={{ position: 'absolute', left: '32%', top: '31%', width: 8, height: 4, borderRadius: '50%', background: 'rgba(234,120,145,.35)', filter: 'blur(1px)', pointerEvents: 'none' }} /><span style={{ position: 'absolute', right: '30%', top: '31%', width: 8, height: 4, borderRadius: '50%', background: 'rgba(234,120,145,.35)', filter: 'blur(1px)', pointerEvents: 'none' }} /></>}
+        {!motion && idleState === 'excited' && <span className="pet-idle-cue" style={{ position: 'absolute', right: 5, top: 24, fontSize: 13, color: theme.primary, textShadow: '0 1px 4px white', pointerEvents: 'none' }}>✦</span>}
+        {!motion && idleState === 'resting' && <span className="pet-idle-cue" style={{ position: 'absolute', right: 7, top: 18, fontSize: 13, color: theme.primary, textShadow: '0 1px 4px white', pointerEvents: 'none' }}>…</span>}
+        {!motion && idleState === 'sleeping' && <span className="pet-idle-cue" style={{ position: 'absolute', right: 2, top: 10, fontSize: 11, fontWeight: 800, color: theme.primary, textShadow: '0 1px 4px white', pointerEvents: 'none' }}>Zz</span>}
       </div>
 
       <input ref={screenshotInputRef} type="file" accept="image/*" hidden onChange={handleScreenshotFile} />

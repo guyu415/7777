@@ -19,7 +19,7 @@ describe('desktop pet isolated reactions', () => {
   it('counts the secret hotspot without dropping ordinary gestures', () => {
     const counts = { ...emptyGestureCounts(), pet: 2, secret: 10 }
     expect(totalGestureCount(counts)).toBe(12)
-    expect(describeGestureCounts(counts)).toBe('摸了2下、摸两腿之间了10下')
+    expect(describeGestureCounts(counts)).toBe('摸了2下、在身上来回搓了10次')
   })
 
   it('extracts the model mood marker before showing the bubble', () => {

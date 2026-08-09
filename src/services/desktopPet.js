@@ -12,7 +12,7 @@ export const GESTURES = [
   { id: 'pinch', label: '捏脸', unit: '下', feedback: '捏了一下', motion: 'pinch' },
   { id: 'bonk', label: '锤', unit: '下', feedback: '锤！', motion: 'bonk' },
   { id: 'lift', label: '拎起来晃', unit: '次', feedback: '拎起来了', motion: 'lift' },
-  { id: 'secret', label: '摸两腿之间', unit: '下', feedback: '……', motion: 'secret' },
+  { id: 'secret', label: '在身上来回搓', unit: '次', feedback: '……', motion: 'secret' },
 ]
 
 export function findGesture(id) {
