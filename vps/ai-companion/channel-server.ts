@@ -70,6 +70,17 @@ import {
   type VisibleCcMessage,
 } from './cc-tidal-memory.ts'
 import { splitCompletedCodexMessage } from './codex-chat-history.ts'
+import {
+  CARE_ROLE_IDS,
+  careRoleIsDue,
+  defaultCareHubState,
+  ledgerMonthSummary,
+  normalizeCareHubState,
+  sanitizeCareRoleConfig,
+  zonedDateTime,
+  type CareHubState,
+  type CareRoleId,
+} from './care-hub.ts'
 
 const ROOT = dirname(new URL(import.meta.url).pathname)
 const PORT = Number(process.env.AI_COMPANION_PORT ?? 8788)
@@ -735,10 +746,11 @@ type GroupChat = {
 }
 type GroupUpdateWire = { type: 'group_update'; chat: GroupChat }
 type GroupListWire = { type: 'group_list'; chats: Array<{ id: string; name: string; members: GroupMemberId[]; updatedAt: number }> }
+type CareUpdateWire = { type: 'care_update'; state: CareHubState }
 
 type LiveWire = MsgWire | TurnStartWire | TurnEndWire | TurnErrorWire | ResetBusyWire | ResetWire | ThinkingWire | GomokuWire | GomokuTurnEndWire | XinchaoUpdateWire
   | CodexMsgWire | CodexMsgDeletedWire | CodexStatusWire | CodexNoticeWire | CodexTurnEndWire | CodexTurnBusyWire | CodexResetBusyWire | CodexResetWire
-  | FocusUpdateWire | FocusFinishedWire | GroupUpdateWire | GroupListWire
+  | FocusUpdateWire | FocusFinishedWire | GroupUpdateWire | GroupListWire | CareUpdateWire
 // resetAt lets a client that reconnects (or opens a brand new tab) long
 // after a reset happened — and so never saw the live ResetWire broadcast —
 // detect it anyway: it compares this against the last resetAt it persisted
@@ -6340,7 +6352,7 @@ async function mysteryCcEnsureSession(gameId: string, charId: string, systemProm
   // capture uploaded into UPLOAD_DIR.  Those isolated sessions get Read and
   // nothing else; ordinary mystery/poker characters keep the original empty
   // tool set, so their secrecy boundary is unchanged.
-  const allowedTools = gameId.startsWith('desktop-pet:') ? 'Read' : ''
+  const allowedTools = gameId.startsWith('desktop-pet:') ? 'Read' : gameId === 'care-hub' ? 'WebSearch,WebFetch' : ''
   const cmd = [
     'claude',
     '--system-prompt', shQuote(systemPrompt),
@@ -6689,6 +6701,135 @@ async function mysteryCleanupGame(gameId: string, charIds: string[]): Promise<vo
   }
   saveMysteryCodexThreads()
 }
+
+// ---------- 固定生活关怀群 ----------
+// Four permanent utility roles share one persisted feed, while each model role
+// keeps its own isolated thread. This is intentionally separate from free-form
+// multi-AI group chat: slots cannot be removed and scheduled reports never
+// consume or disturb ordinary chat context.
+const CARE_HUB_FILE = process.env.AI_COMPANION_CARE_HUB_FILE ?? join(ROOT, 'state', 'care-hub.json')
+let careHubState: CareHubState = defaultCareHubState()
+let careRunningRole: CareRoleId | null = null
+
+function loadCareHub() {
+  try { careHubState = normalizeCareHubState(JSON.parse(readFileSync(CARE_HUB_FILE, 'utf8'))) }
+  catch { careHubState = defaultCareHubState() }
+}
+function saveCareHub() {
+  try {
+    mkdirSync(dirname(CARE_HUB_FILE), { recursive: true })
+    const { runningRole: _running, ...persisted } = careHubState
+    writeFileSync(CARE_HUB_FILE, JSON.stringify(persisted))
+  } catch (err) { log('care_hub_save_error', { error: String(err) }) }
+}
+function carePublicState(): CareHubState {
+  return { ...careHubState, runningRole: careRunningRole }
+}
+function broadcastCareHub() {
+  sendRaw({ type: 'care_update', state: carePublicState() })
+}
+function careCommit() {
+  careHubState.updatedAt = Date.now()
+  careHubState.messages = careHubState.messages.slice(-300)
+  saveCareHub()
+  broadcastCareHub()
+}
+function careAppend(role: CareRoleId, text: string, kind: 'report' | 'record' | 'reminder' | 'system') {
+  careHubState.messages.push({ id: nextId(), role, text: text.trim(), ts: Date.now(), kind })
+}
+loadCareHub()
+
+const CARE_ROLE_NAMES: Record<CareRoleId, string> = {
+  news: '晨间新闻', ledger: '记账员', almanac: '黄历运势', study: '学习监督',
+}
+
+function careRolePrompt(role: CareRoleId, today: string): { system: string; instruction: string } {
+  const common = `你是固定生活关怀群里的“${CARE_ROLE_NAMES[role]}”。只用中文输出，语气自然、温和、利落。今天是中国时区 ${today}。不要展示思考过程。`
+  if (role === 'news') return {
+    system: `${common}\n你的职责是每日联网检索新闻。必须在本轮真实使用联网搜索；不能凭记忆写“今日新闻”，不能虚构标题、事实或链接。`,
+    instruction: `现在联网检索 ${today} 的最新消息，筛选恰好 5 条真正值得知道的新闻。兼顾国内、国际、科技、经济与社会影响，避免五条都来自同一领域。\n\n每条按“1. 标题 / 摘要 / 为什么值得关注 / 来源”写，摘要 1—2 句；来源必须给出媒体名和可点击的原文 URL。末尾用一句话概括今天值得持续关注的主线。若无法联网或找不到五条可核验来源，明确说明失败，不得用旧闻或常识补齐。`,
+  }
+  if (role === 'almanac') return {
+    system: `${common}\n你负责实用型每日黄历与轻量运势。黄历属于民俗参考，不能冒充科学结论；不要制造恐惧或下确定性断言。当天信息必须联网核验。`,
+    instruction: `联网查询并核验 ${today} 的中国黄历信息，播报：日期与农历、宜与忌、今日生活注意事项、轻量整体运势。附至少一个实际查询来源 URL，并明确“民俗内容仅供参考”。内容短而有用，不要按生肖逐个展开。`,
+  }
+  if (role === 'ledger') {
+    const month = today.slice(0, 7)
+    const summary = ledgerMonthSummary(careHubState.ledger.entries, month)
+    return {
+      system: `${common}\n你负责每日账本回顾，不评价、不羞辱消费，只帮助看清数据和下一步。`,
+      instruction: `这是 ${month} 的账本：预算 ${careHubState.ledger.monthlyBudget || '未设置'} 元，已记 ${summary.count} 笔，共 ${summary.total} 元；分类合计 ${JSON.stringify(summary.byCategory)}。请做一段不超过 180 字的晚间回顾：预算进度、最大支出类别、一个具体而温和的提醒。没有记录时就提醒用户今天可以补记。`,
+    }
+  }
+  const goals = careHubState.study.goals.map((g) => ({ title: g.title, done: g.done, targetDate: g.targetDate || null }))
+  return {
+    system: `${common}\n你负责监督学习清单。只能依据给定清单判断完成情况，绝不能擅自把目标标为完成。`,
+    instruction: `当前学习目标：${JSON.stringify(goals)}。请做一段不超过 220 字的检查：完成数量、尚未完成项、临近截止项，以及一个可立刻开始的最小行动。若清单为空，提醒用户先预设目标。`,
+  }
+}
+
+async function careRunRole(role: CareRoleId, manual = false): Promise<{ ok: boolean; error?: string }> {
+  if (careRunningRole) return { ok: false, error: `${CARE_ROLE_NAMES[careRunningRole]}正在生成` }
+  const config = careHubState.config.roles[role]
+  const { date } = zonedDateTime(new Date(), careHubState.config.timezone)
+  careRunningRole = role
+  if (!manual) config.lastAttemptDate = date
+  config.lastError = undefined
+  saveCareHub()
+  broadcastCareHub()
+  try {
+    const prompt = careRolePrompt(role, date)
+    const selectedModel = config.model || (config.runtime === 'codex' ? (codexSelectedModel || codexModelList.find((item) => item.isDefault)?.id || '') : 'claude-sonnet-4-6')
+    const result = await mysteryRunTurn('care-hub', role, config.runtime, selectedModel, prompt.system, prompt.instruction)
+    if ('error' in result) throw new Error(result.error)
+    if (role === 'news' && (result.text.match(/https?:\/\/[^\s)]+/g) || []).length < 5) throw new Error('联网早报未返回五条可核验来源，已拒绝发布')
+    if (role === 'almanac' && !/https?:\/\//.test(result.text)) throw new Error('黄历结果缺少可核验来源，已拒绝发布')
+    careAppend(role, result.text, role === 'ledger' || role === 'study' ? 'reminder' : 'report')
+    config.lastRunDate = date
+    config.lastAttemptDate = date
+    config.lastError = undefined
+    careCommit()
+    void sendCompanionPush(`${CARE_ROLE_NAMES[role]}已送达`, { title: `生活关怀群 · ${CARE_ROLE_NAMES[role]}`, tag: `care-${role}-${date}`, url: '/?source=care-hub' })
+    log('care_role_completed', { role, runtime: config.runtime, model: config.model, manual })
+    return { ok: true }
+  } catch (err) {
+    const error = String((err as Error)?.message || err).slice(0, 300)
+    config.lastError = error
+    if (!manual) careAppend(role, `${CARE_ROLE_NAMES[role]}本次生成失败：${error}`, 'system')
+    careCommit()
+    log('care_role_error', { role, manual, error })
+    return { ok: false, error }
+  } finally {
+    careRunningRole = null
+    broadcastCareHub()
+  }
+}
+
+function careAddLedgerEntry(raw: any): { ok: boolean; error?: string } {
+  const amount = Math.round(Number(raw?.amount) * 100) / 100
+  if (!Number.isFinite(amount) || amount <= 0 || amount > 99_999_999) return { ok: false, error: '请输入有效金额' }
+  const { date: today } = zonedDateTime(new Date(), careHubState.config.timezone)
+  const date = /^\d{4}-\d{2}-\d{2}$/.test(raw?.date) ? raw.date : today
+  const category = typeof raw?.category === 'string' && raw.category.trim() ? raw.category.trim().slice(0, 20) : '其他'
+  const note = typeof raw?.note === 'string' ? raw.note.trim().slice(0, 100) : ''
+  careHubState.ledger.entries.push({ id: nextId(), amount, category, note, date, ts: Date.now() })
+  careAppend('ledger', `已记账：${category} ¥${amount.toFixed(2)}${note ? ` · ${note}` : ''}`, 'record')
+  careCommit()
+  return { ok: true }
+}
+
+async function careTick() {
+  if (careRunningRole) return
+  const { date, time } = zonedDateTime(new Date(), careHubState.config.timezone)
+  for (const role of CARE_ROLE_IDS) {
+    if (careRoleIsDue(careHubState.config.roles[role], date, time)) {
+      await careRunRole(role)
+      break
+    }
+  }
+}
+setTimeout(() => void careTick(), 5_000)
+setInterval(() => void careTick(), 30_000)
 
 // ---------- public server: 127.0.0.1:PORT (the only port cloudflared forwards) ----------
 
@@ -7938,6 +8079,140 @@ Bun.serve<{ authed: true }>({
       const minutes = Number((body as any)?.minutes)
       const result = focusExtend({ runtime: 'api', sessionId, name: focusState.manager?.name || 'AI' }, minutes)
       return jsonResponse(result, { status: result.ok ? 200 : 409, headers: cors })
+    }
+
+    // ---- 固定生活关怀群 ----
+    if (url.pathname === '/care/state' && req.method === 'GET') {
+      const gate = authGate()
+      if (gate) return gate
+      return jsonResponse({ state: carePublicState() }, { headers: corsHeadersFor(origin) })
+    }
+    if (url.pathname === '/care/config' && req.method === 'PUT') {
+      const gate = authGate()
+      if (gate) return gate
+      const cors = corsHeadersFor(origin)
+      let body: any = {}
+      try { body = await req.json() } catch {}
+      for (const role of CARE_ROLE_IDS) {
+        if (body?.roles?.[role]) careHubState.config.roles[role] = sanitizeCareRoleConfig(careHubState.config.roles[role], body.roles[role])
+      }
+      if (body?.monthlyBudget !== undefined) {
+        const budget = Number(body.monthlyBudget)
+        if (!Number.isFinite(budget) || budget < 0) return jsonResponse({ ok: false, error: '预算无效' }, { status: 400, headers: cors })
+        careHubState.ledger.monthlyBudget = Math.round(budget * 100) / 100
+      }
+      careCommit()
+      return jsonResponse({ ok: true, state: carePublicState() }, { headers: cors })
+    }
+    if (url.pathname === '/care/run' && req.method === 'POST') {
+      const gate = authGate()
+      if (gate) return gate
+      const cors = corsHeadersFor(origin)
+      let body: any = {}
+      try { body = await req.json() } catch {}
+      const role = CARE_ROLE_IDS.includes(body?.role) ? body.role as CareRoleId : null
+      if (!role) return jsonResponse({ ok: false, error: '岗位无效' }, { status: 400, headers: cors })
+      // Return immediately: progress and final state arrive through care_update,
+      // so a slow web-search turn never leaves the browser request hanging.
+      void careRunRole(role, true)
+      return jsonResponse({ ok: true }, { headers: cors })
+    }
+    if (url.pathname === '/care/ledger/add' && req.method === 'POST') {
+      const gate = authGate()
+      if (gate) return gate
+      const cors = corsHeadersFor(origin)
+      let body: any = {}
+      try { body = await req.json() } catch {}
+      const result = careAddLedgerEntry(body)
+      return jsonResponse(result.ok ? { ...result, state: carePublicState() } : result, { status: result.ok ? 200 : 400, headers: cors })
+    }
+    if (url.pathname === '/care/ledger/delete' && req.method === 'POST') {
+      const gate = authGate()
+      if (gate) return gate
+      const cors = corsHeadersFor(origin)
+      let body: any = {}
+      try { body = await req.json() } catch {}
+      const before = careHubState.ledger.entries.length
+      careHubState.ledger.entries = careHubState.ledger.entries.filter((entry) => entry.id !== body?.id)
+      if (before === careHubState.ledger.entries.length) return jsonResponse({ ok: false, error: '记录不存在' }, { status: 404, headers: cors })
+      careCommit()
+      return jsonResponse({ ok: true, state: carePublicState() }, { headers: cors })
+    }
+    if (url.pathname === '/care/study/add' && req.method === 'POST') {
+      const gate = authGate()
+      if (gate) return gate
+      const cors = corsHeadersFor(origin)
+      let body: any = {}
+      try { body = await req.json() } catch {}
+      const title = typeof body?.title === 'string' ? body.title.trim().slice(0, 120) : ''
+      if (!title) return jsonResponse({ ok: false, error: '目标不能为空' }, { status: 400, headers: cors })
+      const targetDate = /^\d{4}-\d{2}-\d{2}$/.test(body?.targetDate) ? body.targetDate : undefined
+      careHubState.study.goals.push({ id: nextId(), title, targetDate, done: false, createdAt: Date.now() })
+      careAppend('study', `新目标：${title}${targetDate ? ` · 截止 ${targetDate}` : ''}`, 'record')
+      careCommit()
+      return jsonResponse({ ok: true, state: carePublicState() }, { headers: cors })
+    }
+    if (url.pathname === '/care/study/toggle' && req.method === 'POST') {
+      const gate = authGate()
+      if (gate) return gate
+      const cors = corsHeadersFor(origin)
+      let body: any = {}
+      try { body = await req.json() } catch {}
+      const goal = careHubState.study.goals.find((item) => item.id === body?.id)
+      if (!goal) return jsonResponse({ ok: false, error: '目标不存在' }, { status: 404, headers: cors })
+      goal.done = typeof body?.done === 'boolean' ? body.done : !goal.done
+      goal.doneAt = goal.done ? Date.now() : undefined
+      careAppend('study', `${goal.done ? '✅ 已完成' : '↩️ 重新打开'}：${goal.title}`, 'record')
+      careCommit()
+      return jsonResponse({ ok: true, state: carePublicState() }, { headers: cors })
+    }
+    if (url.pathname === '/care/study/delete' && req.method === 'POST') {
+      const gate = authGate()
+      if (gate) return gate
+      const cors = corsHeadersFor(origin)
+      let body: any = {}
+      try { body = await req.json() } catch {}
+      const before = careHubState.study.goals.length
+      careHubState.study.goals = careHubState.study.goals.filter((goal) => goal.id !== body?.id)
+      if (before === careHubState.study.goals.length) return jsonResponse({ ok: false, error: '目标不存在' }, { status: 404, headers: cors })
+      careCommit()
+      return jsonResponse({ ok: true, state: carePublicState() }, { headers: cors })
+    }
+    // Fast chat-like input: “记账 午饭 25” / “目标 学完第三章” /
+    // “完成 学完第三章”. Ambiguous text is rejected instead of guessed.
+    if (url.pathname === '/care/input' && req.method === 'POST') {
+      const gate = authGate()
+      if (gate) return gate
+      const cors = corsHeadersFor(origin)
+      let body: any = {}
+      try { body = await req.json() } catch {}
+      const text = typeof body?.text === 'string' ? body.text.trim() : ''
+      const ledgerMatch = text.match(/^(?:记账[：:\s]*)?(.+?)\s*[¥￥]?([0-9]+(?:\.[0-9]{1,2})?)\s*元?$/)
+      if (ledgerMatch && (/^记账/.test(text) || /[元¥￥]/.test(text))) {
+        const note = ledgerMatch[1].trim()
+        const category = /饭|餐|吃|喝|咖啡|奶茶/.test(note) ? '餐饮' : /车|地铁|公交|打车|油/.test(note) ? '交通' : /书|课|学习/.test(note) ? '学习' : '其他'
+        const result = careAddLedgerEntry({ amount: ledgerMatch[2], category, note })
+        return jsonResponse(result.ok ? { ...result, state: carePublicState() } : result, { status: result.ok ? 200 : 400, headers: cors })
+      }
+      const goalMatch = text.match(/^(?:目标|添加目标)[：:\s]*(.+)$/)
+      if (goalMatch) {
+        careHubState.study.goals.push({ id: nextId(), title: goalMatch[1].trim().slice(0, 120), done: false, createdAt: Date.now() })
+        careAppend('study', `新目标：${goalMatch[1].trim().slice(0, 120)}`, 'record')
+        careCommit()
+        return jsonResponse({ ok: true, state: carePublicState() }, { headers: cors })
+      }
+      const doneMatch = text.match(/^(?:完成|打勾)[：:\s]*(.+)$/)
+      if (doneMatch) {
+        const needle = doneMatch[1].trim()
+        const matches = careHubState.study.goals.filter((goal) => !goal.done && goal.title.includes(needle))
+        if (matches.length !== 1) return jsonResponse({ ok: false, error: matches.length ? '匹配到多个目标，请到学习清单勾选' : '没找到这个未完成目标' }, { status: 400, headers: cors })
+        matches[0].done = true
+        matches[0].doneAt = Date.now()
+        careAppend('study', `✅ 已完成：${matches[0].title}`, 'record')
+        careCommit()
+        return jsonResponse({ ok: true, state: carePublicState() }, { headers: cors })
+      }
+      return jsonResponse({ ok: false, error: '可以发“记账 午饭 25元”“目标 学完第三章”或“完成 第三章”' }, { status: 400, headers: cors })
     }
 
     // ---- Group chat (多AI群聊) — see this file's own "Group chat" section ----

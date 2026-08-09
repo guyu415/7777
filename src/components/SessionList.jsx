@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { Plus, Trash2, Edit3, Check, ChevronDown, Users } from 'lucide-react'
+import { Plus, Trash2, Edit3, Check, ChevronDown, Users, HeartHandshake } from 'lucide-react'
 import { useStore, deleteMessagesForSession } from '../store'
 import { deleteSessionMsgs } from '../services/sync'
 import DiarySection from './DiarySection'
@@ -23,7 +23,7 @@ function genId() {
   return Date.now().toString(36) + Math.random().toString(36).slice(2)
 }
 
-export default function SessionList({ theme, onSelectSession, onOpenGroupChat }) {
+export default function SessionList({ theme, onSelectSession, onOpenGroupChat, onOpenCareHub }) {
   const {
     sessions, currentSessionId, setCurrentSessionId,
     addSession, updateSession, deleteSession,
@@ -272,6 +272,17 @@ export default function SessionList({ theme, onSelectSession, onOpenGroupChat })
             <Plus size={11} /> 创建群聊
           </button>
         </div>
+        <button
+          onClick={() => onOpenCareHub?.()}
+          className="w-full flex items-center gap-3 px-4 py-3 mb-2 rounded-2xl text-left"
+          style={{ background: 'linear-gradient(135deg, rgba(235,247,255,.88), rgba(250,240,255,.88))', border: `1.5px solid ${primary}30`, boxShadow: `0 6px 22px ${primary}0d` }}
+        >
+          <div className="w-9 h-9 rounded-full flex items-center justify-center text-white shrink-0" style={{ background: `linear-gradient(135deg, ${primary}, #a27fc0)` }}><HeartHandshake size={17} /></div>
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-2"><span className="text-sm font-semibold" style={{ color: '#385d82' }}>生活关怀群</span><span className="text-[9px] px-1.5 py-0.5 rounded-full" style={{ color: primary, background: `${primary}15` }}>固定</span></div>
+            <div className="text-xs truncate mt-0.5" style={{ color: '#7a9cc0' }}>📰 新闻 · 🧾 记账 · 🧭 黄历 · 📚 学习</div>
+          </div>
+        </button>
         {groupChats.length === 0 ? (
           <div className="text-xs px-1 pb-2" style={{ color: '#a0b8d0' }}>还没有群聊，创建一个试试～</div>
         ) : (

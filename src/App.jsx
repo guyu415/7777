@@ -3,6 +3,7 @@ import { useStore, getCustomFont, getBlob, getMessages, saveMessage, saveBlob, d
 import { THEMES } from './themes'
 import ChatWindow from './components/Chat/ChatWindow'
 import GroupChatWindow from './components/GroupChat/GroupChatWindow'
+import CareHubWindow from './components/CareHub/CareHubWindow'
 import GlobalSettings from './components/GlobalSettings'
 import SessionSettings from './components/SessionSettings'
 import SessionList from './components/SessionList'
@@ -60,6 +61,12 @@ export default function App() {
       targetId = params.get('session')
     } else if (source === 'cc-proactive') {
       targetId = sessions?.find(s => s.providerName === 'claude-code-vps')?.id || null
+    } else if (source === 'care-hub') {
+      setCurrentView('careHub')
+      params.delete('source')
+      const next = `${window.location.pathname}${params.toString() ? `?${params}` : ''}${window.location.hash}`
+      window.history.replaceState({}, '', next)
+      return
     } else {
       return
     }
@@ -670,11 +677,13 @@ export default function App() {
           {currentView === 'groupChat' && currentGroupChatId && (
             <GroupChatWindow theme={theme} chatId={currentGroupChatId} onClose={() => setCurrentView('sessions')} />
           )}
+          {currentView === 'careHub' && <CareHubWindow theme={theme} onClose={() => setCurrentView('sessions')} />}
           {currentView === 'sessions' && (
             <SessionList
               theme={theme}
               onSelectSession={() => setCurrentView('chat')}
               onOpenGroupChat={(id) => { setCurrentGroupChatId(id); setCurrentView('groupChat') }}
+              onOpenCareHub={() => setCurrentView('careHub')}
             />
           )}
           {currentView === 'globalSettings' && <GlobalSettings theme={theme} onLogout={handleLogout} onForceSync={handleForceSync} />}
@@ -685,7 +694,7 @@ export default function App() {
           {currentView === 'codexMemory' && <CodexMemory theme={theme} onBack={() => setCurrentView('sessionSettings')} />}
         </div>
 
-        {currentView !== 'sessionSettings' && currentView !== 'voiceFavorites' && currentView !== 'chat' && currentView !== 'companionMemory' && currentView !== 'codexMemory' && currentView !== 'tidalMemory' && currentView !== 'groupChat' && (
+        {currentView !== 'sessionSettings' && currentView !== 'voiceFavorites' && currentView !== 'chat' && currentView !== 'companionMemory' && currentView !== 'codexMemory' && currentView !== 'tidalMemory' && currentView !== 'groupChat' && currentView !== 'careHub' && (
           <BottomNav currentView={currentView} onChange={setCurrentView} theme={theme} />
         )}
       </div>

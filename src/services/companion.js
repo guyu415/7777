@@ -473,6 +473,46 @@ function announceGroupUpdate(chat) {
   }
 }
 
+// ---------- 固定生活关怀群 ----------
+const careListeners = new Set()
+export function onCareHubUpdate(fn) {
+  careListeners.add(fn)
+  return () => careListeners.delete(fn)
+}
+function announceCareHubUpdate(state) {
+  for (const fn of careListeners) {
+    try { fn(state) } catch { /* isolate subscribers */ }
+  }
+}
+export async function getCareHubState() {
+  const { state } = await companionJson('/care/state')
+  return state
+}
+export async function updateCareHubConfig(patch) {
+  return companionJson('/care/config', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(patch) })
+}
+export async function runCareRole(role) {
+  return companionJson('/care/run', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ role }) })
+}
+export async function addCareLedgerEntry(entry) {
+  return companionJson('/care/ledger/add', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(entry) })
+}
+export async function deleteCareLedgerEntry(id) {
+  return companionJson('/care/ledger/delete', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id }) })
+}
+export async function addCareStudyGoal(goal) {
+  return companionJson('/care/study/add', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(goal) })
+}
+export async function toggleCareStudyGoal(id, done) {
+  return companionJson('/care/study/toggle', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id, done }) })
+}
+export async function deleteCareStudyGoal(id) {
+  return companionJson('/care/study/delete', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id }) })
+}
+export async function sendCareHubInput(text) {
+  return companionJson('/care/input', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text }) })
+}
+
 export async function listGroupChats() {
   const { chats } = await companionJson('/group/list')
   return chats
@@ -788,6 +828,10 @@ listeners.add(evt => {
     }
     if (m.type === 'group_update') {
       announceGroupUpdate(m.chat)
+      return
+    }
+    if (m.type === 'care_update') {
+      announceCareHubUpdate(m.state)
       return
     }
     if (m.type === 'codex_msg' || m.type === 'codex_msg_deleted' || m.type === 'codex_status' || m.type === 'codex_notice' || m.type === 'codex_turn_end'
