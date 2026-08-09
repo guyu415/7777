@@ -777,7 +777,7 @@ function DesktopPetWindow({ theme }) {
   const gestureSummaryPlain = describeGestureCounts(gestureCounts.current)
 
   // 菜单入口合并进右上角角标——不再有常驻的底部工具条。角标本身始终可点：
-  // 视觉上是一枚很小的银色雕花戒指，实际触控热区更大；短按时戒面展开，
+  // 视觉上是一枚真正镂空的银色雕花戒指，实际触控热区更大；短按时戒圈展开，
   // 按住后拖动才会改变桌宠位置。
   const badgeHitSize = 34
   const badgeVisualSize = toolbarOpen ? 28 : 20
@@ -821,12 +821,10 @@ function DesktopPetWindow({ theme }) {
         .pet-idle-cue{animation:pet-cue-float 2.2s ease-in-out infinite}
         .pet-secret-bulge{animation:pet-secret-pop .45s cubic-bezier(.2,.9,.25,1.15) forwards}
         .pet-flash-text{animation:pet-flash .7s ease forwards}
-        .pet-silver-ring{position:relative;display:grid;place-items:center;border-radius:50%;border:1px solid #7e8796;background:radial-gradient(circle at 38% 30%,#fff 0 12%,#dce5f1 25%,#9da7b5 43%,#f8fbff 54%,#737c8a 63%,#cbd2dc 74%,#7f8792 100%);box-shadow:inset 0 0 0 1px rgba(255,255,255,.9),inset 0 -2px 3px rgba(44,51,63,.42),0 2px 5px rgba(38,34,42,.22);transition:width .2s ease,height .2s ease,transform .2s ease,filter .2s ease;color:#536071}
-        .pet-silver-ring::before{content:'';position:absolute;inset:3px;border-radius:50%;border:1px solid rgba(255,255,255,.78);box-shadow:0 0 0 1px rgba(67,76,89,.35)}
-        .pet-silver-ring::after{content:'◇';position:absolute;left:50%;top:-7px;transform:translateX(-50%) rotate(45deg);width:8px;height:8px;display:grid;place-items:center;border-radius:2px;border:1px solid #8792a2;background:linear-gradient(135deg,#fff,#c9dbeb 48%,#8795a8);color:transparent;box-shadow:0 1px 2px rgba(40,45,55,.28)}
-        .pet-ring-scroll{position:absolute;top:50%;width:7px;height:8px;margin-top:-4px;border:1px solid #8e97a4;border-top-color:#eef2f7;border-radius:70% 30% 70% 30%;background:linear-gradient(145deg,#f8fafc,#929ba7);box-shadow:inset 0 0 1px #fff}
-        .pet-ring-scroll.left{left:-5px;transform:rotate(-24deg)}.pet-ring-scroll.right{right:-5px;transform:scaleX(-1) rotate(-24deg)}
-        .pet-silver-ring.open{transform:scale(1.03);filter:brightness(1.08)}
+        .pet-silver-ring{position:relative;display:block;transition:width .2s ease,height .2s ease,transform .2s ease,filter .2s ease;filter:drop-shadow(0 1px 2px rgba(35,39,48,.36));pointer-events:none}
+        .pet-silver-ring.open{transform:rotate(8deg);filter:brightness(1.08) drop-shadow(0 2px 3px rgba(35,39,48,.4))}
+        .pet-silver-ring img{display:block;width:100%;height:100%;object-fit:contain}
+        .pet-ring-count{position:absolute;right:-2px;top:-2px;display:grid;place-items:center;min-width:12px;height:12px;padding:0 3px;border-radius:999px;background:#d977a2;color:white;font-size:8px;line-height:1;box-shadow:0 1px 3px rgba(62,36,51,.28),0 0 0 1px rgba(255,255,255,.9)}
       `}</style>
 
       {/* 手势计数角标——紧贴桌宠肩侧、跟随桌宠位置移动，同时也是菜单入口与
@@ -848,9 +846,8 @@ function DesktopPetWindow({ theme }) {
         title="点按开菜单，按住拖动桌宠"
       >
         <span className={`pet-silver-ring${toolbarOpen ? ' open' : ''}`} style={{ width: badgeVisualSize, height: badgeVisualSize }}>
-          <span className="pet-ring-scroll left" />
-          <span className="pet-ring-scroll right" />
-          {toolbarOpen ? <X size={10} strokeWidth={2.4} /> : (pendingCount > 0 ? pendingCount : <span style={{ fontSize: 8, lineHeight: 1, textShadow: '0 1px 0 white' }}>✦</span>)}
+          <img src="/pets/silver-filigree-ring-hollow.png" alt="" draggable="false" />
+          {pendingCount > 0 && <span className="pet-ring-count">{pendingCount}</span>}
         </span>
       </button>
 
