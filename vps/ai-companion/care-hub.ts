@@ -132,3 +132,13 @@ export function ledgerMonthSummary(entries: LedgerEntry[], month: string) {
   }
   return { total: Math.round(total * 100) / 100, byCategory, count: selected.length }
 }
+
+export function careIsSevereOverspend(monthlyBudget: number, total: number): boolean {
+  return Number.isFinite(monthlyBudget) && monthlyBudget > 0 && Number.isFinite(total) && total >= monthlyBudget * 1.1
+}
+
+export function careOverdueDays(targetDate: string | undefined, today: string): number {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(targetDate || '') || !/^\d{4}-\d{2}-\d{2}$/.test(today)) return 0
+  const days = Math.floor((Date.parse(`${today}T00:00:00Z`) - Date.parse(`${targetDate}T00:00:00Z`)) / 86_400_000)
+  return Number.isFinite(days) ? Math.max(0, days) : 0
+}

@@ -72,6 +72,8 @@ import {
 import { splitCompletedCodexMessage } from './codex-chat-history.ts'
 import {
   CARE_ROLE_IDS,
+  careIsSevereOverspend,
+  careOverdueDays,
   careRoleIsDue,
   defaultCareHubState,
   ledgerMonthSummary,
@@ -3779,10 +3781,14 @@ function focusTick() {
   const k = focusDayKey(focusState.endAt)
   counts[k] = (Number(counts[k]) || 0) + 1
   const finishedManager = focusState.manager
+  const finishedTask = focusState.task
+  const finishedMinutes = focusState.minutes
+  const finishedStartedAt = focusState.startedAt
   focusState = { ...defaultFocusState(), completedByDay: counts, lastEndedReason: 'completed', updatedAt: Date.now() }
   saveFocusState()
   broadcastFocus()
   sendRaw({ type: 'focus_finished', reason: 'completed', manager: finishedManager })
+  void careRecordFocusCompletion(finishedTask, finishedMinutes, finishedStartedAt)
   log('focus_completed', { manager: finishedManager })
 }
 setInterval(focusTick, 1000)
@@ -3834,10 +3840,14 @@ function focusManagerFinish(caller: FocusManager): { ok: true } | { ok: false; r
   const k = focusDayKey()
   counts[k] = (Number(counts[k]) || 0) + 1
   const finishedManager = focusState.manager
+  const finishedTask = focusState.task
+  const finishedMinutes = focusState.minutes
+  const finishedStartedAt = focusState.startedAt
   focusState = { ...defaultFocusState(), completedByDay: counts, lastEndedReason: 'completed', updatedAt: Date.now() }
   saveFocusState()
   broadcastFocus()
   sendRaw({ type: 'focus_finished', reason: 'completed', manager: finishedManager })
+  void careRecordFocusCompletion(finishedTask, finishedMinutes, finishedStartedAt)
   log('focus_manager_finished', { manager: finishedManager })
   return { ok: true }
 }
@@ -6709,8 +6719,12 @@ async function mysteryCleanupGame(gameId: string, charIds: string[]): Promise<vo
 // consume or disturb ordinary chat context.
 const CARE_HUB_FILE = process.env.AI_COMPANION_CARE_HUB_FILE ?? join(ROOT, 'state', 'care-hub.json')
 const CARE_GEMINI_KEY_FILE = process.env.AI_COMPANION_GEMINI_KEY_FILE ?? join(ROOT, 'config', 'gemini.secret')
+const CARE_PROFILE_FILE = process.env.AI_COMPANION_CARE_PROFILE_FILE ?? join(ROOT, 'config', 'care-profile.json')
+const CARE_ALERTS_FILE = process.env.AI_COMPANION_CARE_ALERTS_FILE ?? join(ROOT, 'state', 'care-alerts.json')
 let careHubState: CareHubState = defaultCareHubState()
 let careRunningRole: CareRoleId | null = null
+let careAlertNotified = new Set<string>()
+const careAlertQueue = new Map<string, string>()
 
 function loadCareHub() {
   try { careHubState = normalizeCareHubState(JSON.parse(readFileSync(CARE_HUB_FILE, 'utf8'))) }
@@ -6722,6 +6736,24 @@ function saveCareHub() {
     const { runningRole: _running, ...persisted } = careHubState
     writeFileSync(CARE_HUB_FILE, JSON.stringify(persisted))
   } catch (err) { log('care_hub_save_error', { error: String(err) }) }
+}
+function loadCareAlertKeys() {
+  try {
+    const parsed = JSON.parse(readFileSync(CARE_ALERTS_FILE, 'utf8'))
+    careAlertNotified = new Set(Array.isArray(parsed?.notified) ? parsed.notified.filter((key: unknown) => typeof key === 'string').slice(-500) : [])
+  } catch { careAlertNotified = new Set() }
+}
+function saveCareAlertKeys() {
+  try {
+    mkdirSync(dirname(CARE_ALERTS_FILE), { recursive: true })
+    writeFileSync(CARE_ALERTS_FILE, JSON.stringify({ notified: [...careAlertNotified].slice(-500) }))
+  } catch (err) { log('care_alert_save_error', { error: String(err) }) }
+}
+function carePrivateProfile(): { bazi?: string } {
+  try {
+    const parsed = JSON.parse(readFileSync(CARE_PROFILE_FILE, 'utf8'))
+    return typeof parsed?.bazi === 'string' && parsed.bazi.trim() ? { bazi: parsed.bazi.trim().slice(0, 80) } : {}
+  } catch { return {} }
 }
 function carePublicState(): CareHubState {
   return { ...careHubState, runningRole: careRunningRole }
@@ -6739,6 +6771,7 @@ function careAppend(role: CareRoleId, text: string, kind: 'report' | 'record' | 
   careHubState.messages.push({ id: nextId(), role, text: text.trim(), ts: Date.now(), kind })
 }
 loadCareHub()
+loadCareAlertKeys()
 
 const CARE_ROLE_NAMES: Record<CareRoleId, string> = {
   news: '晨间新闻', ledger: '记账员', almanac: '黄历运势', study: '学习监督',
@@ -6796,8 +6829,8 @@ function careRolePrompt(role: CareRoleId, today: string, evidence = ''): { syste
     instruction: `下面是服务端刚刚联网取得的实时新闻候选。请筛选恰好 5 条真正值得知道的新闻，兼顾国内、国际、科技、经济与社会影响，避免五条都来自同一领域。\n\n每条按“1. 标题 / 摘要 / 为什么值得关注 / 来源”写，摘要 1—2 句；来源必须原样保留候选里的媒体名和完整 URL。末尾用一句话概括今天值得持续关注的主线。\n\n${evidence}`,
   }
   if (role === 'almanac') return {
-    system: `${common}\n你负责实用型每日黄历与轻量运势。服务端已实时取得当天黄历来源；只能依据来源整理。黄历属于民俗参考，不能冒充科学结论；不要制造恐惧或下确定性断言。`,
-    instruction: `根据下面本轮联网取得的来源，播报 ${today} 的日期与农历、宜与忌、今日生活注意事项、轻量整体运势。正文直接保留完整来源 URL，并明确“民俗内容仅供参考”。内容短而有用，不要按生肖逐个展开。\n\n${evidence}`,
+    system: `${common}\n你负责实用型每日黄历与轻量运势。服务端已实时取得当天黄历来源；只能依据来源整理。黄历属于民俗参考，不能冒充科学结论；不要制造恐惧或下确定性断言。${carePrivateProfile().bazi ? `\n用户的私密命盘资料是：${carePrivateProfile().bazi}。只在内部用于调整当天建议，输出中禁止复述、展示或解释这组原始资料，也不要每次声明“已结合八字”。` : ''}`,
+    instruction: `根据下面本轮联网取得的来源，播报 ${today} 的日期与农历、宜与忌、今日生活注意事项、针对用户的轻量整体运势。正文直接保留完整来源 URL，并明确“民俗内容仅供参考”。内容短而有用，不要按生肖逐个展开。\n\n${evidence}`,
   }
   if (role === 'ledger') {
     const month = today.slice(0, 7)
@@ -6808,10 +6841,18 @@ function careRolePrompt(role: CareRoleId, today: string, evidence = ''): { syste
     }
   }
   const goals = careHubState.study.goals.map((g) => ({ title: g.title, done: g.done, targetDate: g.targetDate || null }))
+  const recentFocus = careHubState.messages.filter((m) => m.role === 'study' && m.text.startsWith('🍅') && zonedDateTime(new Date(m.ts), careHubState.config.timezone).date === today).slice(-8).map((m) => m.text)
   return {
     system: `${common}\n你负责监督学习清单。只能依据给定清单判断完成情况，绝不能擅自把目标标为完成。`,
-    instruction: `当前学习目标：${JSON.stringify(goals)}。请做一段不超过 220 字的检查：完成数量、尚未完成项、临近截止项，以及一个可立刻开始的最小行动。若清单为空，提醒用户先预设目标。`,
+    instruction: `当前学习目标：${JSON.stringify(goals)}。最近完成的番茄钟：${JSON.stringify(recentFocus)}。请做一段不超过 220 字的检查：先回应刚完成的专注（若有），再说明目标完成数量、尚未完成项、临近截止项，以及一个可立刻开始的最小行动。若清单为空，也要认可已完成的专注，再提醒用户预设目标。`,
   }
+}
+
+function careRedactPrivateProfile(text: string): string {
+  const bazi = carePrivateProfile().bazi
+  if (!bazi) return text
+  const pattern = bazi.trim().split(/\s+/).map((part) => part.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('\\s*')
+  return text.replace(new RegExp(pattern, 'g'), '').replace(/\n{3,}/g, '\n\n').trim()
 }
 
 async function careRunGemini(model: string, system: string, instruction: string): Promise<string> {
@@ -6853,17 +6894,20 @@ async function careRunRole(role: CareRoleId, manual = false): Promise<{ ok: bool
     const evidence = role === 'news' ? await careNewsEvidence() : role === 'almanac' ? await careAlmanacEvidence(date) : ''
     const prompt = careRolePrompt(role, date, evidence)
     const selectedModel = config.model || (config.runtime === 'codex' ? (codexSelectedModel || codexModelList.find((item) => item.isDefault)?.id || '') : config.runtime === 'gemini' ? 'gemini-3.5-flash-lite' : 'claude-sonnet-4-6')
-    const text = config.runtime === 'gemini'
+    let text = config.runtime === 'gemini'
       ? await careRunGemini(selectedModel, prompt.system, prompt.instruction)
       : await mysteryRunTurn('care-hub', role, config.runtime, selectedModel, prompt.system, prompt.instruction).then((result) => {
           if ('error' in result) throw new Error(result.error)
           return result.text
         })
+    if (role === 'almanac') text = careRedactPrivateProfile(text)
     if (role === 'news' && ((text.match(/(?:^|\n)\s*[1-5][.、)]/g) || []).length < 5 || (text.match(/https?:\/\/[^\s)]+/g) || []).length < 5)) throw new Error('联网早报未完整返回五条新闻及来源，已拒绝发布')
     if (role === 'almanac' && !/https?:\/\//.test(text)) throw new Error('黄历结果缺少可核验来源，已拒绝发布')
     careAppend(role, text, role === 'ledger' || role === 'study' ? 'reminder' : 'report')
-    config.lastRunDate = date
-    config.lastAttemptDate = date
+    if (!manual) {
+      config.lastRunDate = date
+      config.lastAttemptDate = date
+    }
     config.lastError = undefined
     careCommit()
     void sendCompanionPush(`${CARE_ROLE_NAMES[role]}已送达`, { title: `生活关怀群 · ${CARE_ROLE_NAMES[role]}`, tag: `care-${role}-${date}`, url: '/?source=care-hub' })
@@ -6893,11 +6937,65 @@ function careAddLedgerEntry(raw: any): { ok: boolean; error?: string } {
   careHubState.ledger.entries.push({ id: nextId(), amount, category, note, date, ts: Date.now() })
   careAppend('ledger', `已记账：${category} ¥${amount.toFixed(2)}${note ? ` · ${note}` : ''}`, 'record')
   careCommit()
+  careEvaluateAlerts()
   return { ok: true }
+}
+
+function careRecordFocusCompletion(task: string, minutes: number, startedAt: number): void {
+  const label = String(task || '').trim() || '未命名任务'
+  careAppend('study', `🍅 完成专注：${label} · ${Math.max(1, Math.round(minutes || 0))} 分钟`, 'record')
+  careCommit()
+  log('care_focus_completed_recorded', { task: label, minutes, startedAt })
+  scheduleCareStudyAcknowledgement()
+}
+
+function scheduleCareStudyAcknowledgement(attempt = 0) {
+  if (!careRunningRole) {
+    setTimeout(() => void careRunRole('study', true), 0)
+    return
+  }
+  if (attempt < 12) setTimeout(() => scheduleCareStudyAcknowledgement(attempt + 1), 5_000)
+}
+
+function queueCareAlert(key: string, message: string) {
+  if (careAlertNotified.has(key) || careAlertQueue.has(key)) return
+  careAlertQueue.set(key, message)
+  dispatchCareAlert()
+}
+
+function dispatchCareAlert() {
+  if (currentTurn || !careAlertQueue.size) return
+  const first = careAlertQueue.entries().next().value as [string, string] | undefined
+  if (!first) return
+  const [key, message] = first
+  careAlertQueue.delete(key)
+  careAlertNotified.add(key)
+  saveCareAlertKeys()
+  const id = nextId()
+  startTurn(id)
+  deliver(id, `[系统提示，不是用户直接发的消息]生活关怀群检测到一项需要你介入的情况：${message}\n\n请结合你和用户平时的相处方式，在主聊天窗里主动说她几句：明确指出问题，但不要羞辱、恐吓或夸大；给一个马上能做的具体动作。可以用 reply 或 send_voice 正常发给用户。`)
+  log('care_alert_sent_to_cc', { key, id })
+}
+setInterval(dispatchCareAlert, 15_000)
+
+function careEvaluateAlerts() {
+  const { date } = zonedDateTime(new Date(), careHubState.config.timezone)
+  const month = date.slice(0, 7)
+  const budget = careHubState.ledger.monthlyBudget
+  const summary = ledgerMonthSummary(careHubState.ledger.entries, month)
+  if (careIsSevereOverspend(budget, summary.total)) {
+    queueCareAlert(`overspend:${month}`, `本月预算是 ${budget} 元，当前已支出 ${summary.total} 元，超过预算至少 10%。`)
+  }
+  for (const goal of careHubState.study.goals) {
+    if (goal.done || !goal.targetDate) continue
+    const overdueDays = careOverdueDays(goal.targetDate, date)
+    if (overdueDays >= 3) queueCareAlert(`overdue:${goal.id}`, `学习目标“${goal.title}”已经逾期 ${overdueDays} 天且仍未完成。`)
+  }
 }
 
 async function careTick() {
   if (careRunningRole) return
+  careEvaluateAlerts()
   const { date, time } = zonedDateTime(new Date(), careHubState.config.timezone)
   for (const role of CARE_ROLE_IDS) {
     if (careRoleIsDue(careHubState.config.roles[role], date, time)) {
@@ -8202,6 +8300,7 @@ Bun.serve<{ authed: true }>({
         careHubState.ledger.monthlyBudget = Math.round(budget * 100) / 100
       }
       careCommit()
+      careEvaluateAlerts()
       return jsonResponse({ ok: true, state: carePublicState() }, { headers: cors })
     }
     if (url.pathname === '/care/run' && req.method === 'POST') {
@@ -8250,6 +8349,7 @@ Bun.serve<{ authed: true }>({
       careHubState.study.goals.push({ id: nextId(), title, targetDate, done: false, createdAt: Date.now() })
       careAppend('study', `新目标：${title}${targetDate ? ` · 截止 ${targetDate}` : ''}`, 'record')
       careCommit()
+      careEvaluateAlerts()
       return jsonResponse({ ok: true, state: carePublicState() }, { headers: cors })
     }
     if (url.pathname === '/care/study/toggle' && req.method === 'POST') {
@@ -8264,6 +8364,7 @@ Bun.serve<{ authed: true }>({
       goal.doneAt = goal.done ? Date.now() : undefined
       careAppend('study', `${goal.done ? '✅ 已完成' : '↩️ 重新打开'}：${goal.title}`, 'record')
       careCommit()
+      careEvaluateAlerts()
       return jsonResponse({ ok: true, state: carePublicState() }, { headers: cors })
     }
     if (url.pathname === '/care/study/delete' && req.method === 'POST') {

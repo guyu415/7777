@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { careRoleIsDue, defaultCareHubState, isValidCareTime, ledgerMonthSummary, normalizeCareHubState, sanitizeCareRoleConfig, zonedDateTime } from '../care-hub'
+import { careIsSevereOverspend, careOverdueDays, careRoleIsDue, defaultCareHubState, isValidCareTime, ledgerMonthSummary, normalizeCareHubState, sanitizeCareRoleConfig, zonedDateTime } from '../care-hub'
 
 describe('care hub', () => {
   it('validates push time and sanitizes role config', () => {
@@ -39,5 +39,13 @@ describe('care hub', () => {
       { id: '3', amount: 8, category: '交通', note: '', date: '2026-07-31', ts: 3 },
     ], '2026-08')
     expect(result).toEqual({ total: 32.5, byCategory: { 餐饮: 32.5 }, count: 2 })
+  })
+
+  it('only escalates genuinely severe overspending and overdue goals', () => {
+    expect(careIsSevereOverspend(1000, 1099)).toBe(false)
+    expect(careIsSevereOverspend(1000, 1100)).toBe(true)
+    expect(careIsSevereOverspend(0, 9999)).toBe(false)
+    expect(careOverdueDays('2026-08-06', '2026-08-09')).toBe(3)
+    expect(careOverdueDays('2026-08-10', '2026-08-09')).toBe(0)
   })
 })

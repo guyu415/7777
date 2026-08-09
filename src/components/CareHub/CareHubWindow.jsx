@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { ArrowLeft, BarChart3, BookOpenCheck, Check, CircleDollarSign, Loader2, Newspaper, Plus, RefreshCw, Send, Settings2, Sparkles, Trash2 } from 'lucide-react'
+import { ArrowLeft, BarChart3, BookOpenCheck, Check, CircleDollarSign, Loader2, Newspaper, RefreshCw, Send, Settings2, Sparkles, Trash2 } from 'lucide-react'
 import {
   addCareLedgerEntry, addCareStudyGoal, deleteCareLedgerEntry, deleteCareStudyGoal,
   getCareHubState, onCareHubUpdate, runCareRole, sendCareHubInput,
@@ -13,6 +13,14 @@ const ROLES = {
   study: { name: '学习监督', icon: BookOpenCheck, emoji: '📚', color: '#e18a72', desc: '目标检查与清单打勾' },
 }
 const ROLE_IDS = Object.keys(ROLES)
+const LEDGER_ITEMS = [
+  { id: '早餐', emoji: '🥣', category: '餐饮' }, { id: '午餐', emoji: '🍚', category: '餐饮' },
+  { id: '晚餐', emoji: '🍲', category: '餐饮' }, { id: '零食饮料', emoji: '🧋', category: '餐饮' },
+  { id: '交通', emoji: '🚕', category: '交通' }, { id: '购物', emoji: '🛍️', category: '购物' },
+  { id: '学习', emoji: '📖', category: '学习' }, { id: '医疗', emoji: '💊', category: '医疗' },
+  { id: '娱乐', emoji: '🎮', category: '娱乐' }, { id: '居住', emoji: '🏠', category: '居住' },
+  { id: '其他', emoji: '🧾', category: '其他' }, { id: '自定义', emoji: '✏️', category: '其他' },
+]
 
 function LinkText({ text }) {
   const parts = String(text || '').split(/(https?:\/\/[^\s)]+)/g)
@@ -35,7 +43,7 @@ export default function CareHubWindow({ theme, onClose }) {
   const [error, setError] = useState('')
   const [input, setInput] = useState('')
   const [sending, setSending] = useState(false)
-  const [expense, setExpense] = useState({ amount: '', category: '餐饮', note: '' })
+  const [expense, setExpense] = useState({ amount: '', item: '午餐', custom: '' })
   const [goal, setGoal] = useState({ title: '', targetDate: '' })
   const [draftRoles, setDraftRoles] = useState(null)
   const [budget, setBudget] = useState('')
@@ -168,9 +176,16 @@ export default function CareHubWindow({ theme, onClose }) {
           </Panel>
           <Panel>
             <div className="text-sm font-semibold mb-3" style={{ color: '#46657c' }}>记一笔</div>
-            <form onSubmit={async (e) => { e.preventDefault(); if (await action(() => addCareLedgerEntry(expense))) setExpense({ amount: '', category: expense.category, note: '' }) }} className="space-y-2">
-              <div className="flex gap-2"><input required inputMode="decimal" value={expense.amount} onChange={(e) => setExpense({ ...expense, amount: e.target.value })} placeholder="金额" className="min-w-0 flex-1 rounded-xl px-3 py-2.5 text-sm outline-none" style={{ background: '#f5f8fa' }} /><select value={expense.category} onChange={(e) => setExpense({ ...expense, category: e.target.value })} className="rounded-xl px-2 text-sm outline-none" style={{ background: '#f5f8fa', color: '#536d80' }}>{['餐饮', '交通', '购物', '学习', '娱乐', '居住', '医疗', '其他'].map((x) => <option key={x}>{x}</option>)}</select></div>
-              <div className="flex gap-2"><input value={expense.note} onChange={(e) => setExpense({ ...expense, note: e.target.value })} placeholder="备注（可不填）" className="min-w-0 flex-1 rounded-xl px-3 py-2.5 text-sm outline-none" style={{ background: '#f5f8fa' }} /><button className="rounded-xl px-4 text-white" style={{ background: '#56a58d' }}><Plus size={16} /></button></div>
+            <form onSubmit={async (e) => {
+              e.preventDefault()
+              const selected = LEDGER_ITEMS.find((item) => item.id === expense.item) || LEDGER_ITEMS[0]
+              const note = expense.item === '自定义' ? expense.custom.trim() : expense.item
+              if (!note) return setError('请填写消费事项')
+              if (await action(() => addCareLedgerEntry({ amount: expense.amount, category: selected.category, note }))) setExpense({ ...expense, amount: '', custom: '' })
+            }} className="space-y-3">
+              <div className="grid grid-cols-4 gap-1.5">{LEDGER_ITEMS.map((item) => <button key={item.id} type="button" onClick={() => setExpense({ ...expense, item: item.id })} className="rounded-xl py-2 text-[11px]" style={{ background: expense.item === item.id ? '#dff0eb' : '#f5f8fa', color: expense.item === item.id ? '#3d7d6b' : '#667e91', border: `1px solid ${expense.item === item.id ? '#8bc5b4' : 'transparent'}` }}><span className="block text-base leading-4 mb-1">{item.emoji}</span>{item.id}</button>)}</div>
+              {expense.item === '自定义' && <input required value={expense.custom} onChange={(e) => setExpense({ ...expense, custom: e.target.value })} placeholder="是什么花费" className="w-full rounded-xl px-3 py-2.5 text-sm outline-none" style={{ background: '#f5f8fa' }} />}
+              <div className="flex gap-2"><input required inputMode="decimal" value={expense.amount} onChange={(e) => setExpense({ ...expense, amount: e.target.value })} placeholder="只需输入金额" className="min-w-0 flex-1 rounded-xl px-3 py-2.5 text-sm outline-none" style={{ background: '#f5f8fa' }} /><button className="rounded-xl px-5 text-white text-xs font-medium" style={{ background: '#56a58d' }}>记账</button></div>
             </form>
           </Panel>
           <Panel><div className="text-sm font-semibold mb-2" style={{ color: '#46657c' }}>最近记录</div>{[...monthEntries].reverse().map((entry) => <div key={entry.id} className="flex items-center gap-2 py-2 border-b last:border-0" style={{ borderColor: '#edf2f5' }}><div className="flex-1 min-w-0"><div className="text-xs font-medium" style={{ color: '#526b7d' }}>{entry.category} · {entry.note || '无备注'}</div><div className="text-[10px]" style={{ color: '#9aabba' }}>{entry.date}</div></div><span className="text-sm" style={{ color: '#446b64' }}>¥{entry.amount.toFixed(2)}</span><button onClick={() => action(() => deleteCareLedgerEntry(entry.id))} style={{ color: '#b6c1c9' }}><Trash2 size={13} /></button></div>)}</Panel>
@@ -194,7 +209,7 @@ export default function CareHubWindow({ theme, onClose }) {
         </div>}
       </main>
 
-      {tab === 'chat' && <form onSubmit={submitQuick} className="shrink-0 px-3 py-3 flex gap-2" style={{ background: 'rgba(255,255,255,.82)', borderTop: '1px solid rgba(120,160,210,.12)' }}><input value={input} onChange={(e) => setInput(e.target.value)} placeholder="记账 午饭25元 / 目标… / 完成…" className="min-w-0 flex-1 rounded-2xl px-4 py-2.5 text-sm outline-none" style={{ background: '#f1f5f8', color: '#456176' }} /><button disabled={!input.trim() || sending} className="w-10 h-10 rounded-full flex items-center justify-center text-white disabled:opacity-40" style={{ background: primary }}>{sending ? <Loader2 size={16} className="animate-spin" /> : <Send size={16} />}</button></form>}
+      {tab === 'chat' && <form onSubmit={submitQuick} className="shrink-0 px-3 py-3 flex gap-2" style={{ background: 'rgba(255,255,255,.82)', borderTop: '1px solid rgba(120,160,210,.12)' }}><input value={input} onChange={(e) => setInput(e.target.value)} placeholder="目标… / 完成…（记账请点“账本”快捷选择）" className="min-w-0 flex-1 rounded-2xl px-4 py-2.5 text-sm outline-none" style={{ background: '#f1f5f8', color: '#456176' }} /><button disabled={!input.trim() || sending} className="w-10 h-10 rounded-full flex items-center justify-center text-white disabled:opacity-40" style={{ background: primary }}>{sending ? <Loader2 size={16} className="animate-spin" /> : <Send size={16} />}</button></form>}
     </div>
   )
 }
