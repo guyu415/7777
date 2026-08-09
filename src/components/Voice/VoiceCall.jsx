@@ -39,7 +39,12 @@ export default function VoiceCall({ theme, onClose, audioKit }) {
       baseUrl: session?.baseUrl || provider?.baseUrl || apiBaseUrl,
       model: session?.model || model,
       providerName: session?.providerName || '',
-      systemPrompt: session?.systemPrompt !== undefined ? (session.systemPrompt || systemPrompt) : systemPrompt,
+      // Codex's prompt is thread-scoped and must match useCodexChat exactly;
+      // falling back to the global API prompt here would silently rewrite
+      // the persistent Codex thread's persona when a call starts.
+      systemPrompt: session?.providerName === 'codex-vps'
+        ? (session?.systemPrompt || '')
+        : session?.systemPrompt !== undefined ? (session.systemPrompt || systemPrompt) : systemPrompt,
       workerUrl, useWorkerProxy,
       ttsApiKey: session?.ttsApiKey || ttsApiKey,
       ttsGroupId: session?.ttsGroupId || ttsGroupId,

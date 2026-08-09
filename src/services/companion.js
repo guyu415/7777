@@ -795,6 +795,106 @@ export function sendCodexMessage(text, imageUrl, options = {}) {
   return sendRaw(buildCodexMessagePayload({ id, text, segments: options?.segments, imageUrl, file: options?.file, sessionId, prompt, clientTime: clientTimeContext() }))
 }
 
+/**
+ * Voice-call adapter for the persistent Codex runtime.
+ *
+ * This deliberately mirrors streamChatViaCompanion's { text } async-
+ * generator contract so callers can route a transcribed turn through the
+ * SAME Codex thread used by typed chat. codex_msg streaming updates contain
+ * the whole answer-so-far, not deltas, so this adapter converts them back to
+ * deltas and ignores the final bubble-splitting replay.
+ */
+export async function* streamChatViaCodex({ text, sessionId, prompt = '', signal }) {
+  if (signal?.aborted) return
+
+  const wantedSessionId = normalizeCodexSessionId(sessionId)
+  const queue = []
+  let wake = null
+  let finishError = null
+  let sawStreamingReply = false
+  const streamedTextById = new Map()
+  const deliveredVoiceIds = new Set()
+
+  const push = (item) => {
+    if (wake) {
+      const resolve = wake
+      wake = null
+      resolve(item)
+    } else {
+      queue.push(item)
+    }
+  }
+  const next = () => queue.length
+    ? Promise.resolve(queue.shift())
+    : new Promise(resolve => { wake = resolve })
+
+  const unsubscribe = onCodexEvent((evt) => {
+    if (normalizeCodexSessionId(evt.sessionId) !== wantedSessionId) return
+
+    if (evt.type === 'codex_turn_busy' || evt.type === 'codex_reset_busy') {
+      finishError = new Error(evt.type === 'codex_turn_busy'
+        ? 'Codex 正在处理上一轮，请稍候再说'
+        : 'Codex 正在清空对话，请稍候再说')
+      push({ done: true })
+      return
+    }
+    if (evt.type === 'codex_notice' && evt.kind === 'error') {
+      finishError = new Error(evt.message || 'Codex 回复失败')
+      push({ done: true })
+      return
+    }
+    if (evt.type === 'codex_turn_end') {
+      push({ done: true })
+      return
+    }
+    if (evt.type !== 'codex_msg' || evt.msg?.from !== 'codex') return
+
+    const msg = evt.msg
+    const value = msg.text || ''
+    if (msg.kind === 'voice') {
+      if (value && !deliveredVoiceIds.has(msg.id)) {
+        deliveredVoiceIds.add(msg.id)
+        push({ text: value })
+      }
+      return
+    }
+    if (msg.streaming) {
+      sawStreamingReply = true
+      const previous = streamedTextById.get(msg.id) || ''
+      const delta = value.startsWith(previous) ? value.slice(previous.length) : value
+      streamedTextById.set(msg.id, value)
+      if (delta) push({ text: delta })
+      return
+    }
+    // turn completion re-broadcasts the streamed answer as one or more
+    // finalized bubbles. It is history/UI normalization, not new speech.
+    if (!sawStreamingReply && value) push({ text: value })
+  })
+
+  let aborted = false
+  const onAbort = () => {
+    aborted = true
+    push({ done: true })
+    stopCodex(wantedSessionId).catch(() => {})
+  }
+  signal?.addEventListener('abort', onAbort)
+
+  try {
+    selectCodexSession(wantedSessionId)
+    const sent = sendCodexMessage(text, undefined, { sessionId: wantedSessionId, prompt })
+    if (!sent) throw new Error('companion 未连接')
+    while (true) {
+      const item = await next()
+      if (item.done) break
+      yield item
+    }
+    if (!aborted && finishError) throw finishError
+  } finally {
+    signal?.removeEventListener('abort', onAbort)
+    unsubscribe()
+  }
+}
+
 listeners.add(evt => {
   if (evt.kind === 'wire') {
     const m = evt.wire

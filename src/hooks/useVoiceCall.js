@@ -1,6 +1,7 @@
 import { useState, useRef, useCallback } from 'react'
 import { useStore, saveMessage } from '../store'
 import { streamChat } from '../services/claude'
+import { streamChatViaCompanion, streamChatViaCodex } from '../services/companion'
 import { fetchTTSAudio } from '../services/tts'
 import { saveSessionMsgs } from '../services/sync'
 
@@ -156,10 +157,19 @@ export function useVoiceCall() {
     setUserCaption(text)
     setAiCaption('')
 
-    const state = useStore.getState()
-    const userMsg = { id: genId(), conversationId: sessionId, role: 'user', type: 'text', content: text, timestamp: Date.now() }
-    state.addMessage(userMsg)
-    try { await saveMessage(userMsg) } catch {}
+    const isClaudeVps = cfg.providerName === 'claude-code-vps'
+    const isCodexVps = cfg.providerName === 'codex-vps'
+    const isPersistentVps = isClaudeVps || isCodexVps
+
+    // VPS runtimes own their history server-side. Persisting a second local
+    // copy here was the other half of the split-brain bug: the call looked
+    // like it belonged to the open chat while its model turn went elsewhere.
+    if (!isPersistentVps) {
+      const state = useStore.getState()
+      const userMsg = { id: genId(), conversationId: sessionId, role: 'user', type: 'text', content: text, timestamp: Date.now() }
+      state.addMessage(userMsg)
+      try { await saveMessage(userMsg) } catch {}
+    }
 
     // 上下文：本会话最近 24 条（含刚说的这句），首条必须是 user
     let ctx = useStore.getState().messages
@@ -208,14 +218,19 @@ export function useVoiceCall() {
     let full = ''
     let segBuf = ''
     try {
-      for await (const chunk of streamChat({
-        apiKey: cfg.apiKey, apiBaseUrl: cfg.baseUrl, model: cfg.model,
-        systemPrompt: cfg.systemPrompt + CALL_RULES,
-        messages: ctx,
-        workerUrl: cfg.workerUrl, useWorkerProxy: cfg.useWorkerProxy,
-        signal: controller.signal,
-        disableThinking: true, webSearch: false, providerName: cfg.providerName,
-      })) {
+      const chunkSource = isCodexVps
+        ? streamChatViaCodex({ text, sessionId, prompt: cfg.systemPrompt, signal: controller.signal })
+        : isClaudeVps
+          ? streamChatViaCompanion({ text, signal: controller.signal })
+          : streamChat({
+              apiKey: cfg.apiKey, apiBaseUrl: cfg.baseUrl, model: cfg.model,
+              systemPrompt: cfg.systemPrompt + CALL_RULES,
+              messages: ctx,
+              workerUrl: cfg.workerUrl, useWorkerProxy: cfg.useWorkerProxy,
+              signal: controller.signal,
+              disableThinking: true, webSearch: false, providerName: cfg.providerName,
+            })
+      for await (const chunk of chunkSource) {
         if (!chunk.text) continue
         full += chunk.text
         segBuf += chunk.text
@@ -244,11 +259,15 @@ export function useVoiceCall() {
     if (!blobQueue.length) pushSeg(spoken) // 一句都没切出来的兜底
     queueClosed = true
 
-    const aiMsg = { id: genId(), conversationId: sessionId, role: 'assistant', type: 'text', content: spoken, timestamp: Date.now() }
-    useStore.getState().addMessage(aiMsg)
-    try { await saveMessage(aiMsg) } catch {}
+    if (!isPersistentVps) {
+      const aiMsg = { id: genId(), conversationId: sessionId, role: 'assistant', type: 'text', content: spoken, timestamp: Date.now() }
+      useStore.getState().addMessage(aiMsg)
+      try { await saveMessage(aiMsg) } catch {}
+    }
     setAiCaption(spoken)
-    useStore.getState().updateSession(sessionId, { lastMsgPreview: spoken.slice(0, 40), lastMsgTime: Date.now() })
+    if (!isPersistentVps) {
+      useStore.getState().updateSession(sessionId, { lastMsgPreview: spoken.slice(0, 40), lastMsgTime: Date.now() })
+    }
 
     await consumer // 等所有句子播完
     if (activeRef.current) setTimeout(() => listen(), 250)
@@ -257,7 +276,8 @@ export function useVoiceCall() {
   // audioKit：调用方在用户点击的调用栈里创建并解锁的 { el: <audio>, ctx: AudioContext }
   const startCall = useCallback(({ sessionId, audioKit, ...cfg }) => {
     if (!SpeechRecognitionAPI) { setError('此浏览器不支持语音识别，无法通话'); return false }
-    if (!cfg.apiKey) { setError('请先在设置中配置 API Key'); return false }
+    const isPersistentVps = cfg.providerName === 'claude-code-vps' || cfg.providerName === 'codex-vps'
+    if (!isPersistentVps && !cfg.apiKey) { setError('请先在设置中配置 API Key'); return false }
     if (!cfg.ttsApiKey || !cfg.ttsGroupId) { setError('请先在设置中配置语音（TTS）密钥'); return false }
     sessionIdRef.current = sessionId || 'main'
     cfgRef.current = cfg
@@ -311,10 +331,12 @@ export function useVoiceCall() {
     audioCtxRef.current = null
     if (ctx) { try { ctx.close() } catch {} }
     setSt('idle')
-    // 通话内容整体同步到云端（一次写入）
+    // 普通 API 会话的通话内容整体同步到云端（一次写入）。VPS 会话
+    // 已由服务端持久化，重复上传本地副本会重新制造两套历史。
     const password = localStorage.getItem('auth.password')
     const sessionId = sessionIdRef.current
-    if (password) {
+    const providerName = cfgRef.current?.providerName
+    if (password && providerName !== 'claude-code-vps' && providerName !== 'codex-vps') {
       const msgs = useStore.getState().messages.filter(m => m.conversationId === sessionId && !m.streaming)
       if (msgs.length) saveSessionMsgs(password, sessionId, msgs).catch(() => {})
     }
