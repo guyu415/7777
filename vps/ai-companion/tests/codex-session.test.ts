@@ -7,6 +7,8 @@ import {
   buildCodexContextMigrationText,
   codexSessionNeedsRecovery,
   codexRuntimeRestartDecision,
+  isCodexAlreadyInitializedError,
+  codexReconnectDelayMs,
 } from '../codex-session.ts'
 
 describe('Codex session prompt protocol helpers', () => {
@@ -63,5 +65,19 @@ describe('Codex session prompt protocol helpers', () => {
     expect(codexSessionNeedsRecovery(null, [{ from: 'codex' }])).toBe(true)
     expect(codexSessionNeedsRecovery(null, [{ from: 'system' }])).toBe(false)
     expect(codexSessionNeedsRecovery(null, [])).toBe(false)
+  })
+
+  test('only the exact already-initialized response is safe on daemon reconnect', () => {
+    expect(isCodexAlreadyInitializedError(new Error('Already initialized'))).toBe(true)
+    expect(isCodexAlreadyInitializedError(' already initialized ')).toBe(true)
+    expect(isCodexAlreadyInitializedError(new Error('Not initialized'))).toBe(false)
+    expect(isCodexAlreadyInitializedError(new Error('Already initialized but incompatible'))).toBe(false)
+  })
+
+  test('unexpected bridge reconnect uses bounded exponential backoff', () => {
+    expect(codexReconnectDelayMs(1)).toBe(500)
+    expect(codexReconnectDelayMs(2)).toBe(1000)
+    expect(codexReconnectDelayMs(5)).toBe(8000)
+    expect(codexReconnectDelayMs(20)).toBe(10_000)
   })
 })

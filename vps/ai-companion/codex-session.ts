@@ -66,3 +66,18 @@ export function codexRuntimeRestartDecision(
   if (snapshot.activeTurns > 0 && !force) return { allowed: false, reason: 'active_turn' }
   return { allowed: true, reason: force ? 'forced' : 'idle' }
 }
+
+// A dedicated app-server survives channel-server restarts. Reconnecting to
+// that same daemon legitimately receives this exact response because the
+// upstream process is already initialized by the previous bridge client.
+// Keep the match deliberately narrow: every other initialize error remains
+// fatal and visible instead of being accidentally swallowed.
+export function isCodexAlreadyInitializedError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : typeof error === 'string' ? error : ''
+  return message.trim().toLowerCase() === 'already initialized'
+}
+
+export function codexReconnectDelayMs(attempt: number): number {
+  const safeAttempt = Math.max(1, Math.floor(Number(attempt) || 1))
+  return Math.min(10_000, 500 * (2 ** (safeAttempt - 1)))
+}

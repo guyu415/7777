@@ -41,6 +41,8 @@ import {
   buildCodexContextMigrationText,
   codexSessionNeedsRecovery,
   codexRuntimeRestartDecision,
+  isCodexAlreadyInitializedError,
+  codexReconnectDelayMs,
 } from './codex-session.ts'
 import {
   DEFAULT_TIDAL_CONFIG,
@@ -4667,6 +4669,8 @@ const CODEX_EXISTING_BRIDGE_SOCKET = process.env.AI_COMPANION_CODEX_BRIDGE_SOCKE
 const CODEX_BRIDGE_CLIENT = process.env.AI_COMPANION_CODEX_BRIDGE_CLIENT ?? join(ROOT, 'scripts', 'codex-fd-bridge')
 const CODEX_DAEMON_SOCKET = process.env.AI_COMPANION_CODEX_DAEMON_SOCKET ?? '/run/ai-companion-codex/daemon.sock'
 let codexAttachedExistingProcess = false
+let codexReconnectTimer: ReturnType<typeof setTimeout> | null = null
+let codexReconnectAttempts = 0
 
 function codexWriteLine(obj: unknown) {
   if (!codexProc) return
@@ -5088,10 +5092,40 @@ function codexHandleProcExit(proc: ReturnType<typeof Bun.spawn>) {
     codexGomokuPending = null
     pending.resolve({ text: '', error: exitReason })
   }
+  if (!codexRestartInFlight) codexScheduleReconnect()
+}
+
+function codexScheduleReconnect() {
+  if (codexProc || codexReconnectTimer || codexRestartInFlight) return
+  codexReconnectAttempts += 1
+  if (codexReconnectAttempts > 5) {
+    log('codex_reconnect_abandoned', { attempts: codexReconnectAttempts - 1 })
+    return
+  }
+  const attempt = codexReconnectAttempts
+  const delayMs = codexReconnectDelayMs(attempt)
+  log('codex_reconnect_scheduled', { attempt, delayMs })
+  codexReconnectTimer = setTimeout(async () => {
+    codexReconnectTimer = null
+    if (codexProc || codexRestartInFlight) return
+    try {
+      await codexEnsureProc()
+      const recovery = await codexRecoverKnownChatThreads()
+      codexReconnectAttempts = 0
+      log('codex_reconnect_complete', { attempt, ...recovery })
+    } catch (err) {
+      log('codex_reconnect_failed', { attempt, error: String(err) })
+      codexScheduleReconnect()
+    }
+  }, delayMs)
 }
 
 async function codexEnsureProc(): Promise<void> {
   if (codexProc && codexInitPromise) return codexInitPromise
+  if (codexReconnectTimer) {
+    clearTimeout(codexReconnectTimer)
+    codexReconnectTimer = null
+  }
   codexRespawnAttempts += 1
   if (codexRespawnAttempts > 5) throw new Error('codex process failed to start too many times')
   // During the 2026-08 tidal-memory rollout the already-running Codex
@@ -5126,11 +5160,19 @@ async function codexEnsureProc(): Promise<void> {
   codexInitPromise = (async () => {
     // The adopted stream was initialized by this same Eunoia client before
     // handoff. Sending initialize twice would corrupt protocol state.
-    if (!codexAttachedExistingProcess) await codexRequest('initialize', {
-      clientInfo: { name: 'eunoia-codex-vps', title: 'Eunoia (Codex)', version: '0.1.0' },
-      capabilities: null,
-    })
+    if (!codexAttachedExistingProcess) {
+      try {
+        await codexRequest('initialize', {
+          clientInfo: { name: 'eunoia-codex-vps', title: 'Eunoia (Codex)', version: '0.1.0' },
+          capabilities: null,
+        })
+      } catch (err) {
+        if (!isCodexAlreadyInitializedError(err)) throw err
+        log('codex_initialize_reused', { socket: CODEX_DAEMON_SOCKET })
+      }
+    }
     codexRespawnAttempts = 0
+    codexReconnectAttempts = 0
   })()
   return codexInitPromise
 }
