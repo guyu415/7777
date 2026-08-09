@@ -64,7 +64,7 @@ export default function OpeningSplash() {
       )}
 
       <div className="opening-splash__grain" aria-hidden="true" />
-      <div className="opening-splash__brand" aria-hidden="true">Eunoia</div>
+      <div className="opening-splash__brand" data-text="Eunoia" aria-hidden="true">Eunoia</div>
 
       <style>{`
         .opening-splash {
@@ -297,7 +297,7 @@ export default function OpeningSplash() {
           top: 50%;
           transform: translate(-50%, -50%);
           padding: .08em .22em .16em;
-          color: rgba(255,255,255,.12);
+          color: transparent;
           font-family: ui-rounded, "SF Pro Rounded", "Nunito", "Avenir Next", system-ui, sans-serif;
           font-size: clamp(56px, 18vw, 112px);
           font-weight: 800;
@@ -305,25 +305,69 @@ export default function OpeningSplash() {
           letter-spacing: -.075em;
           line-height: 1;
           white-space: nowrap;
-          -webkit-text-stroke: 1.2px rgba(255,255,255,.58);
+          background:
+            linear-gradient(180deg,
+              rgba(255,255,255,.72) 0%,
+              rgba(255,255,255,.2) 20%,
+              rgba(255,255,255,.06) 52%,
+              rgba(218,250,255,.34) 76%,
+              rgba(255,255,255,.58) 100%);
+          background-clip: text;
+          -webkit-background-clip: text;
+          -webkit-text-fill-color: transparent;
+          -webkit-text-stroke: 1.4px rgba(255,255,255,.7);
           text-shadow:
-            0 1px 0 rgba(255,255,255,.6),
-            0 3px 0 rgba(255,255,255,.17),
-            0 7px 12px rgba(24,69,79,.24),
-            inset 0 1px 0 rgba(255,255,255,.8);
-          filter: drop-shadow(0 13px 17px rgba(28,47,68,.22));
-          backdrop-filter: blur(1.5px);
-          -webkit-backdrop-filter: blur(1.5px);
+            0 -1px 0 rgba(255,255,255,.9),
+            0 2px 0 rgba(214,250,255,.28),
+            0 5px 0 rgba(83,151,166,.2),
+            0 9px 15px rgba(19,73,83,.28);
+          filter: drop-shadow(0 12px 15px rgba(18,61,77,.24));
           animation: opening-splash-brand 1.1s cubic-bezier(.2,.75,.2,1) both;
         }
 
+        .opening-splash__brand::before,
+        .opening-splash__brand::after {
+          content: attr(data-text);
+          position: absolute;
+          inset: .08em .22em .16em;
+          pointer-events: none;
+        }
+
+        .opening-splash__brand::before {
+          z-index: -1;
+          color: rgba(127,211,223,.18);
+          -webkit-text-fill-color: rgba(127,211,223,.18);
+          -webkit-text-stroke: 2.4px rgba(232,255,255,.28);
+          transform: translateY(5px);
+          filter: blur(.35px);
+        }
+
+        .opening-splash__brand::after {
+          color: transparent;
+          -webkit-text-fill-color: transparent;
+          -webkit-text-stroke: 1.5px rgba(255,255,255,.88);
+          clip-path: inset(0 0 58% 0);
+          transform: translateY(-1px);
+          filter: drop-shadow(0 2px 2px rgba(255,255,255,.5));
+        }
+
         .opening-splash--night .opening-splash__brand {
-          color: rgba(255,238,235,.1);
-          -webkit-text-stroke-color: rgba(255,241,231,.62);
+          background: linear-gradient(180deg, rgba(255,255,255,.78), rgba(255,229,244,.12) 42%, rgba(235,207,255,.16) 68%, rgba(255,244,249,.62));
+          background-clip: text;
+          -webkit-background-clip: text;
+          -webkit-text-fill-color: transparent;
+          -webkit-text-stroke-color: rgba(255,238,249,.74);
           text-shadow:
-            0 1px 0 rgba(255,255,255,.65),
-            0 3px 0 rgba(255,213,205,.16),
-            0 8px 15px rgba(43,30,65,.32);
+            0 -1px 0 rgba(255,255,255,.92),
+            0 3px 0 rgba(244,203,239,.25),
+            0 6px 0 rgba(94,68,126,.24),
+            0 11px 18px rgba(29,22,61,.36);
+        }
+
+        .opening-splash--night .opening-splash__brand::before {
+          color: rgba(220,181,244,.2);
+          -webkit-text-fill-color: rgba(220,181,244,.2);
+          -webkit-text-stroke-color: rgba(255,232,250,.3);
         }
 
         @keyframes opening-splash-arrive {
