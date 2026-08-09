@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Settings, X, MessageCircle, Undo2, Upload, Move, Eye } from 'lucide-react'
+import { Settings, X, MessageCircle, Undo2, Upload, Eye } from 'lucide-react'
 import { useStore, getBlob } from '../store'
 import { useChat } from '../hooks/useChat'
 import { useCodexChat } from '../hooks/useCodexChat'
@@ -777,14 +777,15 @@ function DesktopPetWindow({ theme }) {
   const gestureSummaryPlain = describeGestureCounts(gestureCounts.current)
 
   // 菜单入口合并进右上角角标——不再有常驻的底部工具条。角标本身始终可点：
-  // 有待汇报手势时显示数字，没有时显示移动图标；点一下在角标旁展开菜单，
+  // 视觉上是一枚很小的银色雕花戒指，实际触控热区更大；短按时戒面展开，
   // 按住后拖动才会改变桌宠位置。
-  const badgeSize = 28
-  const badgeLeft = position.x + PET_W * 0.64
-  const badgeTop = position.y + PET_H * 0.06
+  const badgeHitSize = 34
+  const badgeVisualSize = toolbarOpen ? 28 : 20
+  const badgeLeft = position.x + PET_W * 0.62
+  const badgeTop = position.y + PET_H * 0.045
   const menuWidth = 154
-  const menuLeft = Math.max(8, Math.min(badgeLeft + badgeSize - menuWidth, window.innerWidth - menuWidth - 8))
-  const menuTop = badgeTop + badgeSize + 6
+  const menuLeft = Math.max(8, Math.min(badgeLeft + badgeHitSize - menuWidth, window.innerWidth - menuWidth - 8))
+  const menuTop = badgeTop + badgeHitSize + 3
 
   // 回复气泡（"…"/单字反应/语音🔊/长回复摘录都走这一个气泡）——横向以桌宠
   // 中线为基准居中，不再是原来那种以桌宠左侧为锚点、盒子整体往右怼的算法
@@ -820,6 +821,12 @@ function DesktopPetWindow({ theme }) {
         .pet-idle-cue{animation:pet-cue-float 2.2s ease-in-out infinite}
         .pet-secret-bulge{animation:pet-secret-pop .45s cubic-bezier(.2,.9,.25,1.15) forwards}
         .pet-flash-text{animation:pet-flash .7s ease forwards}
+        .pet-silver-ring{position:relative;display:grid;place-items:center;border-radius:50%;border:1px solid #7e8796;background:radial-gradient(circle at 38% 30%,#fff 0 12%,#dce5f1 25%,#9da7b5 43%,#f8fbff 54%,#737c8a 63%,#cbd2dc 74%,#7f8792 100%);box-shadow:inset 0 0 0 1px rgba(255,255,255,.9),inset 0 -2px 3px rgba(44,51,63,.42),0 2px 5px rgba(38,34,42,.22);transition:width .2s ease,height .2s ease,transform .2s ease,filter .2s ease;color:#536071}
+        .pet-silver-ring::before{content:'';position:absolute;inset:3px;border-radius:50%;border:1px solid rgba(255,255,255,.78);box-shadow:0 0 0 1px rgba(67,76,89,.35)}
+        .pet-silver-ring::after{content:'◇';position:absolute;left:50%;top:-7px;transform:translateX(-50%) rotate(45deg);width:8px;height:8px;display:grid;place-items:center;border-radius:2px;border:1px solid #8792a2;background:linear-gradient(135deg,#fff,#c9dbeb 48%,#8795a8);color:transparent;box-shadow:0 1px 2px rgba(40,45,55,.28)}
+        .pet-ring-scroll{position:absolute;top:50%;width:7px;height:8px;margin-top:-4px;border:1px solid #8e97a4;border-top-color:#eef2f7;border-radius:70% 30% 70% 30%;background:linear-gradient(145deg,#f8fafc,#929ba7);box-shadow:inset 0 0 1px #fff}
+        .pet-ring-scroll.left{left:-5px;transform:rotate(-24deg)}.pet-ring-scroll.right{right:-5px;transform:scaleX(-1) rotate(-24deg)}
+        .pet-silver-ring.open{transform:scale(1.03);filter:brightness(1.08)}
       `}</style>
 
       {/* 手势计数角标——紧贴桌宠肩侧、跟随桌宠位置移动，同时也是菜单入口与
@@ -833,14 +840,18 @@ function DesktopPetWindow({ theme }) {
         className="fixed grid place-items-center rounded-full"
         style={{
           left: badgeLeft, top: badgeTop,
-          width: badgeSize, height: badgeSize, zIndex: 125, border: 'none', padding: 0,
-          background: theme.primary, color: 'white', fontSize: 10, fontWeight: 700,
-          boxShadow: '0 2px 6px rgba(0,0,0,.18)', touchAction: 'none', cursor: 'grab',
+          width: badgeHitSize, height: badgeHitSize, zIndex: 125, border: 'none', padding: 0,
+          background: 'transparent', color: '#526070', fontSize: 9, fontWeight: 800,
+          touchAction: 'none', cursor: 'grab',
         }}
         aria-label={toolbarOpen ? '收起菜单；按住可移动桌宠' : (pendingCount > 0 ? `${pendingCount} 次待汇报；点按展开，按住移动桌宠` : '点按展开菜单，按住移动桌宠')}
         title="点按开菜单，按住拖动桌宠"
       >
-        {toolbarOpen ? <X size={13} /> : (pendingCount > 0 ? pendingCount : <Move size={13} />)}
+        <span className={`pet-silver-ring${toolbarOpen ? ' open' : ''}`} style={{ width: badgeVisualSize, height: badgeVisualSize }}>
+          <span className="pet-ring-scroll left" />
+          <span className="pet-ring-scroll right" />
+          {toolbarOpen ? <X size={10} strokeWidth={2.4} /> : (pendingCount > 0 ? pendingCount : <span style={{ fontSize: 8, lineHeight: 1, textShadow: '0 1px 0 white' }}>✦</span>)}
+        </span>
       </button>
 
       {/* 菜单——从角标展开，桌宠下方不再保留任何常驻控件 */}
