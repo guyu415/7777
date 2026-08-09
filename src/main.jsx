@@ -1,6 +1,7 @@
 import React from 'react'
 import { createRoot } from 'react-dom/client'
 import App from './App'
+import OpeningSplash from './components/OpeningSplash'
 import './styles/globals.css'
 
 // 注册 Service Worker（推送通知需要；sw.js 不做请求缓存）
@@ -20,6 +21,7 @@ for (const evt of ['gesturestart', 'gesturechange', 'gestureend']) {
 
 createRoot(document.getElementById('root')).render(
   <React.StrictMode>
+    <OpeningSplash />
     <App />
   </React.StrictMode>
 )
