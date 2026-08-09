@@ -1,12 +1,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Settings, X, MessageCircle, Undo2, Upload, Eye } from 'lucide-react'
-import { useStore, getBlob } from '../store'
+import { useStore, getBlob, getMessages, saveMessage } from '../store'
 import { useChat } from '../hooks/useChat'
 import { useCodexChat } from '../hooks/useCodexChat'
 import {
-  findGesture, emptyGestureCounts, totalGestureCount,
+  findGesture, emptyGestureCounts, totalGestureCount, buildGestureReport,
   describeGestureCounts, playGestureSfx, playLightTapSfx, requestDesktopPetReaction,
 } from '../services/desktopPet'
+import { recordVpsDesktopPetExchange } from '../services/companion'
+import { saveSessionMsgs } from '../services/sync'
 import { compressImage } from '../utils/image'
 import { fetchTTSAudio } from '../services/tts'
 
@@ -22,6 +24,8 @@ const DEFAULT_EXPRESSION_IMAGES = {
   resting: '/pets/black-haired-expressions/resting.png',
   sleeping: '/pets/black-haired-expressions/sleeping.png',
   flustered: '/pets/black-haired-expressions/excited.png',
+  angry: '/pets/black-haired-expressions/angry.png',
+  teased: '/pets/black-haired-expressions/teased.png',
 }
 const EXCITED_MS = 8_000
 const RESTING_AFTER_MS = 45_000
@@ -53,22 +57,23 @@ export default function DesktopPet({ theme }) {
 }
 
 function DesktopPetWindow({ theme }) {
-  const { sessions, currentSessionId, desktopPet, updateDesktopPet, setCurrentView } = useStore()
+  const { sessions, currentSessionId, desktopPet, updateDesktopPet, setCurrentView, setCurrentSessionId } = useStore()
   const cc = useChat()
   const codex = useCodexChat()
 
+  const petSessionId = desktopPet.sessionId || currentSessionId
   const currentSession = useMemo(
-    () => sessions?.find((s) => s.id === currentSessionId),
-    [sessions, currentSessionId],
+    () => sessions?.find((s) => s.id === petSessionId),
+    [sessions, petSessionId],
   )
   const isCodexSession = currentSession?.providerName === 'codex-vps'
   const chat = isCodexSession ? codex : cc
   const { sendMessage, isLoading: chatIsLoading, loadHistory, messages } = chat
 
-  // 桌宠输入框里的真实文字对话仍跟随当前会话；手势和屏幕感知则走
-  // requestDesktopPetReaction() 的隔离线程，不会写进这份历史。只有文字对话
-  // 需要先保证原会话历史已加载。
-  useEffect(() => { loadHistory() }, [currentSessionId, loadHistory])
+  // 桌宠输入框里的真实文字对话走原会话；手势和屏幕感知走隔离反应线程。
+  // 手势完成后会把动作与反应写回绑定会话的显示历史，屏幕感知仍只留在桌宠层。
+  // 只有桌宠文字输入需要先保证原会话历史已加载。
+  useEffect(() => { if (currentSessionId === petSessionId) loadHistory() }, [currentSessionId, petSessionId, loadHistory])
 
   const [position, setPosition] = useState(() => clampPosition(
     Number.isFinite(desktopPet?.x) ? desktopPet.x : window.innerWidth - 102,
@@ -308,6 +313,31 @@ function DesktopPetWindow({ theme }) {
         identity,
         instruction: `用户刚才${report}。作为「${identity}」本人，给一句当下的桌宠反应。`,
       })
+      const action = buildGestureReport(counts)
+      if (currentSession?.providerName === 'claude-code-vps' || currentSession?.providerName === 'codex-vps') {
+        await recordVpsDesktopPetExchange({
+          runtime: currentSession.providerName === 'codex-vps' ? 'codex' : 'claude-code',
+          sessionId: petSessionId,
+          action,
+          reply: result.text,
+        })
+      } else {
+        const now = Date.now()
+        const exchange = [
+          { id: `pet-user-${now}`, conversationId: petSessionId, role: 'user', type: 'text', content: action, timestamp: now },
+          { id: `pet-ai-${now}`, conversationId: petSessionId, role: 'assistant', type: 'text', content: result.text, timestamp: now + 1 },
+        ]
+        for (const message of exchange) await saveMessage(message)
+        const store = useStore.getState()
+        if (store.currentSessionId === petSessionId) exchange.forEach(store.addMessage)
+        store.updateSession(petSessionId, { lastMsgPreview: result.text.slice(0, 40), lastMsgTime: now + 1 })
+        const password = localStorage.getItem('auth.password')
+        if (password) {
+          const history = await getMessages(petSessionId)
+          history.sort((a, b) => a.timestamp - b.timestamp)
+          await saveSessionMsgs(password, petSessionId, history.filter((message) => !message.streaming))
+        }
+      }
       showPetReply(result.text, result.mood)
     } catch (e) {
       console.warn('[PET] 手势汇总发送失败:', e?.message)
@@ -318,17 +348,17 @@ function DesktopPetWindow({ theme }) {
       reactionBusyRef.current = false
       setReactionLoading(false)
     }
-  }, [currentSession, identity, showPetReply])
+  }, [currentSession, identity, petSessionId, showPetReply])
 
   // 单次手势只累加本地计数 + 播本地动效；攒够 batchSize 次才真的触发一次
   // 请求（带完整人设与上下文的真实链路），中间几次完全不联网。
-  const triggerGesture = useCallback((gestureId, amount = 1) => {
-    markActive(gestureId === 'secret' ? 'flustered' : gestureId === 'pinch' ? 'resting' : 'excited')
+  const triggerGesture = useCallback((gestureId, amount = 1, forceReport = false) => {
+    markActive(gestureId === 'bonk' ? 'angry' : gestureId === 'secret' ? 'teased' : gestureId === 'pinch' ? 'resting' : 'excited')
     playLocalMotion(gestureId)
     if (amount > 1) setGestureFlash(`锤×${amount}`)
     gestureCounts.current[gestureId] = (gestureCounts.current[gestureId] || 0) + amount
     const total = totalGestureCount(gestureCounts.current)
-    if (total >= batchSize) {
+    if (total >= batchSize || forceReport) {
       reportGestures()
     } else {
       setPendingCount(total)
@@ -348,7 +378,7 @@ function DesktopPetWindow({ theme }) {
     const now = Date.now()
     const nextCount = now - secretStreak.current.at <= SECRET_STREAK_MS ? secretStreak.current.count + 1 : 1
     secretStreak.current = { count: nextCount, at: now }
-    triggerGesture('secret')
+    triggerGesture('secret', 1, nextCount === 10)
     if (nextCount < 10) return
     secretStreak.current = { count: 0, at: 0 }
     setSecretActive(true)
@@ -402,8 +432,9 @@ function DesktopPetWindow({ theme }) {
   const closeNow = useCallback(() => {
     setLeaveConfirmOpen(false)
     updateDesktopPet({ active: false })
+    if (petSessionId) setCurrentSessionId(petSessionId)
     setCurrentView('chat')
-  }, [updateDesktopPet, setCurrentView])
+  }, [updateDesktopPet, petSessionId, setCurrentSessionId, setCurrentView])
 
   const confirmBringAlong = useCallback(async () => {
     await reportGestures()
@@ -857,7 +888,7 @@ function DesktopPetWindow({ theme }) {
           className="fixed flex items-center gap-1 p-1 rounded-full"
           style={{ left: menuLeft, top: menuTop, zIndex: 124, background: 'rgba(255,255,255,.9)', backdropFilter: 'blur(10px)', boxShadow: '0 4px 14px rgba(54,35,48,.14)' }}
         >
-          <button onClick={() => { setChatOpen((v) => !v); setSettingsOpen(false); window.setTimeout(() => chatInputRef.current?.focus(), 30) }} className="w-8 h-8 grid place-items-center rounded-full flex-shrink-0" style={{ color: theme.primary }} aria-label="跟它说两句"><MessageCircle size={15} /></button>
+          <button onClick={() => { if (petSessionId && currentSessionId !== petSessionId) setCurrentSessionId(petSessionId); setChatOpen((v) => !v); setSettingsOpen(false); window.setTimeout(() => chatInputRef.current?.focus(), 30) }} className="w-8 h-8 grid place-items-center rounded-full flex-shrink-0" style={{ color: theme.primary }} aria-label="跟它说两句"><MessageCircle size={15} /></button>
           <button onClick={() => { setPeekRequestOpen(true); setToolbarOpen(false); markActive('excited', 12_000) }} className="w-8 h-8 grid place-items-center rounded-full flex-shrink-0" style={{ color: theme.primary }} aria-label="请求偷看屏幕"><Eye size={15} /></button>
           <button onClick={() => { setSettingsOpen((v) => !v); setChatOpen(false) }} className="w-8 h-8 grid place-items-center rounded-full flex-shrink-0" style={{ color: theme.primary }} aria-label="桌宠设置"><Settings size={15} /></button>
           <button onClick={requestClose} className="w-8 h-8 grid place-items-center rounded-full flex-shrink-0" style={{ color: theme.primary }} aria-label="返回聊天窗"><Undo2 size={15} /></button>
@@ -903,9 +934,10 @@ function DesktopPetWindow({ theme }) {
         onTouchStart={onTouchStart}
         onTouchMove={onTouchMove}
         onTouchEnd={onTouchEnd}
+        onContextMenu={(event) => event.preventDefault()}
         title="点一下=摸，快速连点=锤，身上来回滑=搓，长按或双指捏=捏脸；移动请按住右上角标"
       >
-        <img src={displayedPetImage} alt={identity} draggable="false" style={{ width: '100%', height: '100%', objectFit: 'contain', transform: `scale(${scale})`, transformOrigin: 'bottom center', filter: 'drop-shadow(0 5px 5px rgba(35,25,31,.22))', userSelect: 'none', WebkitUserDrag: 'none' }} />
+        <img src={displayedPetImage} alt={identity} draggable="false" onContextMenu={(event) => event.preventDefault()} style={{ width: '100%', height: '100%', objectFit: 'contain', transform: `scale(${scale})`, transformOrigin: 'bottom center', filter: 'drop-shadow(0 5px 5px rgba(35,25,31,.22))', userSelect: 'none', WebkitUserDrag: 'none', WebkitTouchCallout: 'none', pointerEvents: 'none' }} />
         {secretActive && usesDefaultPet && <div className="pet-secret-bulge" style={{ position: 'absolute', left: '50%', top: '65%', width: '12px', height: '18px', borderRadius: '55% 55% 48% 48%', background: 'radial-gradient(ellipse at 38% 28%, rgba(94,90,99,.96), rgba(24,22,27,.98) 58%, rgba(8,8,10,.98))', boxShadow: '0 1px 3px rgba(0,0,0,.42)', pointerEvents: 'none' }} />}
         {expression === 'flustered' && usesDefaultPet && <><span style={{ position: 'absolute', left: '32%', top: '31%', width: 8, height: 4, borderRadius: '50%', background: 'rgba(234,120,145,.35)', filter: 'blur(1px)', pointerEvents: 'none' }} /><span style={{ position: 'absolute', right: '30%', top: '31%', width: 8, height: 4, borderRadius: '50%', background: 'rgba(234,120,145,.35)', filter: 'blur(1px)', pointerEvents: 'none' }} /></>}
         {!motion && idleState === 'excited' && <span className="pet-idle-cue" style={{ position: 'absolute', right: 5, top: 24, fontSize: 13, color: theme.primary, textShadow: '0 1px 4px white', pointerEvents: 'none' }}>✦</span>}

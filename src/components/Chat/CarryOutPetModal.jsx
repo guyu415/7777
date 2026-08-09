@@ -29,6 +29,7 @@ export default function CarryOutPetModal({ theme, session, onClose }) {
   const confirm = () => {
     updateDesktopPet({
       active: true,
+      sessionId: session.id,
       petImage,
       x: window.innerWidth - 102,
       y: window.innerHeight - 300,

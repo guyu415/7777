@@ -1339,6 +1339,14 @@ async function companionJson(path, init) {
   return body
 }
 
+export async function recordVpsDesktopPetExchange({ runtime, sessionId, action, reply }) {
+  return companionJson('/pet/exchange', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ runtime, sessionId, action, reply }),
+  })
+}
+
 export async function listMemoryFiles() {
   const data = await companionJson('/memory/list')
   return data.files

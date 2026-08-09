@@ -1,6 +1,6 @@
 export const CARE_ROLE_IDS = ['news', 'ledger', 'almanac', 'study'] as const
 export type CareRoleId = typeof CARE_ROLE_IDS[number]
-export type CareRuntime = 'codex' | 'claude-code'
+export type CareRuntime = 'codex' | 'claude-code' | 'gemini'
 
 export type CareRoleConfig = {
   enabled: boolean
@@ -55,10 +55,10 @@ export function defaultCareHubState(now = Date.now()): CareHubState {
     config: {
       timezone: 'Asia/Shanghai',
       roles: {
-        news: { enabled: true, time: '08:00', runtime: 'codex', model: '' },
-        almanac: { enabled: true, time: '08:05', runtime: 'codex', model: '' },
-        ledger: { enabled: true, time: '21:00', runtime: 'codex', model: '' },
-        study: { enabled: true, time: '21:30', runtime: 'codex', model: '' },
+        news: { enabled: true, time: '08:00', runtime: 'codex', model: 'gpt-5.6-luna' },
+        almanac: { enabled: true, time: '08:05', runtime: 'codex', model: 'gpt-5.4-mini' },
+        ledger: { enabled: true, time: '21:00', runtime: 'codex', model: 'gpt-5.6-luna' },
+        study: { enabled: true, time: '21:30', runtime: 'codex', model: 'gpt-5.4-mini' },
       },
     },
     messages: [],
@@ -89,8 +89,8 @@ export function careRoleIsDue(config: CareRoleConfig, date: string, time: string
 export function sanitizeCareRoleConfig(previous: CareRoleConfig, patch: unknown): CareRoleConfig {
   if (!patch || typeof patch !== 'object') return previous
   const input = patch as Record<string, unknown>
-  const runtime: CareRuntime = input.runtime === 'claude-code' ? 'claude-code' : input.runtime === 'codex' ? 'codex' : previous.runtime
-  const fallbackModel = runtime === 'codex' ? 'gpt-5.6-sol' : 'claude-sonnet-4-6'
+  const runtime: CareRuntime = input.runtime === 'claude-code' ? 'claude-code' : input.runtime === 'codex' ? 'codex' : input.runtime === 'gemini' ? 'gemini' : previous.runtime
+  const fallbackModel = runtime === 'codex' ? 'gpt-5.6-luna' : runtime === 'gemini' ? 'gemini-3.5-flash-lite' : 'claude-haiku-4-5'
   return {
     ...previous,
     enabled: typeof input.enabled === 'boolean' ? input.enabled : previous.enabled,

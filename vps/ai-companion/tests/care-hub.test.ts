@@ -7,6 +7,13 @@ describe('care hub', () => {
     expect(isValidCareTime('24:00')).toBe(false)
     const role = defaultCareHubState().config.roles.news
     expect(sanitizeCareRoleConfig(role, { time: '07:30', runtime: 'claude-code', model: '' })).toMatchObject({ time: '07:30', runtime: 'claude-code', model: '' })
+    expect(sanitizeCareRoleConfig(role, { runtime: 'gemini', model: 'gemini-3.5-flash-lite' })).toMatchObject({ runtime: 'gemini', model: 'gemini-3.5-flash-lite' })
+  })
+
+  it('defaults scheduled care to lightweight subscription models', () => {
+    const roles = defaultCareHubState().config.roles
+    expect(roles.news.model).toBe('gpt-5.6-luna')
+    expect(roles.almanac.model).toBe('gpt-5.4-mini')
   })
 
   it('uses Shanghai wall time and only runs once per day', () => {

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, useLayoutEffect } from 'react'
-import { Menu, Cat, Search } from 'lucide-react'
+import { Menu, Cat, Search, Trash2, X } from 'lucide-react'
 import { useShallow } from 'zustand/react/shallow'
 import MessageList from './MessageList'
 import MessageSearch from './MessageSearch'
@@ -106,6 +106,7 @@ export default function ChatWindow({ theme }) {
 
   const inputRef = useRef(null)
   const [menuMsg, setMenuMsg] = useState(null)
+  const [selectedMessageIds, setSelectedMessageIds] = useState(() => new Set())
   const [replyTarget, setReplyTarget] = useState(null)
   const [memoryMsg, setMemoryMsg] = useState(null)
   const [editMsg, setEditMsg] = useState(null)
@@ -130,7 +131,11 @@ export default function ChatWindow({ theme }) {
   const focusSessionVisible = !!focusRuntime.state?.active || !!focusRuntime.justFinished
   const [xinchaoState, setXinchaoState] = useState(null)
 
-  useEffect(() => setReplyTarget(null), [currentSessionId])
+  useEffect(() => {
+    setReplyTarget(null)
+    setMenuMsg(null)
+    setSelectedMessageIds(new Set())
+  }, [currentSessionId])
   const [showXinchaoPanel, setShowXinchaoPanel] = useState(false)
   const [showSearch, setShowSearch] = useState(false)
   const callAudioRef = useRef(null)
@@ -327,6 +332,34 @@ export default function ChatWindow({ theme }) {
       showToast(`删除失败：${error.message}`)
     }
   }
+
+  const toggleMessageSelection = useCallback((id) => {
+    setSelectedMessageIds((current) => {
+      const next = new Set(current)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }, [])
+
+  const startMultiSelect = useCallback((msg) => {
+    setMenuMsg(null)
+    setSelectedMessageIds(new Set([msg.id]))
+  }, [])
+
+  const cancelMultiSelect = useCallback(() => setSelectedMessageIds(new Set()), [])
+
+  const handleDeleteSelected = useCallback(async () => {
+    const ids = messages.filter((message) => selectedMessageIds.has(message.id)).map((message) => message.id)
+    if (!ids.length) return
+    if (!window.confirm(`确定删除选中的 ${ids.length} 条消息吗？`)) return
+    let failed = 0
+    for (const id of ids) {
+      try { await deleteMsg(id) } catch { failed += 1 }
+    }
+    setSelectedMessageIds(new Set())
+    showToast(failed ? `已删除 ${ids.length - failed} 条，${failed} 条失败` : `已删除 ${ids.length} 条消息`)
+  }, [deleteMsg, messages, selectedMessageIds])
 
   const handleReply = (msg) => {
     const raw = msg.type === 'voice'
@@ -568,6 +601,9 @@ export default function ChatWindow({ theme }) {
           userAvatar={effectiveUserAvatar}
           aiAvatar={effectiveAiAvatar}
           theme={theme}
+          selectionMode={selectedMessageIds.size > 0}
+          selectedIds={selectedMessageIds}
+          onToggleSelect={toggleMessageSelection}
           emptyAiName={effectiveAiName}
           emptyHasApiKey={isCodexSession ? true : !!effectiveApiKey}
           onEmptyConfigureClick={goToGlobalSettings}
@@ -662,7 +698,22 @@ export default function ChatWindow({ theme }) {
             >
               🗑️ 删除
             </button>
+            <button
+              onClick={() => startMultiSelect(menuMsg)}
+              className="w-full flex items-center gap-3 px-5 py-3.5 text-sm hover:bg-pink-50 transition-colors"
+              style={{ color: '#8b5060', borderTop: '1px solid rgba(255,182,209,0.25)' }}
+            >
+              ☑️ 多选删除
+            </button>
           </div>
+        </div>
+      )}
+
+      {selectedMessageIds.size > 0 && (
+        <div className="fixed left-1/2 -translate-x-1/2 flex items-center gap-2 rounded-full px-2 py-2" style={{ bottom: 'calc(var(--safe-bottom) + 78px)', zIndex: 45, background: 'rgba(255,255,255,.96)', boxShadow: '0 8px 30px rgba(70,45,60,.2)', border: `1px solid ${primaryColor}30`, backdropFilter: 'blur(16px)' }}>
+          <button onClick={cancelMultiSelect} className="w-9 h-9 rounded-full grid place-items-center" style={{ color: '#8b7580', background: '#f5f0f2' }} aria-label="取消多选"><X size={17} /></button>
+          <span className="px-2 text-sm font-medium" style={{ color: '#76525e', minWidth: 74, textAlign: 'center' }}>已选 {selectedMessageIds.size} 条</span>
+          <button onClick={handleDeleteSelected} className="h-9 rounded-full px-4 flex items-center gap-1.5 text-sm text-white" style={{ background: '#df6f7b' }}><Trash2 size={15} />删除</button>
         </div>
       )}
 

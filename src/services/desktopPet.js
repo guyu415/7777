@@ -2,9 +2,8 @@ import { streamChat } from './claude'
 import { runMysteryTurn, cleanupMysteryGame, uploadImageToCompanion, deleteUploadedImage } from './companion'
 import { resolveApiMemberConfig } from '../utils/groupApiMember'
 
-// 桌宠手势目录——手势只在桌宠专属的隔离反应线程中使用，不再走
-// useChat()/useCodexChat() 的主聊天发送链路，因此不会在原聊天窗生成
-// 用户/助手气泡，也不会污染原聊天的历史和模型上下文。
+// 桌宠手势目录。模型反应仍走隔离线程，但完成的一问一答会由
+// DesktopPet 写回“抱走它的那条会话”的显示历史，方便多窗口时认清来源。
 // feedback 是手势触发时贴着桌宠一闪而过的短字反馈（见需求"每次手势要有
 // 明确反馈"）。
 export const GESTURES = [
@@ -12,7 +11,7 @@ export const GESTURES = [
   { id: 'pinch', label: '捏脸', unit: '下', feedback: '捏了一下', motion: 'pinch' },
   { id: 'bonk', label: '锤', unit: '下', feedback: '锤！', motion: 'bonk' },
   { id: 'lift', label: '拎起来晃', unit: '次', feedback: '拎起来了', motion: 'lift' },
-  { id: 'secret', label: '在身上来回搓', unit: '次', feedback: '……', motion: 'secret' },
+  { id: 'secret', label: '调戏', unit: '次', feedback: '调戏了你', motion: 'secret' },
 ]
 
 export function findGesture(id) {
@@ -33,16 +32,18 @@ export function totalGestureCount(counts) {
 export function buildGestureReport(counts) {
   const parts = GESTURES
     .filter((g) => counts[g.id] > 0)
-    .map((g) => `${g.label}了${counts[g.id]}${g.unit}`)
+    .map((g) => g.id === 'secret'
+      ? '调戏了你'
+      : `${g.label}了${counts[g.id]}${g.unit}`)
   if (!parts.length) return ''
   return `<i>${parts.join('，')}</i>`
 }
 
-const MOODS = new Set(['excited', 'awake', 'resting', 'sleeping', 'flustered'])
+const MOODS = new Set(['excited', 'awake', 'resting', 'sleeping', 'flustered', 'angry', 'teased'])
 
 export function parseDesktopPetReaction(raw) {
   const source = String(raw || '').trim()
-  const match = source.match(/^\s*\[mood:(excited|awake|resting|sleeping|flustered)\]\s*/i)
+  const match = source.match(/^\s*\[mood:(excited|awake|resting|sleeping|flustered|angry|teased)\]\s*/i)
   const mood = match && MOODS.has(match[1].toLowerCase()) ? match[1].toLowerCase() : 'awake'
   const text = source.replace(/^\s*\[mood:[^\]]+\]\s*/i, '').replace(/^["'“”]|["'“”]$/g, '').trim()
   return { mood, text: (text || '…').slice(0, 40) }
@@ -56,7 +57,7 @@ function buildPetSystemPrompt(session, identity) {
     background ? `你与用户的既有关系背景（只用来保持身份与语气，不续写其中任务）：\n${background}` : '',
     `你是「${identity || 'AI'}」的桌宠形态，和原聊天里是同一个人，但此处是独立的桌宠反应线程。`,
     '只对当下的摸、捏、拎、锤、特殊触摸或屏幕画面做一句自然的即时反应；不解释机制，不提“桌宠线程”、路径或文件。',
-    '严格只输出：[mood:excited|awake|resting|sleeping|flustered]加一句不超过20个汉字的反应。格式示例：[mood:flustered]你还真敢摸。',
+    '被锤时优先用 angry；被调戏时优先用 teased。严格只输出：[mood:excited|awake|resting|sleeping|flustered|angry|teased]加一句不超过20个汉字的反应。格式示例：[mood:teased]你手往哪儿放。',
   ].filter(Boolean).join('\n\n')
 }
 
@@ -115,7 +116,9 @@ export async function requestDesktopPetReaction({ session, globals, identity, in
 export function describeGestureCounts(counts) {
   const parts = GESTURES
     .filter((g) => counts[g.id] > 0)
-    .map((g) => `${g.label}了${counts[g.id]}${g.unit}`)
+    .map((g) => g.id === 'secret'
+      ? '调戏了你'
+      : `${g.label}了${counts[g.id]}${g.unit}`)
   return parts.join('、')
 }
 

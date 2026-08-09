@@ -6708,6 +6708,7 @@ async function mysteryCleanupGame(gameId: string, charIds: string[]): Promise<vo
 // multi-AI group chat: slots cannot be removed and scheduled reports never
 // consume or disturb ordinary chat context.
 const CARE_HUB_FILE = process.env.AI_COMPANION_CARE_HUB_FILE ?? join(ROOT, 'state', 'care-hub.json')
+const CARE_GEMINI_KEY_FILE = process.env.AI_COMPANION_GEMINI_KEY_FILE ?? join(ROOT, 'config', 'gemini.secret')
 let careHubState: CareHubState = defaultCareHubState()
 let careRunningRole: CareRoleId | null = null
 
@@ -6813,6 +6814,28 @@ function careRolePrompt(role: CareRoleId, today: string, evidence = ''): { syste
   }
 }
 
+async function careRunGemini(model: string, system: string, instruction: string): Promise<string> {
+  let apiKey = ''
+  try { apiKey = readFileSync(CARE_GEMINI_KEY_FILE, 'utf8').trim() } catch {}
+  if (!apiKey) throw new Error('Gemini API Key 尚未配置')
+  const modelId = (model || 'gemini-3.5-flash-lite').replace(/^models\//, '')
+  const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(modelId)}:generateContent`, {
+    method: 'POST',
+    signal: AbortSignal.timeout(120_000),
+    headers: { 'content-type': 'application/json', 'x-goog-api-key': apiKey },
+    body: JSON.stringify({
+      systemInstruction: { parts: [{ text: system }] },
+      contents: [{ role: 'user', parts: [{ text: instruction }] }],
+      generationConfig: { temperature: 0.45, maxOutputTokens: 4096 },
+    }),
+  })
+  const payload: any = await response.json().catch(() => ({}))
+  if (!response.ok) throw new Error(`Gemini 请求失败（${response.status}）：${payload?.error?.message || '未知错误'}`)
+  const text = (payload?.candidates?.[0]?.content?.parts || []).map((part: any) => typeof part?.text === 'string' ? part.text : '').join('').trim()
+  if (!text) throw new Error(`Gemini 没有返回正文${payload?.candidates?.[0]?.finishReason ? `（${payload.candidates[0].finishReason}）` : ''}`)
+  return text
+}
+
 async function careRunRole(role: CareRoleId, manual = false): Promise<{ ok: boolean; error?: string }> {
   if (careRunningRole) return { ok: false, error: `${CARE_ROLE_NAMES[careRunningRole]}正在生成` }
   const config = careHubState.config.roles[role]
@@ -6826,15 +6849,19 @@ async function careRunRole(role: CareRoleId, manual = false): Promise<{ ok: bool
     // A scheduled report must never coast on yesterday's thread context.
     // Start every role run with a fresh isolated runtime session so “联网”
     // means a new search in this run and model changes take effect immediately.
-    await mysteryCleanupGame('care-hub', [role])
+    if (config.runtime !== 'gemini') await mysteryCleanupGame('care-hub', [role])
     const evidence = role === 'news' ? await careNewsEvidence() : role === 'almanac' ? await careAlmanacEvidence(date) : ''
     const prompt = careRolePrompt(role, date, evidence)
-    const selectedModel = config.model || (config.runtime === 'codex' ? (codexSelectedModel || codexModelList.find((item) => item.isDefault)?.id || '') : 'claude-sonnet-4-6')
-    const result = await mysteryRunTurn('care-hub', role, config.runtime, selectedModel, prompt.system, prompt.instruction)
-    if ('error' in result) throw new Error(result.error)
-    if (role === 'news' && ((result.text.match(/(?:^|\n)\s*[1-5][.、)]/g) || []).length < 5 || (result.text.match(/https?:\/\/[^\s)]+/g) || []).length < 5)) throw new Error('联网早报未完整返回五条新闻及来源，已拒绝发布')
-    if (role === 'almanac' && !/https?:\/\//.test(result.text)) throw new Error('黄历结果缺少可核验来源，已拒绝发布')
-    careAppend(role, result.text, role === 'ledger' || role === 'study' ? 'reminder' : 'report')
+    const selectedModel = config.model || (config.runtime === 'codex' ? (codexSelectedModel || codexModelList.find((item) => item.isDefault)?.id || '') : config.runtime === 'gemini' ? 'gemini-3.5-flash-lite' : 'claude-sonnet-4-6')
+    const text = config.runtime === 'gemini'
+      ? await careRunGemini(selectedModel, prompt.system, prompt.instruction)
+      : await mysteryRunTurn('care-hub', role, config.runtime, selectedModel, prompt.system, prompt.instruction).then((result) => {
+          if ('error' in result) throw new Error(result.error)
+          return result.text
+        })
+    if (role === 'news' && ((text.match(/(?:^|\n)\s*[1-5][.、)]/g) || []).length < 5 || (text.match(/https?:\/\/[^\s)]+/g) || []).length < 5)) throw new Error('联网早报未完整返回五条新闻及来源，已拒绝发布')
+    if (role === 'almanac' && !/https?:\/\//.test(text)) throw new Error('黄历结果缺少可核验来源，已拒绝发布')
+    careAppend(role, text, role === 'ledger' || role === 'study' ? 'reminder' : 'report')
     config.lastRunDate = date
     config.lastAttemptDate = date
     config.lastError = undefined
@@ -6850,7 +6877,7 @@ async function careRunRole(role: CareRoleId, manual = false): Promise<{ ok: bool
     log('care_role_error', { role, manual, error })
     return { ok: false, error }
   } finally {
-    try { await mysteryCleanupGame('care-hub', [role]) } catch (err) { log('care_role_cleanup_error', { role, error: String(err) }) }
+    if (config.runtime !== 'gemini') try { await mysteryCleanupGame('care-hub', [role]) } catch (err) { log('care_role_cleanup_error', { role, error: String(err) }) }
     careRunningRole = null
     broadcastCareHub()
   }
@@ -6990,6 +7017,28 @@ Bun.serve<{ authed: true }>({
     // Opening this (GET /codex/state) is what lazily spawns/resumes the
     // real codex app-server process and thread — nothing runs before the
     // window is actually opened.
+    if (url.pathname === '/pet/exchange' && req.method === 'POST') {
+      const gate = authGate()
+      if (gate) return gate
+      const cors = corsHeadersFor(origin)
+      let body: any = {}
+      try { body = await req.json() } catch { return jsonResponse({ error: 'bad json' }, { status: 400, headers: cors }) }
+      const action = typeof body?.action === 'string' ? body.action.trim().slice(0, 500) : ''
+      const reply = typeof body?.reply === 'string' ? body.reply.trim().slice(0, 1000) : ''
+      if (!action || !reply) return jsonResponse({ error: 'missing action or reply' }, { status: 400, headers: cors })
+      if (body?.runtime === 'codex') {
+        const sessionId = normalizeCodexSessionId(body?.sessionId)
+        const state = sessionId === DEFAULT_CODEX_SESSION_ID ? null : getExtraCodexSession(sessionId)
+        const append = state ? (msg: CodexMsg) => extraAppendMsg(state, msg) : codexAppendMsg
+        append({ id: nextId(), from: 'user', text: action, ts: Date.now() })
+        append({ id: nextId(), from: 'model', text: reply, ts: Date.now() + 1 })
+      } else {
+        broadcastMsg({ type: 'msg', id: nextId(), from: 'user', text: action, ts: Date.now() })
+        broadcastMsg({ type: 'msg', id: nextId(), from: 'cc', text: reply, ts: Date.now() + 1 })
+      }
+      return jsonResponse({ ok: true }, { headers: cors })
+    }
+
     if (url.pathname === '/codex/state' && req.method === 'GET') {
       const gate = authGate()
       if (gate) return gate

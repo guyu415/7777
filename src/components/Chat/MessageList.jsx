@@ -33,6 +33,7 @@ const MessageList = forwardRef(function MessageList({
   messages, sessionId,
   onLongPress, lastAiId, onRegenerate, onRegenerateRound, onRetry,
   isLoading, userAvatar, aiAvatar, theme,
+  selectionMode, selectedIds, onToggleSelect,
   emptyAiName, emptyHasApiKey, onEmptyConfigureClick,
 }, ref) {
   const scrollRef = useRef(null)
@@ -181,11 +182,22 @@ const MessageList = forwardRef(function MessageList({
                 key={vi.key}
                 data-index={vi.index}
                 ref={virtualizer.measureElement}
-                style={{ position: 'absolute', top: 0, left: 0, width: '100%', transform: `translateY(${vi.start}px)` }}
+                style={{ position: 'absolute', top: 0, left: 0, width: '100%', transform: `translateY(${vi.start}px)`, borderRadius: 18, background: selectedIds?.has(msg.id) ? `${primaryColor}13` : 'transparent' }}
+                onClickCapture={selectionMode ? (event) => { event.preventDefault(); event.stopPropagation(); onToggleSelect?.(msg.id) } : undefined}
               >
+                {selectionMode && (
+                  <button
+                    type="button"
+                    aria-label={selectedIds?.has(msg.id) ? '取消选择消息' : '选择消息'}
+                    style={{ position: 'absolute', left: 4, top: '50%', transform: 'translateY(-50%)', zIndex: 8, width: 24, height: 24, borderRadius: '50%', display: 'grid', placeItems: 'center', border: `2px solid ${selectedIds?.has(msg.id) ? primaryColor : `${primaryColor}80`}`, background: selectedIds?.has(msg.id) ? primaryColor : 'rgba(255,255,255,.9)', color: 'white', pointerEvents: 'none' }}
+                  >
+                    {selectedIds?.has(msg.id) && <span style={{ fontSize: 14, lineHeight: 1 }}>✓</span>}
+                  </button>
+                )}
+                <div style={{ paddingLeft: selectionMode ? 28 : 0, transition: 'padding .15s ease' }}>
                 <MessageBubble
                   message={msg}
-                  onLongPress={onLongPress}
+                  onLongPress={selectionMode ? null : onLongPress}
                   onRegenerate={isLastAi ? onRegenerate : null}
                   onRegenerateRound={isLastAi ? onRegenerateRound : null}
                   onRetry={msg.error && vi.index === messages.length - 1 ? onRetry : null}
@@ -194,6 +206,7 @@ const MessageList = forwardRef(function MessageList({
                   aiAvatar={aiAvatar}
                   theme={theme}
                 />
+                </div>
               </div>
             )
           })}

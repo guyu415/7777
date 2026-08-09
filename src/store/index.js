@@ -222,7 +222,7 @@ export const useStore = create(
       // 里目前没有别的全局静音设置，这个就是桌宠这块唯一的音效控制）、
       // replyMode（回复以文字气泡还是语音播出，只影响桌宠这层展示，不动
       // 会话本身的语音设置）跨页面、刷新与设备同步。
-      desktopPet: { active: false, petImage: '', x: null, y: null, scale: 0.8, batchSize: 15, sfxEnabled: true, replyMode: 'text', sceneAwareness: true },
+      desktopPet: { active: false, sessionId: '', petImage: '', x: null, y: null, scale: 0.8, batchSize: 15, sfxEnabled: true, replyMode: 'text', sceneAwareness: true },
 
       setApiKey: (key) => set({ apiKey: key }),
       setApiBaseUrl: (url) => set({ apiBaseUrl: url }),
@@ -597,6 +597,7 @@ export const useStore = create(
             ...persisted,
             desktopPet: {
               active: !!old.active,
+              sessionId: old.sessionId || '',
               petImage: old.petImage || '',
               x: old.x ?? null,
               y: old.y ?? null,
