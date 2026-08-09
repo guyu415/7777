@@ -6601,13 +6601,18 @@ async function mysteryCodexEnsureThread(gameId: string, charId: string, systemPr
 // contend with each other, only with a second concurrent turn on that exact
 // same character's own thread, which the frontend's own turn-based engine
 // never actually attempts.
-const mysteryCodexPendingByThread = new Map<string, { turnId: string; resolve: (r: { text: string; error?: string }) => void; agentText: string }>()
+const mysteryCodexPendingByThread = new Map<string, { turnId: string; resolve: (r: { text: string; error?: string; usedWebSearch?: boolean }) => void; agentText: string; usedWebSearch: boolean }>()
 
 function mysteryCodexHandleNotification(threadId: string, method: string, params: any) {
   const pending = mysteryCodexPendingByThread.get(threadId)
   if (!pending) return
   switch (method) {
+    case 'item/started': {
+      if (params?.item?.type === 'webSearch' || params?.item?.type === 'web_search') pending.usedWebSearch = true
+      break
+    }
     case 'item/completed': {
+      if (params?.item?.type === 'webSearch' || params?.item?.type === 'web_search') pending.usedWebSearch = true
       if (params?.item?.type === 'agentMessage') pending.agentText = params.item.text ?? pending.agentText
       break
     }
@@ -6617,7 +6622,7 @@ function mysteryCodexHandleNotification(threadId: string, method: string, params
       const status = params?.turn?.status
       if (status === 'failed') pending.resolve({ text: '', error: params?.turn?.error?.message ? codexFriendlyError(params.turn.error) : 'Codex 出错了' })
       else if (status === 'interrupted') pending.resolve({ text: '', error: '已中断' })
-      else pending.resolve({ text: pending.agentText })
+      else pending.resolve({ text: pending.agentText, usedWebSearch: pending.usedWebSearch })
       break
     }
     case 'error': {
@@ -6638,7 +6643,7 @@ function mysteryCodexHandleNotification(threadId: string, method: string, params
   }
 }
 
-async function mysteryCodexSendTurn(gameId: string, charId: string, systemPrompt: string, instruction: string, model: string, imageUrl = ''): Promise<{ text: string; error?: string }> {
+async function mysteryCodexSendTurn(gameId: string, charId: string, systemPrompt: string, instruction: string, model: string, imageUrl = ''): Promise<{ text: string; error?: string; usedWebSearch?: boolean }> {
   const threadId = await mysteryCodexEnsureThread(gameId, charId, systemPrompt)
   if (mysteryCodexPendingByThread.has(threadId)) return { text: '', error: 'Codex 这个角色上一轮还没结束' }
   const input: any[] = [{ type: 'text', text: instruction, text_elements: [] }]
@@ -6650,7 +6655,7 @@ async function mysteryCodexSendTurn(gameId: string, charId: string, systemPrompt
   const turnId = result?.turn?.id
   if (!turnId) return { text: '', error: 'Codex 没有返回 turn id' }
   return new Promise((resolve) => {
-    mysteryCodexPendingByThread.set(threadId, { turnId, resolve, agentText: '' })
+    mysteryCodexPendingByThread.set(threadId, { turnId, resolve, agentText: '', usedWebSearch: false })
   })
 }
 
@@ -6658,7 +6663,7 @@ async function mysteryCodexSendTurn(gameId: string, charId: string, systemPrompt
 // 收到的 runtime/model/来源 和 prompt 长度，配合 mysteryCcSendTurn 里的
 // queueWaitMs/firstContentMs/totalMs/hadThinking，可以完整比对"轮到该成员
 // 的时间"到"完整响应时间"每一步耗时，而不用只靠前端的"感觉很慢"。
-async function mysteryRunTurn(gameId: string, charId: string, runtime: 'claude-code' | 'codex', model: string, systemPrompt: string, instruction: string, signal?: AbortSignal, imageUrl = '', imagePath = ''): Promise<{ text: string } | { error: string }> {
+async function mysteryRunTurn(gameId: string, charId: string, runtime: 'claude-code' | 'codex', model: string, systemPrompt: string, instruction: string, signal?: AbortSignal, imageUrl = '', imagePath = ''): Promise<{ text: string; usedWebSearch?: boolean } | { error: string }> {
   const tAssigned = Date.now()
   log('mystery_turn_received', {
     gameId, charId, runtime, model,
@@ -6678,7 +6683,7 @@ async function mysteryRunTurn(gameId: string, charId: string, runtime: 'claude-c
     const result = await mysteryCodexSendTurn(gameId, charId, systemPrompt, instruction, model, imageUrl)
     log('mystery_turn_done', { gameId, charId, runtime, totalMs: Date.now() - tAssigned })
     if (result.error || !result.text.trim()) return { error: result.error || 'Codex 没有给出有效回复' }
-    return { text: result.text.trim() }
+    return { text: result.text.trim(), usedWebSearch: result.usedWebSearch }
   } catch (err) {
     log('mystery_turn_error', { gameId, charId, runtime, totalMs: Date.now() - tAssigned, error: String(err) })
     return { error: String((err as Error)?.message || err) }
@@ -6782,7 +6787,8 @@ async function careRunRole(role: CareRoleId, manual = false): Promise<{ ok: bool
     const selectedModel = config.model || (config.runtime === 'codex' ? (codexSelectedModel || codexModelList.find((item) => item.isDefault)?.id || '') : 'claude-sonnet-4-6')
     const result = await mysteryRunTurn('care-hub', role, config.runtime, selectedModel, prompt.system, prompt.instruction)
     if ('error' in result) throw new Error(result.error)
-    if (role === 'news' && (result.text.match(/https?:\/\/[^\s)]+/g) || []).length < 5) throw new Error('联网早报未返回五条可核验来源，已拒绝发布')
+    if ((role === 'news' || role === 'almanac') && config.runtime === 'codex' && !result.usedWebSearch) throw new Error('本轮未实际调用联网搜索，已拒绝发布')
+    if (role === 'news' && ((result.text.match(/(?:^|\n)\s*[1-5][.、)]/g) || []).length < 5 || !/https?:\/\//.test(result.text))) throw new Error('联网早报未完整返回五条新闻及来源，已拒绝发布')
     if (role === 'almanac' && !/https?:\/\//.test(result.text)) throw new Error('黄历结果缺少可核验来源，已拒绝发布')
     careAppend(role, result.text, role === 'ledger' || role === 'study' ? 'reminder' : 'report')
     config.lastRunDate = date
