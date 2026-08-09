@@ -171,7 +171,7 @@ export const useStore = create(
       selectedProviderId: 'anthropic',
       selectedModelId: 'claude-sonnet-4-6',
 
-      currentView: 'chat',
+      currentView: 'sessions',
       isLoading: false,
       streamingMessageId: null,
       summaryToast: null,

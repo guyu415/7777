@@ -6,7 +6,7 @@ import GroupChatWindow from './components/GroupChat/GroupChatWindow'
 import CareHubWindow from './components/CareHub/CareHubWindow'
 import GlobalSettings from './components/GlobalSettings'
 import SessionSettings from './components/SessionSettings'
-import SessionList from './components/SessionList'
+import UniverseHome from './components/UniverseHome'
 import BottomNav from './components/BottomNav'
 import LoginPage from './components/LoginPage'
 import VoiceFavorites from './components/VoiceFavorites'
@@ -679,11 +679,11 @@ export default function App() {
           )}
           {currentView === 'careHub' && <CareHubWindow theme={theme} onClose={() => setCurrentView('sessions')} />}
           {currentView === 'sessions' && (
-            <SessionList
+            <UniverseHome
               theme={theme}
-              onSelectSession={() => setCurrentView('chat')}
-              onOpenGroupChat={(id) => { setCurrentGroupChatId(id); setCurrentView('groupChat') }}
+              onOpenChat={() => setCurrentView('chat')}
               onOpenCareHub={() => setCurrentView('careHub')}
+              onOpenSettings={() => setCurrentView('globalSettings')}
             />
           )}
           {currentView === 'globalSettings' && <GlobalSettings theme={theme} onLogout={handleLogout} onForceSync={handleForceSync} />}
@@ -694,7 +694,7 @@ export default function App() {
           {currentView === 'codexMemory' && <CodexMemory theme={theme} onBack={() => setCurrentView('sessionSettings')} />}
         </div>
 
-        {currentView !== 'sessionSettings' && currentView !== 'voiceFavorites' && currentView !== 'chat' && currentView !== 'companionMemory' && currentView !== 'codexMemory' && currentView !== 'tidalMemory' && currentView !== 'groupChat' && currentView !== 'careHub' && (
+        {['sessions', 'chat', 'globalSettings'].includes(currentView) && (
           <BottomNav currentView={currentView} onChange={setCurrentView} theme={theme} />
         )}
       </div>

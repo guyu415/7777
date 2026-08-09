@@ -1,87 +1,67 @@
+import { MessageCircleHeart, Settings2, Sparkles } from 'lucide-react'
+
 const TABS = [
-  { id: 'sessions',       label: '会话', img: '/assets/bunny.png',          fit: 'contain' },
-  { id: 'chat',           label: '聊天', img: '/assets/capybara-acorn.png', fit: 'contain' },
-  { id: 'globalSettings', label: '设置', img: '/assets/capybara-apple.png', fit: 'contain' },
+  { id: 'sessions', label: '宇宙', Icon: Sparkles },
+  { id: 'chat', label: '聊天', Icon: MessageCircleHeart },
+  { id: 'globalSettings', label: '设置', Icon: Settings2 },
 ]
 
 export default function BottomNav({ currentView, onChange, theme, bare = false }) {
-  const primary = theme?.primary || '#4aacf0'
-  const primaryDark = theme?.primaryDark || '#2196d3'
-
-  const containerStyle = bare
-    ? { display: 'flex', alignItems: 'center', justifyContent: 'space-around', paddingTop: 4, paddingBottom: 4, minHeight: 88 }
-    : {
-        display: 'flex', alignItems: 'center', justifyContent: 'space-around',
-        background: `linear-gradient(to bottom, ${primary}08, rgba(255,255,255,0.22))`,
-        backdropFilter: 'blur(22px)',
-        WebkitBackdropFilter: 'blur(22px)',
-        borderTop: `1px solid ${primary}14`,
-        paddingTop: 4, paddingBottom: 4,
-        minHeight: 88,
-      }
+  const primary = theme?.primary || '#ff85b3'
+  const primaryDark = theme?.primaryDark || '#756ea8'
 
   return (
-    <div
+    <nav
       className={bare ? 'flex-shrink-0' : 'flex-shrink-0 safe-bottom'}
-      style={containerStyle}
+      aria-label="主导航"
+      style={{
+        padding: bare ? '5px 14px' : '6px 14px 7px',
+        background: bare ? 'transparent' : 'rgba(255,255,255,.2)',
+        backdropFilter: bare ? undefined : 'blur(18px)',
+        WebkitBackdropFilter: bare ? undefined : 'blur(18px)',
+      }}
     >
-      {TABS.map((tab) => {
-        const active = currentView === tab.id
-        return (
-          <button
-            key={tab.id}
-            onClick={() => onChange(tab.id)}
-            style={{
-              flex: 1,
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              padding: 0,
-              background: 'none',
-              border: 'none',
-              cursor: 'pointer',
-            }}
-          >
-            {/* Flower wreath IS the tab frame — fills the tab area */}
-            <div style={{ position: 'relative', width: 84, height: 84 }}>
-              <img
-                src={tab.img}
-                alt={tab.label}
-                style={{
-                  width: '100%',
-                  height: '100%',
-                  objectFit: tab.fit || 'cover',
-                  filter: active
-                    ? `drop-shadow(0 0 7px ${primary}) drop-shadow(0 0 16px ${primary}aa) brightness(1.12)`
-                    : 'opacity(0.42) saturate(0.5)',
-                  transform: active ? 'scale(1.06)' : 'scale(1)',
-                  transition: 'all 0.3s ease',
-                }}
-              />
-              <span
-                style={{
-                  position: 'absolute',
-                  inset: 0,
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  fontSize: 12,
-                  fontWeight: active ? 700 : 500,
-                  color: active ? primaryDark : '#bbb',
-                  textShadow: active
-                    ? `0 0 8px ${primary}cc, 0 1px 0 rgba(255,255,255,0.9)`
-                    : '0 1px 0 rgba(255,255,255,0.6)',
-                  letterSpacing: '0.02em',
-                  pointerEvents: 'none',
-                  userSelect: 'none',
-                }}
-              >
-                {tab.label}
-              </span>
-            </div>
-          </button>
-        )
-      })}
-    </div>
+      <div style={{
+        height: 62,
+        display: 'flex',
+        alignItems: 'stretch',
+        padding: 4,
+        borderRadius: 25,
+        border: '1px solid rgba(255,255,255,.72)',
+        background: 'linear-gradient(135deg,rgba(255,255,255,.68),rgba(255,239,247,.52))',
+        boxShadow: '0 10px 28px rgba(81,69,97,.13),inset 0 1px 0 rgba(255,255,255,.9)',
+      }}>
+        {TABS.map(({ id, label, Icon }) => {
+          const active = currentView === id
+          return (
+            <button
+              key={id}
+              onClick={() => onChange(id)}
+              aria-current={active ? 'page' : undefined}
+              style={{
+                position: 'relative',
+                flex: 1,
+                display: 'flex',
+                flexDirection: 'column',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: 3,
+                padding: 0,
+                border: 0,
+                borderRadius: 21,
+                background: active ? `linear-gradient(145deg,${primary}20,rgba(255,255,255,.55))` : 'transparent',
+                color: active ? primaryDark : '#a4a4b1',
+                cursor: 'pointer',
+                transition: 'all .22s ease',
+              }}
+            >
+              <Icon size={active ? 20 : 18} strokeWidth={active ? 2 : 1.6} />
+              <span style={{ fontSize: 10, lineHeight: 1, fontWeight: active ? 700 : 500, letterSpacing: '.06em' }}>{label}</span>
+              {active && <i style={{ position: 'absolute', bottom: 2, width: 4, height: 4, borderRadius: '50%', background: primary, boxShadow: `0 0 7px ${primary}` }} />}
+            </button>
+          )
+        })}
+      </div>
+    </nav>
   )
 }

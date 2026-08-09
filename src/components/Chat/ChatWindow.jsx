@@ -12,6 +12,7 @@ import VoiceCall from '../Voice/VoiceCall'
 import GomokuBoard from './GomokuBoard'
 import DiceDuel from './DiceDuel'
 import SpicyMonopolyBoard from './SpicyMonopolyBoard'
+import SessionList from '../SessionList'
 import XinchaoPanel from './XinchaoPanel'
 import FocusPomodoroSheet from '../Focus/FocusPomodoroSheet'
 import FocusSession from '../Focus/FocusSession'
@@ -118,6 +119,7 @@ export default function ChatWindow({ theme }) {
   const [showGomoku, setShowGomoku] = useState(false)
   const [showDice, setShowDice] = useState(false)
   const [showSpicy, setShowSpicy] = useState(false)
+  const [showSessionDrawer, setShowSessionDrawer] = useState(false)
   const [showDivination, setShowDivination] = useState(false)
   const [showCarryOut, setShowCarryOut] = useState(false)
   // Focus (专注) — ONE real global task, server-authoritative (see
@@ -481,8 +483,8 @@ export default function ChatWindow({ theme }) {
               own fixed-width column has no crowding to compete with. */}
           <div className="flex flex-col items-center gap-1 flex-shrink-0">
             <button
-              onClick={() => setCurrentView('sessions')}
-              title="会话列表"
+              onClick={() => setShowSessionDrawer(true)}
+              title="切换对话"
               className="w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 transition-all duration-200"
               style={{ background: `${primaryColor}18`, color: primaryColor }}
             >
@@ -792,11 +794,11 @@ export default function ChatWindow({ theme }) {
         </div>
       )}
 
-      {/* 输入区：聊天页不再显示底部导航栏，输入区独占底部并适配 safe-area。
+      {/* 输入区：主导航现在常驻聊天页下方，因此安全区由主导航统一承接。
           backdropFilter 会自成一个层叠上下文，必须显式给 position+z-index，
           否则会被消息区 zIndex:1 的定位元素盖住（"+"菜单弹层因此被压在消息区下面）。 */}
       <div
-        className="flex-shrink-0 safe-bottom"
+        className="flex-shrink-0"
         style={{
           position: 'relative',
           zIndex: 5,
@@ -914,6 +916,42 @@ export default function ChatWindow({ theme }) {
           userAvatar={effectiveUserAvatar}
           onClose={() => setShowDice(false)}
         />
+      )}
+
+      {showSessionDrawer && (
+        <div className="fixed inset-0 z-[84] flex" role="dialog" aria-modal="true" aria-label="切换对话">
+          <style>{`@keyframes eunoiaDrawerIn{from{transform:translateX(-102%)}to{transform:translateX(0)}}`}</style>
+          <button
+            className="absolute inset-0 border-0"
+            style={{ background: 'rgba(33,29,42,.22)', backdropFilter: 'blur(4px)', WebkitBackdropFilter: 'blur(4px)' }}
+            onClick={() => setShowSessionDrawer(false)}
+            aria-label="关闭会话列表"
+          />
+          <div
+            className="relative h-full overflow-hidden"
+            style={{
+              width: 'min(88vw, 380px)',
+              borderRadius: '0 30px 30px 0',
+              background: theme?.appBg || '#f9f7fc',
+              boxShadow: '18px 0 55px rgba(37,29,49,.2)',
+              animation: 'eunoiaDrawerIn .3s cubic-bezier(.2,.75,.2,1)',
+            }}
+          >
+            <SessionList
+              theme={theme}
+              onSelectSession={() => setShowSessionDrawer(false)}
+              onOpenGroupChat={(id) => {
+                setShowSessionDrawer(false)
+                useStore.getState().setCurrentGroupChatId(id)
+                setCurrentView('groupChat')
+              }}
+              onOpenCareHub={() => {
+                setShowSessionDrawer(false)
+                setCurrentView('careHub')
+              }}
+            />
+          </div>
+        </div>
       )}
 
       {showXinchaoPanel && (
