@@ -56,9 +56,9 @@ export function defaultCareHubState(now = Date.now()): CareHubState {
       timezone: 'Asia/Shanghai',
       roles: {
         news: { enabled: true, time: '08:00', runtime: 'codex', model: 'gpt-5.6-luna' },
-        almanac: { enabled: true, time: '08:05', runtime: 'codex', model: 'gpt-5.4-mini' },
+        almanac: { enabled: true, time: '08:05', runtime: 'codex', model: 'gpt-5.6-luna' },
         ledger: { enabled: true, time: '21:00', runtime: 'codex', model: 'gpt-5.6-luna' },
-        study: { enabled: true, time: '21:30', runtime: 'codex', model: 'gpt-5.4-mini' },
+        study: { enabled: true, time: '21:30', runtime: 'codex', model: 'gpt-5.6-luna' },
       },
     },
     messages: [],

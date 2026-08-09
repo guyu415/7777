@@ -10,10 +10,12 @@ describe('care hub', () => {
     expect(sanitizeCareRoleConfig(role, { runtime: 'gemini', model: 'gemini-3.5-flash-lite' })).toMatchObject({ runtime: 'gemini', model: 'gemini-3.5-flash-lite' })
   })
 
-  it('defaults scheduled care to lightweight subscription models', () => {
+  it('defaults every scheduled care role to ChatGPT-authenticated Luna', () => {
     const roles = defaultCareHubState().config.roles
-    expect(roles.news.model).toBe('gpt-5.6-luna')
-    expect(roles.almanac.model).toBe('gpt-5.4-mini')
+    for (const role of Object.values(roles)) {
+      expect(role.runtime).toBe('codex')
+      expect(role.model).toBe('gpt-5.6-luna')
+    }
   })
 
   it('uses Shanghai wall time and only runs once per day', () => {

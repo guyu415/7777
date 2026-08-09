@@ -25,7 +25,8 @@ Luna runs through the root-owned fixed-path script
 arguments. It invokes `codex exec --ephemeral --ignore-user-config
 --ignore-rules --sandbox read-only --model gpt-5.6-luna` with medium
 reasoning and a strict JSON output schema. It never resumes a CC or Codex
-thread.
+thread. The root Codex CLI is authenticated with ChatGPT login, so this uses
+the ChatGPT plan's included Codex allowance rather than an OpenAI API key.
 
 Persistent tidal state is `/opt/ai-companion/state/cc-tidal-memory.json`.
 The file contains the CC session id, rolling summary, processed boundary,
