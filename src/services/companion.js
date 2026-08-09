@@ -651,6 +651,16 @@ export async function getXinchaoStatus(runtime = 'claude-code') {
 export async function getGomokuState(runtime = 'claude-code') {
   return companionJson(`/gomoku/state?runtime=${encodeURIComponent(runtime)}`)
 }
+export async function getDiceDuelState(runtime = 'claude-code') {
+  return companionJson(`/dice/state?runtime=${encodeURIComponent(runtime)}`)
+}
+export async function rollDiceDuel(runtime = 'claude-code') {
+  return companionJson('/dice/roll', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ runtime }),
+  })
+}
 export async function newGomokuGame(runtime = 'claude-code') {
   return companionJson('/gomoku/new', {
     method: 'POST',

@@ -10,6 +10,7 @@ import RuntimeStatusBall from './RuntimeStatusBall'
 import CarryOutPetModal from './CarryOutPetModal'
 import VoiceCall from '../Voice/VoiceCall'
 import GomokuBoard from './GomokuBoard'
+import DiceDuel from './DiceDuel'
 import XinchaoPanel from './XinchaoPanel'
 import FocusPomodoroSheet from '../Focus/FocusPomodoroSheet'
 import FocusSession from '../Focus/FocusSession'
@@ -114,6 +115,7 @@ export default function ChatWindow({ theme }) {
   const [toast, setToast] = useState(null)
   const [showCall, setShowCall] = useState(false)
   const [showGomoku, setShowGomoku] = useState(false)
+  const [showDice, setShowDice] = useState(false)
   const [showDivination, setShowDivination] = useState(false)
   const [showCarryOut, setShowCarryOut] = useState(false)
   // Focus (专注) — ONE real global task, server-authoritative (see
@@ -810,6 +812,7 @@ export default function ChatWindow({ theme }) {
           replyDraft={replyTarget}
           onCancelReply={() => setReplyTarget(null)}
           onOpenGomoku={() => setShowGomoku(true)}
+          onOpenDice={() => setShowDice(true)}
           gomokuEnabled={isFixedVpsSession}
           onOpenFocus={() => setShowFocusSheet(true)}
           onOpenDivination={() => setShowDivination(true)}
@@ -877,6 +880,17 @@ export default function ChatWindow({ theme }) {
           aiAvatar={effectiveAiAvatar}
           userAvatar={effectiveUserAvatar}
           onClose={() => setShowGomoku(false)}
+        />
+      )}
+
+      {showDice && (
+        <DiceDuel
+          theme={theme}
+          runtime={isCodexSession ? 'codex' : 'claude-code'}
+          aiName={effectiveAiName}
+          aiAvatar={effectiveAiAvatar}
+          userAvatar={effectiveUserAvatar}
+          onClose={() => setShowDice(false)}
         />
       )}
 

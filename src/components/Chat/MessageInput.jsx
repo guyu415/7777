@@ -50,6 +50,16 @@ function GomokuIcon() {
   )
 }
 
+function DiceIcon() {
+  return (
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="3" y="3" width="18" height="18" rx="4"/>
+      <circle cx="8" cy="8" r="1" fill="currentColor"/><circle cx="16" cy="8" r="1" fill="currentColor"/>
+      <circle cx="12" cy="12" r="1" fill="currentColor"/><circle cx="8" cy="16" r="1" fill="currentColor"/><circle cx="16" cy="16" r="1" fill="currentColor"/>
+    </svg>
+  )
+}
+
 function FocusIcon() {
   return (
     <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -167,7 +177,7 @@ function readDraft(storageKey) {
   } catch { return { text: '', segments: [] } }
 }
 
-const MessageInput = forwardRef(function MessageInput({ onSend, onSendBatch, onStartCall, onSendImage, onSendFile, replyDraft, onCancelReply, onOpenGomoku, gomokuEnabled, onOpenFocus, onOpenDivination, disabled, theme, isLoading, onStop, draftKey }, ref) {
+const MessageInput = forwardRef(function MessageInput({ onSend, onSendBatch, onStartCall, onSendImage, onSendFile, replyDraft, onCancelReply, onOpenGomoku, onOpenDice, gomokuEnabled, onOpenFocus, onOpenDivination, disabled, theme, isLoading, onStop, draftKey }, ref) {
   const draftStorageKey = draftKey ? `chat.draft.${draftKey}` : null
   const initialDraft = readDraft(draftStorageKey)
   const [text, setTextRaw] = useState(initialDraft.text)
@@ -369,6 +379,10 @@ const MessageInput = forwardRef(function MessageInput({ onSend, onSendBatch, onS
   const handleMenuGomoku = () => {
     setMenuOpen(false)
     onOpenGomoku?.()
+  }
+  const handleMenuDice = () => {
+    setMenuOpen(false)
+    onOpenDice?.()
   }
 
   const handleMenuFocus = () => {
@@ -623,6 +637,13 @@ const MessageInput = forwardRef(function MessageInput({ onSend, onSendBatch, onS
             label="五子棋"
             sub={gomokuEnabled ? undefined : '仅VPS会话支持'}
             onClick={handleMenuGomoku}
+            disabled={!gomokuEnabled}
+          />
+          <MenuItem
+            icon={<DiceIcon />}
+            label="骰子比大小"
+            sub={gomokuEnabled ? undefined : '仅VPS会话支持'}
+            onClick={handleMenuDice}
             disabled={!gomokuEnabled}
           />
           <MenuItem icon={<FocusIcon />} label="专注" onClick={handleMenuFocus} />

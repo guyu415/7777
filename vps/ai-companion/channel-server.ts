@@ -30,8 +30,9 @@
 import { Server } from '@modelcontextprotocol/sdk/server/index.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { ListToolsRequestSchema, CallToolRequestSchema } from '@modelcontextprotocol/sdk/types.js'
-import { readFileSync, appendFileSync, mkdirSync, readdirSync, statSync, writeFileSync, unlinkSync, copyFileSync, existsSync, renameSync } from 'fs'
+import { readFileSync, appendFileSync, mkdirSync, readdirSync, statSync, lstatSync, writeFileSync, unlinkSync, copyFileSync, existsSync, renameSync } from 'fs'
 import { join, dirname, resolve } from 'path'
+import { randomInt } from 'node:crypto'
 import type { ServerWebSocket } from 'bun'
 import {
   DEFAULT_CODEX_SESSION_ID,
@@ -127,6 +128,7 @@ const CODEX_MEMORY_CONTEXT_MAX_BYTES = 64 * 1024
 const TRANSCRIPT_DIR = process.env.AI_COMPANION_TRANSCRIPT_DIR
   ?? join(process.env.HOME ?? '/home/companion', '.claude', 'projects', '-opt-ai-companion')
 const MEMORY_FILENAME_RE = /^[A-Za-z0-9_-]+\.md$/
+const MEMORY_RELATIVE_PATH_RE = /^(?:[\p{L}\p{N}_-]+\/)*[\p{L}\p{N}_-]+\.md$/u
 const MEMORY_FILE_MAX_BYTES = 256 * 1024
 const MEMORY_DIR_MAX_BYTES = 10 * 1024 * 1024
 mkdirSync(MEMORY_DIR, { recursive: true })
@@ -237,6 +239,7 @@ const RESET_MARKER_FILE = process.env.AI_COMPANION_RESET_MARKER_FILE ?? join(ROO
 // channel-server restart (loaded back into memory at startup below).
 const GOMOKU_FILE = process.env.AI_COMPANION_GOMOKU_FILE ?? join(ROOT, 'state', 'gomoku-game.json')
 const GOMOKU_BOARD_SIZE = 15
+const DICE_DUEL_FILE = process.env.AI_COMPANION_DICE_DUEL_FILE ?? join(ROOT, 'state', 'dice-duel.json')
 
 // 心潮 (xinchao-dynamic-mind) — a separate, independently-deployed dynamic
 // state layer (Docker Compose, 127.0.0.1:18110 only, SHADOW_MODE=true,
@@ -582,6 +585,23 @@ type GomokuGame = {
 // 'claude-code' only for wire compatibility with any stale client code.
 type GomokuRuntime = 'claude-code' | 'codex'
 type GomokuWire = { type: 'gomoku_update'; runtime: GomokuRuntime; game: GomokuGame }
+type DiceDuelRound = {
+  id: string
+  runtime: GomokuRuntime
+  userRoll: number
+  opponentRoll: number
+  result: 'user_win' | 'opponent_win' | 'draw'
+  ts: number
+}
+type DiceDuelState = {
+  runtime: GomokuRuntime
+  userWins: number
+  opponentWins: number
+  draws: number
+  rounds: DiceDuelRound[]
+  updatedAt: number
+}
+type DiceDuelWire = { type: 'dice_duel_update'; runtime: GomokuRuntime; state: DiceDuelState }
 // Codex gomoku has no tmux/MCP turn_id space to piggyback on the way Claude
 // Code's gomoku reuses turn_start/turn_end for — this is its own explicit
 // completion signal for an in-game chat turn, carrying the same
@@ -750,7 +770,7 @@ type GroupUpdateWire = { type: 'group_update'; chat: GroupChat }
 type GroupListWire = { type: 'group_list'; chats: Array<{ id: string; name: string; members: GroupMemberId[]; updatedAt: number }> }
 type CareUpdateWire = { type: 'care_update'; state: CareHubState }
 
-type LiveWire = MsgWire | TurnStartWire | TurnEndWire | TurnErrorWire | ResetBusyWire | ResetWire | ThinkingWire | GomokuWire | GomokuTurnEndWire | XinchaoUpdateWire
+type LiveWire = MsgWire | TurnStartWire | TurnEndWire | TurnErrorWire | ResetBusyWire | ResetWire | ThinkingWire | GomokuWire | GomokuTurnEndWire | DiceDuelWire | XinchaoUpdateWire
   | CodexMsgWire | CodexMsgDeletedWire | CodexStatusWire | CodexNoticeWire | CodexTurnEndWire | CodexTurnBusyWire | CodexResetBusyWire | CodexResetWire
   | FocusUpdateWire | FocusFinishedWire | GroupUpdateWire | GroupListWire | CareUpdateWire
 // resetAt lets a client that reconnects (or opens a brand new tab) long
@@ -1967,6 +1987,12 @@ mcp.setRequestHandler(ListToolsRequestSchema, async () => ({
       description: 'Stay quiet this round in the group chat — a genuine, common, expected choice when you have nothing worth adding. Costs nothing.',
       inputSchema: { type: 'object', properties: {} },
     },
+    {
+      name: 'get_life_progress',
+      description:
+        'Read the user\'s compact current life dashboard. Returns only study completion progress and aggregate spending totals for today and this month; it never returns individual ledger entries or a verbose record trail.',
+      inputSchema: { type: 'object', properties: {} },
+    },
   ],
 }))
 
@@ -2268,6 +2294,9 @@ mcp.setRequestHandler(CallToolRequestSchema, async req => {
         }
         return { content: [{ type: 'text', text: 'ok, staying quiet' }] }
       }
+      case 'get_life_progress': {
+        return { content: [{ type: 'text', text: JSON.stringify(careCompactProgress()) }] }
+      }
       default:
         return { content: [{ type: 'text', text: `unknown tool: ${req.params.name}` }], isError: true }
     }
@@ -2441,10 +2470,15 @@ const CLEAR_COOKIE = `${COOKIE_NAME}=; Path=/; HttpOnly; Secure; SameSite=Strict
 // ---------- Auto Memory management (real files, no second memory system) ----------
 
 function safeMemoryPath(filename: string): string | null {
-  if (typeof filename !== 'string' || !MEMORY_FILENAME_RE.test(filename)) return null
+  if (typeof filename !== 'string' || filename.length > 240 || !MEMORY_RELATIVE_PATH_RE.test(filename)) return null
   const base = resolve(MEMORY_DIR)
   const p = resolve(MEMORY_DIR, filename)
-  if (p !== join(base, filename)) return null // defense in depth against traversal
+  if (!p.startsWith(base + '/')) return null // defense in depth against traversal
+  let cursor = base
+  for (const part of filename.split('/')) {
+    cursor = join(cursor, part)
+    if (existsSync(cursor) && lstatSync(cursor).isSymbolicLink()) return null
+  }
   return p
 }
 
@@ -2517,16 +2551,20 @@ function readCodexMemoryContext(sessionId: string): string {
 
 function memoryDirTotalBytes(excludeFilename?: string): number {
   let total = 0
-  for (const name of readdirSync(MEMORY_DIR)) {
-    if (name === excludeFilename) continue
-    const p = join(MEMORY_DIR, name)
-    try {
-      const st = statSync(p)
-      if (st.isFile()) total += st.size
-    } catch {
-      // ignore races (file removed between readdir and stat)
+  const walk = (dir: string, prefix = '') => {
+    for (const name of readdirSync(dir)) {
+      const relativeName = prefix ? `${prefix}/${name}` : name
+      const p = join(dir, name)
+      try {
+        const st = lstatSync(p)
+        if (st.isDirectory()) walk(p, relativeName)
+        else if (st.isFile() && MEMORY_RELATIVE_PATH_RE.test(relativeName) && relativeName !== excludeFilename) total += st.size
+      } catch {
+        // ignore races (file removed between readdir and stat)
+      }
     }
   }
+  walk(MEMORY_DIR)
   return total
 }
 
@@ -2535,25 +2573,85 @@ function backupMemoryFile(filename: string, path: string) {
   // not accumulated — kept OUTSIDE MEMORY_DIR so it can never be picked up
   // by Claude Code's own memory-directory scan.
   if (existsSync(path)) {
-    copyFileSync(path, join(MEMORY_BACKUP_DIR, filename))
+    const backupPath = join(MEMORY_BACKUP_DIR, filename)
+    mkdirSync(dirname(backupPath), { recursive: true })
+    copyFileSync(path, backupPath)
   }
 }
 
-function listMemoryFiles(): Array<{ name: string; size: number; mtime: number }> {
-  const out: Array<{ name: string; size: number; mtime: number }> = []
-  for (const name of readdirSync(MEMORY_DIR)) {
-    if (!MEMORY_FILENAME_RE.test(name)) continue
-    const p = join(MEMORY_DIR, name)
-    try {
-      const st = statSync(p)
-      if (st.isFile()) out.push({ name, size: st.size, mtime: st.mtimeMs })
-    } catch {
-      // ignore races
+function listMemoryFiles(): Array<{ name: string; size: number; mtime: number; kind: 'fixed' | 'on-demand' }> {
+  const out: Array<{ name: string; size: number; mtime: number; kind: 'fixed' | 'on-demand' }> = []
+  const walk = (dir: string, prefix = '') => {
+    for (const name of readdirSync(dir)) {
+      const relativeName = prefix ? `${prefix}/${name}` : name
+      const p = join(dir, name)
+      try {
+        const st = lstatSync(p)
+        if (st.isDirectory()) walk(p, relativeName)
+        else if (st.isFile() && MEMORY_RELATIVE_PATH_RE.test(relativeName)) {
+          out.push({ name: relativeName, size: st.size, mtime: st.mtimeMs, kind: relativeName === 'MEMORY.md' ? 'fixed' : 'on-demand' })
+        }
+      } catch {
+        // ignore races
+      }
     }
   }
-  out.sort((a, b) => b.mtime - a.mtime)
+  walk(MEMORY_DIR)
+  out.sort((a, b) => (a.kind === b.kind ? b.mtime - a.mtime : a.kind === 'fixed' ? -1 : 1))
   return out
 }
+
+// ---------- Dice duel (骰子比大小) ----------
+
+function emptyDiceDuelState(runtime: GomokuRuntime): DiceDuelState {
+  return { runtime, userWins: 0, opponentWins: 0, draws: 0, rounds: [], updatedAt: 0 }
+}
+
+let diceDuelStates: Record<GomokuRuntime, DiceDuelState> = {
+  'claude-code': emptyDiceDuelState('claude-code'),
+  codex: emptyDiceDuelState('codex'),
+}
+
+function loadDiceDuelStates() {
+  try {
+    const parsed = JSON.parse(readFileSync(DICE_DUEL_FILE, 'utf8'))
+    for (const runtime of ['claude-code', 'codex'] as const) {
+      const state = parsed?.[runtime]
+      if (!state || !Array.isArray(state.rounds)) continue
+      diceDuelStates[runtime] = {
+        runtime,
+        userWins: Math.max(0, Number(state.userWins) || 0),
+        opponentWins: Math.max(0, Number(state.opponentWins) || 0),
+        draws: Math.max(0, Number(state.draws) || 0),
+        rounds: state.rounds.slice(-30),
+        updatedAt: Number(state.updatedAt) || 0,
+      }
+    }
+  } catch {}
+}
+
+function saveDiceDuelStates() {
+  mkdirSync(dirname(DICE_DUEL_FILE), { recursive: true })
+  writeFileSync(DICE_DUEL_FILE, JSON.stringify(diceDuelStates))
+}
+
+function rollDiceDuel(runtime: GomokuRuntime): DiceDuelState {
+  const state = diceDuelStates[runtime]
+  const userRoll = randomInt(1, 7)
+  const opponentRoll = randomInt(1, 7)
+  const result = userRoll === opponentRoll ? 'draw' : userRoll > opponentRoll ? 'user_win' : 'opponent_win'
+  if (result === 'user_win') state.userWins++
+  else if (result === 'opponent_win') state.opponentWins++
+  else state.draws++
+  state.rounds.push({ id: nextId(), runtime, userRoll, opponentRoll, result, ts: Date.now() })
+  state.rounds = state.rounds.slice(-30)
+  state.updatedAt = Date.now()
+  saveDiceDuelStates()
+  sendRaw({ type: 'dice_duel_update', runtime, state })
+  return state
+}
+
+loadDiceDuelStates()
 
 // ---------- statusLine-fed status ----------
 
@@ -6758,6 +6856,21 @@ function carePrivateProfile(): { bazi?: string } {
 function carePublicState(): CareHubState {
   return { ...careHubState, runningRole: careRunningRole }
 }
+function careCompactProgress() {
+  const { date } = zonedDateTime(new Date(), careHubState.config.timezone)
+  const month = date.slice(0, 7)
+  const todayTotal = careHubState.ledger.entries
+    .filter((entry) => entry.date === date)
+    .reduce((sum, entry) => sum + entry.amount, 0)
+  const monthTotal = ledgerMonthSummary(careHubState.ledger.entries, month).total
+  const total = careHubState.study.goals.length
+  const completed = careHubState.study.goals.filter((goal) => goal.done).length
+  return {
+    date,
+    spending: { todayTotal, monthTotal },
+    study: { completed, total, progressPercent: total ? Math.round(completed / total * 100) : 0 },
+  }
+}
 function broadcastCareHub() {
   sendRaw({ type: 'care_update', state: carePublicState() })
 }
@@ -6973,7 +7086,13 @@ function dispatchCareAlert() {
   saveCareAlertKeys()
   const id = nextId()
   startTurn(id)
-  deliver(id, `[系统提示，不是用户直接发的消息]生活关怀群检测到一项需要你介入的情况：${message}\n\n请结合你和用户平时的相处方式，在主聊天窗里主动说她几句：明确指出问题，但不要羞辱、恐吓或夸大；给一个马上能做的具体动作。可以用 reply 或 send_voice 正常发给用户。`)
+  deliver(id, JSON.stringify({
+    kind: 'care_alert',
+    source: 'care-hub',
+    alertKey: key,
+    fact: message,
+    observedAt: Date.now(),
+  }))
   log('care_alert_sent_to_cc', { key, id })
 }
 setInterval(dispatchCareAlert, 15_000)
@@ -7480,6 +7599,7 @@ Bun.serve<{ authed: true }>({
       }
       try {
         backupMemoryFile(name, p)
+        mkdirSync(dirname(p), { recursive: true })
         writeFileSync(p, content, 'utf8')
         const st = statSync(p)
         log('memory_put', { name, bytes: contentBytes })
@@ -7740,6 +7860,25 @@ Bun.serve<{ authed: true }>({
     //
     // GET reads whatever is currently persisted (or null — no game started
     // yet), used by the frontend to restore an in-progress game on mount.
+    if (url.pathname === '/dice/state' && req.method === 'GET') {
+      const gate = authGate()
+      if (gate) return gate
+      const runtime: GomokuRuntime = url.searchParams.get('runtime') === 'codex' ? 'codex' : 'claude-code'
+      return jsonResponse({ state: diceDuelStates[runtime] }, { headers: corsHeadersFor(origin) })
+    }
+
+    if (url.pathname === '/dice/roll' && req.method === 'POST') {
+      const gate = authGate()
+      if (gate) return gate
+      const cors = corsHeadersFor(origin)
+      let body: unknown = {}
+      try { body = await req.json() } catch {}
+      const runtime: GomokuRuntime = (body as any)?.runtime === 'codex' ? 'codex' : 'claude-code'
+      const state = rollDiceDuel(runtime)
+      log('dice_duel_roll', { runtime, result: state.rounds[state.rounds.length - 1]?.result })
+      return jsonResponse({ ok: true, state }, { headers: cors })
+    }
+
     if (url.pathname === '/gomoku/state' && req.method === 'GET') {
       const gate = authGate()
       if (gate) return gate

@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { ChevronLeft } from 'lucide-react'
 import { listMemoryFiles, getMemoryFile, putMemoryFile, deleteMemoryFile } from '../services/companion'
 
-const FILENAME_RE = /^[A-Za-z0-9_-]+\.md$/
+const FILENAME_RE = /^(?:[\p{L}\p{N}_-]+\/)*[\p{L}\p{N}_-]+\.md$/u
 
 function formatTime(ms) {
   if (!ms) return ''
@@ -25,6 +25,8 @@ export default function CompanionMemory({ theme, onBack }) {
   const [saveError, setSaveError] = useState(null)
   const [newName, setNewName] = useState('')
   const [showNewForm, setShowNewForm] = useState(false)
+  const fixedFiles = files?.filter(f => f.kind === 'fixed' || f.name === 'MEMORY.md') || []
+  const onDemandFiles = files?.filter(f => f.kind === 'on-demand' || (f.kind == null && f.name !== 'MEMORY.md')) || []
 
   const refreshList = async () => {
     setLoadError(null)
@@ -87,7 +89,7 @@ export default function CompanionMemory({ theme, onBack }) {
   const createNew = async () => {
     const name = newName.trim()
     if (!FILENAME_RE.test(name)) {
-      setSaveError('文件名只能包含字母/数字/下划线/短横线，并以 .md 结尾')
+      setSaveError('文件名可使用中英文、数字、下划线、短横线和子目录，并以 .md 结尾')
       return
     }
     try {
@@ -125,7 +127,7 @@ export default function CompanionMemory({ theme, onBack }) {
         {!selected ? (
           <div className="space-y-3">
             <p className="text-[11px]" style={{ color: '#7a9cc0' }}>
-              直接管理 VPS 上生产 Claude Code 会话真实使用的 Auto Memory 文件（与 Eunoia 自己的"存入记忆"是两回事）。
+              MEMORY.md 会固定注入常驻会话；“按需提取”目录里的资料会在相关话题出现时按需调用。这里列出两类真实文件，不会复制成另一套记忆。
             </p>
             {loadError && (
               <div className="text-xs p-3 rounded-xl" style={{ background: 'rgba(255,100,100,0.08)', color: '#e07070' }}>{loadError}</div>
@@ -136,24 +138,29 @@ export default function CompanionMemory({ theme, onBack }) {
             {!loadError && files?.length === 0 && (
               <div className="text-xs text-center py-8" style={{ color: '#a0b8d0' }}>还没有任何记忆文件</div>
             )}
-            {files?.map(f => (
-              <div key={f.name}
-                onClick={() => openFile(f.name)}
-                className="rounded-2xl px-4 py-3 cursor-pointer"
-                style={{ background: 'rgba(255,255,255,0.55)', border: '1.5px solid rgba(200,220,255,0.3)' }}
-              >
-                <div className="flex items-center justify-between">
-                  <span className="text-sm font-semibold" style={{ color: '#2c5282' }}>{f.name}</span>
-                  <button
-                    onClick={e => { e.stopPropagation(); remove(f.name) }}
-                    className="text-xs px-2 py-1 rounded-lg"
-                    style={{ color: '#e07070', background: 'rgba(255,100,100,0.08)' }}
-                  >删除</button>
-                </div>
-                <div className="text-[11px] mt-1" style={{ color: '#a0b8d0' }}>
-                  {f.size} 字节 · 更新于 {formatTime(f.mtime)}
-                </div>
-              </div>
+            {[['固定注入', fixedFiles], ['按需调用', onDemandFiles]].map(([label, group]) => group.length > 0 && (
+              <section key={label} className="space-y-2">
+                <div className="text-xs font-semibold px-1" style={{ color: '#6a90b8' }}>{label} · {group.length}</div>
+                {group.map(f => (
+                  <div key={f.name}
+                    onClick={() => openFile(f.name)}
+                    className="rounded-2xl px-4 py-3 cursor-pointer"
+                    style={{ background: 'rgba(255,255,255,0.55)', border: '1.5px solid rgba(200,220,255,0.3)' }}
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-sm font-semibold break-all" style={{ color: '#2c5282' }}>{f.name}</span>
+                      <button
+                        onClick={e => { e.stopPropagation(); remove(f.name) }}
+                        className="text-xs px-2 py-1 rounded-lg flex-shrink-0"
+                        style={{ color: '#e07070', background: 'rgba(255,100,100,0.08)' }}
+                      >删除</button>
+                    </div>
+                    <div className="text-[11px] mt-1" style={{ color: '#a0b8d0' }}>
+                      {f.size} 字节 · 更新于 {formatTime(f.mtime)}
+                    </div>
+                  </div>
+                ))}
+              </section>
             ))}
 
             {showNewForm ? (
