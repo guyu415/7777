@@ -335,6 +335,17 @@ function announceGomoku(game, runtime) {
   }
 }
 
+const diceDuelListeners = new Set()
+export function onDiceDuelUpdate(fn) {
+  diceDuelListeners.add(fn)
+  return () => diceDuelListeners.delete(fn)
+}
+function announceDiceDuel(state, runtime) {
+  for (const fn of diceDuelListeners) {
+    try { fn(state, runtime) } catch { /* isolate subscribers */ }
+  }
+}
+
 // Fires on every turn_end/turn_error, tagged only with the turnId — lets the
 // gomoku screen notice when the specific interactionId it's waiting on (from
 // postGomokuChat) has finished, without needing its own generator/claiming
@@ -914,6 +925,10 @@ listeners.add(evt => {
     }
     if (m.type === 'gomoku_update') {
       announceGomoku(m.game, m.runtime || 'claude-code')
+      return
+    }
+    if (m.type === 'dice_duel_update') {
+      announceDiceDuel(m.state, m.runtime || 'claude-code')
       return
     }
     // Codex gomoku has no tmux/MCP turnId space to reuse the way Claude

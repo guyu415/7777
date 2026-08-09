@@ -589,8 +589,9 @@ type DiceDuelRound = {
   id: string
   runtime: GomokuRuntime
   userRoll: number
-  opponentRoll: number
-  result: 'user_win' | 'opponent_win' | 'draw'
+  opponentRoll: number | null
+  result: 'user_win' | 'opponent_win' | 'draw' | null
+  phase: 'waiting_opponent' | 'complete'
   ts: number
 }
 type DiceDuelState = {
@@ -2612,6 +2613,8 @@ let diceDuelStates: Record<GomokuRuntime, DiceDuelState> = {
   codex: emptyDiceDuelState('codex'),
 }
 
+const diceDuelTimers: Partial<Record<GomokuRuntime, ReturnType<typeof setTimeout>>> = {}
+
 function loadDiceDuelStates() {
   try {
     const parsed = JSON.parse(readFileSync(DICE_DUEL_FILE, 'utf8'))
@@ -2623,7 +2626,12 @@ function loadDiceDuelStates() {
         userWins: Math.max(0, Number(state.userWins) || 0),
         opponentWins: Math.max(0, Number(state.opponentWins) || 0),
         draws: Math.max(0, Number(state.draws) || 0),
-        rounds: state.rounds.slice(-30),
+        rounds: state.rounds.slice(-30).map((round: any) => ({
+          ...round,
+          opponentRoll: Number.isInteger(round.opponentRoll) ? round.opponentRoll : null,
+          result: round.result === 'user_win' || round.result === 'opponent_win' || round.result === 'draw' ? round.result : null,
+          phase: round.result ? 'complete' : 'waiting_opponent',
+        })),
         updatedAt: Number(state.updatedAt) || 0,
       }
     }
@@ -2635,23 +2643,55 @@ function saveDiceDuelStates() {
   writeFileSync(DICE_DUEL_FILE, JSON.stringify(diceDuelStates))
 }
 
-function rollDiceDuel(runtime: GomokuRuntime): DiceDuelState {
+function completeDiceDuel(runtime: GomokuRuntime, roundId: string): void {
   const state = diceDuelStates[runtime]
-  const userRoll = randomInt(1, 7)
+  const round = state.rounds.find((item) => item.id === roundId)
+  if (!round || round.phase !== 'waiting_opponent') return
   const opponentRoll = randomInt(1, 7)
-  const result = userRoll === opponentRoll ? 'draw' : userRoll > opponentRoll ? 'user_win' : 'opponent_win'
+  const result = round.userRoll === opponentRoll ? 'draw' : round.userRoll > opponentRoll ? 'user_win' : 'opponent_win'
+  round.opponentRoll = opponentRoll
+  round.result = result
+  round.phase = 'complete'
   if (result === 'user_win') state.userWins++
   else if (result === 'opponent_win') state.opponentWins++
   else state.draws++
-  state.rounds.push({ id: nextId(), runtime, userRoll, opponentRoll, result, ts: Date.now() })
+  state.updatedAt = Date.now()
+  saveDiceDuelStates()
+  sendRaw({ type: 'dice_duel_update', runtime, state })
+  log('dice_duel_opponent_roll', { runtime, roundId, opponentRoll, result })
+}
+
+function scheduleDiceDuelOpponent(runtime: GomokuRuntime, roundId: string, delayMs = randomInt(900, 1601)): void {
+  if (diceDuelTimers[runtime]) clearTimeout(diceDuelTimers[runtime])
+  diceDuelTimers[runtime] = setTimeout(() => {
+    delete diceDuelTimers[runtime]
+    completeDiceDuel(runtime, roundId)
+  }, delayMs)
+}
+
+function rollDiceDuel(runtime: GomokuRuntime): { ok: true; state: DiceDuelState } | { ok: false; error: 'opponent_turn' } {
+  const state = diceDuelStates[runtime]
+  const latest = state.rounds[state.rounds.length - 1]
+  if (latest?.phase === 'waiting_opponent') return { ok: false, error: 'opponent_turn' }
+  const round: DiceDuelRound = {
+    id: nextId(), runtime, userRoll: randomInt(1, 7), opponentRoll: null,
+    result: null, phase: 'waiting_opponent', ts: Date.now(),
+  }
+  state.rounds.push(round)
   state.rounds = state.rounds.slice(-30)
   state.updatedAt = Date.now()
   saveDiceDuelStates()
   sendRaw({ type: 'dice_duel_update', runtime, state })
-  return state
+  scheduleDiceDuelOpponent(runtime, round.id)
+  log('dice_duel_user_roll', { runtime, roundId: round.id, userRoll: round.userRoll })
+  return { ok: true, state }
 }
 
 loadDiceDuelStates()
+for (const runtime of ['claude-code', 'codex'] as const) {
+  const latest = diceDuelStates[runtime].rounds.at(-1)
+  if (latest?.phase === 'waiting_opponent') scheduleDiceDuelOpponent(runtime, latest.id, 500)
+}
 
 // ---------- statusLine-fed status ----------
 
@@ -7913,9 +7953,9 @@ Bun.serve<{ authed: true }>({
       let body: unknown = {}
       try { body = await req.json() } catch {}
       const runtime: GomokuRuntime = (body as any)?.runtime === 'codex' ? 'codex' : 'claude-code'
-      const state = rollDiceDuel(runtime)
-      log('dice_duel_roll', { runtime, result: state.rounds[state.rounds.length - 1]?.result })
-      return jsonResponse({ ok: true, state }, { headers: cors })
+      const result = rollDiceDuel(runtime)
+      if (!result.ok) return jsonResponse({ error: result.error }, { status: 409, headers: cors })
+      return jsonResponse({ ok: true, state: result.state }, { headers: cors })
     }
 
     if (url.pathname === '/gomoku/state' && req.method === 'GET') {
