@@ -48,6 +48,27 @@ function Toggle({ value, onChange, primary }) {
   )
 }
 
+// Decorative animal-mouth frame card (hippo/crocodile), cropped from a hand-drawn
+// design mockup — the frame PNG's mouth is a transparent cutout, drawn ON TOP of
+// the content so its teeth naturally overlap the card edges like in the mockup.
+function FrameCard({ frameSrc, aspectRatio, inset, icon, title, children }) {
+  return (
+    <div className="relative w-full" style={{ aspectRatio }}>
+      <div className="absolute rounded-[18px]" style={{ ...inset, background: 'rgba(255,253,248,0.94)' }} />
+      <div className="absolute flex flex-col" style={{ ...inset, padding: '8px 14px', overflow: 'hidden' }}>
+        <div className="flex items-center gap-1.5 mb-1 flex-shrink-0">
+          <span style={{ fontSize: 15 }}>{icon}</span>
+          <span className="font-semibold" style={{ color: '#2c5282', fontSize: 13 }}>{title}</span>
+        </div>
+        {children}
+      </div>
+      <img src={frameSrc} alt="" draggable={false}
+        className="absolute inset-0 w-full h-full pointer-events-none select-none"
+        style={{ objectFit: 'fill' }} />
+    </div>
+  )
+}
+
 function GlassCard({ icon, title, children }) {
   return (
     <div className="forest-settings-card" style={{
@@ -121,24 +142,26 @@ function NotificationCard({ primary }) {
   }
 
   return (
-    <GlassCard icon="🔔" title="设备推送通知">
+    <FrameCard
+      frameSrc="/assets/hippo-frame.png"
+      aspectRatio="440 / 275"
+      inset={{ top: '35%', bottom: '21%', left: '15%', right: '15%' }}
+      icon="🔔" title="设备推送通知"
+    >
       {state === 'need-install' && (
-        <p className="text-xs" style={{ color: '#7a9cc0', lineHeight: 1.7 }}>
-          iOS 上需要先把 Eunoia 安装成桌面应用才能收通知：<br />
-          1. Safari 底部 <b>分享</b> 按钮 → <b>添加到主屏幕</b><br />
-          2. 从桌面的 Eunoia 图标打开<br />
-          3. 回到这里开启通知
+        <p style={{ color: '#7a9cc0', lineHeight: 1.5, fontSize: 10.5 }}>
+          iOS 需先把 Eunoia 添加到主屏幕，再从桌面图标打开后回来开启通知。
         </p>
       )}
       {state === 'unsupported' && (
-        <p className="text-xs" style={{ color: '#7a9cc0' }}>当前浏览器不支持消息推送。</p>
+        <p style={{ color: '#7a9cc0', fontSize: 11 }}>当前浏览器不支持消息推送。</p>
       )}
       {(state === 'on' || state === 'off') && (
         <>
-          <div className="flex items-center justify-between">
+          <div className="flex items-center justify-between gap-2">
             <div>
-              <span className="text-sm" style={{ color: '#2c5282' }}>在这台设备接收主动消息</span>
-              <p className="text-xs mt-0.5" style={{ color: '#7a9cc0' }}>只控制通知投递，不会关闭主动消息生成</p>
+              <span style={{ color: '#2c5282', fontSize: 11.5, lineHeight: 1.3 }}>在这台设备接收主动消息</span>
+              <p style={{ color: '#7a9cc0', fontSize: 9.5, lineHeight: 1.3 }}>只控制通知投递，不关闭消息生成</p>
             </div>
             <Toggle value={state === 'on'} onChange={handleToggle} primary={primary} />
           </div>
@@ -146,8 +169,10 @@ function NotificationCard({ primary }) {
             <button
               onClick={handleTest}
               disabled={busy}
-              className="mt-3 w-full py-2 rounded-full text-xs font-medium"
+              className="mt-1.5 w-full rounded-full font-medium flex-shrink-0"
               style={{
+                padding: '4px 0',
+                fontSize: 10.5,
                 background: `${primary}18`,
                 border: `1px solid ${primary}55`,
                 color: primary,
@@ -159,8 +184,8 @@ function NotificationCard({ primary }) {
           )}
         </>
       )}
-      {msg && <p className="text-xs mt-2" style={{ color: '#7a9cc0' }}>{msg}</p>}
-    </GlassCard>
+      {msg && <p className="mt-1" style={{ color: '#7a9cc0', fontSize: 9.5, lineHeight: 1.3 }}>{msg}</p>}
+    </FrameCard>
   )
 }
 
@@ -172,17 +197,22 @@ function NotificationCard({ primary }) {
 // backed by companion's VPS config.
 function ApiProactiveCard({ primary, value, onChange }) {
   return (
-    <GlassCard icon="💬" title="普通窗口主动消息">
-      <div className="flex items-center justify-between">
+    <FrameCard
+      frameSrc="/assets/croc-frame.png"
+      aspectRatio="461 / 222"
+      inset={{ top: '28%', bottom: '11%', left: '27%', right: '11%' }}
+      icon="💬" title="普通窗口主动消息"
+    >
+      <div className="flex items-center justify-between gap-2">
         <div>
-          <span className="text-sm" style={{ color: '#2c5282' }}>允许接 API 的普通会话主动发消息</span>
-          <p className="text-xs mt-0.5" style={{ color: '#7a9cc0', lineHeight: 1.5 }}>
-            只影响普通 API 会话；CC 的开关仍在 CC 会话设置里，Codex 不会接收这条链路的消息。
+          <span style={{ color: '#2c5282', fontSize: 11, lineHeight: 1.3 }}>允许 API 普通会话主动发消息</span>
+          <p style={{ color: '#7a9cc0', fontSize: 9, lineHeight: 1.25 }}>
+            CC 开关仍在会话设置里
           </p>
         </div>
         <Toggle value={value} onChange={onChange} primary={primary} />
       </div>
-    </GlassCard>
+    </FrameCard>
   )
 }
 
