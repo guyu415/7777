@@ -388,15 +388,27 @@ export default function GlobalSettings({ theme, onLogout, onForceSync }) {
         .global-settings-garden__scroll{scrollbar-width:none}
         .global-settings-garden__scroll::-webkit-scrollbar{display:none}
       `}</style>
-      {/* Header */}
-      <div className="flex items-center justify-between px-4 flex-shrink-0"
+      {/* Header — deliberately no whale icon here (it stays on the other
+          screens); title nudged right/down so it sits clear of the painted
+          leaves at the top of the garden background, and set in the same
+          ZCOOL XiaoWei treatment as UniverseHome's 铃兰花园 title. */}
+      <div className="flex items-center flex-shrink-0"
         style={{
-          paddingTop: 'calc(var(--safe-top) + 14px)',
+          paddingTop: 'calc(var(--safe-top) + 30px)',
+          paddingLeft: 28,
+          paddingRight: 16,
           paddingBottom: 12,
           background: 'transparent',
         }}>
-        <span className="font-semibold text-sm" style={{ color: '#536573' }}>花园设置</span>
-        <img src="/assets/whale.png" alt="" style={{ width: 36, height: 36, objectFit: 'contain' }} />
+        <span style={{
+          display: 'inline-block',
+          padding: '0 3px 5px',
+          font: "500 22px/1.1 'ZCOOL XiaoWei', serif",
+          color: '#4f5964',
+          letterSpacing: '.05em',
+          transform: 'rotate(-1.2deg)',
+          background: 'linear-gradient(transparent 72%, rgba(238,174,199,.32) 72%)',
+        }}>花园设置</span>
       </div>
 
       <div className="global-settings-garden__scroll flex-1 overflow-y-auto px-4 pt-2 space-y-4" style={{ paddingBottom: 72 }}>
