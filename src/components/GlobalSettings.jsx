@@ -73,20 +73,28 @@ function Toggle({ value, onChange, primary, compact }) {
 //      flexed, multi-line paragraph to that jagged shape chops text mid-line
 //      wherever a tooth notch happens to land (tried it, real bug, reverted).
 function FrameCard({ frameSrc, w, h, pad, icon, title, titleSize = 11.5, iconSize = 13, children }) {
-  const padStr = `${pad.top} ${pad.right} ${pad.bottom} ${pad.left}`
   return (
     <div className="animal-wrapper relative w-full" style={{ overflow: 'visible', zIndex: 1 }}>
       <div style={{ width: '100%', paddingTop: `${(h / w) * 100}%` }} />
       <img src={frameSrc} alt="" draggable={false}
         className="absolute top-0 left-0 w-full h-full pointer-events-none select-none"
         style={{ objectFit: 'contain' }} />
-      <div className="absolute" style={{ inset: 0, padding: padStr }}>
-        <div className="w-full h-full rounded-full" style={{ background: 'rgba(255,253,248,0.4)' }} />
-      </div>
+      {/* `pad` is spread as top/right/bottom/left INSET properties (an
+          absolutely-positioned box's own edges), never as `padding`. CSS
+          resolves padding-top/bottom percentages against the containing
+          block's WIDTH, not its own height — a classic gotcha that silently
+          shoved this whole content well downward on the crocodile specifically
+          (its image is ~2.1x wider than tall, so a "43.5%" meant-as-height
+          padding-top came out ~2x too large once read as a width percentage,
+          landing on the lower teeth; the hippo's closer-to-square ratio hid
+          the same bug as a smaller, easy-to-miss offset). top/bottom on an
+          absolute box correctly resolve against height, left/right against
+          width, which is what these numbers were actually measured as. */}
+      <div className="absolute rounded-full" style={{ ...pad, background: 'rgba(255,253,248,0.4)' }} />
       {/* text-shadow inherited by every child — there's no opaque card behind
           this text anymore, so it's what keeps small text legible over the
           hand-drawn background showing through. */}
-      <div className="absolute inset-0 flex flex-col justify-center" style={{ padding: padStr, textShadow: '0 1px 3px rgba(255,255,255,0.9), 0 0px 6px rgba(255,255,255,0.7)' }}>
+      <div className="absolute flex flex-col justify-center" style={{ ...pad, padding: '2px 4px', textShadow: '0 1px 3px rgba(255,255,255,0.9), 0 0px 6px rgba(255,255,255,0.7)' }}>
         <div className="flex items-center gap-1.5 flex-shrink-0" style={{ marginBottom: 2 }}>
           <span style={{ fontSize: iconSize, lineHeight: 1 }}>{icon}</span>
           <span className="font-semibold" style={{ color: '#2c5282', fontSize: titleSize, lineHeight: 1 }}>{title}</span>
