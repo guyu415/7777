@@ -243,6 +243,13 @@ export function useChat() {
     }
     history = prunedAtLoad.messages
 
+    // Cloud/IDB reads above are async and can straddle a session switch; if the
+    // user has since navigated to a different session, applying this stale
+    // result would clobber (or resurrect already-cleared) content that isn't
+    // for the session currently on screen. Same race-guard pattern already
+    // used by scheduleMsgSync for the write direction.
+    if ((useStore.getState().currentSessionId || 'main') !== CONVERSATION_ID) return
+
     setMessages(history)
     if (history.length > 0) {
       const last = history[history.length - 1]
