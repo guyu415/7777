@@ -23,10 +23,33 @@ import { useScheduledMessages } from '../../hooks/useScheduledMessages'
 import { useFocusRuntime } from '../../hooks/useFocusRuntime'
 import { useStore, deleteMessageFromDB, getBlob } from '../../store'
 import { putAsset } from '../../services/sync'
-import { getXinchaoStatus, onXinchaoUpdate, getCodexMemoryFile, putCodexMemoryFile, uploadFileToCompanion } from '../../services/companion'
+import { getXinchaoStatus, onXinchaoUpdate, getCodexMemoryFile, putCodexMemoryFile, uploadFileToCompanion, getTidalMemoryStatus } from '../../services/companion'
 
 const SYNC_BASE = 'https://chat.xiaoman.xyz'
 const FAV_LIST_KEY = 'user:xiaoman2.26:voice_fav_list'
+
+function chatTidalNotice(status) {
+  const tide = status?.tide
+  if (!tide) return null
+  const queued = Number(status?.queuedCount) > 0 ? ' · 你的消息已排队' : ''
+  if (tide.status === 'running') {
+    const stageText = tide.stage === 'summarizing'
+      ? '正在整理对话摘要'
+      : tide.stage === 'summary_ready' || tide.stage === 'compact_sending'
+        ? '摘要已生成，正在压缩上下文'
+        : tide.stage === 'compacted' || tide.stage === 'recovery_sending' || tide.stage === 'recovering'
+          ? '正在把连续记忆还给 CC'
+          : '正在整理对话记忆'
+    return { key: `running:${tide.stage}:${tide.at}`, tone: 'running', text: `${stageText}${queued}`, transient: false }
+  }
+  if (tide.status === 'retry_wait' || tide.status === 'failed') {
+    return { key: `${tide.status}:${tide.stage}:${tide.at}`, tone: 'failed', text: '潮汐整理失败，聊天已恢复；稍后会自动重试', transient: true }
+  }
+  if (tide.status === 'success' && tide.at && Date.now() - tide.at < 120_000) {
+    return { key: `success:${tide.stage}:${tide.at}`, tone: 'success', text: '潮汐整理完成，CC 已恢复', transient: true }
+  }
+  return null
+}
 
 function Signature({ text, color, shadow }) {
   const wrapRef = useRef(null)
@@ -137,6 +160,9 @@ export default function ChatWindow({ theme }) {
   const focusRuntime = useFocusRuntime()
   const focusSessionVisible = !!focusRuntime.state?.active || !!focusRuntime.justFinished
   const [xinchaoState, setXinchaoState] = useState(null)
+  const [tidalNotice, setTidalNotice] = useState(null)
+  const tidalNoticeKeyRef = useRef('')
+  const tidalNoticeTimerRef = useRef(null)
 
   useEffect(() => {
     setReplyTarget(null)
@@ -170,6 +196,54 @@ export default function ChatWindow({ theme }) {
     const unsub = onXinchaoUpdate((state, r) => { if (r === xinchaoRuntime) setXinchaoState(state) })
     return () => { cancelled = true; unsub() }
   }, [isFixedVpsSession, xinchaoRuntime])
+
+  // CC's fixed-window tide runs after an ordinary reply and can briefly hold
+  // subsequent messages. Poll the authoritative server state while the CC
+  // chat is open so this never looks like the person vanished. Running state
+  // stays visible; completion/failure remains long enough to actually read.
+  useEffect(() => {
+    if (!isVpsSession) {
+      if (tidalNoticeTimerRef.current) clearTimeout(tidalNoticeTimerRef.current)
+      tidalNoticeTimerRef.current = null
+      tidalNoticeKeyRef.current = ''
+      setTidalNotice(null)
+      return
+    }
+    let live = true
+    const refresh = async () => {
+      try {
+        const status = await getTidalMemoryStatus()
+        if (!live) return
+        const next = chatTidalNotice(status)
+        if (!next) {
+          if (!tidalNoticeTimerRef.current) setTidalNotice(null)
+          return
+        }
+        if (next.key === tidalNoticeKeyRef.current) return
+        tidalNoticeKeyRef.current = next.key
+        if (tidalNoticeTimerRef.current) clearTimeout(tidalNoticeTimerRef.current)
+        tidalNoticeTimerRef.current = null
+        setTidalNotice(next)
+        if (next.transient) {
+          tidalNoticeTimerRef.current = setTimeout(() => {
+            tidalNoticeTimerRef.current = null
+            if (live) setTidalNotice(null)
+          }, next.tone === 'success' ? 10_000 : 14_000)
+        }
+      } catch {
+        // Chat delivery has its own connection/error UI. A status-poll error
+        // must not invent a tide failure or interfere with sending messages.
+      }
+    }
+    void refresh()
+    const poller = setInterval(refresh, 1_500)
+    return () => {
+      live = false
+      clearInterval(poller)
+      if (tidalNoticeTimerRef.current) clearTimeout(tidalNoticeTimerRef.current)
+      tidalNoticeTimerRef.current = null
+    }
+  }, [isVpsSession])
 
   const showToast = (msg = '✨ 已记住~') => {
     setToast(msg)
@@ -600,6 +674,27 @@ export default function ChatWindow({ theme }) {
             }}
             onClose={() => setShowSpicy(false)}
           />
+        )}
+
+        {isVpsSession && tidalNotice && (
+          <div className="flex-shrink-0 flex justify-center px-4 pt-1.5" style={{ position: 'relative', zIndex: 4 }}>
+            <div
+              role="status"
+              aria-live="polite"
+              className="flex items-center gap-1.5 px-3 py-1.5 text-[11px]"
+              style={{
+                color: tidalNotice.tone === 'success' ? '#287a58' : tidalNotice.tone === 'failed' ? '#a1545e' : '#3c6f9d',
+                background: tidalNotice.tone === 'success' ? 'rgba(210,246,228,.82)' : tidalNotice.tone === 'failed' ? 'rgba(255,225,226,.84)' : 'rgba(220,239,255,.84)',
+                borderRadius: '48% 52% 46% 54% / 57% 45% 55% 43%',
+                boxShadow: `0 3px 12px ${primaryColor}18`,
+                backdropFilter: 'blur(10px)',
+                WebkitBackdropFilter: 'blur(10px)',
+              }}
+            >
+              <Waves size={13} className={tidalNotice.tone === 'running' ? 'animate-pulse' : ''} />
+              <span>{tidalNotice.text}</span>
+            </div>
+          </div>
         )}
 
         <div className="flex-1 min-h-0 relative overflow-hidden">

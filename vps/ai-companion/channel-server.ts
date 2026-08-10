@@ -201,7 +201,7 @@ const TIDAL_LUNA_RUNNER = join(ROOT, 'scripts', 'tidal-luna-summary.sh')
 const TIDAL_FALLBACK_SECRET_FILE = process.env.AI_COMPANION_TIDAL_FALLBACK_SECRET_FILE ?? join(ROOT, 'config', 'siliconflow.secret')
 const TIDAL_FALLBACK_MODEL = process.env.AI_COMPANION_TIDAL_FALLBACK_MODEL ?? 'Qwen/Qwen2.5-7B-Instruct'
 const TIDAL_SUMMARY_TIMEOUT_MS = Number(process.env.AI_COMPANION_TIDAL_SUMMARY_TIMEOUT_MS ?? 250_000)
-const TIDAL_COMPACT_TIMEOUT_MS = Number(process.env.AI_COMPANION_TIDAL_COMPACT_TIMEOUT_MS ?? 180_000)
+const TIDAL_COMPACT_TIMEOUT_MS = Number(process.env.AI_COMPANION_TIDAL_COMPACT_TIMEOUT_MS ?? 60_000)
 const TIDAL_CONFIG: TidalConfig = {
   tokenThreshold: Number(process.env.AI_COMPANION_TIDAL_TOKEN_THRESHOLD ?? DEFAULT_TIDAL_CONFIG.tokenThreshold),
   visibleThreshold: Number(process.env.AI_COMPANION_TIDAL_VISIBLE_THRESHOLD ?? DEFAULT_TIDAL_CONFIG.visibleThreshold),
@@ -2789,6 +2789,17 @@ async function tmuxSendKeys(...args: string[]): Promise<boolean> {
   }
 }
 
+// Claude Code's prompt treats a long pasted slash command differently from a
+// short key sequence. Sending text and Enter in one tmux invocation can leave
+// the command visibly sitting in the prompt without ever submitting it. Type
+// literally, give the TUI one render tick, then submit in a separate call.
+async function tmuxTypeAndSubmit(text: string): Promise<boolean> {
+  const typed = await tmuxSendKeys('-l', text)
+  if (!typed) return false
+  await Bun.sleep(300)
+  return tmuxSendKeys('Enter')
+}
+
 // Every operation that types real keystrokes into the shared brain pane
 // (model switch, context reset) must run one at a time — two interleaved
 // keystroke streams would corrupt each other's input. A simple promise chain
@@ -3035,7 +3046,7 @@ async function runNativeCompact(pending: NonNullable<TidalState['pending']>): Pr
   tidalLog('compact_sending')
 
   const command = '/compact 只生成中文、200字以内的事实清单：正在进行的事、明确约定和待办。不要写情感氛围，不要写关系评价，不要解释压缩过程。'
-  const sent = await withTmuxLock(() => tmuxSendKeys(command, 'Enter'))
+  const sent = await withTmuxLock(() => tmuxTypeAndSubmit(command))
   if (!sent) return { ok: false, compacted: false, error: 'tmux_send_failed' }
 
   const deadline = Date.now() + TIDAL_COMPACT_TIMEOUT_MS
@@ -3078,6 +3089,7 @@ function publicTidalMemoryStatus() {
       boundaryTs: tidalState.processedBoundaryTs,
     } : null,
     tide: tidalStatusSnapshot(tidalState),
+    queuedCount: tidalState.queue.length,
     lastContextTokens: tidalState.lastContextTokens,
     limits: { maxSummaryChars: 8_000 },
   }
