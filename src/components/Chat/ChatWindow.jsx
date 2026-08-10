@@ -1021,7 +1021,7 @@ export default function ChatWindow({ theme }) {
             style={{
               width: 'min(92vw, 400px)',
               borderRadius: '0 38px 34px 0',
-              background: `linear-gradient(180deg,rgba(255,252,253,.76),rgba(244,248,246,.72)), url('/backgrounds/lily-garden-anime-v1.webp') center top / cover no-repeat`,
+              background: `linear-gradient(180deg,rgba(255,252,253,.76),rgba(244,248,246,.72)), url('/backgrounds/fa048-garden-v1.webp') center top / cover no-repeat`,
               boxShadow: '18px 0 55px rgba(37,29,49,.2)',
               animation: 'eunoiaDrawerIn .3s cubic-bezier(.2,.75,.2,1)',
             }}

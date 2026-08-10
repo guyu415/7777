@@ -712,7 +712,7 @@ export default function App() {
         style={{
           boxShadow: `0 0 60px ${theme.primary}26`, zIndex: 2,
           background: ['sessions', 'globalSettings'].includes(currentView)
-            ? `linear-gradient(180deg,rgba(255,249,251,.16),rgba(248,245,250,.06)), url('/backgrounds/lily-garden-anime-v1.webp') center top / cover no-repeat`
+            ? `linear-gradient(180deg,rgba(255,249,251,.16),rgba(248,245,250,.06)), url('/backgrounds/fa048-garden-v1.webp') center top / cover no-repeat`
             : 'transparent',
         }}
       >
