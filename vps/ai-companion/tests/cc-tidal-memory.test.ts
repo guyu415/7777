@@ -13,12 +13,14 @@ import {
   inputTokensFromMessageStart,
   loadTidalState,
   manualSummaryUpdateCandidate,
+  retainThroughBoundary,
   renderRollingSummary,
   saveTidalState,
   sessionIdUnchanged,
   shouldEvaluateTidalSurface,
   tidalTrigger,
   tidalStatusSnapshot,
+  tidalStateAfterConversationClear,
   type RollingSummary,
   type VisibleCcMessage,
 } from '../cc-tidal-memory.ts'
@@ -257,5 +259,41 @@ describe('recovery packet and isolation', () => {
     expect(claimTidalPending(state, pending)).toBeTrue()
     expect(claimTidalPending(state, { ...pending, taskId: 'two' })).toBeFalse()
     expect(state.pending?.taskId).toBe('one')
+  })
+})
+
+describe('conversation clear modes', () => {
+  test('keeps only messages through the completed summary boundary', () => {
+    const items = [
+      { id: 'before', ts: 10 },
+      { id: 'boundary', ts: 20 },
+      { id: 'after', ts: 30 },
+    ]
+    expect(retainThroughBoundary(items, 'boundary', 20).map((item) => item.id)).toEqual(['before', 'boundary'])
+    expect(retainThroughBoundary(items, 'missing-imported-id', 20).map((item) => item.id)).toEqual(['before', 'boundary'])
+  })
+
+  test('preserve mode keeps the summary but drops transient tide state, while full mode removes it', () => {
+    const state = createTidalState('old-session', 1)
+    state.rollingSummary = summary
+    state.processedBoundaryId = 'boundary'
+    state.processedBoundaryTs = 20
+    state.summaryRevision = 3
+    state.queue = [{ id: 'after', text: 'new', queuedAt: 30 }]
+    state.retryAt = 99
+    state.lastContextTokens = 120_000
+
+    const preserved = tidalStateAfterConversationClear(state, 'new-session', true, 40)
+    expect(preserved.rollingSummary).toEqual(summary)
+    expect(preserved.processedBoundaryId).toBe('boundary')
+    expect(preserved.summaryRevision).toBe(3)
+    expect(preserved.queue).toEqual([])
+    expect(preserved.retryAt).toBeNull()
+    expect(preserved.lastContextTokens).toBeNull()
+
+    const cleared = tidalStateAfterConversationClear(state, 'new-session', false, 40)
+    expect(cleared.rollingSummary).toBeNull()
+    expect(cleared.processedBoundaryId).toBeNull()
+    expect(cleared.summaryRevision).toBe(0)
   })
 })

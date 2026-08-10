@@ -169,6 +169,7 @@ export default function SessionSettings({ theme }) {
   // once the server confirms the reset actually happened (via the onCcReset
   // broadcast wired in App.jsx), never before.
   const [clearBusy, setClearBusy] = useState(false)
+  const [clearBusyMode, setClearBusyMode] = useState(null)
   const [clearError, setClearError] = useState(null)
 
   const refreshVpsStatus = async () => {
@@ -509,7 +510,7 @@ export default function SessionSettings({ theme }) {
   //
   // Normal session: clears only this session's messages, locally (store +
   // IndexedDB) and in the cloud (KV), leaving every other session untouched.
-  const handleClearConversation = async () => {
+  const handleClearConversation = async (ccMode = 'all') => {
     if (clearBusy) return
     if (isCodexWindow) {
       const ok = window.confirm(
@@ -518,6 +519,7 @@ export default function SessionSettings({ theme }) {
       )
       if (!ok) return
       setClearBusy(true)
+      setClearBusyMode('all')
       setClearError(null)
       try {
         await resetCodex(currentSessionId)
@@ -528,27 +530,35 @@ export default function SessionSettings({ theme }) {
         setClearError(e.message || '清空失败，请稍后重试')
       } finally {
         setClearBusy(false)
+        setClearBusyMode(null)
       }
       return
     }
     if (isVpsWindow) {
-      const ok = window.confirm(
-        '确定要清空当前对话吗？\n\n' +
-        '将同时清空当前页面消息和 Claude Code 当前上下文，' +
-        '但不会删除长期记忆、登录及模型设置。'
+      const preserveSummary = ccMode === 'after_summary'
+      const ok = window.confirm(preserveSummary
+        ? '仅清空上轮摘要完成后的对话？\n\n将保留已经做好的潮汐摘要和它覆盖的旧对话；Claude Code 当前上下文会清空，再从保留摘要静默恢复。'
+        : '确定要全部清空吗？\n\n将删除本会话的所有页面消息、Claude Code 当前上下文和潮汐摘要。不会删除登录、模型设置或独立记忆文件。'
       )
       if (!ok) return
       setClearBusy(true)
+      setClearBusyMode(ccMode)
       setClearError(null)
       try {
-        await resetCcConversation()
+        await resetCcConversation(ccMode)
         // Do NOT clear local messages here — that happens only once the
         // server's reset broadcast actually arrives (App.jsx's onCcReset),
         // so a failed or still-in-flight reset never shows a false "cleared".
       } catch (e) {
-        setClearError(e.message || '清空失败，请稍后重试')
+        const message = e.code === 'no_completed_summary'
+          ? '还没有成功完成过潮汐摘要，不能按摘要边界清空。'
+          : e.code === 'tidal_active'
+          ? '潮汐摘要或恢复正在进行，请完成后再清空。'
+          : e.message || '清空失败，请稍后重试'
+        setClearError(message)
       } finally {
         setClearBusy(false)
+        setClearBusyMode(null)
       }
       return
     }
@@ -556,6 +566,7 @@ export default function SessionSettings({ theme }) {
     const ok = window.confirm('确定要清空当前对话的所有消息吗？此操作不可撤销，只影响这一个会话，不影响其他会话。')
     if (!ok) return
     setClearBusy(true)
+    setClearBusyMode('all')
     setClearError(null)
     try {
       await deleteMessagesForSession(currentSessionId)
@@ -575,6 +586,7 @@ export default function SessionSettings({ theme }) {
       setClearError(e.message || '清空失败，请稍后重试')
     } finally {
       setClearBusy(false)
+      setClearBusyMode(null)
     }
   }
 
@@ -1263,24 +1275,41 @@ export default function SessionSettings({ theme }) {
         <GlassCard icon="⚠️" title="清空当前对话">
           <p className="text-xs mb-3" style={{ color: '#7a9cc0' }}>
             {isVpsWindow
-              ? '将同时清空当前页面消息和 Claude Code 当前上下文；不会删除长期记忆、登录及模型设置。'
+              ? '可只删除上轮摘要完成后的对话并保留摘要，也可删除本会话全部上下文和摘要。'
               : isCodexWindow
               ? '将同时清空当前页面消息、服务器记录，并重置 Codex 当前上下文；不影响 Claude Code。'
               : '清空这一个会话的所有消息，不影响其他会话。'}
           </p>
-          <button
-            onClick={handleClearConversation}
-            disabled={clearBusy || (isVpsWindow && !vpsLoggedIn)}
-            className="flex items-center gap-2 px-4 py-2.5 rounded-full text-sm transition-all duration-200"
-            style={{
-              background: 'rgba(255,100,100,0.08)', color: clearBusy ? '#e0a0a0' : '#e07070',
-              border: '1px solid rgba(255,100,100,0.2)',
-              cursor: (clearBusy || (isVpsWindow && !vpsLoggedIn)) ? 'default' : 'pointer',
-              opacity: (isVpsWindow && !vpsLoggedIn) ? 0.5 : 1,
-            }}
-          >
-            {clearBusy ? '清空中…' : '清空当前对话'}
-          </button>
+          <div className="flex flex-wrap gap-2">
+            {isVpsWindow && (
+              <button
+                onClick={() => handleClearConversation('after_summary')}
+                disabled={clearBusy || !vpsLoggedIn}
+                className="flex items-center gap-2 px-4 py-2.5 rounded-full text-sm transition-all duration-200"
+                style={{
+                  background: 'rgba(235,174,75,0.10)', color: clearBusy ? '#d6b98d' : '#b98235',
+                  border: '1px solid rgba(210,150,55,0.24)',
+                  cursor: (clearBusy || !vpsLoggedIn) ? 'default' : 'pointer',
+                  opacity: !vpsLoggedIn ? 0.5 : 1,
+                }}
+              >
+                {clearBusyMode === 'after_summary' ? '清空中…' : '仅清空摘要后的对话'}
+              </button>
+            )}
+            <button
+              onClick={() => handleClearConversation('all')}
+              disabled={clearBusy || (isVpsWindow && !vpsLoggedIn)}
+              className="flex items-center gap-2 px-4 py-2.5 rounded-full text-sm transition-all duration-200"
+              style={{
+                background: 'rgba(255,100,100,0.08)', color: clearBusy ? '#e0a0a0' : '#e07070',
+                border: '1px solid rgba(255,100,100,0.2)',
+                cursor: (clearBusy || (isVpsWindow && !vpsLoggedIn)) ? 'default' : 'pointer',
+                opacity: (isVpsWindow && !vpsLoggedIn) ? 0.5 : 1,
+              }}
+            >
+              {clearBusyMode === 'all' ? '清空中…' : isVpsWindow ? '全部清空' : '清空当前对话'}
+            </button>
+          </div>
           {clearError && (
             <p className="text-[11px] mt-2" style={{ color: '#e07070' }}>{clearError}</p>
           )}

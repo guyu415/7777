@@ -204,6 +204,7 @@ function connect() {
     }
     if (m.type === 'history') {
       notify({ kind: 'history', openTurnId: m.openTurnId, queuedTurnIds: m.queuedTurnIds || [], items: m.items, resetAt: m.resetAt,
+        resetMode: m.resetMode, resetBoundaryId: m.resetBoundaryId, resetBoundaryTs: m.resetBoundaryTs,
         codexSessionId: m.codexSessionId || 'main', codexPrompt: m.codexPrompt || '' })
       return
     }
@@ -296,17 +297,25 @@ export function onCcReset(fn) {
   return () => ccResetListeners.delete(fn)
 }
 
-function maybeAnnounceReset(resetAt) {
-  if (!resetAt || resetAt <= lastKnownResetAt) return
-  lastKnownResetAt = resetAt
+function maybeAnnounceReset(input) {
+  const marker = typeof input === 'number'
+    ? { resetAt: input, mode: 'all', boundaryId: null, boundaryTs: null }
+    : {
+        resetAt: Number(input?.resetAt) || 0,
+        mode: input?.mode === 'after_summary' ? 'after_summary' : 'all',
+        boundaryId: typeof input?.boundaryId === 'string' ? input.boundaryId : null,
+        boundaryTs: input?.boundaryTs != null && Number.isFinite(Number(input.boundaryTs)) ? Number(input.boundaryTs) : null,
+      }
+  if (!marker.resetAt || marker.resetAt <= lastKnownResetAt) return
+  lastKnownResetAt = marker.resetAt
   try {
-    localStorage.setItem(RESET_MARKER_KEY, String(resetAt))
+    localStorage.setItem(RESET_MARKER_KEY, String(marker.resetAt))
   } catch {
     // best-effort persistence — an in-memory-only marker still protects this tab for its own lifetime
   }
   for (const fn of ccResetListeners) {
     try {
-      fn({ resetAt })
+      fn(marker)
     } catch {
       // a subscriber throwing must not break delivery to the others
     }
@@ -923,7 +932,7 @@ listeners.add(evt => {
   if (evt.kind === 'wire') {
     const m = evt.wire
     if (m.type === 'reset') {
-      maybeAnnounceReset(m.ts)
+      maybeAnnounceReset({ resetAt: m.ts, mode: m.mode, boundaryId: m.boundaryId, boundaryTs: m.boundaryTs })
       return
     }
     if (m.type === 'gomoku_update') {
@@ -977,7 +986,12 @@ listeners.add(evt => {
     return
   }
   if (evt.kind === 'history') {
-    maybeAnnounceReset(evt.resetAt)
+    maybeAnnounceReset({
+      resetAt: evt.resetAt,
+      mode: evt.resetMode,
+      boundaryId: evt.resetBoundaryId,
+      boundaryTs: evt.resetBoundaryTs,
+    })
     for (const item of evt.items) {
       if (item.from === 'cc') maybeAnnounceProactive(item)
     }
@@ -1541,8 +1555,12 @@ export async function setProactiveSettings(enabled) {
 // itself. Rejected (409) if a turn is in flight or already in progress on
 // the server; safe to call again (idempotent — a reset already running is
 // joined, not restarted).
-export async function resetCcConversation() {
-  return companionJson('/cc/reset', { method: 'POST' })
+export async function resetCcConversation(mode = 'all') {
+  return companionJson('/cc/reset', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ mode: mode === 'after_summary' ? 'after_summary' : 'all' }),
+  })
 }
 
 // ---------- Mystery game (剧本杀) — isolated CC/Codex character turns ----------

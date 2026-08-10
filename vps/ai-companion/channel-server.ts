@@ -55,10 +55,12 @@ import {
   loadTidalState,
   manualSummaryUpdateCandidate,
   queuedTurnIds,
+  retainThroughBoundary,
   renderRollingSummary,
   saveTidalState,
   summaryInput,
   tidalStatusSnapshot,
+  tidalStateAfterConversationClear,
   tidalTrigger,
   transcriptContainsMarker,
   transcriptHasCompactAfter,
@@ -526,10 +528,12 @@ type TurnBusyWire = { type: 'turn_busy'; turnId: string; ts: number }
 // (/cc/reset) is in flight — distinct from turn_busy so the frontend can
 // show "clearing, please wait" rather than "CC is still replying".
 type ResetBusyWire = { type: 'reset_busy'; ts: number }
+type CcResetMode = 'after_summary' | 'all'
+type CcResetMarker = { resetAt: number; mode: CcResetMode; boundaryId: string | null; boundaryTs: number | null }
 // Broadcast to every connected client the moment a context reset actually
 // succeeds (server history cleared + VPS Claude context confirmed reset).
 // Never persisted into `history` itself — see broadcastReset().
-type ResetWire = { type: 'reset'; ts: number }
+type ResetWire = { type: 'reset'; ts: number; mode: CcResetMode; boundaryId: string | null; boundaryTs: number | null }
 // Live thinking/reasoning increment for the turn currently in flight. NOT
 // persisted into `history` on its own — it gets folded into the eventual
 // MsgWire's `thinking` field instead (see consumePendingThinking()). Purely
@@ -782,6 +786,7 @@ type LiveWire = MsgWire | TurnStartWire | TurnEndWire | TurnErrorWire | ResetBus
 // locally and clears its own local copy of the conversation if this is newer.
 type HistoryMsg = {
   type: 'history'; items: MsgWire[]; openTurnId: string | null; resetAt: number
+  resetMode?: CcResetMode; resetBoundaryId?: string | null; resetBoundaryTs?: number | null
   queuedTurnIds?: string[]
   // Codex's own independent snapshot, namespaced under its own keys so it
   // can never be confused with (or merged into) the Claude Code fields above.
@@ -2761,19 +2766,24 @@ function writeProactiveSchedule(data: ProactiveSchedule) {
 
 // ---------- CC context-reset marker ----------
 
-function readResetMarker(): { resetAt: number } {
+function readResetMarker(): CcResetMarker {
   try {
     const parsed = JSON.parse(readFileSync(RESET_MARKER_FILE, 'utf8'))
     const resetAt = Number(parsed?.resetAt)
-    return { resetAt: Number.isFinite(resetAt) ? resetAt : 0 }
+    return {
+      resetAt: Number.isFinite(resetAt) ? resetAt : 0,
+      mode: parsed?.mode === 'after_summary' ? 'after_summary' : 'all',
+      boundaryId: typeof parsed?.boundaryId === 'string' ? parsed.boundaryId : null,
+      boundaryTs: parsed?.boundaryTs != null && Number.isFinite(Number(parsed.boundaryTs)) ? Number(parsed.boundaryTs) : null,
+    }
   } catch {
-    return { resetAt: 0 } // never reset — 0 always compares as "older" than any real reset
+    return { resetAt: 0, mode: 'all', boundaryId: null, boundaryTs: null }
   }
 }
 
-function writeResetMarker(ts: number) {
+function writeResetMarker(marker: CcResetMarker) {
   mkdirSync(dirname(RESET_MARKER_FILE), { recursive: true })
-  writeFileSync(RESET_MARKER_FILE, JSON.stringify({ resetAt: ts }, null, 2))
+  writeFileSync(RESET_MARKER_FILE, JSON.stringify(marker, null, 2))
 }
 
 // ---------- model switching (real tmux keystrokes into the brain pane) ----------
@@ -2871,24 +2881,41 @@ async function resetCcContext(): Promise<{ ok: boolean; error?: string }> {
   return { ok: false, error: 'timeout waiting for context reset confirmation' }
 }
 
-// Broadcasts a reset to every currently-connected client. Never persisted
-// into `history` — the whole point is that history is now empty.
-function broadcastReset(ts: number) {
-  sendRaw({ type: 'reset', ts })
+// Broadcasts the exact confirmed reset scope. A partial reset leaves the
+// completed-summary side of history intact; a full reset leaves it empty.
+function broadcastReset(marker: CcResetMarker) {
+  sendRaw({ type: 'reset', ts: marker.resetAt, mode: marker.mode, boundaryId: marker.boundaryId, boundaryTs: marker.boundaryTs })
 }
 
 // Single in-flight reset, shared by concurrent callers (true idempotency:
 // a second /cc/reset call while one is already running joins the same
 // result instead of firing a second /clear or racing the first).
-let resetInFlight: Promise<{ ok: boolean; error?: string }> | null = null
+type CcResetResult = { ok: boolean; error?: string; marker?: CcResetMarker; recoveryStarted?: boolean }
+let resetInFlight: Promise<CcResetResult> | null = null
+let resetInFlightMode: CcResetMode | null = null
 
-function requestReset(): Promise<{ ok: boolean; error?: string }> {
-  if (resetInFlight) return resetInFlight
-  const run = withTmuxLock(resetCcContext).then(result => {
+function requestReset(mode: CcResetMode): Promise<CcResetResult> {
+  if (resetInFlight) {
+    if (resetInFlightMode !== mode) return Promise.resolve({ ok: false, error: 'reset_mode_conflict' })
+    return resetInFlight
+  }
+  const preserveSummary = mode === 'after_summary'
+  const boundaryId = tidalState.processedBoundaryId
+  const boundaryTs = tidalState.processedBoundaryTs
+  if (preserveSummary && (!tidalState.rollingSummary || !boundaryId || !Number.isFinite(boundaryTs))) {
+    return Promise.resolve({ ok: false, error: 'no_completed_summary' })
+  }
+  resetInFlightMode = mode
+  const run = withTmuxLock(resetCcContext).then(async result => {
     if (result.ok) {
       // Only touch server state on confirmed success — a failed reset must
       // never leave the frontend thinking it cleared when it didn't.
-      history.length = 0
+      if (preserveSummary) {
+        const kept = retainThroughBoundary(history, boundaryId!, boundaryTs!)
+        history.splice(0, history.length, ...kept)
+      } else {
+        history.length = 0
+      }
       saveHistory()
       currentTurn = null
       // /clear starts a brand-new transcript file server-side regardless —
@@ -2897,17 +2924,31 @@ function requestReset(): Promise<{ ok: boolean; error?: string }> {
       if (thinkingTail) clearInterval(thinkingTail.timer)
       thinkingTail = null
       pendingThinking = []
+      if (tidalRetryTimer) clearTimeout(tidalRetryTimer)
+      tidalRetryTimer = null
       const ts = Date.now()
-      writeResetMarker(ts)
-      broadcastReset(ts)
-      log('cc_reset_ok', {})
+      const liveSessionId = readBrainSessionId()
+      tidalState = tidalStateAfterConversationClear(tidalState, liveSessionId, preserveSummary, ts)
+      persistTidalState()
+      const marker: CcResetMarker = {
+        resetAt: ts,
+        mode,
+        boundaryId: preserveSummary ? boundaryId : null,
+        boundaryTs: preserveSummary ? boundaryTs : null,
+      }
+      writeResetMarker(marker)
+      broadcastReset(marker)
+      const recoveryStarted = preserveSummary ? await injectPreservedSummaryAfterClear(marker) : false
+      log('cc_reset_ok', { mode, boundaryId: marker.boundaryId, boundaryTs: marker.boundaryTs, recoveryStarted })
+      return { ok: true, marker, recoveryStarted }
     } else {
-      log('cc_reset_failed', { error: result.error })
+      log('cc_reset_failed', { mode, error: result.error })
     }
     return result
   })
   resetInFlight = run.finally(() => {
     resetInFlight = null
+    resetInFlightMode = null
   })
   return resetInFlight
 }
@@ -2918,6 +2959,41 @@ function visibleCcHistory(): VisibleCcMessage[] {
   return history
     .filter((m): m is MsgWire => (m.from === 'user' || m.from === 'cc') && typeof m.text === 'string' && !!m.text.trim())
     .map((m) => ({ id: m.id, from: m.from, text: m.text, ts: m.ts }))
+}
+
+// After a summary-preserving `/clear`, restore only the retained memory
+// snapshot into Claude's genuinely fresh context. This is silent and uses the
+// tidal-recovery surface, so even an accidental reply tool call is discarded.
+async function injectPreservedSummaryAfterClear(reset: CcResetMarker): Promise<boolean> {
+  if (!tidalState.rollingSummary || !tidalState.processedBoundaryId) return false
+  const marker = `cc-tidal-reset:${tidalState.sessionId}:${reset.resetAt}:r${tidalState.summaryRevision}`
+  const packet = buildRecoveryPacket({
+    marker,
+    coreMemory: readCoreMemorySummary(),
+    rollingSummary: tidalState.rollingSummary,
+    visibleHistory: visibleCcHistory(),
+    boundaryId: tidalState.processedBoundaryId,
+    recentMax: TIDAL_CONFIG.recentMax,
+    tokenBudget: TIDAL_CONFIG.recoveryTokenBudget,
+  })
+  tidalStartupRestore = true
+  startTurn(marker, 'tidal_recovery', false)
+  try {
+    await mcp.notification({
+      method: 'notifications/claude/channel',
+      params: {
+        content: packet.content,
+        meta: { chat_id: CHAT_ID, message_id: marker, user: 'user', ts: new Date().toISOString() },
+      },
+    })
+    tidalLog('reset_summary_recovery_injected', { summaryRevision: tidalState.summaryRevision, recentCount: packet.recent.length })
+    return true
+  } catch (err) {
+    if (currentTurn?.turnId === marker) currentTurn = null
+    tidalStartupRestore = false
+    tidalLog('reset_summary_recovery_failed', { error: String(err) })
+    return false
+  }
 }
 
 function pendingSourceMessages(): VisibleCcMessage[] {
@@ -7945,8 +8021,9 @@ Bun.serve<{ authed: true }>({
       return jsonResponse({ ok: true, model: result.model }, { headers: cors })
     }
 
-    // ---- CC context reset: clears server history + genuinely resets the
-    // VPS Claude Code session's own conversation context via /clear. Blocked
+    // ---- CC context reset: either keeps everything covered by the latest
+    // completed tidal summary, or clears the whole live conversation. Both
+    // modes genuinely reset the VPS Claude Code context via /clear. Blocked
     // mid-turn (same precondition as model switch — never interleave real
     // keystrokes with an in-flight reply). Idempotent: concurrent calls all
     // resolve to the one real reset in flight, never fire /clear twice.
@@ -7957,12 +8034,27 @@ Bun.serve<{ authed: true }>({
       const gate = authGate()
       if (gate) return gate
       const cors = corsHeadersFor(origin)
+      let body: { mode?: unknown } = {}
+      try { body = await req.json() } catch { /* legacy clients sent no body */ }
+      const mode: CcResetMode = body?.mode === 'after_summary' ? 'after_summary' : 'all'
       if (currentTurn) {
         return jsonResponse({ error: 'turn_in_progress' }, { status: 409, headers: cors })
       }
-      const result = await requestReset()
-      if (!result.ok) return jsonResponse({ error: result.error }, { status: 504, headers: cors })
-      return jsonResponse({ ok: true }, { headers: cors })
+      if (tidalIsActive()) {
+        return jsonResponse({ error: 'tidal_active' }, { status: 409, headers: cors })
+      }
+      const result = await requestReset(mode)
+      if (!result.ok) {
+        const status = result.error === 'no_completed_summary' || result.error === 'reset_mode_conflict' ? 409 : 504
+        return jsonResponse({ error: result.error }, { status, headers: cors })
+      }
+      return jsonResponse({
+        ok: true,
+        mode: result.marker?.mode ?? mode,
+        boundaryId: result.marker?.boundaryId ?? null,
+        boundaryTs: result.marker?.boundaryTs ?? null,
+        recoveryStarted: result.recoveryStarted ?? false,
+      }, { headers: cors })
     }
 
     // ---- Gomoku (五子棋) ----
@@ -8938,8 +9030,11 @@ Bun.serve<{ authed: true }>({
     open(ws) {
       clients.add(ws)
       log('ws_open', { clients: clients.size })
+      const resetMarker = readResetMarker()
       const hist: HistoryMsg = {
-        type: 'history', items: history, openTurnId: currentTurn?.turnId ?? null, resetAt: readResetMarker().resetAt,
+        type: 'history', items: history, openTurnId: currentTurn?.turnId ?? null,
+        resetAt: resetMarker.resetAt, resetMode: resetMarker.mode,
+        resetBoundaryId: resetMarker.boundaryId, resetBoundaryTs: resetMarker.boundaryTs,
         queuedTurnIds: queuedTurnIds(tidalState),
         codexHistory, codexOpenTurnId: codexCurrentTurnId, codexStatus,
         codexSessionId: DEFAULT_CODEX_SESSION_ID, codexPrompt: getCodexPrompt(DEFAULT_CODEX_SESSION_ID),

@@ -1,5 +1,5 @@
 import { useEffect, useState, useRef } from 'react'
-import { useStore, getCustomFont, getBlob, getMessages, saveMessage, saveBlob, deleteMessagesForSession } from './store'
+import { useStore, getCustomFont, getBlob, getMessages, saveMessage, saveBlob, deleteMessageFromDB, deleteMessagesForSession } from './store'
 import { THEMES } from './themes'
 import ChatWindow from './components/Chat/ChatWindow'
 import GroupChatWindow from './components/GroupChat/GroupChatWindow'
@@ -578,17 +578,54 @@ export default function App() {
     return unsub
   }, [])
 
-  // CC context reset: the server clears its own history and genuinely
-  // resets the VPS Claude Code session's context via /cc/reset; this side
-  // just needs to make the local copy match. Fires for the tab that
+  // CC context reset: the server clears either the whole conversation or
+  // only the part newer than the latest completed tidal summary, and
+  // genuinely resets the VPS Claude Code context via /cc/reset. This side
+  // makes IndexedDB, the visible store, and cloud KV match that exact scope.
+  // Fires for the tab that
   // triggered the reset (live broadcast), every other open tab (live
   // broadcast), and any tab that reconnects/reloads afterward and only
   // then discovers it happened (resetAt comparison — see onCcReset in
   // companion.js). Only ever touches the single VPS-bound session.
   useEffect(() => {
-    const unsub = onCcReset(async () => {
+    const unsub = onCcReset(async ({ mode = 'all', boundaryTs = null } = {}) => {
       const vpsSession = useStore.getState().sessions?.find(s => s.providerName === 'claude-code-vps')
       if (!vpsSession) return
+      const password = localStorage.getItem('auth.password')
+
+      if (mode === 'after_summary' && Number.isFinite(boundaryTs)) {
+        const all = (await getMessages(vpsSession.id)).sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0))
+        const kept = all.filter(msg => Number(msg.timestamp) <= boundaryTs)
+        const removed = all.filter(msg => Number(msg.timestamp) > boundaryTs)
+        for (const msg of removed) await deleteMessageFromDB(msg.id)
+
+        if (password) {
+          try {
+            await saveSessionMsgs(password, vpsSession.id, kept)
+          } catch (e) {
+            // A stale full cloud copy is more dangerous than no cloud copy:
+            // loadHistory would otherwise resurrect the messages just removed.
+            console.warn('[CC-RESET] 保存摘要边界前消息失败，删除旧云端副本:', e.message)
+            try { await deleteSessionMsgs(password, vpsSession.id) } catch { /* best effort */ }
+          }
+        }
+
+        const last = kept.at(-1)
+        const preview = !last ? ''
+          : last.type === 'text' ? (last.content || '').slice(0, 40)
+          : last.type === 'voice' ? `[语音] ${last.voiceText || ''}`.slice(0, 40)
+          : last.type === 'file' ? `[文件] ${last.fileName || ''}`.trim().slice(0, 40)
+          : '[图片]'
+        useStore.getState().updateSession(vpsSession.id, {
+          lastMsgPreview: preview,
+          lastMsgTime: last?.timestamp ?? null,
+        })
+        if (useStore.getState().currentSessionId === vpsSession.id) {
+          useStore.getState().setMessages(kept)
+        }
+        return
+      }
+
       await deleteMessagesForSession(vpsSession.id)
       // The cloud KV copy must go too — useChat's scheduleMsgSync uploads
       // this session's messages after every turn, and loadHistory re-pulls
@@ -596,7 +633,6 @@ export default function App() {
       // storage is empty, which is exactly the state this handler just
       // created. Without this, "清空上下文" looked like a no-op: the next
       // loadHistory resurrected the entire conversation.
-      const password = localStorage.getItem('auth.password')
       if (password) {
         try {
           await deleteSessionMsgs(password, vpsSession.id)

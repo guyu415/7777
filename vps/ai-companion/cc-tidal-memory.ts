@@ -454,6 +454,40 @@ export function queuedTurnIds(state: TidalState): string[] {
   return state.queue.map((q) => q.id)
 }
 
+// Keeps the completed-summary side of a conversation boundary. Exact ids are
+// authoritative; the timestamp fallback lets older/imported histories still
+// honor a valid persisted boundary even if that one id is absent locally.
+export function retainThroughBoundary<T extends { id: string; ts: number }>(
+  items: T[],
+  boundaryId: string,
+  boundaryTs: number,
+): T[] {
+  const exact = items.findIndex((item) => item.id === boundaryId)
+  if (exact >= 0) return items.slice(0, exact + 1)
+  return items.filter((item) => Number.isFinite(item.ts) && item.ts <= boundaryTs)
+}
+
+// `/clear` creates a fresh Claude conversation id. A summary-preserving clear
+// carries only the completed summary/coverage metadata across that boundary;
+// all transient work and queued post-summary messages are always discarded.
+export function tidalStateAfterConversationClear(
+  state: TidalState,
+  sessionId: string,
+  preserveSummary: boolean,
+  now = Date.now(),
+): TidalState {
+  if (!preserveSummary) return createTidalState(sessionId, now)
+  return {
+    ...state,
+    sessionId,
+    pending: null,
+    queue: [],
+    retryAt: null,
+    lastContextTokens: null,
+    updatedAt: now,
+  }
+}
+
 export function appendOnly<T>(items: T[], item: T): void {
   items.push(item)
 }
