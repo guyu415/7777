@@ -39,6 +39,7 @@ function Panel({ children }) {
 
 export default function CareHubWindow({ theme, onClose }) {
   const [state, setState] = useState(null)
+  const [loadNonce, setLoadNonce] = useState(0)
   const [tab, setTab] = useState('chat')
   const [error, setError] = useState('')
   const [input, setInput] = useState('')
@@ -57,10 +58,11 @@ export default function CareHubWindow({ theme, onClose }) {
 
   useEffect(() => {
     let live = true
+    setError('')
     getCareHubState().then((next) => { if (live) setState(next) }).catch((e) => { if (live) setError(e.message || '生活关怀群加载失败') })
     const off = onCareHubUpdate((next) => setState(next))
     return () => { live = false; off() }
-  }, [])
+  }, [loadNonce])
   useEffect(() => {
     let live = true
     Promise.allSettled([getCodexModelStatus(), getMysteryCcModels()]).then(([codex, cc]) => {
@@ -110,7 +112,22 @@ export default function CareHubWindow({ theme, onClose }) {
     setSending(false)
   }
 
-  if (!state) return <div className="h-full flex items-center justify-center" style={{ color: primary }}><Loader2 className="animate-spin" /></div>
+  if (!state) return (
+    <div className="h-full flex flex-col" style={{ background: 'linear-gradient(180deg,rgba(255,247,251,.76),rgba(239,248,245,.72))' }}>
+      <header className="flex items-center gap-3 px-4 shrink-0" style={{ paddingTop: 'calc(var(--safe-top) + 10px)', paddingBottom: 10 }}>
+        <button type="button" onClick={onClose} className="w-9 h-9 rounded-full flex items-center justify-center" style={{ border: 0, background: `${primary}14`, color: primary }} aria-label="返回"><ArrowLeft size={18} /></button>
+        <div className="font-semibold text-[16px]" style={{ color: '#294b70' }}>生活关怀群</div>
+      </header>
+      <div className="flex-1 flex flex-col items-center justify-center px-7 text-center" style={{ color: primary }}>
+        {error ? (
+          <>
+            <div className="text-sm" style={{ color: '#8a6670' }}>{error}</div>
+            <button type="button" onClick={() => setLoadNonce((value) => value + 1)} className="mt-4 px-5 py-2 rounded-full text-xs" style={{ border: 0, color: '#fff', background: primary }}>重新进入</button>
+          </>
+        ) : <><Loader2 className="animate-spin" /><div className="mt-3 text-xs">正在进入关怀群…</div></>}
+      </div>
+    </div>
+  )
 
   const tabs = [
     ['chat', '群消息', Newspaper], ['ledger', '账本', BarChart3], ['study', '学习', BookOpenCheck], ['settings', '设置', Settings2],

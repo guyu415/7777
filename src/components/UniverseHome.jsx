@@ -121,7 +121,7 @@ export default function UniverseHome({ theme, onOpenChat, onOpenCareHub }) {
             <span className="universe-home__shortcut-icon universe-home__shortcut-icon--violet"><BookHeart size={22} /></span>
             <span><strong>日记信箱</strong><small>{getAllLetters().length} 封珍藏</small></span>
           </button>
-          <button onClick={onOpenCareHub} className="universe-home__shortcut-wide">
+          <button type="button" onClick={() => onOpenCareHub?.()} className="universe-home__shortcut-wide">
             <span className="universe-home__shortcut-icon universe-home__shortcut-icon--blue"><HeartHandshake size={22} /></span>
             <span><strong>生活关怀群</strong><small>新闻 · 记账 · 黄历 · 学习监督</small></span>
             <i>›</i>
@@ -151,9 +151,7 @@ export default function UniverseHome({ theme, onOpenChat, onOpenCareHub }) {
           overflow: hidden;
           isolation: isolate;
           color: #59656f;
-          background:
-            linear-gradient(180deg,rgba(255,249,251,.16),rgba(248,245,250,.06)),
-            url('/backgrounds/lily-garden-anime-v1.webp') center top / cover no-repeat;
+          background:transparent;
         }
         .universe-home__wash { position:absolute; inset:0; z-index:-1; background:radial-gradient(circle at 22% 28%,rgba(255,231,240,.18),transparent 38%),linear-gradient(180deg,transparent 56%,rgba(239,246,244,.12)); }
         .universe-home__header { position:relative; z-index:3; flex:none; display:flex; align-items:flex-start; padding:calc(var(--safe-top) + 15px) 22px 4px; background:transparent; }

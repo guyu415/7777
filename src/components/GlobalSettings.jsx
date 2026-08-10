@@ -306,9 +306,7 @@ export default function GlobalSettings({ theme, onLogout, onForceSync }) {
   }
 
   return (
-    <div className="global-settings-garden flex flex-col h-full" style={{
-      background: `linear-gradient(180deg,rgba(255,250,252,.34),rgba(242,248,245,.14)), url('/backgrounds/lily-garden-anime-v1.webp') center top / cover no-repeat`,
-    }}>
+    <div className="global-settings-garden flex flex-col h-full" style={{ background: 'transparent' }}>
       <style>{`
         .global-settings-garden .forest-settings-card:nth-of-type(3n+1){border-radius:29px 19px 27px 22px;transform:rotate(-.2deg)}
         .global-settings-garden .forest-settings-card:nth-of-type(3n+2){border-radius:20px 31px 22px 29px;transform:rotate(.25deg)}

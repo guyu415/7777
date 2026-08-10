@@ -48,6 +48,7 @@ export default function App() {
     customFonts,
     sessions, currentSessionId,
   } = useStore()
+  const [chatSearchRequest, setChatSearchRequest] = useState(0)
 
   // Web Push notifications carry the session that generated the message.
   // Older notifications only opened `/`, which focused whichever window was
@@ -667,13 +668,18 @@ export default function App() {
       {/* App shell */}
       <div
         className="relative h-full w-full max-w-md mx-auto flex flex-col overflow-hidden"
-        style={{ boxShadow: `0 0 60px ${theme.primary}26`, zIndex: 2 }}
+        style={{
+          boxShadow: `0 0 60px ${theme.primary}26`, zIndex: 2,
+          background: ['sessions', 'globalSettings'].includes(currentView)
+            ? `linear-gradient(180deg,rgba(255,249,251,.16),rgba(248,245,250,.06)), url('/backgrounds/lily-garden-anime-v1.webp') center top / cover no-repeat`
+            : 'transparent',
+        }}
       >
         <div className="flex-1 overflow-hidden min-h-0">
           {/* One shared window for every provider (Claude Code VPS, Codex
               VPS, plain API-key) — ChatWindow.jsx itself picks the right
               runtime adapter internally, see its own top-of-file comment. */}
-          {currentView === 'chat' && <ChatWindow theme={theme} />}
+          {currentView === 'chat' && <ChatWindow theme={theme} searchRequest={chatSearchRequest} />}
           {currentView === 'groupChat' && currentGroupChatId && (
             <GroupChatWindow theme={theme} chatId={currentGroupChatId} onClose={() => setCurrentView('sessions')} />
           )}
@@ -686,7 +692,15 @@ export default function App() {
             />
           )}
           {currentView === 'globalSettings' && <GlobalSettings theme={theme} onLogout={handleLogout} onForceSync={handleForceSync} />}
-          {currentView === 'sessionSettings' && <SessionSettings theme={theme} />}
+          {currentView === 'sessionSettings' && (
+            <SessionSettings
+              theme={theme}
+              onOpenMessageSearch={() => {
+                setChatSearchRequest((value) => value + 1)
+                setCurrentView('chat')
+              }}
+            />
+          )}
           {currentView === 'voiceFavorites' && <VoiceFavorites theme={theme} />}
           {currentView === 'companionMemory' && <CompanionMemory theme={theme} onBack={() => setCurrentView('sessionSettings')} />}
           {currentView === 'tidalMemory' && <TidalMemory theme={theme} onBack={() => setCurrentView('sessionSettings')} />}
