@@ -109,7 +109,7 @@ function FrameCard({ frameSrc, w, h, pad, mouthClipPath, icon, title, titleSize 
 // offset). CLIP_PATH is the traced mouth outline as percentages of the whole
 // image box (matching the inset-0 element it clips); PAD is the largest
 // rectangle that fits inside that same mouth, as inset percentages.
-// Assets: hippo-frame-v2.png 467x336, croc-frame-v2.png 502x298.
+// Assets: hippo-frame-v2.png 467x336, croc-frame-v3.png 502x298.
 const HIPPO_PAD = { top: '51.8%', right: '19.5%', bottom: '30.4%', left: '21.0%' }
 const CROC_PAD = { top: '45.0%', right: '16.1%', bottom: '38.3%', left: '28.7%' }
 
@@ -244,7 +244,7 @@ function NotificationCard({ primary }) {
 function ApiProactiveCard({ primary, value, onChange }) {
   return (
     <FrameCard
-      frameSrc="/assets/croc-frame-v2.png"
+      frameSrc="/assets/croc-frame-v3.png"
       w={502} h={298}
       pad={CROC_PAD} mouthClipPath={CROC_MOUTH_CLIP_PATH}
       icon="💬" title="普通窗口主动消息"
