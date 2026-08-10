@@ -23,13 +23,17 @@ const inputStyle = {
   fontFamily: 'inherit',
 }
 
-function Toggle({ value, onChange, primary }) {
+// `compact` only shrinks the physical footprint (used inside the crocodile card,
+// whose mouth is much flatter than the hippo's) — same value/onChange/primary
+// contract, every other call site is untouched.
+function Toggle({ value, onChange, primary, compact }) {
+  const w = compact ? 36 : 48, h = compact ? 20 : 26, dot = compact ? 14 : 20, pad = 3
   return (
     <button
       onClick={() => onChange(!value)}
       className="relative flex-shrink-0 transition-all duration-300"
       style={{
-        width: 48, height: 26, borderRadius: 13,
+        width: w, height: h, borderRadius: h / 2,
         background: value
           ? `linear-gradient(135deg, ${primary || '#4aacf0'}, ${primary || '#4aacf0'}cc)`
           : 'rgba(180,200,220,0.4)',
@@ -38,36 +42,56 @@ function Toggle({ value, onChange, primary }) {
       }}
     >
       <div style={{
-        position: 'absolute', top: 3, width: 20, height: 20, borderRadius: '50%',
+        position: 'absolute', top: pad, width: dot, height: dot, borderRadius: '50%',
         background: '#fff',
         boxShadow: '0 1px 4px rgba(0,0,0,0.15)',
         transition: 'left 0.25s ease-in-out',
-        left: value ? 25 : 3,
+        left: value ? w - dot - pad : pad,
       }} />
     </button>
   )
 }
 
 // Decorative animal-mouth frame card (hippo/crocodile), cropped from a hand-drawn
-// design mockup — the frame PNG's mouth is a transparent cutout, drawn ON TOP of
-// the content so its teeth naturally overlap the card edges like in the mockup.
-function FrameCard({ frameSrc, aspectRatio, inset, icon, title, children }) {
+// design mockup. Three independent layers, per-animal safe-area insets (measured
+// off each PNG's actual transparent mouth cutout, NOT a shared ratio):
+//   1. animal-wrapper — pure placeholder box (padding-top keeps its height stable
+//      across browsers even before the image loads; percentage insets on layers
+//      2/3 below need this to be a definite height, which plain `aspect-ratio` on
+//      the box itself does not reliably guarantee for absolutely-positioned
+//      percentage children on older WebKit — this is why the mouth content used
+//      to render clipped/misplaced on real iPhones despite looking fine in a
+//      desktop-Chrome preview). overflow: visible so the animal itself is never
+//      cropped.
+//   2. the animal image — width/height 100%, objectFit: contain, so the full
+//      animal (ears, tail, paws) always shows regardless of the box's exact ratio.
+//   3. content overlay — absolutely positioned to that animal's own measured
+//      mouth-interior rect, nothing shared with the other animal's numbers.
+function FrameCard({ frameSrc, w, h, safeArea, icon, title, titleSize = 11.5, iconSize = 13, children }) {
   return (
-    <div className="relative w-full" style={{ aspectRatio }}>
-      <div className="absolute rounded-[18px]" style={{ ...inset, background: 'rgba(255,253,248,0.94)' }} />
-      <div className="absolute flex flex-col" style={{ ...inset, padding: '8px 14px', overflow: 'hidden' }}>
-        <div className="flex items-center gap-1.5 mb-1 flex-shrink-0">
-          <span style={{ fontSize: 15 }}>{icon}</span>
-          <span className="font-semibold" style={{ color: '#2c5282', fontSize: 13 }}>{title}</span>
+    <div className="animal-wrapper relative w-full" style={{ overflow: 'visible' }}>
+      <div style={{ width: '100%', paddingTop: `${(h / w) * 100}%` }} />
+      <img src={frameSrc} alt="" draggable={false}
+        className="absolute top-0 left-0 w-full h-full pointer-events-none select-none"
+        style={{ objectFit: 'contain' }} />
+      <div className="absolute rounded-[14px]" style={{ ...safeArea, background: 'rgba(255,253,248,0.95)' }} />
+      <div className="absolute flex flex-col justify-center" style={{ ...safeArea, padding: '2px 6%' }}>
+        <div className="flex items-center gap-1.5 flex-shrink-0" style={{ marginBottom: 2 }}>
+          <span style={{ fontSize: iconSize, lineHeight: 1 }}>{icon}</span>
+          <span className="font-semibold" style={{ color: '#2c5282', fontSize: titleSize, lineHeight: 1 }}>{title}</span>
         </div>
         {children}
       </div>
-      <img src={frameSrc} alt="" draggable={false}
-        className="absolute inset-0 w-full h-full pointer-events-none select-none"
-        style={{ objectFit: 'fill' }} />
     </div>
   )
 }
+
+// Measured (via flood-fill on the actual PNG alpha channel, not eyeballed) against
+// each cropped asset's own pixel dimensions — see public/assets/hippo-frame.png (448x300)
+// and croc-frame.png (476x228). Deliberately NOT shared: the hippo's mouth is a tall
+// oval, the crocodile's is a flat wide sliver, at different offsets in each image.
+const HIPPO_SAFE_AREA = { top: '41%', bottom: '26%', left: '18%', right: '17%' }
+const CROC_SAFE_AREA = { top: '43.5%', bottom: '30.5%', left: '27%', right: '21%' }
 
 function GlassCard({ icon, title, children }) {
   return (
@@ -144,35 +168,34 @@ function NotificationCard({ primary }) {
   return (
     <FrameCard
       frameSrc="/assets/hippo-frame.png"
-      aspectRatio="440 / 275"
-      inset={{ top: '35%', bottom: '21%', left: '15%', right: '15%' }}
+      w={448} h={300}
+      safeArea={HIPPO_SAFE_AREA}
       icon="🔔" title="设备推送通知"
     >
       {state === 'need-install' && (
-        <p style={{ color: '#7a9cc0', lineHeight: 1.5, fontSize: 10.5 }}>
+        <p style={{ color: '#7a9cc0', lineHeight: 1.35, fontSize: 9 }}>
           iOS 需先把 Eunoia 添加到主屏幕，再从桌面图标打开后回来开启通知。
         </p>
       )}
       {state === 'unsupported' && (
-        <p style={{ color: '#7a9cc0', fontSize: 11 }}>当前浏览器不支持消息推送。</p>
+        <p style={{ color: '#7a9cc0', fontSize: 10 }}>当前浏览器不支持消息推送。</p>
       )}
       {(state === 'on' || state === 'off') && (
         <>
           <div className="flex items-center justify-between gap-2">
-            <div>
-              <span style={{ color: '#2c5282', fontSize: 11.5, lineHeight: 1.3 }}>在这台设备接收主动消息</span>
-              <p style={{ color: '#7a9cc0', fontSize: 9.5, lineHeight: 1.3 }}>只控制通知投递，不关闭消息生成</p>
-            </div>
+            <span style={{ color: '#2c5282', fontSize: 10.5, lineHeight: 1.25 }}>在这台设备接收主动消息</span>
             <Toggle value={state === 'on'} onChange={handleToggle} primary={primary} />
           </div>
+          <p style={{ color: '#7a9cc0', fontSize: 8.5, lineHeight: 1.25, marginTop: 1 }}>只控制通知投递，不会关闭主动消息生成</p>
           {state === 'on' && (
             <button
               onClick={handleTest}
               disabled={busy}
-              className="mt-1.5 w-full rounded-full font-medium flex-shrink-0"
+              className="w-full rounded-full font-medium flex-shrink-0"
               style={{
-                padding: '4px 0',
-                fontSize: 10.5,
+                marginTop: 3,
+                padding: '3px 0',
+                fontSize: 9.5,
                 background: `${primary}18`,
                 border: `1px solid ${primary}55`,
                 color: primary,
@@ -184,7 +207,7 @@ function NotificationCard({ primary }) {
           )}
         </>
       )}
-      {msg && <p className="mt-1" style={{ color: '#7a9cc0', fontSize: 9.5, lineHeight: 1.3 }}>{msg}</p>}
+      {msg && <p style={{ color: '#7a9cc0', fontSize: 8.5, lineHeight: 1.2, marginTop: 1 }}>{msg}</p>}
     </FrameCard>
   )
 }
@@ -199,19 +222,18 @@ function ApiProactiveCard({ primary, value, onChange }) {
   return (
     <FrameCard
       frameSrc="/assets/croc-frame.png"
-      aspectRatio="461 / 222"
-      inset={{ top: '28%', bottom: '11%', left: '27%', right: '11%' }}
+      w={476} h={228}
+      safeArea={CROC_SAFE_AREA}
       icon="💬" title="普通窗口主动消息"
+      iconSize={11} titleSize={10}
     >
       <div className="flex items-center justify-between gap-2">
-        <div>
-          <span style={{ color: '#2c5282', fontSize: 11, lineHeight: 1.3 }}>允许 API 普通会话主动发消息</span>
-          <p style={{ color: '#7a9cc0', fontSize: 9, lineHeight: 1.25 }}>
-            CC 开关仍在会话设置里
-          </p>
-        </div>
-        <Toggle value={value} onChange={onChange} primary={primary} />
+        <span style={{ color: '#2c5282', fontSize: 9, lineHeight: 1.15 }}>允许接 API 的普通会话主动发消息</span>
+        <Toggle value={value} onChange={onChange} primary={primary} compact />
       </div>
+      <p style={{ color: '#7a9cc0', fontSize: 6.5, lineHeight: 1.1, marginTop: 0 }}>
+        只影响普通 API 会话；CC 的开关仍在 CC 会话设置里，Codex 不会接收这条链路的消息。
+      </p>
     </FrameCard>
   )
 }
