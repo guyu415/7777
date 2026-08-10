@@ -53,29 +53,40 @@ function Toggle({ value, onChange, primary, compact }) {
 }
 
 // Decorative animal-mouth frame card (hippo/crocodile), cropped from a hand-drawn
-// design mockup. Three independent layers, per-animal safe-area insets (measured
-// off each PNG's actual transparent mouth cutout, NOT a shared ratio):
-//   1. animal-wrapper — pure placeholder box (padding-top keeps its height stable
-//      across browsers even before the image loads; percentage insets on layers
-//      2/3 below need this to be a definite height, which plain `aspect-ratio` on
-//      the box itself does not reliably guarantee for absolutely-positioned
-//      percentage children on older WebKit — this is why the mouth content used
-//      to render clipped/misplaced on real iPhones despite looking fine in a
-//      desktop-Chrome preview). overflow: visible so the animal itself is never
-//      cropped.
-//   2. the animal image — width/height 100%, objectFit: contain, so the full
-//      animal (ears, tail, paws) always shows regardless of the box's exact ratio.
-//   3. content overlay — absolutely positioned to that animal's own measured
-//      mouth-interior rect, nothing shared with the other animal's numbers.
-function FrameCard({ frameSrc, w, h, safeArea, icon, title, titleSize = 11.5, iconSize = 13, children }) {
+// design mockup. Layers, in DOM/paint order:
+//   1. animal-wrapper — pure placeholder box, position: relative + z-index so
+//      it always paints above ordinary in-flow siblings (padding-top keeps its
+//      height stable across browsers even before the image loads — plain
+//      `aspect-ratio` on the box itself does not reliably give percentage-
+//      positioned descendants a definite height on real-device WebKit, which
+//      is why content used to render clipped/misplaced on an iPhone despite
+//      looking fine in a desktop preview). overflow: visible so the animal
+//      itself — ears, eyes, tail, all of it — is never cropped by this box.
+//   2. the animal image — width/height 100%, objectFit: contain.
+//   3. an oval tint, NOT the old opaque rounded-rectangle "settings card" —
+//      barely-there fill, `pad`-sized and border-radius: 50% so it reads as an
+//      oval sitting inside the mouth rather than a card pasted over it.
+//   4. the actual text/toggle/button content, unclipped and laid out with the
+//      SAME `pad` rectangle (measured off each PNG's real alpha-channel hole,
+//      per-animal, not a shared guess) — kept as a plain rectangle rather than
+//      the mouth's exact jagged tooth-by-tooth outline, because clipping a
+//      flexed, multi-line paragraph to that jagged shape chops text mid-line
+//      wherever a tooth notch happens to land (tried it, real bug, reverted).
+function FrameCard({ frameSrc, w, h, pad, icon, title, titleSize = 11.5, iconSize = 13, children }) {
+  const padStr = `${pad.top} ${pad.right} ${pad.bottom} ${pad.left}`
   return (
-    <div className="animal-wrapper relative w-full" style={{ overflow: 'visible' }}>
+    <div className="animal-wrapper relative w-full" style={{ overflow: 'visible', zIndex: 1 }}>
       <div style={{ width: '100%', paddingTop: `${(h / w) * 100}%` }} />
       <img src={frameSrc} alt="" draggable={false}
         className="absolute top-0 left-0 w-full h-full pointer-events-none select-none"
         style={{ objectFit: 'contain' }} />
-      <div className="absolute rounded-[14px]" style={{ ...safeArea, background: 'rgba(255,253,248,0.95)' }} />
-      <div className="absolute flex flex-col justify-center" style={{ ...safeArea, padding: '2px 6%' }}>
+      <div className="absolute" style={{ inset: 0, padding: padStr }}>
+        <div className="w-full h-full rounded-full" style={{ background: 'rgba(255,253,248,0.4)' }} />
+      </div>
+      {/* text-shadow inherited by every child — there's no opaque card behind
+          this text anymore, so it's what keeps small text legible over the
+          hand-drawn background showing through. */}
+      <div className="absolute inset-0 flex flex-col justify-center" style={{ padding: padStr, textShadow: '0 1px 3px rgba(255,255,255,0.9), 0 0px 6px rgba(255,255,255,0.7)' }}>
         <div className="flex items-center gap-1.5 flex-shrink-0" style={{ marginBottom: 2 }}>
           <span style={{ fontSize: iconSize, lineHeight: 1 }}>{icon}</span>
           <span className="font-semibold" style={{ color: '#2c5282', fontSize: titleSize, lineHeight: 1 }}>{title}</span>
@@ -86,12 +97,13 @@ function FrameCard({ frameSrc, w, h, safeArea, icon, title, titleSize = 11.5, ic
   )
 }
 
-// Measured (via flood-fill on the actual PNG alpha channel, not eyeballed) against
-// each cropped asset's own pixel dimensions — see public/assets/hippo-frame.png (448x300)
-// and croc-frame.png (476x228). Deliberately NOT shared: the hippo's mouth is a tall
-// oval, the crocodile's is a flat wide sliver, at different offsets in each image.
-const HIPPO_SAFE_AREA = { top: '41%', bottom: '26%', left: '18%', right: '17%' }
-const CROC_SAFE_AREA = { top: '43.5%', bottom: '30.5%', left: '27%', right: '21%' }
+// Measured off each cropped PNG's own alpha channel (largest enclosed
+// transparent region inside the mouth, not eyeballed) — see
+// public/assets/hippo-frame.png (448x300) and croc-frame.png (476x228).
+// Deliberately not shared: the hippo's mouth is a tall oval; the crocodile's
+// is a flat tapering sliver at a different offset entirely.
+const HIPPO_PAD = { top: '42%', bottom: '27%', left: '19%', right: '18%' }
+const CROC_PAD = { top: '43.5%', bottom: '30.5%', left: '27%', right: '21%' }
 
 function GlassCard({ icon, title, children }) {
   return (
@@ -169,7 +181,7 @@ function NotificationCard({ primary }) {
     <FrameCard
       frameSrc="/assets/hippo-frame.png"
       w={448} h={300}
-      safeArea={HIPPO_SAFE_AREA}
+      pad={HIPPO_PAD}
       icon="🔔" title="设备推送通知"
     >
       {state === 'need-install' && (
@@ -223,7 +235,7 @@ function ApiProactiveCard({ primary, value, onChange }) {
     <FrameCard
       frameSrc="/assets/croc-frame.png"
       w={476} h={228}
-      safeArea={CROC_SAFE_AREA}
+      pad={CROC_PAD}
       icon="💬" title="普通窗口主动消息"
       iconSize={11} titleSize={10}
     >
