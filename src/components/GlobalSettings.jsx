@@ -13,9 +13,9 @@ function genId() {
 
 const inputStyle = {
   width: '100%',
-  background: 'rgba(255,255,255,0.6)',
-  border: '1px solid rgba(200,220,255,0.4)',
-  borderRadius: 14,
+  background: 'rgba(255,255,255,0.56)',
+  border: 'none',
+  borderRadius: '15px 20px 16px 18px',
   padding: '10px 16px',
   fontSize: 14,
   color: '#2c5282',
@@ -50,14 +50,14 @@ function Toggle({ value, onChange, primary }) {
 
 function GlassCard({ icon, title, children }) {
   return (
-    <div style={{
-      background: 'rgba(255,255,255,0.42)',
-      backdropFilter: 'blur(16px)',
-      WebkitBackdropFilter: 'blur(16px)',
-      borderRadius: 20,
+    <div className="forest-settings-card" style={{
+      background: 'rgba(255,255,255,0.48)',
+      backdropFilter: 'blur(9px)',
+      WebkitBackdropFilter: 'blur(9px)',
+      borderRadius: '28px 20px 31px 19px',
       padding: 16,
-      border: '1px solid rgba(200,220,255,0.3)',
-      boxShadow: '0 4px 20px rgba(74,172,240,0.06)',
+      border: 'none',
+      boxShadow: '0 6px 18px rgba(66,88,82,0.06)',
     }}>
       <div className="flex items-center gap-2 mb-3">
         <span>{icon}</span>
@@ -223,8 +223,8 @@ export default function GlobalSettings({ theme, onLogout, onForceSync }) {
 
   const chipStyle = (active) => ({
     padding: '6px 14px', borderRadius: 20, fontSize: 13, cursor: 'pointer', transition: 'all 0.2s',
-    border: active ? `1.5px solid ${primary}` : '1.5px solid rgba(200,220,255,0.4)',
-    background: active ? `${primary}22` : 'rgba(255,255,255,0.4)',
+    border: 'none',
+    background: active ? `${primary}27` : 'rgba(255,255,255,0.46)',
     color: active ? primaryDark : '#6a90b8',
     fontWeight: active ? 600 : 400,
   })
@@ -306,23 +306,27 @@ export default function GlobalSettings({ theme, onLogout, onForceSync }) {
   }
 
   return (
-    <div className="flex flex-col h-full" style={{ background: 'transparent' }}>
+    <div className="global-settings-garden flex flex-col h-full" style={{
+      background: `linear-gradient(180deg,rgba(255,250,252,.34),rgba(242,248,245,.14)), url('/backgrounds/lily-garden-anime-v1.webp') center top / cover no-repeat`,
+    }}>
+      <style>{`
+        .global-settings-garden .forest-settings-card:nth-of-type(3n+1){border-radius:29px 19px 27px 22px;transform:rotate(-.2deg)}
+        .global-settings-garden .forest-settings-card:nth-of-type(3n+2){border-radius:20px 31px 22px 29px;transform:rotate(.25deg)}
+        .global-settings-garden__scroll{scrollbar-width:none}
+        .global-settings-garden__scroll::-webkit-scrollbar{display:none}
+      `}</style>
       {/* Header */}
       <div className="flex items-center justify-between px-4 flex-shrink-0"
         style={{
           paddingTop: 'calc(var(--safe-top) + 14px)',
           paddingBottom: 12,
-          background: 'rgba(255,255,255,0.72)',
-          backdropFilter: 'blur(24px)',
-          WebkitBackdropFilter: 'blur(24px)',
-          borderBottom: '1px solid rgba(200,220,255,0.25)',
-          boxShadow: '0 2px 12px rgba(74,172,240,0.08)',
+          background: 'transparent',
         }}>
-        <span className="font-semibold text-sm" style={{ color: '#2c5282' }}>全局设置</span>
+        <span className="font-semibold text-sm" style={{ color: '#536573' }}>花园设置</span>
         <img src="/assets/whale.png" alt="" style={{ width: 36, height: 36, objectFit: 'contain' }} />
       </div>
 
-      <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4">
+      <div className="global-settings-garden__scroll flex-1 overflow-y-auto px-4 pt-2 space-y-4" style={{ paddingBottom: 72 }}>
 
         {/* Push notifications */}
         <NotificationCard primary={primary} />

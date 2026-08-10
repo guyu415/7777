@@ -122,30 +122,35 @@ export default function SessionList({ theme, onSelectSession, onOpenGroupChat, o
   }
 
   return (
-    <div className="flex flex-col h-full" style={{ background: 'transparent' }}>
+    <div className="session-garden flex flex-col h-full" style={{ background: 'transparent' }}>
+      <style>{`
+        .session-garden .session-sticker:nth-child(3n+1){transform:rotate(-.45deg);border-radius:31px 20px 28px 18px}
+        .session-garden .session-sticker:nth-child(3n+2){transform:translateX(5px) rotate(.55deg);border-radius:19px 32px 21px 30px}
+        .session-garden .session-sticker:nth-child(3n){transform:translateX(-2px) rotate(-.2deg);border-radius:28px 22px 34px 19px}
+        .session-garden .session-sticker:active{transform:scale(.985)}
+        .session-garden__scroll{scrollbar-width:none}
+        .session-garden__scroll::-webkit-scrollbar{display:none}
+      `}</style>
       {/* Header */}
       <div
         className="flex items-center justify-between px-4 flex-shrink-0"
         style={{
           paddingTop: 'calc(var(--safe-top) + 14px)',
           paddingBottom: 12,
-          background: 'rgba(255,255,255,0.72)',
-          backdropFilter: 'blur(24px)',
-          WebkitBackdropFilter: 'blur(24px)',
-          borderBottom: '1px solid rgba(200,220,255,0.25)',
-          boxShadow: '0 2px 12px rgba(74,172,240,0.08)',
+          background: 'transparent',
         }}
       >
         <div className="flex items-center gap-1.5">
-          {onBackHome && <button onClick={onBackHome} className="w-7 h-7 rounded-full grid place-items-center" style={{ color: primaryDark, background: `${primary}12` }} aria-label="返回铃兰花园"><ChevronLeft size={15} /></button>}
-          <span className="font-semibold text-sm" style={{ color: '#2c5282' }}>会话列表</span>
+          {onBackHome && <button onClick={onBackHome} className="w-8 h-8 grid place-items-center" style={{ border: 0, borderRadius: '52% 48% 57% 43%', color: primaryDark, background: 'rgba(255,255,255,.52)' }} aria-label="返回铃兰花园"><ChevronLeft size={17} /></button>}
+          <span className="font-semibold text-sm" style={{ color: '#536573' }}>切换对话</span>
         </div>
         <button
           onClick={handleNew}
-          className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium text-white transition-all duration-200"
+          className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium transition-all duration-200"
           style={{
-            background: `linear-gradient(135deg, ${primary}, ${primaryDark})`,
-            boxShadow: `0 2px 8px ${primary}50`,
+            border: 0, color: primaryDark,
+            borderRadius: '48% 52% 42% 58% / 58% 45% 55% 42%',
+            background: `${primary}18`,
           }}
         >
           <Plus size={13} />
@@ -154,7 +159,7 @@ export default function SessionList({ theme, onSelectSession, onOpenGroupChat, o
       </div>
 
       {/* List + diary (whole area scrolls; diary has its own inner scroll) */}
-      <div className="flex-1 overflow-y-auto px-3 py-3">
+      <div className="session-garden__scroll flex-1 overflow-y-auto px-3 pt-1" style={{ paddingBottom: 'calc(32px + env(safe-area-inset-bottom))' }}>
         <div className="space-y-2">
         {(sessions || []).map(session => {
           const active = session.id === currentSessionId
@@ -162,32 +167,32 @@ export default function SessionList({ theme, onSelectSession, onOpenGroupChat, o
             <div
               key={session.id}
               onClick={() => handleSelect(session.id)}
-              className="rounded-2xl px-4 py-3 cursor-pointer transition-all duration-200"
+              className="session-sticker px-4 py-3 cursor-pointer transition-all duration-200"
               style={{
                 background: active
-                  ? `linear-gradient(135deg, ${primary}18, ${primaryDark}10)`
-                  : 'rgba(255,255,255,0.55)',
-                border: active
-                  ? `1.5px solid ${primary}40`
-                  : '1.5px solid rgba(200,220,255,0.3)',
-                backdropFilter: 'blur(12px)',
-                WebkitBackdropFilter: 'blur(12px)',
+                  ? `linear-gradient(135deg, ${primary}2b, rgba(231,243,238,.7))`
+                  : 'rgba(255,255,255,0.48)',
+                border: 0,
+                backdropFilter: 'blur(8px)',
+                WebkitBackdropFilter: 'blur(8px)',
                 boxShadow: active
-                  ? `0 4px 16px ${primary}20`
-                  : '0 2px 8px rgba(74,172,240,0.06)',
+                  ? `0 7px 18px ${primary}21`
+                  : '0 4px 12px rgba(71,94,91,.055)',
               }}
             >
               <div className="flex items-start gap-3">
                 {/* Session icon */}
                 <div
-                  className="w-9 h-9 rounded-full flex items-center justify-center text-base flex-shrink-0 mt-0.5"
+                  className="w-9 h-9 flex items-center justify-center text-xs font-semibold flex-shrink-0 mt-0.5 overflow-hidden"
                   style={{
                     background: active ? `${primary}22` : 'rgba(200,220,255,0.3)',
+                    color: primaryDark,
+                    clipPath: 'polygon(7% 2%,93% 5%,100% 24%,94% 91%,74% 100%,6% 93%,0 72%,3% 15%)',
                   }}
                 >
                   {(session.aiAvatar || globalAiAvatar)
-                    ? <img src={session.aiAvatar || globalAiAvatar} alt="" className="w-full h-full object-cover rounded-full" />
-                    : '🌸'}
+                    ? <img src={session.aiAvatar || globalAiAvatar} alt="" className="w-full h-full object-cover" />
+                    : 'CC'}
                 </div>
 
                 <div className="flex-1 min-w-0">
@@ -266,19 +271,19 @@ export default function SessionList({ theme, onSelectSession, onOpenGroupChat, o
         {/* 群聊 — 独立于上面的单聊会话列表，真实的多 AI 群聊（见
             GroupChatWindow.jsx），从不与任何成员的单聊历史混在一起。 */}
         <div className="flex items-center justify-between mt-4 mb-2 px-1">
-          <span className="text-xs font-medium" style={{ color: '#7a9cc0' }}>群聊</span>
+          <span className="text-xs font-medium" style={{ color: '#71878a' }}>群聊</span>
           <button
             onClick={() => setShowCreateGroup(true)}
-            className="flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-medium text-white"
-            style={{ background: `linear-gradient(135deg, ${primary}, ${primaryDark})` }}
+            className="flex items-center gap-1 px-2.5 py-1 text-[11px] font-medium"
+            style={{ border: 0, color: primaryDark, borderRadius: '44% 56% 51% 49%', background: `${primary}17` }}
           >
             <Plus size={11} /> 创建群聊
           </button>
         </div>
         <button
           onClick={() => onOpenCareHub?.()}
-          className="w-full flex items-center gap-3 px-4 py-3 mb-2 rounded-2xl text-left"
-          style={{ background: 'linear-gradient(135deg, rgba(235,247,255,.88), rgba(250,240,255,.88))', border: `1.5px solid ${primary}30`, boxShadow: `0 6px 22px ${primary}0d` }}
+          className="w-full flex items-center gap-3 px-4 py-3 mb-2 text-left"
+          style={{ border: 0, borderRadius: '30px 19px 27px 22px', background: 'linear-gradient(135deg, rgba(230,244,239,.76), rgba(250,232,241,.67))', boxShadow: `0 6px 20px ${primary}0d`, transform: 'rotate(.3deg)' }}
         >
           <div className="w-9 h-9 rounded-full flex items-center justify-center text-white shrink-0" style={{ background: `linear-gradient(135deg, ${primary}, #a27fc0)` }}><HeartHandshake size={17} /></div>
           <div className="flex-1 min-w-0">
@@ -294,8 +299,8 @@ export default function SessionList({ theme, onSelectSession, onOpenGroupChat, o
               <div
                 key={chat.id}
                 onClick={() => onOpenGroupChat?.(chat.id)}
-                className="flex items-center gap-3 px-4 py-2.5 rounded-2xl cursor-pointer"
-                style={{ background: 'rgba(255,255,255,0.55)', border: '1.5px solid rgba(200,220,255,0.3)' }}
+                className="flex items-center gap-3 px-4 py-2.5 cursor-pointer"
+                style={{ border: 0, borderRadius: '23px 31px 20px 27px', background: 'rgba(255,255,255,0.48)', transform: 'rotate(-.25deg)' }}
               >
                 <div className="flex items-center flex-shrink-0" style={{ width: 36 }}>
                   <div className="w-7 h-7 rounded-full flex items-center justify-center text-xs" style={{ background: `${primary}20`, color: primary }}>
@@ -328,11 +333,13 @@ export default function SessionList({ theme, onSelectSession, onOpenGroupChat, o
         {/* 日记：默认收起成一条紧凑入口，点击才展开成面板 */}
         <button
           onClick={() => setDiaryOpen(v => !v)}
-          className="w-full flex items-center justify-between px-4 py-3 mt-3 rounded-2xl text-sm font-medium transition-all"
+          className="w-full flex items-center justify-between px-4 py-3 mt-3 text-sm font-medium transition-all"
           style={{
-            background: 'rgba(255,255,255,0.5)',
-            border: '1.5px solid rgba(180,150,220,0.3)',
+            background: 'rgba(239,232,247,.57)',
+            border: 0,
+            borderRadius: '29px 19px 31px 22px',
             color: '#9a8ab0',
+            transform: 'rotate(.45deg)',
           }}
         >
           <span>📔 日记 · {getAllLetters().length} 封</span>

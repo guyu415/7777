@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, useLayoutEffect } from 'react'
-import { Menu, Cat, Search, Trash2, X } from 'lucide-react'
+import { ArrowLeft, Menu, Cat, Search, Trash2, X } from 'lucide-react'
 import { useShallow } from 'zustand/react/shallow'
 import MessageList from './MessageList'
 import MessageSearch from './MessageSearch'
@@ -462,79 +462,46 @@ export default function ChatWindow({ theme }) {
   return (
     <div className="flex flex-col h-full" style={{ background: 'transparent' }}>
       {/* Header */}
-      <div className="flex items-center justify-between px-4 safe-top"
+      <div className="safe-top"
         style={{
           paddingTop: 'calc(var(--safe-top) + 14px)',
-          paddingBottom: 12,
-          background: `linear-gradient(to bottom, ${primaryColor}1f, rgba(255,255,255,0.55))`,
-          backdropFilter: 'blur(24px)',
-          WebkitBackdropFilter: 'blur(24px)',
-          borderBottom: `1px solid ${primaryColor}22`,
+          paddingBottom: 8,
+          paddingLeft: 13,
+          paddingRight: 13,
+          background: `linear-gradient(180deg, rgba(255,252,253,.76), ${primaryColor}0b 72%, rgba(255,255,255,.18))`,
+          backdropFilter: 'blur(18px)',
+          WebkitBackdropFilter: 'blur(18px)',
           flexShrink: 0,
           position: 'relative',
           zIndex: 10,
         }}>
-        <div className="flex items-center gap-3 min-w-0">
-          {/* 心潮 status pill moved here (below the session-list button) from
-              the name row — on narrow screens it used to sit inline next to
-              the name and get visually covered by the header's right-side
-              button group (that row is explicitly z-indexed above), making
-              it unclickable. Stacking it under a button that's already its
-              own fixed-width column has no crowding to compete with. */}
-          <div className="flex flex-col items-center gap-1 flex-shrink-0">
-            <button
-              onClick={() => setShowSessionDrawer(true)}
-              title="切换对话"
-              className="w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 transition-all duration-200"
-              style={{ background: `${primaryColor}18`, color: primaryColor }}
-            >
-              <Menu size={16} />
-            </button>
-            {xinchaoState?.toneLabel && (
-              <button
-                onClick={() => setShowXinchaoPanel(true)}
-                title="心潮状态"
-                style={{
-                  fontSize: 10, color: primaryColor, background: `${primaryColor}12`,
-                  border: `1px solid ${primaryColor}30`, borderRadius: 8,
-                  padding: '1px 6px', lineHeight: 1.5, whiteSpace: 'nowrap',
-                }}
-              >
-                {xinchaoState.toneLabel}
-              </button>
-            )}
-          </div>
+        <div className="flex items-center min-w-0" style={{ gap: 9 }}>
+          <button
+            onClick={() => setCurrentView('sessions')}
+            title="返回铃兰花园"
+            aria-label="返回铃兰花园"
+            className="w-9 h-9 flex items-center justify-center flex-shrink-0"
+            style={{ border: 0, borderRadius: '52% 48% 58% 42% / 43% 57% 43% 57%', background: 'rgba(255,255,255,.56)', color: primaryDarkColor }}
+          >
+            <ArrowLeft size={20} />
+          </button>
           <div className="w-11 h-11 rounded-full overflow-hidden flex items-center justify-center text-xl flex-shrink-0"
             style={{
               background: `${primaryColor}33`,
-              border: '2px solid rgba(180,130,255,0.65)',
-              boxShadow: '0 0 10px rgba(180,130,255,0.6), 0 2px 10px rgba(180,130,255,0.35)',
+              boxShadow: `0 4px 13px ${primaryColor}42`,
+              clipPath: 'polygon(7% 3%,91% 0,100% 18%,96% 90%,78% 100%,8% 95%,0 77%,3% 14%)',
             }}>
             {effectiveAiAvatar
               ? <img src={effectiveAiAvatar} alt="" className="w-full h-full object-cover" />
-              : '🌸'}
+              : <span style={{ fontSize: 12, fontWeight: 700, color: primaryDarkColor }}>CC</span>}
           </div>
-          <div className="min-w-0">
-            {/* Name — crystal usage orb — mood, fixed left-to-right order, all
-                normal (non-absolute) flex children so they share one row and
-                vertically center together for free. This row is entirely
-                separate from the signature row below, so the signature is
-                never affected by anything here.
-                No overflow/ellipsis clipping on the name itself — that was
-                cutting off its own text-shadow glow into a visible square
-                block. The name has no background of its own; it's just
-                colored text with a glow that's allowed to spread outward
-                freely. */}
-            <div className="flex items-center" style={{ maxWidth: '100%', minWidth: 0 }}>
-              <div className="font-semibold text-sm" style={{
+          <div className="min-w-0" style={{ flex: 1 }}>
+            <div className="font-semibold text-sm" style={{
+                overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
                 color: primaryColor,
                 textShadow: `0 0 8px ${primaryColor}cc, 0 0 18px ${primaryColor}80`,
               }}>
                 {effectiveAiName || currentSession?.name || '新对话'}
-              </div>
-              {isFixedVpsSession && (
-                <RuntimeStatusBall theme={theme} isLoading={isLoading} runtime={isCodexSession ? 'codex' : 'claude-code'} />
-              )}
             </div>
             <div className="flex items-center gap-1.5">
               <Signature text={effectiveSignature || '在线'} color={primaryColor} shadow={`0 0 6px ${primaryColor}aa, 0 0 14px ${primaryColor}60`} />
@@ -547,21 +514,49 @@ export default function ChatWindow({ theme }) {
               )}
             </div>
           </div>
+          {isFixedVpsSession && (
+            <div className="flex-shrink-0" style={{ width: 34, height: 34 }}>
+              <RuntimeStatusBall theme={theme} isLoading={isLoading} runtime={isCodexSession ? 'codex' : 'claude-code'} />
+            </div>
+          )}
+          <button
+            onClick={() => setShowSessionDrawer(true)}
+            title="切换对话"
+            aria-label="切换对话"
+            className="w-9 h-9 flex items-center justify-center flex-shrink-0"
+            style={{ border: 0, borderRadius: '47% 53% 40% 60% / 58% 43% 57% 42%', background: `${primaryColor}14`, color: primaryColor }}
+          >
+            <Menu size={17} />
+          </button>
         </div>
-        <div className="flex items-center gap-2 flex-shrink-0" style={{ position: 'relative', zIndex: 10 }}>
+
+        <div className="flex items-center justify-end flex-wrap" style={{ gap: 7, marginTop: 6, paddingRight: 2 }}>
+          {xinchaoState?.toneLabel && (
+            <button
+              onClick={() => setShowXinchaoPanel(true)}
+              title="心潮状态"
+              style={{
+                fontSize: 10, color: primaryDarkColor, background: `${primaryColor}10`,
+                border: 0, borderRadius: '54% 46% 59% 41% / 48% 62% 38% 52%',
+                padding: '3px 9px', lineHeight: 1.5, whiteSpace: 'nowrap',
+              }}
+            >
+              {xinchaoState.toneLabel}
+            </button>
+          )}
           <button
             onClick={() => setShowSearch(true)}
             title="搜索这个对话"
-            className="w-9 h-9 rounded-full flex items-center justify-center flex-shrink-0"
-            style={{ background: `${primaryColor}18`, color: primaryColor }}
+            className="w-8 h-8 flex items-center justify-center flex-shrink-0"
+            style={{ border: 0, borderRadius: '52% 48% 45% 55%', background: `${primaryColor}12`, color: primaryColor }}
           >
             <Search size={15} />
           </button>
           <button
             onClick={() => setShowCarryOut(true)}
             title="把它抱走，变成桌宠"
-            className="w-9 h-9 rounded-full flex items-center justify-center flex-shrink-0"
-            style={{ background: `${primaryColor}18`, color: primaryColor }}
+            className="w-8 h-8 flex items-center justify-center flex-shrink-0"
+            style={{ border: 0, borderRadius: '43% 57% 50% 50%', background: `${primaryColor}12`, color: primaryColor }}
           >
             <Cat size={16} />
           </button>
@@ -569,13 +564,13 @@ export default function ChatWindow({ theme }) {
             onClick={() => setCurrentView('sessionSettings')}
             className="btn-whale flex items-center justify-center flex-shrink-0"
             style={{
-              width: 56, height: 56, borderRadius: '50%',
-              background: `${primaryColor}12`,
-              border: '1.5px solid transparent',
+              width: 43, height: 36, borderRadius: '54% 46% 58% 42%',
+              background: 'transparent',
+              border: 0,
               overflow: 'hidden',
             }}
           >
-            <img src="/assets/whale.png" alt="设置" style={{ width: 70, height: 70, objectFit: 'contain', flexShrink: 0 }} />
+            <img src="/assets/whale.png" alt="设置" style={{ width: 51, height: 51, objectFit: 'contain', flexShrink: 0 }} />
           </button>
         </div>
       </div>
@@ -930,9 +925,9 @@ export default function ChatWindow({ theme }) {
           <div
             className="relative h-full overflow-hidden"
             style={{
-              width: 'min(88vw, 380px)',
-              borderRadius: '0 30px 30px 0',
-              background: theme?.appBg || '#f9f7fc',
+              width: 'min(92vw, 400px)',
+              borderRadius: '0 38px 34px 0',
+              background: `linear-gradient(180deg,rgba(255,252,253,.76),rgba(244,248,246,.72)), url('/backgrounds/lily-garden-anime-v1.webp') center top / cover no-repeat`,
               boxShadow: '18px 0 55px rgba(37,29,49,.2)',
               animation: 'eunoiaDrawerIn .3s cubic-bezier(.2,.75,.2,1)',
             }}

@@ -694,7 +694,7 @@ export default function App() {
         </div>
 
         {['sessions', 'globalSettings'].includes(currentView) && (
-          <BottomNav currentView={currentView} onChange={setCurrentView} theme={theme} />
+          <BottomNav currentView={currentView} onChange={setCurrentView} theme={theme} bare />
         )}
       </div>
 
