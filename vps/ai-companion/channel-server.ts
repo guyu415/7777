@@ -73,6 +73,7 @@ import {
 import { splitCompletedCodexMessage } from './codex-chat-history.ts'
 import {
   CARE_ROLE_IDS,
+  baziSolarMonthContext,
   careIsSevereOverspend,
   careOverdueDays,
   careRoleIsDue,
@@ -7017,15 +7018,15 @@ async function careAlmanacEvidence(today: string): Promise<string> {
   return `查询来源：${sourceUrl}\n来源页面正文：${text}`
 }
 
-function careRolePrompt(role: CareRoleId, today: string, evidence = ''): { system: string; instruction: string } {
+function careRolePrompt(role: CareRoleId, today: string, evidence = '', solarMonth?: ReturnType<typeof baziSolarMonthContext>): { system: string; instruction: string } {
   const common = `你是固定生活关怀群里的“${CARE_ROLE_NAMES[role]}”。只用中文输出，语气自然、温和、利落。今天是中国时区 ${today}。不要展示思考过程。`
   if (role === 'news') return {
     system: `${common}\n服务端已在本轮实时抓取多个新闻频道。你只能从提供的候选中筛选，不能凭记忆补新闻，不能改写或虚构链接。`,
     instruction: `下面是服务端刚刚联网取得的实时新闻候选。请筛选恰好 5 条真正值得知道的新闻，兼顾国内、国际、科技、经济与社会影响，避免五条都来自同一领域。\n\n每条按“1. 标题 / 摘要 / 为什么值得关注 / 来源”写，摘要 1—2 句；来源必须原样保留候选里的媒体名和完整 URL。末尾用一句话概括今天值得持续关注的主线。\n\n${evidence}`,
   }
   if (role === 'almanac') return {
-    system: `${common}\n你负责实用型每日黄历与轻量运势。服务端已实时取得当天黄历来源；只能依据来源整理。黄历属于民俗参考，不能冒充科学结论；不要制造恐惧或下确定性断言。${carePrivateProfile().bazi ? `\n用户的私密命盘资料是：${carePrivateProfile().bazi}。只在内部用于调整当天建议，输出中禁止复述、展示或解释这组原始资料，也不要每次声明“已结合八字”。` : ''}`,
-    instruction: `根据下面本轮联网取得的来源，播报 ${today} 的日期与农历、宜与忌、今日生活注意事项、针对用户的轻量整体运势。正文直接保留完整来源 URL，并明确“民俗内容仅供参考”。内容短而有用，不要按生肖逐个展开。\n\n${evidence}`,
+    system: `${common}\n你负责实用型每日黄历与轻量运势。服务端已实时取得当天黄历来源；只能依据来源整理宜忌和农历日期。八字运势必须采用节气分月，服务端已经计算出当前月柱是${solarMonth?.pillar || '未知'}月（最近节令：${solarMonth?.boundaryName || '未知'}，${solarMonth?.boundaryAt || '未知'}，中国时区）；来源页面若出现另一个干支月，那是其农历月份标签，不是八字节气月，禁止沿用。黄历属于民俗参考，不能冒充科学结论；不要制造恐惧或下确定性断言。${carePrivateProfile().bazi ? `\n用户的私密命盘资料是：${carePrivateProfile().bazi}。只在内部用于调整当天建议，输出中禁止复述、展示或解释这组原始资料，也不要每次声明“已结合八字”。` : ''}`,
+    instruction: `根据下面本轮联网取得的来源，播报 ${today} 的日期与农历、宜与忌、今日生活注意事项、针对用户的轻量整体运势。涉及月柱时必须明确写作“${solarMonth?.pillar || '未知'}月（节气月）”，不能照抄来源里的其他干支月。正文直接保留完整来源 URL，并明确“民俗内容仅供参考”。内容短而有用，不要按生肖逐个展开。\n\n${evidence}`,
   }
   if (role === 'ledger') {
     const month = today.slice(0, 7)
@@ -7041,6 +7042,11 @@ function careRolePrompt(role: CareRoleId, today: string, evidence = ''): { syste
     system: `${common}\n你负责监督学习清单。只能依据给定清单判断完成情况，绝不能擅自把目标标为完成。`,
     instruction: `当前学习目标：${JSON.stringify(goals)}。最近完成的番茄钟：${JSON.stringify(recentFocus)}。请做一段不超过 220 字的检查：先回应刚完成的专注（若有），再说明目标完成数量、尚未完成项、临近截止项，以及一个可立刻开始的最小行动。若清单为空，也要认可已完成的专注，再提醒用户预设目标。`,
   }
+}
+
+function careNormalizeBaziSolarMonth(text: string, pillar: string): string {
+  if (!/^[甲乙丙丁戊己庚辛壬癸][子丑寅卯辰巳午未申酉戌亥]$/.test(pillar)) return text
+  return text.replace(/[甲乙丙丁戊己庚辛壬癸][子丑寅卯辰巳午未申酉戌亥]月/g, `${pillar}月`)
 }
 
 function careRedactPrivateProfile(text: string): string {
@@ -7075,7 +7081,8 @@ async function careRunGemini(model: string, system: string, instruction: string)
 async function careRunRole(role: CareRoleId, manual = false): Promise<{ ok: boolean; error?: string }> {
   if (careRunningRole) return { ok: false, error: `${CARE_ROLE_NAMES[careRunningRole]}正在生成` }
   const config = careHubState.config.roles[role]
-  const { date } = zonedDateTime(new Date(), careHubState.config.timezone)
+  const now = new Date()
+  const { date } = zonedDateTime(now, careHubState.config.timezone)
   careRunningRole = role
   if (!manual) config.lastAttemptDate = date
   config.lastError = undefined
@@ -7087,7 +7094,8 @@ async function careRunRole(role: CareRoleId, manual = false): Promise<{ ok: bool
     // means a new search in this run and model changes take effect immediately.
     if (config.runtime !== 'gemini') await mysteryCleanupGame('care-hub', [role])
     const evidence = role === 'news' ? await careNewsEvidence() : role === 'almanac' ? await careAlmanacEvidence(date) : ''
-    const prompt = careRolePrompt(role, date, evidence)
+    const solarMonth = role === 'almanac' ? baziSolarMonthContext(now, careHubState.config.timezone) : undefined
+    const prompt = careRolePrompt(role, date, evidence, solarMonth)
     const selectedModel = config.model || (config.runtime === 'codex' ? (codexSelectedModel || codexModelList.find((item) => item.isDefault)?.id || '') : config.runtime === 'gemini' ? 'gemini-3.5-flash-lite' : 'claude-sonnet-4-6')
     let text = config.runtime === 'gemini'
       ? await careRunGemini(selectedModel, prompt.system, prompt.instruction)
@@ -7095,7 +7103,7 @@ async function careRunRole(role: CareRoleId, manual = false): Promise<{ ok: bool
           if ('error' in result) throw new Error(result.error)
           return result.text
         })
-    if (role === 'almanac') text = careRedactPrivateProfile(text)
+    if (role === 'almanac') text = careNormalizeBaziSolarMonth(careRedactPrivateProfile(text), solarMonth!.pillar)
     if (role === 'news' && ((text.match(/(?:^|\n)\s*[1-5][.、)]/g) || []).length < 5 || (text.match(/https?:\/\/[^\s)]+/g) || []).length < 5)) throw new Error('联网早报未完整返回五条新闻及来源，已拒绝发布')
     if (role === 'almanac' && !/https?:\/\//.test(text)) throw new Error('黄历结果缺少可核验来源，已拒绝发布')
     careAppend(role, text, role === 'ledger' || role === 'study' ? 'reminder' : 'report')

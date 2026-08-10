@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { careIsSevereOverspend, careOverdueDays, careRoleIsDue, defaultCareHubState, isValidCareTime, ledgerMonthSummary, normalizeCareHubState, sanitizeCareRoleConfig, zonedDateTime } from '../care-hub'
+import { baziSolarMonthContext, careIsSevereOverspend, careOverdueDays, careRoleIsDue, defaultCareHubState, isValidCareTime, ledgerMonthSummary, normalizeCareHubState, sanitizeCareRoleConfig, zonedDateTime } from '../care-hub'
 
 describe('care hub', () => {
   it('validates push time and sanitizes role config', () => {
@@ -23,6 +23,12 @@ describe('care hub', () => {
     const role = defaultCareHubState().config.roles.news
     expect(careRoleIsDue(role, '2026-08-09', '08:05')).toBe(true)
     expect(careRoleIsDue({ ...role, lastAttemptDate: '2026-08-09' }, '2026-08-09', '08:05')).toBe(false)
+  })
+
+  it('switches the bazi month pillar at the exact solar-term boundary', () => {
+    expect(baziSolarMonthContext(new Date('2026-08-07T10:00:00Z')).pillar).toBe('乙未')
+    expect(baziSolarMonthContext(new Date('2026-08-07T12:00:00Z'))).toMatchObject({ pillar: '丙申', boundaryName: '立秋' })
+    expect(baziSolarMonthContext(new Date('2026-08-10T00:05:00Z')).pillar).toBe('丙申')
   })
 
   it('keeps fixed slots when loading partial old state', () => {

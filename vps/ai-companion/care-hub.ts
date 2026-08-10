@@ -82,6 +82,22 @@ export function zonedDateTime(now: Date, timezone: string): { date: string; time
   return { date: `${value('year')}-${value('month')}-${value('day')}`, time: `${value('hour')}:${value('minute')}` }
 }
 
+export function baziSolarMonthContext(now: Date, timezone = 'Asia/Shanghai'): { pillar: string; boundaryName: string; boundaryAt: string } {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: timezone,
+    year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23',
+  }).formatToParts(now)
+  const value = (type: string) => Number(parts.find((part) => part.type === type)?.value || 0)
+  const lunar = Solar.fromYmdHms(value('year'), value('month'), value('day'), value('hour'), value('minute'), value('second')).getLunar()
+  const boundary = lunar.getPrevJie()
+  return {
+    pillar: lunar.getEightChar().getMonth(),
+    boundaryName: boundary.getName(),
+    boundaryAt: boundary.getSolar().toYmdHms(),
+  }
+}
+
 export function careRoleIsDue(config: CareRoleConfig, date: string, time: string): boolean {
   return config.enabled && time >= config.time && config.lastRunDate !== date && config.lastAttemptDate !== date
 }
@@ -142,3 +158,4 @@ export function careOverdueDays(targetDate: string | undefined, today: string): 
   const days = Math.floor((Date.parse(`${today}T00:00:00Z`) - Date.parse(`${targetDate}T00:00:00Z`)) / 86_400_000)
   return Number.isFinite(days) ? Math.max(0, days) : 0
 }
+import { Solar } from 'lunar-javascript'

@@ -8,6 +8,7 @@
   },
   "type": "module",
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.0.0"
+    "@modelcontextprotocol/sdk": "^1.0.0",
+    "lunar-javascript": "1.7.7"
   }
 }
