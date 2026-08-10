@@ -36,3 +36,21 @@ crons = ["*/30 * * * *"]
 #   NCM_REAL_IP    — 可选，覆盖伪装的国内来源 IP（默认 116.25.146.177）。
 #                    海外节点被网易地区限制导致 VIP 歌放不出来时，此项与
 #                    X-Real-IP/X-Forwarded-For 头一起解除限制
+#   日记信箱（/diary/*）的 Google Drive 访问，OAuth 到真实 Google 账号（不是
+#   服务账号——服务账号在非 Workspace 的个人文件夹里没有存储配额，建文件会被
+#   storageQuotaExceeded 拒绝）。一次性授权换来的 refresh_token 之后一直有效：
+#   GOOGLE_DRIVE_OAUTH_CLIENT_ID / GOOGLE_DRIVE_OAUTH_CLIENT_SECRET — GCP
+#                    控制台 APIs & Services → Credentials → OAuth client ID
+#                    （Desktop app 类型）拿到的两个值
+#                    wrangler secret put GOOGLE_DRIVE_OAUTH_CLIENT_ID --name scheduled-message-worker
+#                    wrangler secret put GOOGLE_DRIVE_OAUTH_CLIENT_SECRET --name scheduled-message-worker
+#   GOOGLE_DRIVE_OAUTH_REFRESH_TOKEN — 用上面的 client 去
+#                    https://accounts.google.com/o/oauth2/v2/auth 走一次
+#                    response_type=code&scope=.../auth/drive&access_type=offline&prompt=consent
+#                    的同意流程，拿到 code 后用 grant_type=authorization_code
+#                    换 token，响应里的 refresh_token 就是这个值（长期有效，
+#                    不会随 access_token 一起过期）
+#                    wrangler secret put GOOGLE_DRIVE_OAUTH_REFRESH_TOKEN --name scheduled-message-worker
+#   GOOGLE_DRIVE_DIARY_FOLDER_ID — 目标 Drive 文件夹的 ID（文件夹 URL 里
+#                    /folders/ 后面那一串），文件夹本身就属于这个 OAuth 账号
+#                    wrangler secret put GOOGLE_DRIVE_DIARY_FOLDER_ID --name scheduled-message-worker

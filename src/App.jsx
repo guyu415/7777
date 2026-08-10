@@ -14,8 +14,7 @@ import CompanionMemory from './components/CompanionMemory'
 import TidalMemory from './components/TidalMemory'
 import CodexMemory from './components/CodexMemory'
 import DesktopPet from './components/DesktopPet'
-import { getSettings, saveSettings, extractSettings, saveSessionMsgs, deleteSessionMsgs, putAsset, putAssetDataUrl, loadAsset, getLetters } from './services/sync'
-import { mergeLetters } from './services/letters'
+import { getSettings, saveSettings, extractSettings, saveSessionMsgs, deleteSessionMsgs, putAsset, putAssetDataUrl, loadAsset } from './services/sync'
 import { compressImage, slimSettings } from './utils/image'
 import { ensureConnected as ensureCompanionConnected, getAuthStatus as getCompanionAuthStatus, onProactiveMessage, onCcReset } from './services/companion'
 import { fetchTTSAudio } from './services/tts'
@@ -357,16 +356,6 @@ export default function App() {
         await runImageAssetMigration(password)
         await slimAvatars()
       })
-  }, [loggedIn])
-
-  // Pull letters (交换日记) from cloud once on login, merge into local
-  useEffect(() => {
-    if (!loggedIn) return
-    const password = localStorage.getItem('auth.password')
-    if (!password) return
-    getLetters(password)
-      .then(cloud => { if (cloud) mergeLetters(cloud) })
-      .catch(e => console.warn('[LETTERS] 云端拉取失败:', e.message))
   }, [loggedIn])
 
   // Debounced auto-sync: fires 2s after any store change, once startup pull is done

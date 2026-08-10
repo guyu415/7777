@@ -35,7 +35,7 @@ import { fetchTTSAudio } from '../services/tts'
 import { pruneReasoningBeyondTurns } from '../utils/pruneReasoning'
 import { getSessionMsgs, saveSessionMsgs, putAssetDataUrl, loadAsset } from '../services/sync'
 import { playByQuery, pausePlayer, resumePlayer, stopPlayer, getPlayerState } from '../services/player'
-import { addLetter, getLettersByCharacter } from '../services/letters'
+import { addLetter, getRecentLettersByCharacter } from '../services/letters'
 import { getFocusState, startFocus as startFocusApi, apiManagerApproveFocus, apiManagerDenyFocus, apiManagerFinishFocus, apiManagerExtendFocus } from '../services/companion'
 
 const CTX_KEEP    = 80  // 保留最近 N 条原文
@@ -443,7 +443,7 @@ export function useChat() {
       }
 
       // Inject letter index (existence only, NOT content — letters stay out of chat context)
-      const recentLetters = getLettersByCharacter(CONVERSATION_ID).slice(-5)
+      const recentLetters = await getRecentLettersByCharacter(CONVERSATION_ID, 5).catch(() => [])
       if (recentLetters.length > 0) {
         builtSystemPrompt += `\n\n【信件索引（仅知存在，不知正文）】\n`
         for (const l of recentLetters) {
@@ -644,21 +644,36 @@ export function useChat() {
 
       // --- Post-stream processing ---
 
-      // Extract [LETTER ...] blocks → store in diary, replace with card placeholders.
-      // Done before paragraph splitting so each card lands in its own bubble.
+      // Extract [LETTER ...] blocks → store in diary (now a Drive write, so
+      // async — can't use a plain sync .replace(regex, cb) anymore), replace
+      // with card placeholders. Done before paragraph splitting so each card
+      // lands in its own bubble. letter.id is now the Drive fileId.
       if (fullContent.includes('[LETTER')) {
-        // Do NOT store characterName/characterAvatar — display side resolves them
-        // live from session by sessionId. Embedding base64 avatars here blew up
-        // localStorage quota (QuotaExceededError on letters:all).
-        fullContent = fullContent.replace(LETTER_RE, (_m, mood, weather, date, body) => {
-          const letter = addLetter({
-            sessionId: CONVERSATION_ID,
-            role: 'ai',
-            mood, weather, date,
-            content: body.trim(),
-          })
-          return `\n\n{{LETTER_CARD:${letter.id}}}\n\n`
-        })
+        const matches = [...fullContent.matchAll(LETTER_RE)]
+        let rebuilt = ''
+        let cursor = 0
+        for (const m of matches) {
+          const [full, mood, weather, date, body] = m
+          rebuilt += fullContent.slice(cursor, m.index)
+          cursor = m.index + full.length
+          try {
+            const letter = await addLetter({
+              sessionId: CONVERSATION_ID,
+              role: 'ai',
+              mood, weather, date,
+              content: body.trim(),
+            })
+            rebuilt += `\n\n{{LETTER_CARD:${letter.id}}}\n\n`
+          } catch (e) {
+            // Drive hiccup — keep the raw tag rather than lose the letter;
+            // MessageBubble's RAW_LETTER_ONE fallback still renders it as an
+            // inline card even though it never made it to Drive.
+            console.warn('[LETTERS] 写入失败:', e.message)
+            rebuilt += full
+          }
+        }
+        rebuilt += fullContent.slice(cursor)
+        fullContent = rebuilt
       }
 
       // Handle AC command

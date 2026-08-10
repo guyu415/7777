@@ -1,13 +1,26 @@
+import { useState, useEffect } from 'react'
 import { getLetterById } from '../../services/letters'
 import { useStore } from '../../store'
 
 export default function LetterCard({ letterId, letter: inlineLetter }) {
   const setCurrentView = useStore(s => s.setCurrentView)
   const setDiaryTarget = useStore(s => s.setDiaryTarget)
-  const letter = inlineLetter || getLetterById(letterId)
-  if (!letter) return null
+  const [fetched, setFetched] = useState(null)
+  const [loading, setLoading] = useState(!inlineLetter && !!letterId)
 
-  const isUser = letter.role === 'user'
+  useEffect(() => {
+    if (inlineLetter || !letterId) return
+    let cancelled = false
+    setLoading(true)
+    getLetterById(letterId)
+      .then(l => { if (!cancelled) setFetched(l) })
+      .catch(() => { if (!cancelled) setFetched(null) })
+      .finally(() => { if (!cancelled) setLoading(false) })
+    return () => { cancelled = true }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [letterId])
+
+  const letter = inlineLetter || fetched
 
   const openDiary = (e) => {
     e.stopPropagation()
@@ -15,6 +28,21 @@ export default function LetterCard({ letterId, letter: inlineLetter }) {
     setCurrentView('sessions')
   }
 
+  if (loading) {
+    return (
+      <div style={{
+        background: 'linear-gradient(135deg, rgba(250,244,230,0.95), rgba(244,238,252,0.95))',
+        border: '1px solid rgba(200,180,150,0.4)', borderRadius: 14, padding: '12px 14px',
+        maxWidth: 240, color: '#9a8a70', fontSize: 13,
+      }}>
+        📔 读取信件中…
+      </div>
+    )
+  }
+
+  if (!letter) return null
+
+  const isUser = letter.role === 'user'
   const text = letter.content || ''
   const preview = text.length > 20 ? text.slice(0, 20) + '…' : text
 

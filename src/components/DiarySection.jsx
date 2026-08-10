@@ -1,6 +1,6 @@
-import { useState, useEffect, useRef, useMemo } from 'react'
+import { useState, useEffect } from 'react'
 import { useStore, saveMessage, getMessages } from '../store'
-import { getAllLetters, getLettersByCharacter, addLetter } from '../services/letters'
+import { getLatestLetter, getLetterById, addLetter } from '../services/letters'
 import { saveSessionMsgs } from '../services/sync'
 
 const MOOD_OPTIONS = ['😊', '🥰', '😌', '😔', '🥹', '😤', '🤔', '😶‍🌫️']
@@ -14,17 +14,17 @@ function todayStr() {
   return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date())
 }
 
-// Collapsible letter body — folds when content exceeds ~3 lines
+// Collapsible letter body — folds when content exceeds ~5 lines
 function LetterBody({ text, color }) {
   const [expanded, setExpanded] = useState(false)
-  const long = text.length > 80 || text.split('\n').length > 3
+  const long = text.length > 160 || text.split('\n').length > 5
   return (
-    <div style={{ borderTop: '1px solid rgba(200,180,150,0.3)', paddingTop: 6, fontSize: 13, lineHeight: 1.55, color, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
-      <div style={!expanded && long ? { display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical', overflow: 'hidden' } : undefined}>
+    <div style={{ borderTop: '1px solid rgba(200,180,150,0.3)', paddingTop: 8, fontSize: 14, lineHeight: 1.6, color, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+      <div style={!expanded && long ? { display: '-webkit-box', WebkitLineClamp: 5, WebkitBoxOrient: 'vertical', overflow: 'hidden' } : undefined}>
         {text}
       </div>
       {long && (
-        <button onClick={() => setExpanded(v => !v)} style={{ marginTop: 4, fontSize: 12, color: '#9a8ab0', background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}>
+        <button onClick={() => setExpanded(v => !v)} style={{ marginTop: 6, fontSize: 12, color: '#9a8ab0', background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}>
           {expanded ? '收起' : '展开'}
         </button>
       )}
@@ -32,6 +32,18 @@ function LetterBody({ text, color }) {
   )
 }
 
+// Diary is now a Google Drive-backed mailbox — no more browsable full
+// history in this UI (that used to be a per-character-filterable, scrollable
+// list over a local+KV copy of every letter ever written). Opening it just
+// shows the single latest letter; the compose box below still lets the user
+// write one back (to `filter`'s session), which cc can also do on its own
+// via a separate direct write path (see channel-server.ts's diary_write
+// tool) without going through this UI at all.
+//
+// `diaryTarget` (set when a letter-card bubble in chat is clicked) overrides
+// "show latest" with "show this specific letter, by its Drive fileId" —
+// preserves the old click-through-to-that-letter behavior even though there
+// is no longer a full timeline to scroll it into view within.
 export default function DiarySection({ theme }) {
   const { sessions, aiAvatar: globalAiAvatar, userAvatar, diaryTarget, setDiaryTarget } = useStore()
 
@@ -42,16 +54,11 @@ export default function DiarySection({ theme }) {
   const [mood, setMood] = useState('😊')
   const [weather, setWeather] = useState('☀️')
   const [content, setContent] = useState('')
-  const [letters, setLetters] = useState(() => getAllLetters())
   const [sending, setSending] = useState(false)
+  const [loading, setLoading] = useState(true)
+  const [letter, setLetter] = useState(null)
+  const [loadError, setLoadError] = useState(false)
 
-  const bottomRef = useRef(null)
-  const letterRefs = useRef({})
-
-  const refresh = () => setLetters(getAllLetters())
-
-  // Live lookup by sessionId — name = session.name, avatar = session.aiAvatar
-  // (NOT session.aiName, which defaults to global "小满" for every session)
   const charOf = (sessionId) => {
     const s = sessions?.find(x => x.id === sessionId)
     return {
@@ -60,24 +67,26 @@ export default function DiarySection({ theme }) {
     }
   }
 
-  const visibleLetters = useMemo(() => {
-    const list = filter === 'all' ? getAllLetters() : getLettersByCharacter(filter)
-    return [...list].sort((a, b) => a.createdAt - b.createdAt)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [filter, letters])
+  const load = async (targetId) => {
+    setLoading(true)
+    setLoadError(false)
+    try {
+      const result = targetId ? await getLetterById(targetId) : await getLatestLetter()
+      setLetter(result)
+    } catch (e) {
+      console.warn('[LETTERS] 读取失败:', e.message)
+      setLoadError(true)
+    } finally {
+      setLoading(false)
+    }
+  }
 
-  const scrollToBottom = () => setTimeout(() => bottomRef.current?.scrollIntoView({ behavior: 'smooth' }), 50)
-
-  // On mount / when navigated from a chat letter card: scroll to target, else bottom
   useEffect(() => {
     if (diaryTarget) {
-      setTimeout(() => {
-        const el = letterRefs.current[diaryTarget]
-        if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' })
-        setDiaryTarget(null)
-      }, 100)
+      load(diaryTarget)
+      setDiaryTarget(null)
     } else {
-      scrollToBottom()
+      load()
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
@@ -88,10 +97,12 @@ export default function DiarySection({ theme }) {
     try {
       const date = todayStr()
       const body = content.trim()
+      await addLetter({ sessionId: filter, role: 'user', mood, weather, date, content: body })
 
-      // No characterName/characterAvatar — resolved live via charOf() on display.
-      addLetter({ sessionId: filter, role: 'user', mood, weather, date, content: body })
-
+      // Also drop a real chat message into this session so the AI actually
+      // sees "a letter arrived" in its next turn — a Drive-only write is
+      // invisible to it otherwise (the diary index injected into the system
+      // prompt is metadata-only, no content).
       const chatMsg = {
         id: genId(),
         conversationId: filter,
@@ -101,7 +112,6 @@ export default function DiarySection({ theme }) {
         timestamp: Date.now(),
       }
       await saveMessage(chatMsg)
-
       const password = localStorage.getItem('auth.password')
       if (password) {
         try {
@@ -114,8 +124,9 @@ export default function DiarySection({ theme }) {
       }
 
       setContent('')
-      refresh()
-      scrollToBottom()
+      await load()
+    } catch (e) {
+      console.warn('[LETTERS] 寄出失败:', e.message)
     } finally {
       setSending(false)
     }
@@ -124,7 +135,6 @@ export default function DiarySection({ theme }) {
   const canWrite = filter !== 'all'
   const filterCharName = canWrite ? charOf(filter).name : ''
 
-  // Circular avatar filter button
   const AvatarFilter = ({ active, avatar, emoji, label, onClick }) => (
     <button
       onClick={onClick}
@@ -154,9 +164,15 @@ export default function DiarySection({ theme }) {
     transition: 'all 0.15s',
   })
 
+  const letterIsUser = letter?.role === 'user'
+  const letterChar = letter ? charOf(letter.sessionId) : null
+  const letterAvatar = letter ? (letterIsUser ? userAvatar : letterChar.avatar) : null
+  const letterName = letter ? (letterIsUser ? '我' : letterChar.name) : null
+
   return (
     <div className="flex flex-col h-full">
-      {/* Avatar filter row */}
+      {/* Avatar filter row — still picks WHO to write to below; no longer
+          filters a browsable list, since there is none anymore */}
       <div className="flex gap-1 px-1 pb-2 overflow-x-auto flex-shrink-0">
         <AvatarFilter active={filter === 'all'} emoji="📔" label="全部" onClick={() => setFilter('all')} />
         {(sessions || []).map(s => (
@@ -170,52 +186,45 @@ export default function DiarySection({ theme }) {
         ))}
       </div>
 
-      {/* Letters list — internal scroll */}
-      <div className="flex-1 overflow-y-auto px-1 space-y-2" style={{ minHeight: 0 }}>
-        {visibleLetters.length === 0 ? (
+      {/* Latest (or targeted) letter only */}
+      <div className="flex-1 overflow-y-auto px-1" style={{ minHeight: 0 }}>
+        {loading ? (
+          <div className="flex items-center justify-center h-full text-center" style={{ color: '#a0b8d0' }}>
+            <div className="text-sm">读取中…</div>
+          </div>
+        ) : loadError ? (
           <div className="flex flex-col items-center justify-center h-full text-center gap-1 py-4" style={{ color: '#a0b8d0' }}>
             <div className="text-3xl">📭</div>
-            <div className="text-xs">
-              {filter === 'all' ? '还没有信件，跟 AI 聊聊看看？' : `还没收到来自 ${filterCharName} 的信`}
-            </div>
+            <div className="text-xs">信箱暂时联系不上，稍后再看看？</div>
+          </div>
+        ) : !letter ? (
+          <div className="flex flex-col items-center justify-center h-full text-center gap-1 py-4" style={{ color: '#a0b8d0' }}>
+            <div className="text-3xl">📭</div>
+            <div className="text-xs">还没有信，跟 AI 聊聊看看？</div>
           </div>
         ) : (
-          visibleLetters.map(l => {
-            const isUser = l.role === 'user'
-            const ch = charOf(l.sessionId)
-            const avatar = isUser ? userAvatar : ch.avatar
-            const name = isUser ? '我' : ch.name
-            return (
-              <div
-                key={l.id}
-                ref={el => { letterRefs.current[l.id] = el }}
-                className={isUser ? 'ml-auto' : 'mr-auto'}
-                style={{
-                  maxWidth: '92%',
-                  background: isUser
-                    ? 'linear-gradient(135deg, rgba(255,240,246,0.96), rgba(252,236,244,0.96))'
-                    : 'linear-gradient(135deg, rgba(250,244,230,0.96), rgba(244,238,252,0.96))',
-                  border: isUser ? '1px solid rgba(230,160,190,0.45)' : '1px solid rgba(200,180,150,0.42)',
-                  borderRadius: 14,
-                  padding: '10px 12px',
-                  boxShadow: '0 2px 10px rgba(150,140,120,0.14)',
-                  outline: diaryTarget === l.id ? `2px solid ${primary}` : 'none',
-                }}
-              >
-                <div className="flex items-center gap-2 mb-1.5">
-                  <div style={{ width: 24, height: 24, borderRadius: '50%', overflow: 'hidden', flexShrink: 0, background: 'rgba(255,255,255,0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 13 }}>
-                    {avatar ? <img src={avatar} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : (isUser ? '🐣' : '🌸')}
-                  </div>
-                  <span style={{ fontSize: 12, fontWeight: 600, color: isUser ? '#b56a8a' : '#6b5840' }}>{name}</span>
-                  <span style={{ fontSize: 12, marginLeft: 'auto' }}>{l.mood} {l.weather}</span>
-                  <span style={{ fontSize: 11, color: '#9a8a70' }}>{l.date}</span>
-                </div>
-                <LetterBody text={l.content || ''} color={isUser ? '#8a5a70' : '#7a6850'} />
+          <div
+            style={{
+              background: letterIsUser
+                ? 'linear-gradient(135deg, rgba(255,240,246,0.96), rgba(252,236,244,0.96))'
+                : 'linear-gradient(135deg, rgba(250,244,230,0.96), rgba(244,238,252,0.96))',
+              border: letterIsUser ? '1px solid rgba(230,160,190,0.45)' : '1px solid rgba(200,180,150,0.42)',
+              borderRadius: 16,
+              padding: '14px 16px',
+              boxShadow: '0 2px 10px rgba(150,140,120,0.14)',
+            }}
+          >
+            <div className="flex items-center gap-2 mb-2">
+              <div style={{ width: 26, height: 26, borderRadius: '50%', overflow: 'hidden', flexShrink: 0, background: 'rgba(255,255,255,0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 14 }}>
+                {letterAvatar ? <img src={letterAvatar} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : (letterIsUser ? '🐣' : '🌸')}
               </div>
-            )
-          })
+              <span style={{ fontSize: 13, fontWeight: 600, color: letterIsUser ? '#b56a8a' : '#6b5840' }}>{letterName}</span>
+              <span style={{ fontSize: 13, marginLeft: 'auto' }}>{letter.mood} {letter.weather}</span>
+              <span style={{ fontSize: 11, color: '#9a8a70' }}>{letter.date}</span>
+            </div>
+            <LetterBody text={letter.content || ''} color={letterIsUser ? '#8a5a70' : '#7a6850'} />
+          </div>
         )}
-        <div ref={bottomRef} />
       </div>
 
       {/* Write panel */}

@@ -2,7 +2,6 @@ import { useEffect, useMemo, useState } from 'react'
 import { BookHeart, Heart, HeartHandshake, MessageCircleHeart, Sparkles, X } from 'lucide-react'
 import { useStore } from '../store'
 import DiarySection from './DiarySection'
-import { getAllLetters } from '../services/letters'
 import { getXinchaoStatus, onXinchaoUpdate } from '../services/companion'
 
 function dayNumber(timestamp) {
@@ -119,7 +118,7 @@ export default function UniverseHome({ theme, onOpenChat, onOpenCareHub }) {
           </button>
           <button onClick={() => setDiaryOpen(true)}>
             <span className="universe-home__shortcut-icon universe-home__shortcut-icon--violet"><BookHeart size={22} /></span>
-            <span><strong>日记信箱</strong><small>{getAllLetters().length} 封珍藏</small></span>
+            <span><strong>日记信箱</strong><small>写给你的信</small></span>
           </button>
           <button type="button" onClick={() => onOpenCareHub?.()} className="universe-home__shortcut-wide">
             <span className="universe-home__shortcut-icon universe-home__shortcut-icon--blue"><HeartHandshake size={22} /></span>
@@ -134,7 +133,7 @@ export default function UniverseHome({ theme, onOpenChat, onOpenCareHub }) {
           <button className="universe-home__diary-backdrop" onClick={closeDiary} aria-label="关闭日记" />
           <div className="universe-home__diary-sheet">
             <div className="universe-home__diary-head">
-              <div><strong>日记信箱</strong><span>{getAllLetters().length} 封珍藏</span></div>
+              <div><strong>日记信箱</strong></div>
               <button onClick={closeDiary} aria-label="关闭"><X size={18} /></button>
             </div>
             <div className="universe-home__diary-body"><DiarySection theme={theme} /></div>

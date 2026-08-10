@@ -1,4 +1,4 @@
-import { memo, forwardRef, useCallback, useImperativeHandle, useLayoutEffect, useRef, useState } from 'react'
+import { memo, forwardRef, useCallback, useEffect, useImperativeHandle, useLayoutEffect, useRef, useState } from 'react'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import { ChevronUp, ChevronDown } from 'lucide-react'
 import MessageBubble from './MessageBubble'
@@ -50,6 +50,13 @@ const MessageList = forwardRef(function MessageList({
   const [nearTop, setNearTop] = useState(true)
   const [nearBottom, setNearBottom] = useState(true)
   const [newBelowCount, setNewBelowCount] = useState(0)
+  // Which single jump arrow (if any) is currently shown. Driven by scroll
+  // *direction*, not just edge-proximity, so only ever one of the two is
+  // visible — and it auto-hides shortly after scrolling stops (see
+  // idleTimerRef below) instead of sitting there while the reader is at rest.
+  const [activeArrow, setActiveArrow] = useState(null) // null | 'up' | 'down'
+  const prevScrollTopRef = useRef(0)
+  const idleTimerRef = useRef(null)
 
   const virtualizer = useVirtualizer({
     count: messages.length,
@@ -81,7 +88,24 @@ const MessageList = forwardRef(function MessageList({
     if (atBottom) setNewBelowCount(0)
     const atTop = el.scrollTop < TOP_THRESHOLD_PX
     setNearTop((prev) => (prev === atTop ? prev : atTop))
+
+    // Direction: scrolling toward the bottom (scrollTop rising) means the
+    // reader is moving away from the top, so offer the "back to top" arrow;
+    // scrolling toward the top means they're moving away from the bottom, so
+    // offer "back to bottom" instead. Whichever edge they're already at
+    // suppresses its own arrow (nothing to jump to).
+    const prevTop = prevScrollTopRef.current
+    prevScrollTopRef.current = el.scrollTop
+    const delta = el.scrollTop - prevTop
+    if (delta > 0 && !atTop) setActiveArrow('up')
+    else if (delta < 0 && !atBottom) setActiveArrow('down')
+    else if ((delta > 0 && atTop) || (delta < 0 && atBottom)) setActiveArrow(null)
+
+    clearTimeout(idleTimerRef.current)
+    idleTimerRef.current = setTimeout(() => setActiveArrow(null), 900)
   }, [])
+
+  useEffect(() => () => clearTimeout(idleTimerRef.current), [])
 
   // Session switch (or first mount): land exactly on the last message with
   // no visible top-to-bottom scroll animation. useLayoutEffect so this runs
@@ -157,11 +181,10 @@ const MessageList = forwardRef(function MessageList({
     position: 'absolute', left: 12, zIndex: 5,
     width: 34, height: 34, borderRadius: '50%',
     display: 'flex', alignItems: 'center', justifyContent: 'center',
-    border: `1px solid ${primaryColor}30`,
-    background: 'rgba(255,255,255,0.85)',
-    backdropFilter: 'blur(8px)', WebkitBackdropFilter: 'blur(8px)',
-    boxShadow: '0 2px 10px rgba(0,0,0,0.12)',
-    color: primaryColor,
+    border: 'none', background: 'transparent',
+    color: '#fff',
+    filter: 'drop-shadow(0 1px 3px rgba(0,0,0,0.4))',
+    transition: 'opacity .2s ease',
   }
 
   return (
@@ -215,9 +238,11 @@ const MessageList = forwardRef(function MessageList({
       {/* Jump buttons live outside the scroll container (as its absolute
           siblings, positioned relative to ChatWindow's own `relative` message
           area) so they stay fixed on screen instead of scrolling away with
-          the content. Each only shows once you've actually scrolled away
-          from that edge — never both hidden, never both shown at once. */}
-      {!nearTop && (
+          the content. Driven by scroll direction (see handleScroll): at most
+          one is ever shown, and it auto-hides ~900ms after scrolling stops —
+          nothing renders while the reader is at rest or the list isn't
+          scrollable at all. */}
+      {activeArrow === 'up' && (
         <button
           onClick={() => { virtualizer.scrollToIndex(0, { align: 'start' }) }}
           title="回到顶部"
@@ -227,7 +252,7 @@ const MessageList = forwardRef(function MessageList({
           <ChevronUp size={18} />
         </button>
       )}
-      {!nearBottom && (
+      {activeArrow === 'down' && (
         <button
           onClick={() => {
             isNearBottomRef.current = true

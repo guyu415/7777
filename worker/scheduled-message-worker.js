@@ -217,6 +217,100 @@ export default {
       return Response.json(result, { headers: CORS })
     }
 
+    // ── 日记信箱（Google Drive 服务账号后端）─────────────────────
+    // Storage moved off KV: each letter is one JSON file in a dedicated
+    // Drive folder (the real Google account owns it, see driveGetAccessToken).
+    // Two writers, one auth each: the logged-in user (password, same as
+    // every other /sync/* route) and the VPS-resident companion (X-VPS-Key,
+    // same secret/header as /vps/push above) — role is resolved server-side
+    // per auth method, never trusted from a client-forgeable field alone.
+    if (pathname === '/diary/latest' && request.method === 'GET') {
+      const password = new URL(request.url).searchParams.get('password')
+      if (!password) return Response.json({ error: 'unauthorized' }, { status: 401, headers: CORS })
+      if (!driveConfigured(env)) {
+        return Response.json({ error: 'drive not configured' }, { status: 500, headers: CORS })
+      }
+      try {
+        const file = await driveGetLatestFile(env)
+        const letter = file ? { id: file.id, ...(await driveReadFile(env, file.id)) } : null
+        return Response.json({ letter }, { headers: CORS })
+      } catch (e) {
+        return Response.json({ error: e.message }, { status: 502, headers: CORS })
+      }
+    }
+
+    if (pathname === '/diary/get' && request.method === 'GET') {
+      const { searchParams } = new URL(request.url)
+      const password = searchParams.get('password')
+      const id = searchParams.get('id')
+      if (!password) return Response.json({ error: 'unauthorized' }, { status: 401, headers: CORS })
+      if (!id) return Response.json({ error: 'missing id' }, { status: 400, headers: CORS })
+      if (!driveConfigured(env)) return Response.json({ error: 'drive not configured' }, { status: 500, headers: CORS })
+      try {
+        const content = await driveReadFile(env, id)
+        return Response.json({ letter: content ? { id, ...content } : null }, { headers: CORS })
+      } catch (e) {
+        return Response.json({ error: e.message }, { status: 502, headers: CORS })
+      }
+    }
+
+    // Lightweight per-session index (id/date/mood/weather/role only, never
+    // downloading a letter body) — powers the "you know these letters exist
+    // but not their content" line the AI gets in its system prompt every
+    // turn (see recentLetters in useChat.js). Reads straight off Drive file
+    // `properties`, set at creation time in driveCreateFile.
+    if (pathname === '/diary/list' && request.method === 'GET') {
+      const { searchParams } = new URL(request.url)
+      const password = searchParams.get('password')
+      const sessionId = searchParams.get('sessionId')
+      const limit = Math.min(Math.max(parseInt(searchParams.get('limit') || '5', 10) || 5, 1), 50)
+      if (!password) return Response.json({ error: 'unauthorized' }, { status: 401, headers: CORS })
+      if (!sessionId) return Response.json({ error: 'missing sessionId' }, { status: 400, headers: CORS })
+      if (!driveConfigured(env)) return Response.json({ error: 'drive not configured' }, { status: 500, headers: CORS })
+      try {
+        const letters = await driveListBySession(env, sessionId, limit)
+        return Response.json({ letters }, { headers: CORS })
+      } catch (e) {
+        return Response.json({ error: e.message }, { status: 502, headers: CORS })
+      }
+    }
+
+    if (pathname === '/diary/write' && request.method === 'POST') {
+      const vpsKey = request.headers.get('X-VPS-Key') || ''
+      const isVps = !!env.VPS_SERVICE_KEY && vpsKey === env.VPS_SERVICE_KEY
+      const payload = await request.json().catch(() => ({}))
+      if (!isVps && !payload.password) {
+        return Response.json({ error: 'unauthorized' }, { status: 401, headers: CORS })
+      }
+      const content = typeof payload.content === 'string' ? payload.content.trim() : ''
+      if (!content) return Response.json({ error: 'missing content' }, { status: 400, headers: CORS })
+      if (!driveConfigured(env)) {
+        return Response.json({ error: 'drive not configured' }, { status: 500, headers: CORS })
+      }
+      const letter = {
+        sessionId: typeof payload.sessionId === 'string' ? payload.sessionId : null,
+        // VPS calls are always cc, never trust the payload for that path.
+        // Password-authed calls (the browser) may legitimately claim either
+        // role — the in-chat [LETTER] tag mechanism runs client-side for
+        // every provider (Codex/API-key sessions have no VPS key at all) and
+        // has always written 'ai' letters this way; the diary compose box
+        // writes 'user'. The password itself is the only real boundary here
+        // (single-user app), so trusting role within that boundary is fine.
+        role: isVps ? 'ai' : (payload.role === 'ai' ? 'ai' : 'user'),
+        mood: typeof payload.mood === 'string' ? payload.mood : '😊',
+        weather: typeof payload.weather === 'string' ? payload.weather : '☀️',
+        date: typeof payload.date === 'string' ? payload.date : new Date().toISOString().slice(0, 10),
+        content,
+        createdAt: Date.now(),
+      }
+      try {
+        const id = await driveCreateFile(env, letter)
+        return Response.json({ ok: true, letter: { id, ...letter } }, { headers: CORS })
+      } catch (e) {
+        return Response.json({ error: e.message }, { status: 502, headers: CORS })
+      }
+    }
+
     // ── iTunes/Apple Music 代理（前端碟片播放器用）───────────────
     if (pathname.startsWith('/itunes/') && request.method === 'GET') {
       return handleItunesApi(request, env)
@@ -1167,4 +1261,125 @@ async function generateProactive(env, { force }) {
   }
 
   return debug
+}
+
+// ── Google Drive (diary letters) ────────────────────────────────────
+// OAuth against the real Google account that owns the folder — NOT a
+// service account. Service accounts have no storage quota of their own, so
+// even with Editor access to a personal (non-Workspace) folder, file
+// creation gets rejected with storageQuotaExceeded; a Shared Drive would
+// fix that but requires a paid Workspace plan. This uses a refresh token
+// obtained once via a manual consent flow (see AGENTS/DEPLOY_INFO for the
+// one-time steps) — GOOGLE_DRIVE_OAUTH_CLIENT_ID/_SECRET/_REFRESH_TOKEN,
+// all set via `wrangler secret put`. GOOGLE_DRIVE_DIARY_FOLDER_ID is the
+// Drive folder itself (Owner = the same account, so no quota problem).
+//
+// Module-scope cache: Worker isolates are frequently reused warm across
+// requests, so this saves a token-refresh round trip most of the time — but
+// nothing here assumes it survives, a cold isolate just re-fetches.
+let _driveTokenCache = null // { token, exp }
+
+function driveConfigured(env) {
+  return !!(env.GOOGLE_DRIVE_OAUTH_CLIENT_ID && env.GOOGLE_DRIVE_OAUTH_CLIENT_SECRET &&
+    env.GOOGLE_DRIVE_OAUTH_REFRESH_TOKEN && env.GOOGLE_DRIVE_DIARY_FOLDER_ID)
+}
+
+async function driveGetAccessToken(env) {
+  const now = Date.now()
+  if (_driveTokenCache && _driveTokenCache.exp > now + 60_000) return _driveTokenCache.token
+
+  const res = await fetch('https://oauth2.googleapis.com/token', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({
+      client_id: env.GOOGLE_DRIVE_OAUTH_CLIENT_ID,
+      client_secret: env.GOOGLE_DRIVE_OAUTH_CLIENT_SECRET,
+      refresh_token: env.GOOGLE_DRIVE_OAUTH_REFRESH_TOKEN,
+      grant_type: 'refresh_token',
+    }),
+  })
+  const data = await res.json()
+  if (!res.ok) throw new Error(`drive token refresh failed: ${res.status} ${JSON.stringify(data)}`)
+  _driveTokenCache = { token: data.access_token, exp: now + data.expires_in * 1000 }
+  return _driveTokenCache.token
+}
+
+async function driveGetLatestFile(env) {
+  const token = await driveGetAccessToken(env)
+  const q = encodeURIComponent(`'${env.GOOGLE_DRIVE_DIARY_FOLDER_ID}' in parents and trashed=false`)
+  const res = await fetch(
+    `https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id,createdTime)&orderBy=createdTime desc&pageSize=1`,
+    { headers: { Authorization: `Bearer ${token}` } }
+  )
+  const data = await res.json()
+  if (!res.ok) throw new Error(`drive list failed: ${res.status} ${JSON.stringify(data)}`)
+  return data.files?.[0] || null
+}
+
+async function driveListBySession(env, sessionId, limit) {
+  const token = await driveGetAccessToken(env)
+  const escaped = sessionId.replace(/\\/g, '\\\\').replace(/'/g, "\\'")
+  const q = encodeURIComponent(
+    `'${env.GOOGLE_DRIVE_DIARY_FOLDER_ID}' in parents and trashed=false and properties has { key='sessionId' and value='${escaped}' }`
+  )
+  const res = await fetch(
+    `https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id,createdTime,properties)&orderBy=createdTime desc&pageSize=${limit}`,
+    { headers: { Authorization: `Bearer ${token}` } }
+  )
+  const data = await res.json()
+  if (!res.ok) throw new Error(`drive list failed: ${res.status} ${JSON.stringify(data)}`)
+  const files = data.files || []
+  // Newest-first from the API, reversed to oldest-of-the-recent-N-first —
+  // matches the old local getLettersByCharacter(...).slice(-5) ordering.
+  return files.reverse().map(f => ({
+    id: f.id,
+    date: f.properties?.date || '',
+    mood: f.properties?.mood || '',
+    weather: f.properties?.weather || '',
+    role: f.properties?.role || 'user',
+  }))
+}
+
+async function driveReadFile(env, fileId) {
+  const token = await driveGetAccessToken(env)
+  const res = await fetch(`https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`, {
+    headers: { Authorization: `Bearer ${token}` },
+  })
+  if (res.status === 404) return null
+  if (!res.ok) throw new Error(`drive read failed: ${res.status} ${await res.text()}`)
+  return res.json()
+}
+
+async function driveCreateFile(env, letter) {
+  const token = await driveGetAccessToken(env)
+  const metadata = {
+    name: `${new Date(letter.createdAt).toISOString()}-${letter.role}.json`,
+    parents: [env.GOOGLE_DRIVE_DIARY_FOLDER_ID],
+    mimeType: 'application/json',
+    // Mirrored onto the file itself (not just inside its JSON body) so
+    // /diary/list can build a per-session index via a single files.list
+    // call — metadata only, never downloading letter bodies just to know
+    // they exist (see the "index, not content" note on the system-prompt
+    // injection in useChat.js).
+    properties: {
+      sessionId: letter.sessionId || '',
+      role: letter.role,
+      mood: letter.mood,
+      weather: letter.weather,
+      date: letter.date,
+    },
+  }
+  const boundary = `diary-${crypto.randomUUID()}`
+  const body =
+    `--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify(metadata)}\r\n` +
+    `--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify(letter)}\r\n` +
+    `--${boundary}--`
+  const res = await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id', {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}`, 'Content-Type': `multipart/related; boundary=${boundary}` },
+    body,
+  })
+  const data = await res.json()
+  if (!res.ok) throw new Error(`drive create failed: ${res.status} ${JSON.stringify(data)}`)
+  return data.id
 }

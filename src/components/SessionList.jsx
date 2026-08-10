@@ -3,7 +3,6 @@ import { Plus, Trash2, Edit3, Check, ChevronDown, ChevronLeft, Users, HeartHands
 import { useStore, deleteMessagesForSession } from '../store'
 import { deleteSessionMsgs } from '../services/sync'
 import DiarySection from './DiarySection'
-import { getAllLetters } from '../services/letters'
 import { listGroupChats, onGroupUpdate } from '../services/companion'
 import { resolveGroupMemberInfo } from '../utils/groupMembers'
 import GroupChatCreateModal from './GroupChat/GroupChatCreateModal'
@@ -342,7 +341,7 @@ export default function SessionList({ theme, onSelectSession, onOpenGroupChat, o
             transform: 'rotate(.45deg)',
           }}
         >
-          <span>📔 日记 · {getAllLetters().length} 封</span>
+          <span>📔 日记</span>
           <ChevronDown size={16} style={{ transform: diaryOpen ? 'rotate(180deg)' : 'none', transition: 'transform 0.2s' }} />
         </button>
 
