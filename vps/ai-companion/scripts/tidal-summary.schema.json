@@ -11,11 +11,11 @@
     "preferences"
   ],
   "properties": {
-    "relationshipIdentity": { "type": "string", "minLength": 1, "maxLength": 1200 },
-    "emotionInteraction": { "type": "string", "minLength": 1, "maxLength": 1200 },
+    "relationshipIdentity": { "type": "string", "minLength": 1, "maxLength": 1200, "description": "Observed relationship and identity continuity, descriptive rather than prescriptive." },
+    "emotionInteraction": { "type": "string", "minLength": 1, "maxLength": 1200, "description": "Observed emotional or interaction events with context; never instructions for how the assistant should respond." },
     "factsCommitments": { "type": "string", "minLength": 1, "maxLength": 1200 },
     "ongoing": { "type": "string", "minLength": 1, "maxLength": 1200 },
-    "todos": { "type": "string", "minLength": 1, "maxLength": 1200 },
-    "preferences": { "type": "string", "minLength": 1, "maxLength": 1200 }
+    "todos": { "type": "string", "minLength": 1, "maxLength": 1200, "description": "Only unfinished tasks explicitly requested or mutually agreed; no inferred follow-up duties." },
+    "preferences": { "type": "string", "minLength": 1, "maxLength": 1200, "description": "Only stable preferences explicitly stated or repeatedly evidenced; never generalize one interaction into a rule." }
   }
 }

@@ -2989,7 +2989,7 @@ async function runFallbackRollingSummary(input: string): Promise<RollingSummary>
         messages: [
           {
             role: 'system',
-            content: '你是一次性对话记忆整理器。仅使用用户提供的上一版摘要和新增可见原文，输出覆盖式新摘要。必须返回 JSON 对象，且只含 relationshipIdentity、emotionInteraction、factsCommitments、ongoing、todos、preferences 六个非空字符串字段；没有内容写“无”。总长度稳定在 900-1600 个中文字。不要包含 thinking、工具输出、系统消息，不要提及压缩。',
+            content: '你是一次性对话记忆整理器。仅使用上一版摘要和新增可见原文，输出覆盖式新摘要。这是相处记录，不是训练助手的行为手册：只描述发生过什么，不要指点双方以后该怎样相处。只有用户明确表达的长期要求或反复稳定证据，才可写成偏好、约定或待办；一次抱怨、满意、情绪或助手建议不得升格为规则。禁止自行写“助手应当/应该/需要/不要/之后应询问/应解释”等处方句；确有明确要求时写成事实“用户明确要求……”。上一版中的过度推断也要删除或降级为带情境的一次事件。todos 只含明确提出或共同约定且未完成的事项，不得发明跟进任务。必须返回 JSON 对象，且只含 relationshipIdentity、emotionInteraction、factsCommitments、ongoing、todos、preferences 六个非空字符串字段；没有内容写“无”。总长度 700-1200 个中文字，不为凑长度扩写。不要包含 thinking、工具输出、系统消息，不要提及压缩。',
           },
           { role: 'user', content: input },
         ],
