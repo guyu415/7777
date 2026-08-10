@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
-import { ChevronLeft, ChevronDown, Eye, EyeOff, RefreshCw, Search } from 'lucide-react'
+import { ChevronLeft, ChevronDown, Eye, EyeOff, RefreshCw } from 'lucide-react'
 import { useStore, getMessages, deleteMessagesForSession } from '../store'
 import { putAsset, saveSettings, extractSettings, deleteSessionMsgs } from '../services/sync'
 import { fetchModels } from '../services/claude'
@@ -54,7 +54,7 @@ function GlassCard({ icon, title, children, collapsible = false, open = true, on
   )
 }
 
-export default function SessionSettings({ theme, onOpenMessageSearch }) {
+export default function SessionSettings({ theme }) {
   const {
     sessions, currentSessionId, updateSession, setCurrentView,
     setSessionAiName, setSessionAiAvatar, setSessionUserAvatar, setSessionSignature,
@@ -609,22 +609,6 @@ export default function SessionSettings({ theme, onOpenMessageSearch }) {
       </div>
 
       <div className="flex-1 overflow-y-auto px-4 py-3 space-y-3">
-
-        <button
-          type="button"
-          onClick={onOpenMessageSearch}
-          className="w-full flex items-center gap-3 px-4 py-3 text-left"
-          style={{
-            border: 0,
-            borderRadius: '24px 17px 27px 20px',
-            background: 'rgba(255,255,255,.48)',
-            color: '#54728c',
-            boxShadow: '0 4px 16px rgba(74,172,240,.06)',
-          }}
-        >
-          <span className="w-8 h-8 grid place-items-center rounded-full" style={{ background: `${primary}15`, color: primary }}><Search size={15} /></span>
-          <span className="min-w-0 flex-1"><strong className="block text-sm">搜索聊天记录</strong><small className="block mt-0.5 text-[10px]" style={{ color: '#91a5b8' }}>在当前对话里查找消息</small></span>
-        </button>
 
         {/* AI Identity */}
         <GlassCard icon="🌸" title="AI 角色">

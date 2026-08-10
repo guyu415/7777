@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, useLayoutEffect } from 'react'
-import { ArrowLeft, Menu, Cat, Trash2, Waves, X } from 'lucide-react'
+import { ArrowLeft, Menu, Cat, Search, Settings2, Trash2, Waves, X } from 'lucide-react'
 import { useShallow } from 'zustand/react/shallow'
 import MessageList from './MessageList'
 import MessageSearch from './MessageSearch'
@@ -67,7 +67,7 @@ function Signature({ text, color, shadow }) {
 // below this point (header, message list, input, settings nav, voice,
 // gomoku, mobile layout) is 100% shared UI, unaware of which provider is
 // active except through the small `isVpsSession`/`isCodexSession` branches.
-export default function ChatWindow({ theme, searchRequest = 0 }) {
+export default function ChatWindow({ theme }) {
   const cc = useChat()
   const codex = useCodexChat()
   const { fetchPendingMessages, updateActiveTime } = useScheduledMessages()
@@ -122,6 +122,7 @@ export default function ChatWindow({ theme, searchRequest = 0 }) {
   const [showSessionDrawer, setShowSessionDrawer] = useState(false)
   const [showDivination, setShowDivination] = useState(false)
   const [showCarryOut, setShowCarryOut] = useState(false)
+  const [showHeaderTools, setShowHeaderTools] = useState(false)
   // Focus (专注) — ONE real global task, server-authoritative (see
   // useFocusRuntime.js and channel-server.ts's own Focus section), entirely
   // separate from chat/session state — it can be started by any runtime
@@ -146,10 +147,6 @@ export default function ChatWindow({ theme, searchRequest = 0 }) {
   const [showSearch, setShowSearch] = useState(false)
   const callAudioRef = useRef(null)
   const messageListRef = useRef(null)
-
-  useEffect(() => {
-    if (searchRequest > 0) setShowSearch(true)
-  }, [searchRequest])
 
   const selectedProvider = providers?.find(p => p.id === selectedProviderId)
   const effectiveApiKey = selectedProvider?.apiKey || apiKey
@@ -468,37 +465,37 @@ export default function ChatWindow({ theme, searchRequest = 0 }) {
       {/* Header */}
       <div className="safe-top"
         style={{
-          paddingTop: 'calc(var(--safe-top) + 6px)',
-          paddingBottom: 5,
-          paddingLeft: 9,
-          paddingRight: 9,
-          background: `linear-gradient(180deg, rgba(255,252,253,.58), ${primaryColor}08)`,
-          backdropFilter: 'blur(14px)',
-          WebkitBackdropFilter: 'blur(14px)',
+          paddingTop: 'calc(var(--safe-top) + 14px)',
+          paddingBottom: 12,
+          paddingLeft: 13,
+          paddingRight: 13,
+          background: `linear-gradient(180deg, rgba(255,252,253,.7), ${primaryColor}0d)`,
+          backdropFilter: 'blur(18px)',
+          WebkitBackdropFilter: 'blur(18px)',
           flexShrink: 0,
           position: 'relative',
           zIndex: 10,
         }}>
-        <div className="flex items-center min-w-0" style={{ gap: 6 }}>
+        <div className="flex items-center min-w-0" style={{ gap: 8 }}>
           <button
             onClick={() => setCurrentView('sessions')}
             title="返回铃兰花园"
             aria-label="返回铃兰花园"
-            className="w-8 h-8 flex items-center justify-center flex-shrink-0"
+            className="w-9 h-9 flex items-center justify-center flex-shrink-0"
             style={{ border: 0, borderRadius: '52% 48% 58% 42% / 43% 57% 43% 57%', background: 'rgba(255,255,255,.48)', color: primaryDarkColor }}
           >
-            <ArrowLeft size={18} />
+            <ArrowLeft size={20} />
           </button>
           <button
             onClick={() => setShowSessionDrawer(true)}
             title="切换对话"
             aria-label="切换对话"
-            className="w-8 h-8 flex items-center justify-center flex-shrink-0"
+            className="w-9 h-9 flex items-center justify-center flex-shrink-0"
             style={{ border: 0, borderRadius: '47% 53% 40% 60% / 58% 43% 57% 42%', background: `${primaryColor}10`, color: primaryColor }}
           >
-            <Menu size={16} />
+            <Menu size={17} />
           </button>
-          <div className="w-10 h-10 rounded-full overflow-hidden flex items-center justify-center text-xl flex-shrink-0"
+          <div className="w-11 h-11 rounded-full overflow-hidden flex items-center justify-center text-xl flex-shrink-0"
             style={{
               background: `${primaryColor}33`,
               border: `2px solid ${primaryColor}9c`,
@@ -509,7 +506,7 @@ export default function ChatWindow({ theme, searchRequest = 0 }) {
               : <span style={{ fontSize: 12, fontWeight: 700, color: primaryDarkColor }}>CC</span>}
           </div>
           <div className="min-w-0" style={{ flex: 1, alignSelf: 'stretch', display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
-            <div className="flex items-center min-w-0" style={{ height: 20 }}>
+            <div className="flex items-center min-w-0" style={{ height: 22 }}>
               <div className="font-semibold text-sm" style={{
                 flex: 1, minWidth: 0,
                 overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
@@ -518,13 +515,8 @@ export default function ChatWindow({ theme, searchRequest = 0 }) {
               }}>
                 {effectiveAiName || currentSession?.name || '新对话'}
               </div>
-              {isFixedVpsSession && (
-                <div className="flex-shrink-0" style={{ width: 30, height: 30, marginRight: -2 }}>
-                  <RuntimeStatusBall theme={theme} isLoading={isLoading} runtime={isCodexSession ? 'codex' : 'claude-code'} />
-                </div>
-              )}
             </div>
-            <div className="flex items-center min-w-0" style={{ height: 22, gap: 3 }}>
+            <div className="flex items-center min-w-0" style={{ height: 23, gap: 4 }}>
               <div className="min-w-0" style={{ flex: 1, overflow: 'hidden' }}>
                 <Signature text={effectiveSignature || '在线'} color={primaryColor} shadow={`0 0 6px ${primaryColor}aa, 0 0 14px ${primaryColor}60`} />
               </div>
@@ -534,36 +526,22 @@ export default function ChatWindow({ theme, searchRequest = 0 }) {
                   boxShadow: '0 0 5px rgba(74,172,240,.65)', flexShrink: 0,
                 }} title="已联网" />
               )}
-              <div className="flex items-center flex-shrink-0" style={{ gap: 1 }}>
-                {xinchaoState?.toneLabel && (
-                  <button
-                    onClick={() => setShowXinchaoPanel(true)}
-                    title={`心潮：${xinchaoState.toneLabel}`}
-                    aria-label={`心潮：${xinchaoState.toneLabel}`}
-                    className="w-6 h-6 flex items-center justify-center"
-                    style={{ border: 0, borderRadius: '52% 48% 58% 42%', background: `${primaryColor}10`, color: primaryDarkColor }}
-                  >
-                    <Waves size={13} />
-                  </button>
-                )}
-                <button
-                  onClick={() => setShowCarryOut(true)}
-                  title="把它抱走，变成桌宠"
-                  className="w-6 h-6 flex items-center justify-center"
-                  style={{ border: 0, borderRadius: '43% 57% 50% 50%', background: `${primaryColor}10`, color: primaryColor }}
-                >
-                  <Cat size={13} />
-                </button>
-                <button
-                  onClick={() => setCurrentView('sessionSettings')}
-                  className="btn-whale flex items-center justify-center"
-                  style={{ width: 28, height: 25, borderRadius: '54% 46% 58% 42%', background: 'transparent', border: 0, overflow: 'hidden' }}
-                >
-                  <img src="/assets/whale.png" alt="设置" style={{ width: 35, height: 35, objectFit: 'contain', flexShrink: 0 }} />
-                </button>
-              </div>
             </div>
           </div>
+          {isFixedVpsSession && (
+            <div className="flex-shrink-0" style={{ width: 34, height: 34 }}>
+              <RuntimeStatusBall theme={theme} isLoading={isLoading} runtime={isCodexSession ? 'codex' : 'claude-code'} />
+            </div>
+          )}
+          <button
+            onClick={() => setShowHeaderTools((value) => !value)}
+            className="btn-whale flex items-center justify-center flex-shrink-0"
+            aria-expanded={showHeaderTools}
+            aria-label="展开聊天工具"
+            style={{ width: 56, height: 56, borderRadius: '50%', background: `${primaryColor}0b`, border: 0, overflow: 'hidden' }}
+          >
+            <img src="/assets/whale.png" alt="" style={{ width: 70, height: 70, objectFit: 'contain', flexShrink: 0 }} />
+          </button>
         </div>
       </div>
 
@@ -576,6 +554,35 @@ export default function ChatWindow({ theme, searchRequest = 0 }) {
             fill="none" stroke="#FFE4A1" strokeWidth="1.5" />
         </svg>
       </div>
+
+      {showHeaderTools && (
+        <div className="fixed inset-0" style={{ zIndex: 78 }}>
+          <style>{`
+            @keyframes headerToolsBloom{from{opacity:0;transform:scale(.72) rotate(-8deg)}to{opacity:1;transform:scale(1) rotate(0)}}
+            .header-tool-choice{position:absolute;width:50px;height:50px;border:0;border-radius:50%;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1px;font-size:9px;box-shadow:0 4px 14px rgba(69,54,79,.13);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px)}
+          `}</style>
+          <button className="absolute inset-0 border-0" style={{ background: 'rgba(37,30,44,.12)', backdropFilter: 'blur(2px)' }} onClick={() => setShowHeaderTools(false)} aria-label="收起聊天工具" />
+          <div
+            role="menu"
+            aria-label="聊天工具"
+            style={{
+              position: 'absolute', top: 'calc(var(--safe-top) + 75px)', right: 10,
+              width: 188, height: 188, borderRadius: '50%',
+              background: `radial-gradient(circle,rgba(255,255,255,.94) 0 31%,${primaryColor}1c 32% 100%)`,
+              boxShadow: `0 12px 38px rgba(55,42,67,.2), inset 0 0 0 1px ${primaryColor}18`,
+              animation: 'headerToolsBloom .24s cubic-bezier(.2,.8,.2,1)',
+            }}
+          >
+            <button className="header-tool-choice" style={{ left: 69, top: 8, color: primaryDarkColor, background: 'rgba(255,255,255,.86)' }} onClick={() => { setShowHeaderTools(false); setShowSearch(true) }}><Search size={17} /><span>搜索</span></button>
+            <button className="header-tool-choice" disabled={!xinchaoState} style={{ right: 8, top: 69, color: primaryDarkColor, background: 'rgba(255,255,255,.86)', opacity: xinchaoState ? 1 : .4 }} onClick={() => { setShowHeaderTools(false); setShowXinchaoPanel(true) }}><Waves size={17} /><span>心潮</span></button>
+            <button className="header-tool-choice" style={{ left: 69, bottom: 8, color: primaryColor, background: 'rgba(255,255,255,.86)' }} onClick={() => { setShowHeaderTools(false); setShowCarryOut(true) }}><Cat size={17} /><span>桌宠</span></button>
+            <button className="header-tool-choice" style={{ left: 8, top: 69, color: primaryDarkColor, background: 'rgba(255,255,255,.86)' }} onClick={() => { setShowHeaderTools(false); setCurrentView('sessionSettings') }}><Settings2 size={17} /><span>设置</span></button>
+            <div style={{ position: 'absolute', inset: 61, borderRadius: '50%', display: 'grid', placeItems: 'center', background: 'rgba(255,255,255,.72)', boxShadow: `0 0 16px ${primaryColor}28` }}>
+              <img src="/assets/whale.png" alt="" style={{ width: 61, height: 61, objectFit: 'contain' }} />
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* The Monopoly board lives inside the real chat rather than taking
           over the whole viewport: board above, original message history

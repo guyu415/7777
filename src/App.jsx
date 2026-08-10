@@ -48,7 +48,6 @@ export default function App() {
     customFonts,
     sessions, currentSessionId,
   } = useStore()
-  const [chatSearchRequest, setChatSearchRequest] = useState(0)
 
   // Web Push notifications carry the session that generated the message.
   // Older notifications only opened `/`, which focused whichever window was
@@ -679,7 +678,7 @@ export default function App() {
           {/* One shared window for every provider (Claude Code VPS, Codex
               VPS, plain API-key) — ChatWindow.jsx itself picks the right
               runtime adapter internally, see its own top-of-file comment. */}
-          {currentView === 'chat' && <ChatWindow theme={theme} searchRequest={chatSearchRequest} />}
+          {currentView === 'chat' && <ChatWindow theme={theme} />}
           {currentView === 'groupChat' && currentGroupChatId && (
             <GroupChatWindow theme={theme} chatId={currentGroupChatId} onClose={() => setCurrentView('sessions')} />
           )}
@@ -692,15 +691,7 @@ export default function App() {
             />
           )}
           {currentView === 'globalSettings' && <GlobalSettings theme={theme} onLogout={handleLogout} onForceSync={handleForceSync} />}
-          {currentView === 'sessionSettings' && (
-            <SessionSettings
-              theme={theme}
-              onOpenMessageSearch={() => {
-                setChatSearchRequest((value) => value + 1)
-                setCurrentView('chat')
-              }}
-            />
-          )}
+          {currentView === 'sessionSettings' && <SessionSettings theme={theme} />}
           {currentView === 'voiceFavorites' && <VoiceFavorites theme={theme} />}
           {currentView === 'companionMemory' && <CompanionMemory theme={theme} onBack={() => setCurrentView('sessionSettings')} />}
           {currentView === 'tidalMemory' && <TidalMemory theme={theme} onBack={() => setCurrentView('sessionSettings')} />}
