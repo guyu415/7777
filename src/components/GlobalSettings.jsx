@@ -72,30 +72,39 @@ function Toggle({ value, onChange, primary, compact }) {
 //      the mouth's exact jagged tooth-by-tooth outline, because clipping a
 //      flexed, multi-line paragraph to that jagged shape chops text mid-line
 //      wherever a tooth notch happens to land (tried it, real bug, reverted).
-function FrameCard({ frameSrc, w, h, pad, icon, title, titleSize = 11.5, iconSize = 13, children }) {
+function FrameCard({ frameSrc, w, h, pad, mouthClipPath, icon, title, titleSize = 11.5, iconSize = 13, children }) {
   return (
     <div className="animal-wrapper relative w-full" style={{ overflow: 'visible', zIndex: 1 }}>
       <div style={{ width: '100%', paddingTop: `${(h / w) * 100}%` }} />
       <img src={frameSrc} alt="" draggable={false}
         className="absolute top-0 left-0 w-full h-full pointer-events-none select-none"
         style={{ objectFit: 'contain' }} />
-      {/* `pad` is spread as top/right/bottom/left INSET properties (an
-          absolutely-positioned box's own edges), never as `padding`. CSS
-          resolves padding-top/bottom percentages against the containing
-          block's WIDTH, not its own height — a classic gotcha that silently
-          shoved this whole content well downward on the crocodile specifically
-          (its image is ~2.1x wider than tall, so a "43.5%" meant-as-height
-          padding-top came out ~2x too large once read as a width percentage,
-          landing on the lower teeth; the hippo's closer-to-square ratio hid
-          the same bug as a smaller, easy-to-miss offset). top/bottom on an
-          absolute box correctly resolve against height, left/right against
-          width, which is what these numbers were actually measured as. */}
-      <div className="absolute rounded-full" style={{ ...pad, background: 'rgba(255,253,248,0.4)' }} />
-      {/* text-shadow inherited by every child — there's no opaque card behind
-          this text anymore, so it's what keeps small text legible over the
-          hand-drawn background showing through. */}
+      {/* Fill layer: clipped to `mouthClipPath`, the actual traced outline of
+          this PNG's transparent mouth cutout (percentages relative to the
+          FULL image box, hence inset-0 here — NOT the `pad` rectangle below),
+          so the translucent backing itself reads as mouth-shaped rather than
+          a generic oval/rounded-rect card pasted over the art. */}
+      <div className="absolute inset-0" style={{
+        clipPath: mouthClipPath,
+        background: 'rgba(255,255,255,0.48)',
+        backdropFilter: 'blur(9px)',
+        WebkitBackdropFilter: 'blur(9px)',
+      }} />
+      {/* Text layer: deliberately NOT clipped to that same jagged outline —
+          clipping flexed, multi-line text to the mouth's exact tooth-by-tooth
+          shape chops lines mid-word wherever a notch lands (tried it, real
+          bug, reverted, see git history). `pad` is instead a plain rectangle
+          conservatively inscribed inside the true mouth (top/right/bottom/left
+          INSET properties on this absolutely-positioned box, never `padding`
+          — CSS resolves padding-top/bottom percentages against the containing
+          block's WIDTH, not its own height, which silently shoved content
+          down onto the crocodile's teeth the one time this used `padding`).
+          Because it's conservative, it stays inside the fill layer's mouth
+          shape above, so the two visually line up despite being sized
+          differently under the hood. text-shadow is inherited by every child
+          as backup legibility for the thin edges of that fill. */}
       <div className="absolute flex flex-col justify-center" style={{ ...pad, padding: '2px 4px', textShadow: '0 1px 3px rgba(255,255,255,0.9), 0 0px 6px rgba(255,255,255,0.7)' }}>
-        <div className="flex items-center gap-1.5 flex-shrink-0" style={{ marginBottom: 2 }}>
+        <div className="flex items-center gap-1.5 flex-shrink-0" style={{ marginBottom: 1 }}>
           <span style={{ fontSize: iconSize, lineHeight: 1 }}>{icon}</span>
           <span className="font-semibold" style={{ color: '#2c5282', fontSize: titleSize, lineHeight: 1 }}>{title}</span>
         </div>
@@ -112,6 +121,15 @@ function FrameCard({ frameSrc, w, h, pad, icon, title, titleSize = 11.5, iconSiz
 // is a flat tapering sliver at a different offset entirely.
 const HIPPO_PAD = { top: '42%', bottom: '27%', left: '19%', right: '18%' }
 const CROC_PAD = { top: '43.5%', bottom: '30.5%', left: '27%', right: '21%' }
+
+// Traced from each PNG's own alpha channel (largest enclosed transparent
+// region, Moore-neighbor contour, eroded a few px in for margin) — the fill
+// layer's outline, NOT used for text layout (see FrameCard's comment on why).
+// Percentages are relative to the full image box (0,0)-(w,h), matching an
+// inset-0 element, which is intentionally a different reference than HIPPO_PAD/
+// CROC_PAD above.
+const HIPPO_MOUTH_CLIP_PATH = 'polygon(43.08% 73.17%, 38.39% 70.5%, 33.48% 70.5%, 28.57% 73.17%, 24.78% 68.83%, 20.76% 71.17%, 19.08% 66%, 18.86% 52%, 20.98% 45.17%, 25.45% 47.17%, 30.8% 42.5%, 43.97% 42.17%, 50.22% 44.83%, 53.79% 42.5%, 69.2% 42.17%, 71.43% 42.83%, 74.78% 46.83%, 77.46% 46.83%, 79.91% 44.83%, 81.36% 47%, 82.25% 64.67%, 81.25% 70.17%, 76.56% 68.83%, 73.44% 72.83%, 69.42% 70.5%, 64.96% 70.17%, 58.93% 72.83%, 54.91% 70.17%, 48.88% 69.83%, 43.08% 73.17%)'
+const CROC_MOUTH_CLIP_PATH = 'polygon(25.42% 47.37%, 25.21% 50.88%, 25.21% 54.39%, 25.42% 57.89%, 25.63% 61.4%, 26.26% 64.91%, 26.89% 68.42%, 33.4% 71.93%, 76.47% 71.93%, 82.98% 68.42%, 86.55% 64.91%, 87.18% 61.4%, 89.08% 57.89%, 92.23% 54.39%, 92.86% 50.88%, 93.91% 47.37%)'
 
 function GlassCard({ icon, title, children }) {
   return (
@@ -189,7 +207,7 @@ function NotificationCard({ primary }) {
     <FrameCard
       frameSrc="/assets/hippo-frame.png"
       w={448} h={300}
-      pad={HIPPO_PAD}
+      pad={HIPPO_PAD} mouthClipPath={HIPPO_MOUTH_CLIP_PATH}
       icon="🔔" title="设备推送通知"
     >
       {state === 'need-install' && (
@@ -203,19 +221,19 @@ function NotificationCard({ primary }) {
       {(state === 'on' || state === 'off') && (
         <>
           <div className="flex items-center justify-between gap-2">
-            <span style={{ color: '#2c5282', fontSize: 10.5, lineHeight: 1.25 }}>在这台设备接收主动消息</span>
-            <Toggle value={state === 'on'} onChange={handleToggle} primary={primary} />
+            <span style={{ color: '#2c5282', fontSize: 9.5, lineHeight: 1.15 }}>在这台设备接收主动消息</span>
+            <Toggle value={state === 'on'} onChange={handleToggle} primary={primary} compact />
           </div>
-          <p style={{ color: '#7a9cc0', fontSize: 8.5, lineHeight: 1.25, marginTop: 1 }}>只控制通知投递，不会关闭主动消息生成</p>
+          <p style={{ color: '#7a9cc0', fontSize: 7.5, lineHeight: 1.15, marginTop: 0 }}>只控制通知投递，不会关闭主动消息生成</p>
           {state === 'on' && (
             <button
               onClick={handleTest}
               disabled={busy}
               className="w-full rounded-full font-medium flex-shrink-0"
               style={{
-                marginTop: 3,
-                padding: '3px 0',
-                fontSize: 9.5,
+                marginTop: 2,
+                padding: '2px 0',
+                fontSize: 8,
                 background: `${primary}18`,
                 border: `1px solid ${primary}55`,
                 color: primary,
@@ -227,7 +245,7 @@ function NotificationCard({ primary }) {
           )}
         </>
       )}
-      {msg && <p style={{ color: '#7a9cc0', fontSize: 8.5, lineHeight: 1.2, marginTop: 1 }}>{msg}</p>}
+      {msg && <p style={{ color: '#7a9cc0', fontSize: 7, lineHeight: 1.1, marginTop: 0 }}>{msg}</p>}
     </FrameCard>
   )
 }
@@ -243,15 +261,15 @@ function ApiProactiveCard({ primary, value, onChange }) {
     <FrameCard
       frameSrc="/assets/croc-frame.png"
       w={476} h={228}
-      pad={CROC_PAD}
+      pad={CROC_PAD} mouthClipPath={CROC_MOUTH_CLIP_PATH}
       icon="💬" title="普通窗口主动消息"
-      iconSize={11} titleSize={10}
+      iconSize={10} titleSize={9.5}
     >
       <div className="flex items-center justify-between gap-2">
-        <span style={{ color: '#2c5282', fontSize: 9, lineHeight: 1.15 }}>允许接 API 的普通会话主动发消息</span>
+        <span style={{ color: '#2c5282', fontSize: 8.5, lineHeight: 1.1 }}>允许接 API 的普通会话主动发消息</span>
         <Toggle value={value} onChange={onChange} primary={primary} compact />
       </div>
-      <p style={{ color: '#7a9cc0', fontSize: 6.5, lineHeight: 1.1, marginTop: 0 }}>
+      <p style={{ color: '#7a9cc0', fontSize: 6, lineHeight: 1.05, marginTop: 0 }}>
         只影响普通 API 会话；CC 的开关仍在 CC 会话设置里，Codex 不会接收这条链路的消息。
       </p>
     </FrameCard>
