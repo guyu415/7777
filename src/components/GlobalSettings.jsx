@@ -52,26 +52,32 @@ function Toggle({ value, onChange, primary, compact }) {
   )
 }
 
-// Decorative animal-mouth frame card (hippo/crocodile), cropped from a hand-drawn
-// design mockup. Layers, in DOM/paint order:
-//   1. animal-wrapper — pure placeholder box, position: relative + z-index so
-//      it always paints above ordinary in-flow siblings (padding-top keeps its
-//      height stable across browsers even before the image loads — plain
-//      `aspect-ratio` on the box itself does not reliably give percentage-
-//      positioned descendants a definite height on real-device WebKit, which
-//      is why content used to render clipped/misplaced on an iPhone despite
-//      looking fine in a desktop preview). overflow: visible so the animal
-//      itself — ears, eyes, tail, all of it — is never cropped by this box.
-//   2. the animal image — width/height 100%, objectFit: contain.
-//   3. an oval tint, NOT the old opaque rounded-rectangle "settings card" —
-//      barely-there fill, `pad`-sized and border-radius: 50% so it reads as an
-//      oval sitting inside the mouth rather than a card pasted over it.
-//   4. the actual text/toggle/button content, unclipped and laid out with the
-//      SAME `pad` rectangle (measured off each PNG's real alpha-channel hole,
-//      per-animal, not a shared guess) — kept as a plain rectangle rather than
-//      the mouth's exact jagged tooth-by-tooth outline, because clipping a
-//      flexed, multi-line paragraph to that jagged shape chops text mid-line
-//      wherever a tooth notch happens to land (tried it, real bug, reverted).
+// Decorative animal-mouth frame card (hippo/crocodile), cut out of a hand-drawn
+// design sheet. Layers, in DOM/paint order:
+//   1. animal-wrapper — pure placeholder box. `padding-top` (not `aspect-ratio`)
+//      establishes its height, so percentage-positioned descendants have a
+//      definite containing-block height even on older WebKit.
+//   2. the animal image — objectFit: contain, so it is never cropped by CSS.
+//      The PNGs themselves carry ~11% transparent margin above the artwork
+//      (see below), which is what actually protects the hippo's ears and the
+//      crocodile's eyes: on a real iPhone roughly 5% of this box's height was
+//      being shaved off the top, slicing both. Because the box's height is
+//      derived from the PNG's aspect ratio while its WIDTH stays 100% of the
+//      column, baking that margin into the asset costs nothing visually — the
+//      animal renders exactly as large as before, the card is just taller.
+//   3. fill — the translucent "card" backing, clipped to the mouth's real
+//      traced outline so it fills the mouth's own shape (teeth and all) rather
+//      than sitting on top of the art as a rectangle or oval. clip-path is on
+//      the wrapper and the filter on an inner child: WebKit mis-renders
+//      backdrop-filter and clip-path applied to the same element.
+//   4. text — deliberately NOT clipped to that jagged outline; clipping flexed
+//      multi-line text to a tooth-by-tooth shape chops lines mid-word wherever
+//      a notch lands (tried it, real bug, reverted — see git history). It uses
+//      `pad`, the largest axis-aligned rectangle that actually fits inside the
+//      mouth (computed, not eyeballed), spread as top/right/bottom/left INSET
+//      properties — never as `padding`, since CSS resolves padding-top/bottom
+//      percentages against the containing block's WIDTH, which once shoved all
+//      of this down onto the crocodile's lower teeth.
 function FrameCard({ frameSrc, w, h, pad, mouthClipPath, icon, title, titleSize = 11.5, iconSize = 13, children }) {
   return (
     <div className="animal-wrapper relative w-full" style={{ overflow: 'visible', zIndex: 1 }}>
@@ -79,31 +85,14 @@ function FrameCard({ frameSrc, w, h, pad, mouthClipPath, icon, title, titleSize 
       <img src={frameSrc} alt="" draggable={false}
         className="absolute top-0 left-0 w-full h-full pointer-events-none select-none"
         style={{ objectFit: 'contain' }} />
-      {/* Fill layer: clipped to `mouthClipPath`, the actual traced outline of
-          this PNG's transparent mouth cutout (percentages relative to the
-          FULL image box, hence inset-0 here — NOT the `pad` rectangle below),
-          so the translucent backing itself reads as mouth-shaped rather than
-          a generic oval/rounded-rect card pasted over the art. */}
-      <div className="absolute inset-0" style={{
-        clipPath: mouthClipPath,
-        background: 'rgba(255,255,255,0.48)',
-        backdropFilter: 'blur(9px)',
-        WebkitBackdropFilter: 'blur(9px)',
-      }} />
-      {/* Text layer: deliberately NOT clipped to that same jagged outline —
-          clipping flexed, multi-line text to the mouth's exact tooth-by-tooth
-          shape chops lines mid-word wherever a notch lands (tried it, real
-          bug, reverted, see git history). `pad` is instead a plain rectangle
-          conservatively inscribed inside the true mouth (top/right/bottom/left
-          INSET properties on this absolutely-positioned box, never `padding`
-          — CSS resolves padding-top/bottom percentages against the containing
-          block's WIDTH, not its own height, which silently shoved content
-          down onto the crocodile's teeth the one time this used `padding`).
-          Because it's conservative, it stays inside the fill layer's mouth
-          shape above, so the two visually line up despite being sized
-          differently under the hood. text-shadow is inherited by every child
-          as backup legibility for the thin edges of that fill. */}
-      <div className="absolute flex flex-col justify-center" style={{ ...pad, padding: '2px 4px', textShadow: '0 1px 3px rgba(255,255,255,0.9), 0 0px 6px rgba(255,255,255,0.7)' }}>
+      <div className="absolute inset-0 pointer-events-none" style={{ clipPath: mouthClipPath }}>
+        <div className="w-full h-full" style={{
+          background: 'rgba(255,255,255,0.48)',
+          backdropFilter: 'blur(9px)',
+          WebkitBackdropFilter: 'blur(9px)',
+        }} />
+      </div>
+      <div className="absolute flex flex-col justify-center" style={{ ...pad, textShadow: '0 1px 3px rgba(255,255,255,0.9), 0 0 6px rgba(255,255,255,0.7)' }}>
         <div className="flex items-center gap-1.5 flex-shrink-0" style={{ marginBottom: 1 }}>
           <span style={{ fontSize: iconSize, lineHeight: 1 }}>{icon}</span>
           <span className="font-semibold" style={{ color: '#2c5282', fontSize: titleSize, lineHeight: 1 }}>{title}</span>
@@ -114,22 +103,18 @@ function FrameCard({ frameSrc, w, h, pad, mouthClipPath, icon, title, titleSize 
   )
 }
 
-// Measured off each cropped PNG's own alpha channel (largest enclosed
-// transparent region inside the mouth, not eyeballed) — see
-// public/assets/hippo-frame.png (448x300) and croc-frame.png (476x228).
-// Deliberately not shared: the hippo's mouth is a tall oval; the crocodile's
-// is a flat tapering sliver at a different offset entirely.
-const HIPPO_PAD = { top: '42%', bottom: '27%', left: '19%', right: '18%' }
-const CROC_PAD = { top: '43.5%', bottom: '30.5%', left: '27%', right: '21%' }
+// All four numbers below are derived from each PNG's own alpha channel by
+// scripted measurement, never by eye, and are per-animal (the hippo's mouth is
+// a tall scalloped oval, the crocodile's a flat tapering sliver at a different
+// offset). CLIP_PATH is the traced mouth outline as percentages of the whole
+// image box (matching the inset-0 element it clips); PAD is the largest
+// rectangle that fits inside that same mouth, as inset percentages.
+// Assets: hippo-frame-v2.png 467x336, croc-frame-v2.png 502x298.
+const HIPPO_PAD = { top: '51.8%', right: '19.5%', bottom: '30.4%', left: '21.0%' }
+const CROC_PAD = { top: '45.0%', right: '16.1%', bottom: '38.3%', left: '28.7%' }
 
-// Traced from each PNG's own alpha channel (largest enclosed transparent
-// region, Moore-neighbor contour, eroded a few px in for margin) — the fill
-// layer's outline, NOT used for text layout (see FrameCard's comment on why).
-// Percentages are relative to the full image box (0,0)-(w,h), matching an
-// inset-0 element, which is intentionally a different reference than HIPPO_PAD/
-// CROC_PAD above.
-const HIPPO_MOUTH_CLIP_PATH = 'polygon(43.08% 73.17%, 38.39% 70.5%, 33.48% 70.5%, 28.57% 73.17%, 24.78% 68.83%, 20.76% 71.17%, 19.08% 66%, 18.86% 52%, 20.98% 45.17%, 25.45% 47.17%, 30.8% 42.5%, 43.97% 42.17%, 50.22% 44.83%, 53.79% 42.5%, 69.2% 42.17%, 71.43% 42.83%, 74.78% 46.83%, 77.46% 46.83%, 79.91% 44.83%, 81.36% 47%, 82.25% 64.67%, 81.25% 70.17%, 76.56% 68.83%, 73.44% 72.83%, 69.42% 70.5%, 64.96% 70.17%, 58.93% 72.83%, 54.91% 70.17%, 48.88% 69.83%, 43.08% 73.17%)'
-const CROC_MOUTH_CLIP_PATH = 'polygon(25.42% 47.37%, 25.21% 50.88%, 25.21% 54.39%, 25.42% 57.89%, 25.63% 61.4%, 26.26% 64.91%, 26.89% 68.42%, 33.4% 71.93%, 76.47% 71.93%, 82.98% 68.42%, 86.55% 64.91%, 87.18% 61.4%, 89.08% 57.89%, 92.23% 54.39%, 92.86% 50.88%, 93.91% 47.37%)'
+const HIPPO_MOUTH_CLIP_PATH = 'polygon(19.91% 55.06%, 23.77% 50.00%, 27.62% 50.00%, 31.48% 46.43%, 35.33% 46.13%, 39.19% 46.13%, 43.04% 46.13%, 46.90% 46.73%, 50.75% 48.21%, 54.60% 46.43%, 58.46% 46.13%, 62.31% 46.13%, 66.17% 46.13%, 70.02% 46.43%, 73.88% 50.30%, 77.73% 49.40%, 81.37% 56.55%, 81.37% 67.56%, 77.73% 71.13%, 73.88% 72.62%, 70.02% 72.92%, 66.17% 72.02%, 62.31% 72.62%, 58.46% 74.11%, 54.60% 72.02%, 50.75% 71.73%, 46.90% 72.62%, 43.04% 74.11%, 39.19% 72.62%, 35.33% 72.32%, 31.48% 73.51%, 27.62% 72.02%, 23.77% 71.43%, 19.91% 66.67%)'
+const CROC_MOUTH_CLIP_PATH = 'polygon(27.69% 45.97%, 31.47% 40.60%, 35.26% 44.30%, 39.04% 39.93%, 42.83% 39.26%, 46.61% 38.59%, 50.40% 41.61%, 54.18% 37.92%, 57.97% 38.93%, 61.75% 40.27%, 65.54% 36.91%, 69.32% 39.93%, 73.11% 36.24%, 76.89% 36.58%, 80.68% 37.25%, 84.46% 35.57%, 88.25% 35.57%, 89.44% 34.90%, 89.44% 55.37%, 88.25% 55.03%, 84.46% 60.07%, 80.68% 63.42%, 76.89% 65.10%, 73.11% 68.46%, 69.32% 68.46%, 65.54% 68.12%, 61.75% 69.13%, 57.97% 68.46%, 54.18% 68.12%, 50.40% 69.46%, 46.61% 69.13%, 42.83% 67.79%, 39.04% 67.79%, 35.26% 67.11%, 31.47% 63.76%, 27.69% 57.72%)'
 
 function GlassCard({ icon, title, children }) {
   return (
@@ -205,8 +190,8 @@ function NotificationCard({ primary }) {
 
   return (
     <FrameCard
-      frameSrc="/assets/hippo-frame.png"
-      w={448} h={300}
+      frameSrc="/assets/hippo-frame-v2.png"
+      w={467} h={336}
       pad={HIPPO_PAD} mouthClipPath={HIPPO_MOUTH_CLIP_PATH}
       icon="🔔" title="设备推送通知"
     >
@@ -221,19 +206,19 @@ function NotificationCard({ primary }) {
       {(state === 'on' || state === 'off') && (
         <>
           <div className="flex items-center justify-between gap-2">
-            <span style={{ color: '#2c5282', fontSize: 9.5, lineHeight: 1.15 }}>在这台设备接收主动消息</span>
+            <span style={{ color: '#2c5282', fontSize: 10.5, lineHeight: 1.2 }}>在这台设备接收主动消息</span>
             <Toggle value={state === 'on'} onChange={handleToggle} primary={primary} compact />
           </div>
-          <p style={{ color: '#7a9cc0', fontSize: 7.5, lineHeight: 1.15, marginTop: 0 }}>只控制通知投递，不会关闭主动消息生成</p>
+          <p style={{ color: '#7a9cc0', fontSize: 8.5, lineHeight: 1.2, marginTop: 0 }}>只控制通知投递，不会关闭主动消息生成</p>
           {state === 'on' && (
             <button
               onClick={handleTest}
               disabled={busy}
               className="w-full rounded-full font-medium flex-shrink-0"
               style={{
-                marginTop: 2,
-                padding: '2px 0',
-                fontSize: 8,
+                marginTop: 3,
+                padding: '3px 0',
+                fontSize: 9,
                 background: `${primary}18`,
                 border: `1px solid ${primary}55`,
                 color: primary,
@@ -245,7 +230,7 @@ function NotificationCard({ primary }) {
           )}
         </>
       )}
-      {msg && <p style={{ color: '#7a9cc0', fontSize: 7, lineHeight: 1.1, marginTop: 0 }}>{msg}</p>}
+      {msg && <p style={{ color: '#7a9cc0', fontSize: 7.5, lineHeight: 1.15, marginTop: 0 }}>{msg}</p>}
     </FrameCard>
   )
 }
@@ -259,17 +244,17 @@ function NotificationCard({ primary }) {
 function ApiProactiveCard({ primary, value, onChange }) {
   return (
     <FrameCard
-      frameSrc="/assets/croc-frame.png"
-      w={476} h={228}
+      frameSrc="/assets/croc-frame-v2.png"
+      w={502} h={298}
       pad={CROC_PAD} mouthClipPath={CROC_MOUTH_CLIP_PATH}
       icon="💬" title="普通窗口主动消息"
-      iconSize={10} titleSize={9.5}
+      iconSize={11} titleSize={10.5}
     >
       <div className="flex items-center justify-between gap-2">
-        <span style={{ color: '#2c5282', fontSize: 8.5, lineHeight: 1.1 }}>允许接 API 的普通会话主动发消息</span>
+        <span style={{ color: '#2c5282', fontSize: 9.5, lineHeight: 1.15 }}>允许接 API 的普通会话主动发消息</span>
         <Toggle value={value} onChange={onChange} primary={primary} compact />
       </div>
-      <p style={{ color: '#7a9cc0', fontSize: 6, lineHeight: 1.05, marginTop: 0 }}>
+      <p style={{ color: '#7a9cc0', fontSize: 7, lineHeight: 1.15, marginTop: 0 }}>
         只影响普通 API 会话；CC 的开关仍在 CC 会话设置里，Codex 不会接收这条链路的消息。
       </p>
     </FrameCard>
