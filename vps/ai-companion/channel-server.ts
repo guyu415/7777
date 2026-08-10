@@ -1130,6 +1130,10 @@ let proactiveTurnId: string | null = null
 // both are server-initiated turns that may land while the app is closed, so
 // both are the cases reply/send_voice below also fire a real Web Push for.
 let dreamAnnounceTurnId: string | null = null
+// A server-initiated main-chat turn which should alert the device even though
+// it is neither a scheduled proactive check nor a dream announcement. This
+// currently covers session-continuity announcements and severe care alerts.
+let backgroundPushTurnId: string | null = null
 let gomokuTurnId: string | null = null
 // What kind of gomoku turn gomokuTurnId currently refers to — decides
 // whether reply/send_voice may reach game.messages during it. 'move'/'undo'
@@ -1527,6 +1531,7 @@ function clearGomokuTurnScope(turnId: string) {
     proactiveTurnId = null
   }
   if (dreamAnnounceTurnId === turnId) { dreamAnnounceTurnId = null }
+  if (backgroundPushTurnId === turnId) { backgroundPushTurnId = null }
   if (gomokuTurnId === turnId) { gomokuTurnId = null; gomokuTurnKind = null }
   if (gomokuEffortTurnId === turnId) {
     gomokuEffortTurnId = null
@@ -1999,11 +2004,15 @@ mcp.setRequestHandler(ListToolsRequestSchema, async () => ({
   ],
 }))
 
-// True for a turn the app may well not be open for — the two cases where a
-// real Web Push (not just the WS broadcast every reply/send_voice already
-// does) is worth the round-trip to the Worker.
+// True for a server-initiated turn the app may well not be open for. Normal
+// replies already travel over WebSocket; these background turns additionally
+// use the same device Web Push subscription as care-hub announcements.
 function isPushWorthyTurn(turnId: string | undefined): boolean {
-  return !!turnId && (turnId === proactiveTurnId || turnId === dreamAnnounceTurnId)
+  return !!turnId && (
+    turnId === proactiveTurnId ||
+    turnId === dreamAnnounceTurnId ||
+    turnId === backgroundPushTurnId
+  )
 }
 
 mcp.setRequestHandler(CallToolRequestSchema, async req => {
@@ -2439,6 +2448,7 @@ function announceSessionStart() {
   const kb = Math.round((parsed.transcriptBytes ?? 0) / 1024)
   const id = nextId()
   startTurn(id)
+  backgroundPushTurnId = id
 
   if (parsed.mode === 'resumed') {
     deliver(id, `[系统提示，不是用户发的消息]常驻会话刚重启过，这次是**接续**上一段对话：你的完整上下文已经恢复（会话 ${parsed.sessionId?.slice(0, 8)}，记录 ${kb}KB），之前聊过什么你都还记得。\n\n请主动跟用户说一句，告诉他这次是接续、记忆没丢，然后就正常继续。不用长篇大论，一句话就够。`)
@@ -7176,6 +7186,7 @@ function dispatchCareAlert() {
   saveCareAlertKeys()
   const id = nextId()
   startTurn(id)
+  backgroundPushTurnId = id
   deliver(id, JSON.stringify({
     kind: 'care_alert',
     source: 'care-hub',
