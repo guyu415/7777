@@ -88,6 +88,12 @@ export default function App() {
   const lastSyncedSettings = useRef('')
   const registeredFonts = useRef(new Set())
 
+  useEffect(() => {
+    if (!loggedIn || sessionStorage.getItem('resumeCareHubAfterLogin') !== '1') return
+    sessionStorage.removeItem('resumeCareHubAfterLogin')
+    setCurrentView('careHub')
+  }, [loggedIn, setCurrentView])
+
   // One-time migration: upload all local IDB messages to cloud
   const runMsgMigration = async (password) => {
     const { sessions: allSessions } = useStore.getState()

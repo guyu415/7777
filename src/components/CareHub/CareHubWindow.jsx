@@ -4,6 +4,7 @@ import {
   addCareLedgerEntry, addCareStudyGoal, deleteCareLedgerEntry, deleteCareStudyGoal,
   getCareHubState, onCareHubUpdate, runCareRole, sendCareHubInput,
   toggleCareStudyGoal, updateCareHubConfig, getCodexModelStatus, getMysteryCcModels,
+  COMPANION_LOGIN_URL, COMPANION_RETURN_URL,
 } from '../../services/companion'
 
 const ROLES = {
@@ -40,6 +41,7 @@ function Panel({ children }) {
 export default function CareHubWindow({ theme, onClose }) {
   const [state, setState] = useState(null)
   const [loadNonce, setLoadNonce] = useState(0)
+  const [loadAuthRequired, setLoadAuthRequired] = useState(false)
   const [tab, setTab] = useState('chat')
   const [error, setError] = useState('')
   const [input, setInput] = useState('')
@@ -59,7 +61,12 @@ export default function CareHubWindow({ theme, onClose }) {
   useEffect(() => {
     let live = true
     setError('')
-    getCareHubState().then((next) => { if (live) setState(next) }).catch((e) => { if (live) setError(e.message || '生活关怀群加载失败') })
+    setLoadAuthRequired(false)
+    getCareHubState().then((next) => { if (live) setState(next) }).catch((e) => {
+      if (!live) return
+      setLoadAuthRequired(e?.status === 401)
+      setError(e?.status === 401 ? 'companion 登录状态已过期，群聊和记录都还在。' : (e.message || '生活关怀群加载失败'))
+    })
     const off = onCareHubUpdate((next) => setState(next))
     return () => { live = false; off() }
   }, [loadNonce])
@@ -122,7 +129,21 @@ export default function CareHubWindow({ theme, onClose }) {
         {error ? (
           <>
             <div className="text-sm" style={{ color: '#8a6670' }}>{error}</div>
-            <button type="button" onClick={() => setLoadNonce((value) => value + 1)} className="mt-4 px-5 py-2 rounded-full text-xs" style={{ border: 0, color: '#fff', background: primary }}>重新进入</button>
+            <button
+              type="button"
+              onClick={() => {
+                if (loadAuthRequired) {
+                  sessionStorage.setItem('resumeCareHubAfterLogin', '1')
+                  window.location.assign(`${COMPANION_LOGIN_URL}?return=${encodeURIComponent(COMPANION_RETURN_URL)}`)
+                  return
+                }
+                setLoadNonce((value) => value + 1)
+              }}
+              className="mt-4 px-5 py-2 rounded-full text-xs"
+              style={{ border: 0, color: '#fff', background: primary }}
+            >
+              {loadAuthRequired ? '重新登录并返回' : '重新进入'}
+            </button>
           </>
         ) : <><Loader2 className="animate-spin" /><div className="mt-3 text-xs">正在进入关怀群…</div></>}
       </div>

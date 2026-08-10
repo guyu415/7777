@@ -2466,7 +2466,10 @@ function jsonResponse(body: unknown, init: ResponseInit = {}) {
   })
 }
 
-const SET_COOKIE = `${COOKIE_NAME}=${TOKEN}; Path=/; HttpOnly; Secure; SameSite=Strict`
+// Keep the companion login across Safari/PWA restarts. This remains an
+// HttpOnly, Secure, same-site cookie; the only change is that a successful
+// explicit token login no longer evaporates when iOS discards the webview.
+const SET_COOKIE = `${COOKIE_NAME}=${TOKEN}; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=31536000`
 const CLEAR_COOKIE = `${COOKIE_NAME}=; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=0`
 
 // ---------- Auto Memory management (real files, no second memory system) ----------
