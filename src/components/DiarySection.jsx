@@ -14,17 +14,17 @@ function todayStr() {
   return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date())
 }
 
-// Collapsible letter body — folds when content exceeds ~5 lines
-function LetterBody({ text, color }) {
+// Collapsible letter body — folds when content exceeds ~6 lines
+function LetterBody({ text }) {
   const [expanded, setExpanded] = useState(false)
-  const long = text.length > 160 || text.split('\n').length > 5
+  const long = text.length > 200 || text.split('\n').length > 6
   return (
-    <div style={{ borderTop: '1px solid rgba(200,180,150,0.3)', paddingTop: 8, fontSize: 14, lineHeight: 1.6, color, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
-      <div style={!expanded && long ? { display: '-webkit-box', WebkitLineClamp: 5, WebkitBoxOrient: 'vertical', overflow: 'hidden' } : undefined}>
+    <div style={{ fontSize: 15, lineHeight: 1.7, color: '#fff', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+      <div style={!expanded && long ? { display: '-webkit-box', WebkitLineClamp: 6, WebkitBoxOrient: 'vertical', overflow: 'hidden' } : undefined}>
         {text}
       </div>
       {long && (
-        <button onClick={() => setExpanded(v => !v)} style={{ marginTop: 6, fontSize: 12, color: '#9a8ab0', background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}>
+        <button onClick={() => setExpanded(v => !v)} style={{ marginTop: 8, fontSize: 12, color: 'rgba(255,255,255,0.75)', background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}>
           {expanded ? '收起' : '展开'}
         </button>
       )}
@@ -32,25 +32,22 @@ function LetterBody({ text, color }) {
   )
 }
 
-// Diary is now a Google Drive-backed mailbox — no more browsable full
-// history in this UI (that used to be a per-character-filterable, scrollable
-// list over a local+KV copy of every letter ever written). Opening it just
-// shows the single latest letter; the compose box below still lets the user
-// write one back (to `filter`'s session), which cc can also do on its own
-// via a separate direct write path (see channel-server.ts's diary_write
-// tool) without going through this UI at all.
+// Diary is a Google Drive-backed mailbox — no browsable history, no avatar
+// picker. Opening it shows just the latest letter as a plain content card
+// (no header — no avatar/name/mood/weather badges, per explicit request);
+// the compose box still lets the user write back, always to whichever
+// session is currently active (no character picker needed since there's
+// only ever one "current" conversation). cc can also write on its own via
+// a separate direct path (see channel-server.ts's diary_write tool).
 //
 // `diaryTarget` (set when a letter-card bubble in chat is clicked) overrides
-// "show latest" with "show this specific letter, by its Drive fileId" —
-// preserves the old click-through-to-that-letter behavior even though there
-// is no longer a full timeline to scroll it into view within.
+// "show latest" with "show this specific letter, by its Drive fileId".
 export default function DiarySection({ theme }) {
-  const { sessions, aiAvatar: globalAiAvatar, userAvatar, diaryTarget, setDiaryTarget } = useStore()
+  const { currentSessionId, diaryTarget, setDiaryTarget } = useStore()
 
   const primary = theme?.primary || '#4aacf0'
   const primaryDark = theme?.primaryDark || '#2196d3'
 
-  const [filter, setFilter] = useState('all')
   const [mood, setMood] = useState('😊')
   const [weather, setWeather] = useState('☀️')
   const [content, setContent] = useState('')
@@ -58,14 +55,6 @@ export default function DiarySection({ theme }) {
   const [loading, setLoading] = useState(true)
   const [letter, setLetter] = useState(null)
   const [loadError, setLoadError] = useState(false)
-
-  const charOf = (sessionId) => {
-    const s = sessions?.find(x => x.id === sessionId)
-    return {
-      name: s?.name || '未知会话',
-      avatar: s?.aiAvatar || globalAiAvatar || '',
-    }
-  }
 
   const load = async (targetId) => {
     setLoading(true)
@@ -92,20 +81,20 @@ export default function DiarySection({ theme }) {
   }, [])
 
   const sendLetter = async () => {
-    if (filter === 'all' || !content.trim() || sending) return
+    if (!content.trim() || sending || !currentSessionId) return
     setSending(true)
     try {
       const date = todayStr()
       const body = content.trim()
-      await addLetter({ sessionId: filter, role: 'user', mood, weather, date, content: body })
+      await addLetter({ sessionId: currentSessionId, role: 'user', mood, weather, date, content: body })
 
-      // Also drop a real chat message into this session so the AI actually
-      // sees "a letter arrived" in its next turn — a Drive-only write is
-      // invisible to it otherwise (the diary index injected into the system
-      // prompt is metadata-only, no content).
+      // Also drop a real chat message into the current session so the AI
+      // actually sees "a letter arrived" in its next turn — a Drive-only
+      // write is invisible to it otherwise (the diary index injected into
+      // the system prompt is metadata-only, no content).
       const chatMsg = {
         id: genId(),
-        conversationId: filter,
+        conversationId: currentSessionId,
         role: 'user',
         type: 'text',
         content: `[LETTER mood=${mood} weather=${weather} date=${date}]\n${body}\n[/LETTER]`,
@@ -115,9 +104,9 @@ export default function DiarySection({ theme }) {
       const password = localStorage.getItem('auth.password')
       if (password) {
         try {
-          const all = await getMessages(filter)
+          const all = await getMessages(currentSessionId)
           all.sort((a, b) => a.timestamp - b.timestamp)
-          await saveSessionMsgs(password, filter, all.filter(m => !m.streaming))
+          await saveSessionMsgs(password, currentSessionId, all.filter(m => !m.streaming))
         } catch (e) {
           console.warn('[LETTERS] 寄出后同步失败:', e.message)
         }
@@ -132,31 +121,6 @@ export default function DiarySection({ theme }) {
     }
   }
 
-  const canWrite = filter !== 'all'
-  const filterCharName = canWrite ? charOf(filter).name : ''
-
-  const AvatarFilter = ({ active, avatar, emoji, label, onClick }) => (
-    <button
-      onClick={onClick}
-      title={label}
-      style={{ flexShrink: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2, background: 'none', border: 'none', cursor: 'pointer', padding: 0, width: 48 }}
-    >
-      <div style={{
-        width: 38, height: 38, borderRadius: '50%', overflow: 'hidden',
-        display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 18,
-        background: 'rgba(255,255,255,0.6)',
-        border: active ? `2px solid ${primary}` : '2px solid transparent',
-        boxShadow: active ? `0 0 8px ${primary}88` : 'none',
-        transition: 'all 0.2s',
-      }}>
-        {avatar ? <img src={avatar} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : (emoji || '🌸')}
-      </div>
-      <span style={{ fontSize: 9, lineHeight: 1.1, maxWidth: 46, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: active ? primaryDark : '#9aaec0' }}>
-        {label}
-      </span>
-    </button>
-  )
-
   const emojiBtn = (active) => ({
     fontSize: 16, lineHeight: 1, padding: '3px 5px', borderRadius: 9, cursor: 'pointer',
     border: active ? `1.5px solid ${primary}` : '1.5px solid transparent',
@@ -164,29 +128,10 @@ export default function DiarySection({ theme }) {
     transition: 'all 0.15s',
   })
 
-  const letterIsUser = letter?.role === 'user'
-  const letterChar = letter ? charOf(letter.sessionId) : null
-  const letterAvatar = letter ? (letterIsUser ? userAvatar : letterChar.avatar) : null
-  const letterName = letter ? (letterIsUser ? '我' : letterChar.name) : null
-
   return (
     <div className="flex flex-col h-full">
-      {/* Avatar filter row — still picks WHO to write to below; no longer
-          filters a browsable list, since there is none anymore */}
-      <div className="flex gap-1 px-1 pb-2 overflow-x-auto flex-shrink-0">
-        <AvatarFilter active={filter === 'all'} emoji="📔" label="全部" onClick={() => setFilter('all')} />
-        {(sessions || []).map(s => (
-          <AvatarFilter
-            key={s.id}
-            active={filter === s.id}
-            avatar={s.aiAvatar || globalAiAvatar}
-            label={s.name}
-            onClick={() => setFilter(s.id)}
-          />
-        ))}
-      </div>
-
-      {/* Latest (or targeted) letter only */}
+      {/* Latest (or targeted) letter — plain semi-transparent blue overlay,
+          no avatar/name/mood/weather header, just the text. */}
       <div className="flex-1 overflow-y-auto px-1" style={{ minHeight: 0 }}>
         {loading ? (
           <div className="flex items-center justify-center h-full text-center" style={{ color: '#a0b8d0' }}>
@@ -205,31 +150,21 @@ export default function DiarySection({ theme }) {
         ) : (
           <div
             style={{
-              background: letterIsUser
-                ? 'linear-gradient(135deg, rgba(255,240,246,0.96), rgba(252,236,244,0.96))'
-                : 'linear-gradient(135deg, rgba(250,244,230,0.96), rgba(244,238,252,0.96))',
-              border: letterIsUser ? '1px solid rgba(230,160,190,0.45)' : '1px solid rgba(200,180,150,0.42)',
-              borderRadius: 16,
-              padding: '14px 16px',
-              boxShadow: '0 2px 10px rgba(150,140,120,0.14)',
+              background: 'rgba(74,144,226,0.32)',
+              backdropFilter: 'blur(10px)', WebkitBackdropFilter: 'blur(10px)',
+              borderRadius: 18,
+              padding: '18px 18px',
+              boxShadow: '0 4px 20px rgba(30,70,150,0.18)',
             }}
           >
-            <div className="flex items-center gap-2 mb-2">
-              <div style={{ width: 26, height: 26, borderRadius: '50%', overflow: 'hidden', flexShrink: 0, background: 'rgba(255,255,255,0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 14 }}>
-                {letterAvatar ? <img src={letterAvatar} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : (letterIsUser ? '🐣' : '🌸')}
-              </div>
-              <span style={{ fontSize: 13, fontWeight: 600, color: letterIsUser ? '#b56a8a' : '#6b5840' }}>{letterName}</span>
-              <span style={{ fontSize: 13, marginLeft: 'auto' }}>{letter.mood} {letter.weather}</span>
-              <span style={{ fontSize: 11, color: '#9a8a70' }}>{letter.date}</span>
-            </div>
-            <LetterBody text={letter.content || ''} color={letterIsUser ? '#8a5a70' : '#7a6850'} />
+            <LetterBody text={letter.content || ''} />
           </div>
         )}
       </div>
 
-      {/* Write panel */}
+      {/* Write panel — always writes to the current conversation */}
       <div className="flex-shrink-0 pt-2 mt-1" style={{ borderTop: '1px solid rgba(200,220,255,0.3)' }}>
-        {!canWrite ? null : (
+        {!currentSessionId ? null : (
           <>
             <div className="flex items-center gap-1 mb-1 overflow-x-auto">
               <span style={{ fontSize: 11, color: '#7a9cc0', flexShrink: 0 }}>心情</span>
@@ -243,7 +178,7 @@ export default function DiarySection({ theme }) {
               <textarea
                 value={content}
                 onChange={e => setContent(e.target.value)}
-                placeholder={`写点什么给 ${filterCharName}...`}
+                placeholder="写点什么..."
                 rows={2}
                 style={{
                   flex: 1, resize: 'none',
