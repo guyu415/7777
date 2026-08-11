@@ -1,5 +1,5 @@
 export const STUDY_SUBJECTS = ['言语', '判推', '数资', '申论'] as const
-export const STUDY_STAGES = ['基础', '刷题', '强化班'] as const
+export const STUDY_STAGES = ['基础', '刷题', '强化班', '模考'] as const
 export const STUDY_SLOTS = ['morning', 'afternoon'] as const
 
 export type StudySubject = typeof STUDY_SUBJECTS[number]

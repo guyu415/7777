@@ -11,6 +11,11 @@ describe('study schedule', () => {
     expect(setStudyCourse(set, '2026-08-11', 'morning', null, 3).entries).toEqual({})
   })
 
+  it('accepts mock exams as a course stage', () => {
+    const result = setStudyCourse(defaultStudySchedule(1), '2026-08-12', 'afternoon', { subject: '数资', stage: '模考' }, 2)
+    expect(result.entries['2026-08-12']?.afternoon).toEqual({ subject: '数资', stage: '模考' })
+  })
+
   it('drops malformed persisted records', () => {
     expect(normalizeStudySchedule({ entries: {
       '2026-02-30': { morning: { subject: '言语', stage: '基础' } },
