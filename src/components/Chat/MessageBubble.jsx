@@ -106,13 +106,24 @@ function MessageBubble({ message, onLongPress, onRegenerate, onRegenerateRound, 
   const replyQuote = message.type === 'text' ? parseReplyQuote(message.content) : null
   const pressTimer = useRef(null)
   const pressAnimTimer = useRef(null)
+  // CC creates an empty assistant bubble as soon as it starts thinking, then
+  // fills that same bubble after the tool result arrives. Its timestamp can
+  // therefore be several seconds old even though the dice itself is brand
+  // new. Track the 0 -> dice transition as another authoritative "new roll"
+  // signal; a history bubble mounts with dice already present and stays still.
+  const hadDiceRef = useRef(diceValue > 0)
 
   useEffect(() => {
-    if (!diceValue) return
+    if (!diceValue) {
+      hadDiceRef.current = false
+      return
+    }
+    const arrivedInExistingBubble = !hadDiceRef.current
+    hadDiceRef.current = true
     const age = Date.now() - Number(message.timestamp || 0)
     // Only a newly-arrived throw gets suspense. Old history stays settled
     // when opening/reloading the conversation instead of replaying en masse.
-    if (age < -10_000 || age > 5_000) {
+    if (!arrivedInExistingBubble && (age < -10_000 || age > 5_000)) {
       setDisplayDiceValue(diceValue)
       setDiceRolling(false)
       setDiceJustSettled(false)
