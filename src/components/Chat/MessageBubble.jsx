@@ -1,4 +1,4 @@
-import { useState, useRef, memo } from 'react'
+import { useState, useRef, useEffect, memo } from 'react'
 import { CheckCheck, FileText } from 'lucide-react'
 import VoicePlayer from '../Voice/VoicePlayer'
 import ImageViewer from '../ImageViewer'
@@ -100,9 +100,42 @@ function MessageBubble({ message, onLongPress, onRegenerate, onRegenerateRound, 
   const [showReasoning, setShowReasoning] = useState(false)
   const isUser = message.role === 'user'
   const diceValue = message.type === 'text' ? Number(message.content?.match(DICE_ONE)?.[1] || 0) : 0
+  const [displayDiceValue, setDisplayDiceValue] = useState(() => diceValue || 1)
+  const [diceRolling, setDiceRolling] = useState(false)
+  const [diceJustSettled, setDiceJustSettled] = useState(false)
   const replyQuote = message.type === 'text' ? parseReplyQuote(message.content) : null
   const pressTimer = useRef(null)
   const pressAnimTimer = useRef(null)
+
+  useEffect(() => {
+    if (!diceValue) return
+    const age = Date.now() - Number(message.timestamp || 0)
+    // Only a newly-arrived throw gets suspense. Old history stays settled
+    // when opening/reloading the conversation instead of replaying en masse.
+    if (age < -10_000 || age > 5_000) {
+      setDisplayDiceValue(diceValue)
+      setDiceRolling(false)
+      setDiceJustSettled(false)
+      return
+    }
+    setDiceRolling(true)
+    setDiceJustSettled(false)
+    setDisplayDiceValue(diceValue === 1 ? 6 : diceValue - 1)
+    const ticker = setInterval(() => {
+      setDisplayDiceValue((value) => (value % 6) + 1)
+    }, 95)
+    const settle = setTimeout(() => {
+      clearInterval(ticker)
+      setDisplayDiceValue(diceValue)
+      setDiceRolling(false)
+      setDiceJustSettled(true)
+      navigator.vibrate?.(22)
+    }, 1_150)
+    return () => {
+      clearInterval(ticker)
+      clearTimeout(settle)
+    }
+  }, [diceValue, message.id, message.timestamp])
 
   const handlePressStart = (e) => {
     // Jelly animation
@@ -272,13 +305,16 @@ function MessageBubble({ message, onLongPress, onRegenerate, onRegenerateRound, 
               alignItems: 'center',
               justifyContent: 'center',
             }}
-            aria-label={`掷出了 ${diceValue} 点`}
-            title={`${diceValue} 点`}
+            aria-label={diceRolling ? '骰子滚动中' : `掷出了 ${diceValue} 点`}
+            title={diceRolling ? '滚动中…' : `${diceValue} 点`}
             {...pressProps}
           >
             <span className={isUser ? '' : 'bubble-ai'} style={{ position: 'absolute', inset: 0, borderRadius: 'inherit', pointerEvents: 'none' }} />
-            <span style={{ position: 'relative', zIndex: 1, fontSize: 55, lineHeight: 1, color: isUser ? (theme?.userBubbleText || '#fff') : (theme?.aiBubbleText || '#3d6b52'), filter: 'drop-shadow(0 2px 2px rgba(0,0,0,.08))' }}>
-              {DICE_FACES[diceValue]}
+            <span
+              className={diceRolling ? 'chat-dice-rolling' : diceJustSettled ? 'chat-dice-settled' : ''}
+              style={{ position: 'relative', zIndex: 1, fontSize: 55, lineHeight: 1, color: isUser ? (theme?.userBubbleText || '#fff') : (theme?.aiBubbleText || '#3d6b52'), filter: 'drop-shadow(0 2px 2px rgba(0,0,0,.08))' }}
+            >
+              {DICE_FACES[displayDiceValue]}
             </span>
           </div>
         )}
