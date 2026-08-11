@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { ArrowLeft, BarChart3, BookOpenCheck, Check, CircleDollarSign, Loader2, Newspaper, RefreshCw, Send, Settings2, Sparkles, Trash2 } from 'lucide-react'
+import { ArrowLeft, BarChart3, BookOpenCheck, CalendarDays, Check, CircleDollarSign, Loader2, Newspaper, Plus, RefreshCw, Send, Settings2, Sparkles, Trash2, X } from 'lucide-react'
 import {
   addCareLedgerEntry, addCareStudyGoal, deleteCareLedgerEntry, deleteCareStudyGoal,
   getCareHubState, onCareHubUpdate, runCareRole, sendCareHubInput,
@@ -34,6 +34,27 @@ function formatTime(ts) {
   return new Intl.DateTimeFormat('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false }).format(new Date(ts))
 }
 
+function chinaDate() {
+  return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date())
+}
+
+function formatDateOnly(date) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date || '')) return date || ''
+  return `${Number(date.slice(5, 7))}月${Number(date.slice(8, 10))}日`
+}
+
+function ledgerPeriod(date, rawStartDay) {
+  const [year, month, dayOfMonth] = date.split('-').map(Number)
+  const startDay = Math.min(31, Math.max(1, Math.trunc(Number(rawStartDay)) || 1))
+  const makeDate = (y, monthIndex) => new Date(Date.UTC(y, monthIndex, Math.min(startDay, new Date(Date.UTC(y, monthIndex + 1, 0)).getUTCDate())))
+  const current = new Date(Date.UTC(year, month - 1, dayOfMonth))
+  const candidate = makeDate(year, month - 1)
+  const start = current >= candidate ? candidate : makeDate(year, month - 2)
+  const next = makeDate(start.getUTCFullYear(), start.getUTCMonth() + 1)
+  const end = new Date(next.getTime() - 86400000)
+  return { start: start.toISOString().slice(0, 10), end: end.toISOString().slice(0, 10) }
+}
+
 function Panel({ children }) {
   return <div className="rounded-3xl p-4" style={{ background: 'rgba(255,255,255,.72)', border: '1px solid rgba(150,180,220,.2)', boxShadow: '0 8px 30px rgba(70,100,150,.06)' }}>{children}</div>
 }
@@ -46,10 +67,11 @@ export default function CareHubWindow({ theme, onClose }) {
   const [error, setError] = useState('')
   const [input, setInput] = useState('')
   const [sending, setSending] = useState(false)
-  const [expense, setExpense] = useState({ amount: '', item: '午餐', custom: '' })
-  const [goal, setGoal] = useState({ title: '', targetDate: '' })
+  const [expense, setExpense] = useState({ amount: '', item: '午餐', custom: '', date: chinaDate() })
+  const [goal, setGoal] = useState({ title: '', schedule: 'daily', dateDraft: '', dates: [] })
   const [draftRoles, setDraftRoles] = useState(null)
   const [budget, setBudget] = useState('')
+  const [monthStartDay, setMonthStartDay] = useState('1')
   const [modelOptions, setModelOptions] = useState({
     codex: [],
     'claude-code': [{ id: 'claude-sonnet-4-6', label: 'claude-sonnet-4-6' }],
@@ -86,12 +108,13 @@ export default function CareHubWindow({ theme, onClose }) {
     if (!state) return
     setDraftRoles(structuredClone(state.config.roles))
     setBudget(String(state.ledger.monthlyBudget || ''))
+    setMonthStartDay(String(state.ledger.monthStartDay || 1))
   }, [state?.updatedAt])
   useEffect(() => { if (tab === 'chat') feedEnd.current?.scrollIntoView({ behavior: 'smooth' }) }, [tab, state?.messages?.length])
 
-  const today = new Date()
-  const month = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}`
-  const monthEntries = useMemo(() => (state?.ledger.entries || []).filter((e) => e.date.startsWith(`${month}-`)), [state, month])
+  const today = chinaDate()
+  const period = ledgerPeriod(today, state?.ledger.monthStartDay || 1)
+  const monthEntries = useMemo(() => (state?.ledger.entries || []).filter((e) => e.date >= period.start && e.date <= period.end), [state, period.start, period.end])
   const ledgerSummary = useMemo(() => {
     const byCategory = {}
     let total = 0
@@ -99,7 +122,9 @@ export default function CareHubWindow({ theme, onClose }) {
     return { total, byCategory }
   }, [monthEntries])
   const goals = state?.study.goals || []
-  const doneCount = goals.filter((item) => item.done).length
+  const todayGoals = goals.filter((item) => item.schedule !== 'dates' || (item.dates || []).includes(today))
+  const goalDoneToday = (item) => item.schedule === 'daily' || item.schedule === 'dates' ? (item.completedDates || []).includes(today) : !!item.done
+  const doneCount = todayGoals.filter(goalDoneToday).length
 
   async function action(fn) {
     setError('')
@@ -207,7 +232,7 @@ export default function CareHubWindow({ theme, onClose }) {
 
         {tab === 'ledger' && <div className="space-y-3">
           <Panel>
-            <div className="flex items-center justify-between"><div><div className="text-xs" style={{ color: '#849aad' }}>{month} 本月支出</div><div className="text-3xl font-semibold mt-1" style={{ color: '#385f76' }}>¥{ledgerSummary.total.toFixed(2)}</div></div><CircleDollarSign size={34} style={{ color: '#56a58d', opacity: .65 }} /></div>
+            <div className="flex items-center justify-between"><div><div className="text-xs" style={{ color: '#849aad' }}>{formatDateOnly(period.start)}—{formatDateOnly(period.end)} 本期支出</div><div className="text-3xl font-semibold mt-1" style={{ color: '#385f76' }}>¥{ledgerSummary.total.toFixed(2)}</div></div><CircleDollarSign size={34} style={{ color: '#56a58d', opacity: .65 }} /></div>
             <div className="mt-4 h-2 rounded-full overflow-hidden" style={{ background: '#e6f0ef' }}><div className="h-full rounded-full" style={{ background: '#56a58d', width: `${state.ledger.monthlyBudget ? Math.min(100, ledgerSummary.total / state.ledger.monthlyBudget * 100) : 0}%` }} /></div>
             <div className="flex justify-between text-[11px] mt-1.5" style={{ color: '#849aad' }}><span>{monthEntries.length} 笔</span><span>{state.ledger.monthlyBudget ? `预算 ¥${state.ledger.monthlyBudget} · 剩余 ¥${(state.ledger.monthlyBudget - ledgerSummary.total).toFixed(2)}` : '尚未设置月预算'}</span></div>
             <div className="mt-4 space-y-2">{Object.entries(ledgerSummary.byCategory).sort((a, b) => b[1] - a[1]).map(([name, amount]) => <div key={name}><div className="flex justify-between text-xs mb-1" style={{ color: '#60788d' }}><span>{name}</span><span>¥{amount.toFixed(2)}</span></div><div className="h-1.5 rounded-full" style={{ background: '#edf2f4' }}><div className="h-full rounded-full" style={{ width: `${ledgerSummary.total ? amount / ledgerSummary.total * 100 : 0}%`, background: '#79b7a5' }} /></div></div>)}</div>
@@ -219,20 +244,49 @@ export default function CareHubWindow({ theme, onClose }) {
               const selected = LEDGER_ITEMS.find((item) => item.id === expense.item) || LEDGER_ITEMS[0]
               const note = expense.item === '自定义' ? expense.custom.trim() : expense.item
               if (!note) return setError('请填写消费事项')
-              if (await action(() => addCareLedgerEntry({ amount: expense.amount, category: selected.category, note }))) setExpense({ ...expense, amount: '', custom: '' })
+              if (await action(() => addCareLedgerEntry({ amount: expense.amount, category: selected.category, note, date: expense.date }))) setExpense({ ...expense, amount: '', custom: '' })
             }} className="space-y-3">
               <div className="grid grid-cols-4 gap-1.5">{LEDGER_ITEMS.map((item) => <button key={item.id} type="button" onClick={() => setExpense({ ...expense, item: item.id })} className="rounded-xl py-2 text-[11px]" style={{ background: expense.item === item.id ? '#dff0eb' : '#f5f8fa', color: expense.item === item.id ? '#3d7d6b' : '#667e91', border: `1px solid ${expense.item === item.id ? '#8bc5b4' : 'transparent'}` }}><span className="block text-base leading-4 mb-1">{item.emoji}</span>{item.id}</button>)}</div>
               {expense.item === '自定义' && <input required value={expense.custom} onChange={(e) => setExpense({ ...expense, custom: e.target.value })} placeholder="是什么花费" className="w-full rounded-xl px-3 py-2.5 text-sm outline-none" style={{ background: '#f5f8fa' }} />}
-              <div className="flex gap-2"><input required inputMode="decimal" value={expense.amount} onChange={(e) => setExpense({ ...expense, amount: e.target.value })} placeholder="只需输入金额" className="min-w-0 flex-1 rounded-xl px-3 py-2.5 text-sm outline-none" style={{ background: '#f5f8fa' }} /><button className="rounded-xl px-5 text-white text-xs font-medium" style={{ background: '#56a58d' }}>记账</button></div>
+              <label className="block text-[11px]" style={{ color: '#7890a2' }}>消费日期（可补记）<input required type="date" max={today} value={expense.date} onChange={(e) => setExpense({ ...expense, date: e.target.value })} className="block mt-1 w-full rounded-xl px-3 py-2.5 text-sm outline-none" style={{ background: '#f5f8fa', color: '#526b7d' }} /></label>
+              <div className="flex gap-2"><input required inputMode="decimal" value={expense.amount} onChange={(e) => setExpense({ ...expense, amount: e.target.value })} placeholder="输入金额" className="min-w-0 flex-1 rounded-xl px-3 py-2.5 text-sm outline-none" style={{ background: '#f5f8fa' }} /><button className="rounded-xl px-5 text-white text-xs font-medium" style={{ background: '#56a58d' }}>{expense.date === today ? '记账' : '补记'}</button></div>
             </form>
           </Panel>
           <Panel><div className="text-sm font-semibold mb-2" style={{ color: '#46657c' }}>最近记录</div>{[...monthEntries].reverse().map((entry) => <div key={entry.id} className="flex items-center gap-2 py-2 border-b last:border-0" style={{ borderColor: '#edf2f5' }}><div className="flex-1 min-w-0"><div className="text-xs font-medium" style={{ color: '#526b7d' }}>{entry.category} · {entry.note || '无备注'}</div><div className="text-[10px]" style={{ color: '#9aabba' }}>{entry.date}</div></div><span className="text-sm" style={{ color: '#446b64' }}>¥{entry.amount.toFixed(2)}</span><button onClick={() => action(() => deleteCareLedgerEntry(entry.id))} style={{ color: '#b6c1c9' }}><Trash2 size={13} /></button></div>)}</Panel>
         </div>}
 
         {tab === 'study' && <div className="space-y-3">
-          <Panel><div className="flex justify-between items-end"><div><div className="text-xs" style={{ color: '#849aad' }}>目标完成度</div><div className="text-3xl font-semibold mt-1" style={{ color: '#8f655c' }}>{doneCount}<span className="text-base"> / {goals.length}</span></div></div><BookOpenCheck size={34} style={{ color: '#e18a72', opacity: .7 }} /></div><div className="mt-4 h-2 rounded-full" style={{ background: '#f4e9e5' }}><div className="h-full rounded-full" style={{ background: '#e18a72', width: `${goals.length ? doneCount / goals.length * 100 : 0}%` }} /></div></Panel>
-          <Panel><form onSubmit={async (e) => { e.preventDefault(); if (await action(() => addCareStudyGoal(goal))) setGoal({ title: '', targetDate: '' }) }} className="space-y-2"><input required value={goal.title} onChange={(e) => setGoal({ ...goal, title: e.target.value })} placeholder="预设一个学习目标" className="w-full rounded-xl px-3 py-2.5 text-sm outline-none" style={{ background: '#f5f8fa' }} /><div className="flex gap-2"><input type="date" value={goal.targetDate} onChange={(e) => setGoal({ ...goal, targetDate: e.target.value })} className="flex-1 rounded-xl px-3 py-2 text-xs outline-none" style={{ background: '#f5f8fa', color: '#667e91' }} /><button className="rounded-xl px-4 text-white text-xs" style={{ background: '#e18a72' }}>添加目标</button></div></form></Panel>
-          <Panel>{goals.length === 0 ? <div className="text-center text-xs py-5" style={{ color: '#91a5b8' }}>还没有学习目标</div> : goals.map((item) => <div key={item.id} className="flex items-center gap-3 py-2.5 border-b last:border-0" style={{ borderColor: '#edf2f5' }}><button onClick={() => action(() => toggleCareStudyGoal(item.id, !item.done))} className="w-6 h-6 rounded-full border flex items-center justify-center shrink-0" style={{ background: item.done ? '#e18a72' : 'transparent', borderColor: item.done ? '#e18a72' : '#c8d4dc', color: 'white' }}>{item.done && <Check size={14} />}</button><div className="flex-1 min-w-0"><div className="text-sm" style={{ color: item.done ? '#9eabb5' : '#526b7d', textDecoration: item.done ? 'line-through' : 'none' }}>{item.title}</div>{item.targetDate && <div className="text-[10px]" style={{ color: '#a1afb9' }}>截止 {item.targetDate}</div>}</div><button onClick={() => action(() => deleteCareStudyGoal(item.id))} style={{ color: '#b6c1c9' }}><Trash2 size={13} /></button></div>)}</Panel>
+          <Panel><div className="flex justify-between items-end"><div><div className="text-xs" style={{ color: '#849aad' }}>今日目标完成度</div><div className="text-3xl font-semibold mt-1" style={{ color: '#8f655c' }}>{doneCount}<span className="text-base"> / {todayGoals.length}</span></div></div><BookOpenCheck size={34} style={{ color: '#e18a72', opacity: .7 }} /></div><div className="mt-4 h-2 rounded-full" style={{ background: '#f4e9e5' }}><div className="h-full rounded-full" style={{ background: '#e18a72', width: `${todayGoals.length ? doneCount / todayGoals.length * 100 : 0}%` }} /></div></Panel>
+          <Panel>
+            <form onSubmit={async (e) => {
+              e.preventDefault()
+              if (goal.schedule === 'dates' && !goal.dates.length) return setError('请至少选择一个学习日期')
+              if (await action(() => addCareStudyGoal({ title: goal.title, schedule: goal.schedule, dates: goal.dates }))) setGoal({ title: '', schedule: 'daily', dateDraft: '', dates: [] })
+            }} className="space-y-3">
+              <input required value={goal.title} onChange={(e) => setGoal({ ...goal, title: e.target.value })} placeholder="预设一个学习目标" className="w-full rounded-xl px-3 py-2.5 text-sm outline-none" style={{ background: '#f5f8fa' }} />
+              <div className="grid grid-cols-2 gap-2">
+                {[['daily', '每天'], ['dates', '指定日期']].map(([value, label]) => <button key={value} type="button" onClick={() => setGoal({ ...goal, schedule: value })} className="rounded-xl py-2 text-xs" style={{ background: goal.schedule === value ? '#f8e6e0' : '#f5f8fa', color: goal.schedule === value ? '#b86855' : '#71889a', border: `1px solid ${goal.schedule === value ? '#e8a897' : 'transparent'}` }}>{value === 'daily' ? '🔁' : '📅'} {label}</button>)}
+              </div>
+              {goal.schedule === 'dates' && <div className="space-y-2">
+                <div className="flex gap-2"><input type="date" value={goal.dateDraft} onChange={(e) => setGoal({ ...goal, dateDraft: e.target.value })} className="min-w-0 flex-1 rounded-xl px-3 py-2 text-xs outline-none" style={{ background: '#f5f8fa', color: '#667e91' }} /><button type="button" disabled={!goal.dateDraft || goal.dates.includes(goal.dateDraft)} onClick={() => setGoal({ ...goal, dates: [...goal.dates, goal.dateDraft].sort(), dateDraft: '' })} className="rounded-xl px-3 disabled:opacity-40" style={{ background: '#f8e6e0', color: '#b86855' }} aria-label="添加日期"><Plus size={16} /></button></div>
+                {goal.dates.length > 0 && <div className="flex flex-wrap gap-1.5">{goal.dates.map((date) => <span key={date} className="inline-flex items-center gap-1 rounded-full px-2 py-1 text-[10px]" style={{ background: '#f8e6e0', color: '#9d665a' }}>{formatDateOnly(date)}<button type="button" onClick={() => setGoal({ ...goal, dates: goal.dates.filter((item) => item !== date) })} aria-label={`移除 ${date}`}><X size={11} /></button></span>)}</div>}
+              </div>}
+              <button className="w-full rounded-xl py-2.5 text-white text-xs" style={{ background: '#e18a72' }}>添加目标</button>
+            </form>
+          </Panel>
+          <Panel>{goals.length === 0 ? <div className="text-center text-xs py-5" style={{ color: '#91a5b8' }}>还没有学习目标</div> : goals.map((item) => {
+            const isRecurring = item.schedule === 'daily' || item.schedule === 'dates'
+            const done = goalDoneToday(item)
+            return <div key={item.id} className="py-3 border-b last:border-0" style={{ borderColor: '#edf2f5' }}>
+              <div className="flex items-center gap-3">
+                {(item.schedule !== 'dates' || (item.dates || []).includes(today)) && <button onClick={() => action(() => toggleCareStudyGoal(item.id, !done, isRecurring ? today : undefined))} className="w-6 h-6 rounded-full border flex items-center justify-center shrink-0" style={{ background: done ? '#e18a72' : 'transparent', borderColor: done ? '#e18a72' : '#c8d4dc', color: 'white' }}>{done && <Check size={14} />}</button>}
+                {item.schedule === 'dates' && !(item.dates || []).includes(today) && <CalendarDays size={22} className="shrink-0" style={{ color: '#d79a89' }} />}
+                <div className="flex-1 min-w-0"><div className="text-sm" style={{ color: done ? '#9eabb5' : '#526b7d', textDecoration: done ? 'line-through' : 'none' }}>{item.title}</div><div className="text-[10px] mt-0.5" style={{ color: '#a1afb9' }}>{item.schedule === 'daily' ? `每天 · ${done ? '今日已完成' : '今日待完成'}` : item.schedule === 'dates' ? `${(item.dates || []).length} 个指定日期` : item.targetDate ? `截止 ${item.targetDate}` : '单次目标'}</div></div>
+                <button onClick={() => action(() => deleteCareStudyGoal(item.id))} style={{ color: '#b6c1c9' }}><Trash2 size={13} /></button>
+              </div>
+              {item.schedule === 'dates' && <div className="flex flex-wrap gap-1.5 mt-2 ml-9">{(item.dates || []).map((date) => { const dateDone = (item.completedDates || []).includes(date); return <button key={date} onClick={() => action(() => toggleCareStudyGoal(item.id, !dateDone, date))} className="inline-flex items-center gap-1 rounded-full px-2 py-1 text-[10px]" style={{ background: dateDone ? '#e18a72' : '#f5f1f0', color: dateDone ? 'white' : '#8c7772' }}>{dateDone && <Check size={10} />}{formatDateOnly(date)}</button> })}</div>}
+            </div>
+          })}</Panel>
         </div>}
 
         {tab === 'settings' && draftRoles && <div className="space-y-3">
@@ -242,8 +296,8 @@ export default function CareHubWindow({ theme, onClose }) {
             if (config.model && !choices.some((item) => item.id === config.model)) choices.push({ id: config.model, label: `${config.model}（当前设置）` })
               return <Panel key={id}><div className="flex items-center gap-2 mb-3"><span>{meta.emoji}</span><div className="flex-1"><div className="text-sm font-semibold" style={{ color: meta.color }}>{meta.name}</div><div className="text-[10px]" style={{ color: '#91a5b8' }}>{meta.desc}</div></div><button onClick={() => setDraftRoles({ ...draftRoles, [id]: { ...config, enabled: !config.enabled } })} className="w-10 h-6 rounded-full p-0.5 transition-colors" style={{ background: config.enabled ? meta.color : '#ccd5dc' }}><div className="w-5 h-5 bg-white rounded-full transition-transform" style={{ transform: config.enabled ? 'translateX(16px)' : 'none' }} /></button></div><div className="grid grid-cols-2 gap-2"><label className="text-[10px]" style={{ color: '#8297a9' }}>推送时间<input type="time" value={config.time} onChange={(e) => setDraftRoles({ ...draftRoles, [id]: { ...config, time: e.target.value } })} className="block mt-1 w-full rounded-xl px-2 py-2 text-xs outline-none" style={{ background: '#f4f7f9', color: '#526b7d' }} /></label><label className="text-[10px]" style={{ color: '#8297a9' }}>运行方式<select value={config.runtime} onChange={(e) => { const runtime = e.target.value; setDraftRoles({ ...draftRoles, [id]: { ...config, runtime, model: '' } }) }} className="block mt-1 w-full rounded-xl px-2 py-2 text-xs outline-none" style={{ background: '#f4f7f9', color: '#526b7d' }}><option value="codex">ChatGPT 登录（Codex 通道）</option><option value="claude-code">Claude Code</option><option value="gemini">Gemini API</option></select></label></div><label className="block text-[10px] mt-2" style={{ color: '#8297a9' }}>模型<select value={config.model} onChange={(e) => setDraftRoles({ ...draftRoles, [id]: { ...config, model: e.target.value } })} className="block mt-1 w-full rounded-xl px-2 py-2 text-xs outline-none" style={{ background: '#f4f7f9', color: '#526b7d' }}>{choices.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}</select></label>{config.runtime === 'codex' && <div className="text-[10px] mt-2" style={{ color: '#7890a5' }}>使用 VPS 上的 ChatGPT 登录与套餐额度，不走 OpenAI API Key。</div>}{config.lastError && <div className="text-[10px] mt-2" style={{ color: '#c46b6b' }}>上次错误：{config.lastError}</div>}</Panel>
           })}
-          <Panel><label className="text-xs" style={{ color: '#6f8799' }}>每月预算<input inputMode="decimal" value={budget} onChange={(e) => setBudget(e.target.value)} placeholder="0 表示不设置" className="block mt-2 w-full rounded-xl px-3 py-2.5 text-sm outline-none" style={{ background: '#f4f7f9' }} /></label></Panel>
-          <button onClick={() => action(() => updateCareHubConfig({ roles: draftRoles, monthlyBudget: Number(budget || 0) }))} className="w-full rounded-2xl py-3 text-sm font-semibold text-white" style={{ background: `linear-gradient(135deg, ${primary}, #8d7bc4)` }}>保存全部设置</button>
+          <Panel><div className="grid grid-cols-2 gap-3"><label className="text-xs" style={{ color: '#6f8799' }}>每期预算<input inputMode="decimal" value={budget} onChange={(e) => setBudget(e.target.value)} placeholder="0 表示不设置" className="block mt-2 w-full rounded-xl px-3 py-2.5 text-sm outline-none" style={{ background: '#f4f7f9' }} /></label><label className="text-xs" style={{ color: '#6f8799' }}>每月起始日<input type="number" min="1" max="31" step="1" value={monthStartDay} onChange={(e) => setMonthStartDay(e.target.value)} className="block mt-2 w-full rounded-xl px-3 py-2.5 text-sm outline-none" style={{ background: '#f4f7f9' }} /></label></div><div className="text-[10px] mt-2" style={{ color: '#91a5b8' }}>例如填 15，则每期从当月 15 日统计到下月 14 日；遇到短月自动按月末处理。</div></Panel>
+          <button onClick={() => action(() => updateCareHubConfig({ roles: draftRoles, monthlyBudget: Number(budget || 0), monthStartDay: Number(monthStartDay) }))} className="w-full rounded-2xl py-3 text-sm font-semibold text-white" style={{ background: `linear-gradient(135deg, ${primary}, #8d7bc4)` }}>保存全部设置</button>
         </div>}
       </main>
 

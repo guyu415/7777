@@ -33,6 +33,9 @@ export type StudyGoal = {
   id: string
   title: string
   targetDate?: string
+  schedule?: 'once' | 'daily' | 'dates'
+  dates?: string[]
+  completedDates?: string[]
   done: boolean
   createdAt: number
   doneAt?: number
@@ -44,7 +47,7 @@ export type CareHubState = {
     roles: Record<CareRoleId, CareRoleConfig>
   }
   messages: CareMessage[]
-  ledger: { monthlyBudget: number; entries: LedgerEntry[] }
+  ledger: { monthlyBudget: number; monthStartDay: number; entries: LedgerEntry[] }
   study: { goals: StudyGoal[] }
   updatedAt: number
   runningRole?: CareRoleId | null
@@ -62,7 +65,7 @@ export function defaultCareHubState(now = Date.now()): CareHubState {
       },
     },
     messages: [],
-    ledger: { monthlyBudget: 0, entries: [] },
+    ledger: { monthlyBudget: 0, monthStartDay: 1, entries: [] },
     study: { goals: [] },
     updatedAt: now,
   }
@@ -128,11 +131,22 @@ export function normalizeCareHubState(raw: unknown, now = Date.now()): CareHubSt
   }
   const messages = Array.isArray(input.messages) ? input.messages.filter((m: any) => CARE_ROLE_IDS.includes(m?.role) && typeof m?.text === 'string' && Number.isFinite(m?.ts)).slice(-300) : []
   const entries = Array.isArray(input.ledger?.entries) ? input.ledger.entries.filter((e: any) => Number.isFinite(e?.amount) && e.amount > 0 && typeof e?.date === 'string').slice(-5000) : []
-  const goals = Array.isArray(input.study?.goals) ? input.study.goals.filter((g: any) => typeof g?.title === 'string' && g.title.trim()).slice(-500) : []
+  const goals = Array.isArray(input.study?.goals) ? input.study.goals
+    .filter((g: any) => typeof g?.title === 'string' && g.title.trim())
+    .map((g: any) => {
+      const schedule = g.schedule === 'daily' || g.schedule === 'dates' ? g.schedule : 'once'
+      const dates = Array.isArray(g.dates) ? [...new Set(g.dates.filter((date: unknown) => /^\d{4}-\d{2}-\d{2}$/.test(String(date))))].sort().slice(0, 366) : []
+      const completedDates = Array.isArray(g.completedDates) ? [...new Set(g.completedDates.filter((date: unknown) => /^\d{4}-\d{2}-\d{2}$/.test(String(date))))].sort().slice(-730) : []
+      return { ...g, schedule, dates, completedDates }
+    }).slice(-500) : []
   return {
     config: { timezone: 'Asia/Shanghai', roles },
     messages,
-    ledger: { monthlyBudget: Math.max(0, Number(input.ledger?.monthlyBudget) || 0), entries },
+    ledger: {
+      monthlyBudget: Math.max(0, Number(input.ledger?.monthlyBudget) || 0),
+      monthStartDay: Math.min(31, Math.max(1, Math.trunc(Number(input.ledger?.monthStartDay) || 1))),
+      entries,
+    },
     study: { goals },
     updatedAt: Number(input.updatedAt) || now,
   }
@@ -147,6 +161,37 @@ export function ledgerMonthSummary(entries: LedgerEntry[], month: string) {
     byCategory[entry.category] = (byCategory[entry.category] || 0) + entry.amount
   }
   return { total: Math.round(total * 100) / 100, byCategory, count: selected.length }
+}
+
+function dateOnly(value: Date): string {
+  return value.toISOString().slice(0, 10)
+}
+
+function clampedUtcDate(year: number, month: number, day: number): Date {
+  const lastDay = new Date(Date.UTC(year, month + 1, 0)).getUTCDate()
+  return new Date(Date.UTC(year, month, Math.min(day, lastDay)))
+}
+
+export function ledgerPeriodForDate(date: string, monthStartDay = 1): { start: string; end: string } {
+  const parsed = /^\d{4}-\d{2}-\d{2}$/.test(date) ? new Date(`${date}T00:00:00Z`) : new Date()
+  const day = Math.min(31, Math.max(1, Math.trunc(monthStartDay) || 1))
+  const candidate = clampedUtcDate(parsed.getUTCFullYear(), parsed.getUTCMonth(), day)
+  const start = parsed >= candidate ? candidate : clampedUtcDate(parsed.getUTCFullYear(), parsed.getUTCMonth() - 1, day)
+  const next = clampedUtcDate(start.getUTCFullYear(), start.getUTCMonth() + 1, day)
+  const end = new Date(next.getTime() - 86_400_000)
+  return { start: dateOnly(start), end: dateOnly(end) }
+}
+
+export function ledgerPeriodSummary(entries: LedgerEntry[], date: string, monthStartDay = 1) {
+  const period = ledgerPeriodForDate(date, monthStartDay)
+  const selected = entries.filter((entry) => entry.date >= period.start && entry.date <= period.end)
+  const byCategory: Record<string, number> = {}
+  let total = 0
+  for (const entry of selected) {
+    total += entry.amount
+    byCategory[entry.category] = (byCategory[entry.category] || 0) + entry.amount
+  }
+  return { ...period, total: Math.round(total * 100) / 100, byCategory, count: selected.length }
 }
 
 export function careIsSevereOverspend(monthlyBudget: number, total: number): boolean {

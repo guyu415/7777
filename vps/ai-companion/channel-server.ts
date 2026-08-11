@@ -80,7 +80,7 @@ import {
   careOverdueDays,
   careRoleIsDue,
   defaultCareHubState,
-  ledgerMonthSummary,
+  ledgerPeriodSummary,
   normalizeCareHubState,
   sanitizeCareRoleConfig,
   zonedDateTime,
@@ -7089,18 +7089,23 @@ function carePublicState(): CareHubState {
 }
 function careCompactProgress() {
   const { date } = zonedDateTime(new Date(), careHubState.config.timezone)
-  const month = date.slice(0, 7)
   const todayTotal = careHubState.ledger.entries
     .filter((entry) => entry.date === date)
     .reduce((sum, entry) => sum + entry.amount, 0)
-  const monthTotal = ledgerMonthSummary(careHubState.ledger.entries, month).total
-  const total = careHubState.study.goals.length
-  const completed = careHubState.study.goals.filter((goal) => goal.done).length
+  const periodTotal = ledgerPeriodSummary(careHubState.ledger.entries, date, careHubState.ledger.monthStartDay).total
+  const todayGoals = careHubState.study.goals.filter((goal) => goal.schedule !== 'dates' || goal.dates?.includes(date))
+  const total = todayGoals.length
+  const completed = todayGoals.filter((goal) => careGoalDoneOnDate(goal, date)).length
   return {
     date,
-    spending: { todayTotal, monthTotal },
+    spending: { todayTotal, monthTotal: periodTotal },
     study: { completed, total, progressPercent: total ? Math.round(completed / total * 100) : 0 },
   }
+}
+
+function careGoalDoneOnDate(goal: CareHubState['study']['goals'][number], date: string): boolean {
+  if (goal.schedule === 'daily' || goal.schedule === 'dates') return !!goal.completedDates?.includes(date)
+  return !!goal.done
 }
 function broadcastCareHub() {
   sendRaw({ type: 'care_update', state: carePublicState() })
@@ -7178,18 +7183,23 @@ function careRolePrompt(role: CareRoleId, today: string, evidence = '', solarMon
     instruction: `根据下面本轮联网取得的来源，播报 ${today} 的日期与农历、宜与忌、今日生活注意事项、针对用户的轻量整体运势。涉及月柱时必须明确写作“${solarMonth?.pillar || '未知'}月（节气月）”，不能照抄来源里的其他干支月。正文直接保留完整来源 URL，并明确“民俗内容仅供参考”。内容短而有用，不要按生肖逐个展开。\n\n${evidence}`,
   }
   if (role === 'ledger') {
-    const month = today.slice(0, 7)
-    const summary = ledgerMonthSummary(careHubState.ledger.entries, month)
+    const summary = ledgerPeriodSummary(careHubState.ledger.entries, today, careHubState.ledger.monthStartDay)
     return {
       system: `${common}\n你负责每日账本回顾，不评价、不羞辱消费，只帮助看清数据和下一步。`,
-      instruction: `这是 ${month} 的账本：预算 ${careHubState.ledger.monthlyBudget || '未设置'} 元，已记 ${summary.count} 笔，共 ${summary.total} 元；分类合计 ${JSON.stringify(summary.byCategory)}。请做一段不超过 180 字的晚间回顾：预算进度、最大支出类别、一个具体而温和的提醒。没有记录时就提醒用户今天可以补记。`,
+      instruction: `这是 ${summary.start} 至 ${summary.end} 的本期账本（每月 ${careHubState.ledger.monthStartDay} 日起算）：预算 ${careHubState.ledger.monthlyBudget || '未设置'} 元，已记 ${summary.count} 笔，共 ${summary.total} 元；分类合计 ${JSON.stringify(summary.byCategory)}。请做一段不超过 180 字的晚间回顾：预算进度、最大支出类别、一个具体而温和的提醒。没有记录时就提醒用户今天可以补记。`,
     }
   }
-  const goals = careHubState.study.goals.map((g) => ({ title: g.title, done: g.done, targetDate: g.targetDate || null }))
+  const goals = careHubState.study.goals.map((g) => ({
+    title: g.title,
+    schedule: g.schedule || 'once',
+    dates: g.dates || [],
+    doneToday: careGoalDoneOnDate(g, today),
+    targetDate: g.targetDate || null,
+  }))
   const recentFocus = careHubState.messages.filter((m) => m.role === 'study' && m.text.startsWith('🍅') && zonedDateTime(new Date(m.ts), careHubState.config.timezone).date === today).slice(-8).map((m) => m.text)
   return {
     system: `${common}\n你负责监督学习清单。只能依据给定清单判断完成情况，绝不能擅自把目标标为完成。`,
-    instruction: `当前学习目标：${JSON.stringify(goals)}。最近完成的番茄钟：${JSON.stringify(recentFocus)}。请做一段不超过 220 字的检查：先回应刚完成的专注（若有），再说明目标完成数量、尚未完成项、临近截止项，以及一个可立刻开始的最小行动。若清单为空，也要认可已完成的专注，再提醒用户预设目标。`,
+    instruction: `当前学习目标：${JSON.stringify(goals)}。schedule=daily 表示每天，schedule=dates 表示只在 dates 中指定的日期执行；只检查今天适用的目标。最近完成的番茄钟：${JSON.stringify(recentFocus)}。请做一段不超过 220 字的检查：先回应刚完成的专注（若有），再说明今日目标完成数量、尚未完成项、临近截止项，以及一个可立刻开始的最小行动。若今天没有目标，也要认可已完成的专注，再提醒用户预设目标。`,
   }
 }
 
@@ -7339,14 +7349,13 @@ setInterval(dispatchCareAlert, 15_000)
 
 function careEvaluateAlerts() {
   const { date } = zonedDateTime(new Date(), careHubState.config.timezone)
-  const month = date.slice(0, 7)
   const budget = careHubState.ledger.monthlyBudget
-  const summary = ledgerMonthSummary(careHubState.ledger.entries, month)
+  const summary = ledgerPeriodSummary(careHubState.ledger.entries, date, careHubState.ledger.monthStartDay)
   if (careIsSevereOverspend(budget, summary.total)) {
-    queueCareAlert(`overspend:${month}`, `本月预算是 ${budget} 元，当前已支出 ${summary.total} 元，超过预算至少 10%。`)
+    queueCareAlert(`overspend:${summary.start}`, `本期预算是 ${budget} 元，当前已支出 ${summary.total} 元，超过预算至少 10%。`)
   }
   for (const goal of careHubState.study.goals) {
-    if (goal.done || !goal.targetDate) continue
+    if (goal.schedule !== 'once' || goal.done || !goal.targetDate) continue
     const overdueDays = careOverdueDays(goal.targetDate, date)
     if (overdueDays >= 3) queueCareAlert(`overdue:${goal.id}`, `学习目标“${goal.title}”已经逾期 ${overdueDays} 天且仍未完成。`)
   }
@@ -8750,6 +8759,11 @@ Bun.serve<{ authed: true }>({
         if (!Number.isFinite(budget) || budget < 0) return jsonResponse({ ok: false, error: '预算无效' }, { status: 400, headers: cors })
         careHubState.ledger.monthlyBudget = Math.round(budget * 100) / 100
       }
+      if (body?.monthStartDay !== undefined) {
+        const day = Number(body.monthStartDay)
+        if (!Number.isInteger(day) || day < 1 || day > 31) return jsonResponse({ ok: false, error: '每月起始日需为 1—31' }, { status: 400, headers: cors })
+        careHubState.ledger.monthStartDay = day
+      }
       careCommit()
       careEvaluateAlerts()
       return jsonResponse({ ok: true, state: carePublicState() }, { headers: cors })
@@ -8796,9 +8810,15 @@ Bun.serve<{ authed: true }>({
       try { body = await req.json() } catch {}
       const title = typeof body?.title === 'string' ? body.title.trim().slice(0, 120) : ''
       if (!title) return jsonResponse({ ok: false, error: '目标不能为空' }, { status: 400, headers: cors })
-      const targetDate = /^\d{4}-\d{2}-\d{2}$/.test(body?.targetDate) ? body.targetDate : undefined
-      careHubState.study.goals.push({ id: nextId(), title, targetDate, done: false, createdAt: Date.now() })
-      careAppend('study', `新目标：${title}${targetDate ? ` · 截止 ${targetDate}` : ''}`, 'record')
+      const schedule = body?.schedule === 'daily' ? 'daily' : body?.schedule === 'dates' ? 'dates' : 'once'
+      const dates = schedule === 'dates' && Array.isArray(body?.dates)
+        ? [...new Set(body.dates.filter((date: unknown) => /^\d{4}-\d{2}-\d{2}$/.test(String(date))).map(String))].sort().slice(0, 366)
+        : []
+      if (schedule === 'dates' && !dates.length) return jsonResponse({ ok: false, error: '请至少选择一个学习日期' }, { status: 400, headers: cors })
+      const targetDate = schedule === 'once' && /^\d{4}-\d{2}-\d{2}$/.test(body?.targetDate) ? body.targetDate : undefined
+      careHubState.study.goals.push({ id: nextId(), title, schedule, dates, completedDates: [], targetDate, done: false, createdAt: Date.now() })
+      const scheduleLabel = schedule === 'daily' ? ' · 每天' : schedule === 'dates' ? ` · ${dates.length} 个指定日期` : targetDate ? ` · 截止 ${targetDate}` : ''
+      careAppend('study', `新目标：${title}${scheduleLabel}`, 'record')
       careCommit()
       careEvaluateAlerts()
       return jsonResponse({ ok: true, state: carePublicState() }, { headers: cors })
@@ -8811,9 +8831,22 @@ Bun.serve<{ authed: true }>({
       try { body = await req.json() } catch {}
       const goal = careHubState.study.goals.find((item) => item.id === body?.id)
       if (!goal) return jsonResponse({ ok: false, error: '目标不存在' }, { status: 404, headers: cors })
-      goal.done = typeof body?.done === 'boolean' ? body.done : !goal.done
-      goal.doneAt = goal.done ? Date.now() : undefined
-      careAppend('study', `${goal.done ? '✅ 已完成' : '↩️ 重新打开'}：${goal.title}`, 'record')
+      const { date: today } = zonedDateTime(new Date(), careHubState.config.timezone)
+      if (goal.schedule === 'daily' || goal.schedule === 'dates') {
+        const date = /^\d{4}-\d{2}-\d{2}$/.test(body?.date) ? body.date : today
+        if (goal.schedule === 'dates' && !goal.dates?.includes(date)) return jsonResponse({ ok: false, error: '该日期不在目标计划中' }, { status: 400, headers: cors })
+        const completed = new Set(goal.completedDates || [])
+        const done = typeof body?.done === 'boolean' ? body.done : !completed.has(date)
+        if (done) completed.add(date); else completed.delete(date)
+        goal.completedDates = [...completed].sort().slice(-730)
+        goal.done = goal.schedule === 'dates' && !!goal.dates?.length && goal.dates.every((item) => completed.has(item))
+        goal.doneAt = goal.done ? Date.now() : undefined
+        careAppend('study', `${done ? '✅ 已完成' : '↩️ 重新打开'}：${goal.title} · ${date}`, 'record')
+      } else {
+        goal.done = typeof body?.done === 'boolean' ? body.done : !goal.done
+        goal.doneAt = goal.done ? Date.now() : undefined
+        careAppend('study', `${goal.done ? '✅ 已完成' : '↩️ 重新打开'}：${goal.title}`, 'record')
+      }
       careCommit()
       careEvaluateAlerts()
       return jsonResponse({ ok: true, state: carePublicState() }, { headers: cors })

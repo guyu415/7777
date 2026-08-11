@@ -523,8 +523,8 @@ export async function deleteCareLedgerEntry(id) {
 export async function addCareStudyGoal(goal) {
   return companionJson('/care/study/add', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(goal) })
 }
-export async function toggleCareStudyGoal(id, done) {
-  return companionJson('/care/study/toggle', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id, done }) })
+export async function toggleCareStudyGoal(id, done, date) {
+  return companionJson('/care/study/toggle', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id, done, ...(date ? { date } : {}) }) })
 }
 export async function deleteCareStudyGoal(id) {
   return companionJson('/care/study/delete', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id }) })
