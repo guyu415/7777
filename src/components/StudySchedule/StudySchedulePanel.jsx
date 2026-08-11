@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { CalendarDays, ChevronLeft, ChevronRight, CloudSun, Sun, Trash2, X } from 'lucide-react'
 import { getStudySchedule, setStudyScheduleCourse } from '../../services/companion'
 
@@ -86,7 +87,7 @@ export default function StudySchedulePanel({ onClose }) {
     }
   }
 
-  return (
+  return createPortal((
     <div className="study-schedule" role="dialog" aria-modal="true" aria-label="半月课表">
       <button className="study-schedule__backdrop" onClick={onClose} aria-label="关闭课表" />
       <section className="study-schedule__sheet">
@@ -151,7 +152,7 @@ export default function StudySchedulePanel({ onClose }) {
       </section>
 
       <style>{`
-        .study-schedule{position:fixed;inset:0;z-index:110;display:flex;align-items:flex-end;color:#67706f}
+        .study-schedule{position:fixed;inset:0;z-index:1000;display:flex;align-items:flex-end;color:#67706f}
         .study-schedule__backdrop{position:absolute;inset:0;border:0;background:rgba(50,43,55,.24);backdrop-filter:blur(3px)}
         .study-schedule__sheet{position:relative;width:100%;height:min(91dvh,850px);display:flex;flex-direction:column;overflow:hidden;border-radius:30px 30px 0 0;background:linear-gradient(155deg,#fffdfb,#fff9fb 48%,#f7fbf7);box-shadow:0 -18px 55px rgba(68,52,68,.2)}
         .study-schedule__sheet:before{content:'';position:absolute;inset:0;pointer-events:none;opacity:.38;background:radial-gradient(circle at 8% 9%,#f8dce8 0 3px,transparent 4px),radial-gradient(circle at 92% 16%,#d9edd8 0 4px,transparent 5px),radial-gradient(circle at 96% 76%,#f5e1a8 0 3px,transparent 4px)}
@@ -168,5 +169,5 @@ export default function StudySchedulePanel({ onClose }) {
         .study-schedule__picker-actions{display:flex;gap:9px;margin-top:20px}.study-schedule__picker-actions button{height:43px;border:0;border-radius:14px}.study-schedule__picker-actions .clear{width:82px;display:flex;align-items:center;justify-content:center;gap:5px;background:#f5f1f2;color:#a2999e}.study-schedule__picker-actions .confirm{flex:1;background:linear-gradient(135deg,#ecaac0,#d692ad);color:white;box-shadow:0 7px 17px rgba(197,121,150,.22)}
       `}</style>
     </div>
-  )
+  ), document.body)
 }
