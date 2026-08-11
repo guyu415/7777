@@ -664,6 +664,18 @@ export async function getXinchaoStatus(runtime = 'claude-code') {
   return companionJson(`/xinchao/status?runtime=${encodeURIComponent(runtime)}`)
 }
 
+export async function getStudySchedule(startDate, endDate = startDate) {
+  return companionJson(`/study-schedule?start=${encodeURIComponent(startDate)}&end=${encodeURIComponent(endDate)}`)
+}
+
+export async function setStudyScheduleCourse(date, slot, course) {
+  return companionJson('/study-schedule', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ date, slot, course }),
+  })
+}
+
 // Every call takes an explicit `runtime` ('claude-code' | 'codex') so the
 // two boards/threads/turn-tracking never share state — see channel-server.ts's
 // runtime-branched gomoku endpoints. Defaults to 'claude-code' so any
