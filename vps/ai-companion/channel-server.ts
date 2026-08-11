@@ -87,6 +87,18 @@ import {
   type CareHubState,
   type CareRoleId,
 } from './care-hub.ts'
+import {
+  STUDY_SLOTS,
+  STUDY_STAGES,
+  STUDY_SUBJECTS,
+  defaultStudySchedule,
+  isStudyDate,
+  normalizeStudySchedule,
+  setStudyCourse,
+  studyScheduleRange,
+  type StudyScheduleState,
+  type StudySlot,
+} from './study-schedule.ts'
 
 const ROOT = dirname(new URL(import.meta.url).pathname)
 const PORT = Number(process.env.AI_COMPANION_PORT ?? 8788)
@@ -106,6 +118,7 @@ const LOG_FILE = process.env.AI_COMPANION_LOG_FILE ?? join(ROOT, 'logs', 'server
 // silently losing that already-sent message from history — not just the
 // reply that never got the chance to happen. Persisting closes that gap.
 const HISTORY_FILE = process.env.AI_COMPANION_HISTORY_FILE ?? join(ROOT, 'state', 'chat-history.json')
+const STUDY_SCHEDULE_FILE = process.env.AI_COMPANION_STUDY_SCHEDULE_FILE ?? join(ROOT, 'state', 'study-schedule.json')
 const COOKIE_NAME = 'ai_companion_token'
 const SELF_ORIGIN = 'https://companion.xiaoman.xyz'
 const TURN_WATCHDOG_MS = 10 * 60 * 1000 // generous — real completion comes from Stop/StopFailure hooks
@@ -2001,6 +2014,20 @@ mcp.setRequestHandler(ListToolsRequestSchema, async () => ({
       inputSchema: { type: 'object', properties: {} },
     },
     {
+      name: 'get_study_schedule',
+      description:
+        '读取用户在 Eunoia 课表里保存的课程。传 date 可查任意单日；或传 startDate/endDate 查询日期范围（最多 63 天）。' +
+        '返回上午 09:00–12:00、下午 14:00–18:00的课程；没排课的日期不会出现在 entries 中。只读，不会修改课表。',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          date: { type: 'string', description: '单日，YYYY-MM-DD' },
+          startDate: { type: 'string', description: '范围开始，YYYY-MM-DD' },
+          endDate: { type: 'string', description: '范围结束，YYYY-MM-DD' },
+        },
+      },
+    },
+    {
       name: 'get_life_progress',
       description:
         'Read the user\'s compact current life dashboard. Returns only study completion progress and aggregate spending totals for today and this month; it never returns individual ledger entries or a verbose record trail.',
@@ -2313,6 +2340,17 @@ mcp.setRequestHandler(CallToolRequestSchema, async req => {
       }
       case 'get_life_progress': {
         return { content: [{ type: 'text', text: JSON.stringify(careCompactProgress()) }] }
+      }
+      case 'get_study_schedule': {
+        const args = req.params.arguments as any
+        const single = isStudyDate(args?.date) ? args.date : null
+        const startDate = single || (isStudyDate(args?.startDate) ? args.startDate : null)
+        const endDate = single || (isStudyDate(args?.endDate) ? args.endDate : null)
+        if (!startDate || !endDate) {
+          return { content: [{ type: 'text', text: '请提供 date，或同时提供 startDate 和 endDate（YYYY-MM-DD）' }], isError: true }
+        }
+        const entries = studyScheduleRange(studyScheduleState, startDate, endDate)
+        return { content: [{ type: 'text', text: JSON.stringify({ startDate, endDate, slots: { morning: '09:00-12:00', afternoon: '14:00-18:00' }, entries }) }] }
       }
       default:
         return { content: [{ type: 'text', text: `unknown tool: ${req.params.name}` }], isError: true }
@@ -7000,10 +7038,22 @@ const CARE_HUB_FILE = process.env.AI_COMPANION_CARE_HUB_FILE ?? join(ROOT, 'stat
 const CARE_GEMINI_KEY_FILE = process.env.AI_COMPANION_GEMINI_KEY_FILE ?? join(ROOT, 'config', 'gemini.secret')
 const CARE_PROFILE_FILE = process.env.AI_COMPANION_CARE_PROFILE_FILE ?? join(ROOT, 'config', 'care-profile.json')
 const CARE_ALERTS_FILE = process.env.AI_COMPANION_CARE_ALERTS_FILE ?? join(ROOT, 'state', 'care-alerts.json')
+let studyScheduleState: StudyScheduleState = defaultStudySchedule()
 let careHubState: CareHubState = defaultCareHubState()
 let careRunningRole: CareRoleId | null = null
 let careAlertNotified = new Set<string>()
 const careAlertQueue = new Map<string, string>()
+
+function loadStudySchedule() {
+  try { studyScheduleState = normalizeStudySchedule(JSON.parse(readFileSync(STUDY_SCHEDULE_FILE, 'utf8'))) }
+  catch { studyScheduleState = defaultStudySchedule() }
+}
+function saveStudySchedule() {
+  try {
+    mkdirSync(dirname(STUDY_SCHEDULE_FILE), { recursive: true })
+    writeFileSync(STUDY_SCHEDULE_FILE, JSON.stringify(studyScheduleState, null, 2) + '\n')
+  } catch (err) { log('study_schedule_save_error', { error: String(err) }) }
+}
 
 function loadCareHub() {
   try { careHubState = normalizeCareHubState(JSON.parse(readFileSync(CARE_HUB_FILE, 'utf8'))) }
@@ -7064,6 +7114,7 @@ function careCommit() {
 function careAppend(role: CareRoleId, text: string, kind: 'report' | 'record' | 'reminder' | 'system') {
   careHubState.messages.push({ id: nextId(), role, text: text.trim(), ts: Date.now(), kind })
 }
+loadStudySchedule()
 loadCareHub()
 loadCareAlertKeys()
 
@@ -8633,6 +8684,50 @@ Bun.serve<{ authed: true }>({
       const minutes = Number((body as any)?.minutes)
       const result = focusExtend({ runtime: 'api', sessionId, name: focusState.manager?.name || 'AI' }, minutes)
       return jsonResponse(result, { status: result.ok ? 200 : 409, headers: cors })
+    }
+
+    // ---- 公考课表 ----
+    if (url.pathname === '/study-schedule' && req.method === 'GET') {
+      const gate = authGate()
+      if (gate) return gate
+      const date = url.searchParams.get('date')
+      const startDate = date || url.searchParams.get('start')
+      const endDate = date || url.searchParams.get('end')
+      if (!isStudyDate(startDate) || !isStudyDate(endDate)) {
+        return jsonResponse({ ok: false, error: '请提供有效的 date，或 start/end 日期' }, { status: 400, headers: corsHeadersFor(origin) })
+      }
+      try {
+        return jsonResponse({
+          ok: true,
+          startDate,
+          endDate,
+          slots: { morning: '09:00-12:00', afternoon: '14:00-18:00' },
+          subjects: STUDY_SUBJECTS,
+          stages: STUDY_STAGES,
+          entries: studyScheduleRange(studyScheduleState, startDate, endDate),
+          updatedAt: studyScheduleState.updatedAt,
+        }, { headers: corsHeadersFor(origin) })
+      } catch (err) {
+        return jsonResponse({ ok: false, error: err instanceof Error ? err.message : String(err) }, { status: 400, headers: corsHeadersFor(origin) })
+      }
+    }
+    if (url.pathname === '/study-schedule' && req.method === 'PUT') {
+      const gate = authGate()
+      if (gate) return gate
+      const cors = corsHeadersFor(origin)
+      let body: any = {}
+      try { body = await req.json() } catch {}
+      const date = body?.date
+      const slot = STUDY_SLOTS.includes(body?.slot) ? body.slot as StudySlot : null
+      const clear = body?.course === null || body?.clear === true
+      const subject = body?.course?.subject
+      const stage = body?.course?.stage
+      if (!isStudyDate(date) || !slot || (!clear && (!STUDY_SUBJECTS.includes(subject) || !STUDY_STAGES.includes(stage)))) {
+        return jsonResponse({ ok: false, error: '日期、时段或课程无效' }, { status: 400, headers: cors })
+      }
+      studyScheduleState = setStudyCourse(studyScheduleState, date, slot, clear ? null : { subject, stage })
+      saveStudySchedule()
+      return jsonResponse({ ok: true, date, entry: studyScheduleState.entries[date] || {}, updatedAt: studyScheduleState.updatedAt }, { headers: cors })
     }
 
     // ---- 固定生活关怀群 ----

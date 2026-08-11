@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from 'react'
-import { BookHeart, Heart, HeartHandshake, MessageCircleHeart, Sparkles, X } from 'lucide-react'
+import { BookHeart, CalendarDays, Heart, HeartHandshake, MessageCircleHeart, Sparkles, X } from 'lucide-react'
 import { useStore } from '../store'
 import DiarySection from './DiarySection'
+import StudySchedulePanel from './StudySchedule/StudySchedulePanel'
 import { getXinchaoStatus, onXinchaoUpdate } from '../services/companion'
 
 function dayNumber(timestamp) {
@@ -21,6 +22,7 @@ export default function UniverseHome({ theme, onOpenChat, onOpenCareHub }) {
     diaryTarget, setDiaryTarget,
   } = useStore()
   const [diaryOpen, setDiaryOpen] = useState(false)
+  const [scheduleOpen, setScheduleOpen] = useState(false)
   const [xinchao, setXinchao] = useState(null)
 
   const ccSession = useMemo(() => (
@@ -105,11 +107,18 @@ export default function UniverseHome({ theme, onOpenChat, onOpenCareHub }) {
           <div className="universe-home__days-heart"><Heart size={28} strokeWidth={1.25} /></div>
         </section>
 
-        <section className="universe-home__quote">
-          <div className="universe-home__quote-label"><Sparkles size={12} /> 它的心情 · 心潮</div>
-          <p>{mood ? `「${mood}」` : '心潮暂时没有传来新的波纹。'}</p>
-          {xinchao && <small>{xinchao.consciousnessLabel || '—'} · 疲劳 {Math.round((xinchao.fatigue || 0) * 100)}%</small>}
-        </section>
+        <div className="universe-home__status-row">
+          <section className="universe-home__quote">
+            <div className="universe-home__quote-label"><Sparkles size={12} /> 它的心情 · 心潮</div>
+            <p>{mood ? `「${mood}」` : '心潮暂时没有传来新的波纹。'}</p>
+            {xinchao && <small>{xinchao.consciousnessLabel || '—'} · 疲劳 {Math.round((xinchao.fatigue || 0) * 100)}%</small>}
+          </section>
+          <button className="universe-home__schedule" type="button" onClick={() => setScheduleOpen(true)}>
+            <span><CalendarDays size={20} /></span>
+            <strong>课表</strong>
+            <small>近半个月</small>
+          </button>
+        </div>
 
         <section className="universe-home__shortcuts">
           <button onClick={openCcChat}>
@@ -140,6 +149,7 @@ export default function UniverseHome({ theme, onOpenChat, onOpenCareHub }) {
           </div>
         </div>
       )}
+      {scheduleOpen && <StudySchedulePanel onClose={() => setScheduleOpen(false)} />}
 
       <style>{`
         .universe-home {
@@ -179,10 +189,15 @@ export default function UniverseHome({ theme, onOpenChat, onOpenCareHub }) {
         .universe-home__days strong { display:block; color:#666778; font:500 15px/1.4 'ZCOOL XiaoWei',serif; }
         .universe-home__days span { display:block; margin-top:7px; color:#a2a6b9; font:italic 11px/1.2 serif; letter-spacing:.06em; }
         .universe-home__days-heart { margin-left:auto; color:${primary}82; }
-        .universe-home__quote { margin:15px 5px 0 12px; padding:15px 18px 17px; background:rgba(239,245,250,.63); border-radius:52% 48% 61% 39% / 29% 39% 61% 71%; transform:rotate(.8deg); }
+        .universe-home__status-row { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr); align-items:stretch; gap:10px; margin:15px 5px 0 8px; }
+        .universe-home__quote { min-width:0; margin:0; padding:15px 13px 17px; background:rgba(239,245,250,.63); border-radius:52% 48% 61% 39% / 29% 39% 61% 71%; transform:rotate(.8deg); }
         .universe-home__quote-label { display:flex; align-items:center; gap:7px; color:#97a1bd; font-size:10px; letter-spacing:.12em; }
         .universe-home__quote p { margin:10px 0 0; color:#676878; font:14px/1.65 'ZCOOL XiaoWei',serif; }
         .universe-home__quote small { display:block; margin-top:7px; color:#9ba1b4; font-size:9px; letter-spacing:.06em; }
+        .universe-home__schedule { min-width:0; min-height:98px; display:flex; flex-direction:column; align-items:center; justify-content:center; padding:12px; border:0; color:#8b7180; background:rgba(255,233,240,.66); border-radius:44% 56% 49% 51% / 38% 47% 53% 62%; box-shadow:none; backdrop-filter:blur(3px); transform:rotate(-1.1deg); }
+        .universe-home__schedule span { width:38px; height:38px; display:grid; place-items:center; margin-bottom:5px; color:#b66d86; background:rgba(255,255,255,.58); border-radius:55% 45% 58% 42% / 48% 59% 41% 52%; }
+        .universe-home__schedule strong { font:500 14px/1.25 'ZCOOL XiaoWei',serif; }
+        .universe-home__schedule small { margin-top:3px; color:#b49da6; font-size:8px; letter-spacing:.06em; }
         .universe-home__shortcuts { display:flex; flex-wrap:wrap; align-items:center; gap:8px 10px; margin:17px 3px 0; }
         .universe-home__shortcuts button { min-width:0; min-height:82px; display:flex; align-items:center; gap:11px; padding:13px 15px; text-align:left; border:0; box-shadow:0 7px 19px rgba(93,95,126,.08); color:#616c73; backdrop-filter:blur(4px); -webkit-backdrop-filter:blur(4px); }
         .universe-home__shortcuts button:nth-child(1){width:57%;background:rgba(255,224,237,.66);border-radius:47% 53% 42% 58% / 38% 45% 55% 62%;transform:rotate(-1.4deg)}
