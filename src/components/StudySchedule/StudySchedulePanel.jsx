@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { CalendarDays, ChevronLeft, ChevronRight, CloudSun, Sun, Trash2, X } from 'lucide-react'
+import { CalendarDays, ChevronLeft, ChevronRight, Trash2, X } from 'lucide-react'
 import { getStudySchedule, setStudyScheduleCourse } from '../../services/companion'
 
 const SUBJECTS = ['言语', '判推', '数资', '申论']
@@ -91,44 +91,43 @@ export default function StudySchedulePanel({ onClose }) {
     <div className="study-schedule" role="dialog" aria-modal="true" aria-label="半月课表">
       <button className="study-schedule__backdrop" onClick={onClose} aria-label="关闭课表" />
       <section className="study-schedule__sheet">
-        <header className="study-schedule__head">
-          <div>
-            <span><CalendarDays size={16} /> 半月课表</span>
-            <small>{start.replaceAll('-', '.')} — {end.replaceAll('-', '.')}</small>
-          </div>
-          <button onClick={onClose} aria-label="关闭"><X size={18} /></button>
-        </header>
-
-        <nav className="study-schedule__nav" aria-label="切换日期范围">
-          <button onClick={() => setWindowStart(value => addDays(value, -15))}><ChevronLeft size={15} /> 前半月</button>
-          <button onClick={() => setWindowStart(startWindow)}>回到今天</button>
-          <button onClick={() => setWindowStart(value => addDays(value, 15))}>后半月 <ChevronRight size={15} /></button>
-        </nav>
-
-        {error && <div className="study-schedule__error">{error}</div>}
-        <div className="study-schedule__table">
-          <div className="study-schedule__row study-schedule__row--head">
-            <span>日期</span><span><Sun size={13} /> 上午 9–12</span><span><CloudSun size={13} /> 下午 2–6</span>
-          </div>
-          {loading ? <div className="study-schedule__loading">花叶正在展开课表…</div> : days.map(date => {
-            const key = dateKey(date)
-            return (
-              <div className={`study-schedule__row${key === today ? ' is-today' : ''}`} key={key}>
-                <div className="study-schedule__date"><strong>{dayLabel(date)}</strong><small>周{weekday(date)}</small></div>
-                {['morning', 'afternoon'].map(slot => {
-                  const course = entries[key]?.[slot]
-                  const colors = course ? SUBJECT_COLORS[course.subject] : null
-                  return (
-                    <button key={slot} className={`study-schedule__cell${course ? ' has-course' : ''}`} style={colors ? { background: colors[0], color: colors[1] } : undefined} onClick={() => openEditor(key, slot)}>
-                      {course ? <><strong>{course.subject}</strong><small>{course.stage}</small></> : <span>＋ 选择课程</span>}
-                    </button>
-                  )
-                })}
+        <div className="study-schedule__canvas-scroll">
+          <div className="study-schedule__table">
+            <header className="study-schedule__head">
+              <div>
+                <span><CalendarDays size={14} /> 半月课表</span>
+                <small>{start.replaceAll('-', '.')} — {end.replaceAll('-', '.')}</small>
               </div>
-            )
-          })}
+              <button onClick={onClose} aria-label="关闭"><X size={17} /></button>
+            </header>
+            <nav className="study-schedule__nav" aria-label="切换日期范围">
+              <button onClick={() => setWindowStart(value => addDays(value, -15))}><ChevronLeft size={13} /> 前半月</button>
+              <button onClick={() => setWindowStart(startWindow)}>回到今天</button>
+              <button onClick={() => setWindowStart(value => addDays(value, 15))}>后半月 <ChevronRight size={13} /></button>
+            </nav>
+            {error && <div className="study-schedule__error">{error}</div>}
+            <div className="study-schedule__row study-schedule__row--head">
+              <span>日期</span><span>上午 9–12</span><span>下午 2–6</span>
+            </div>
+            {loading ? <div className="study-schedule__loading">花叶正在展开课表…</div> : days.map((date, index) => {
+              const key = dateKey(date)
+              return (
+                <div className={`study-schedule__row${key === today ? ' is-today' : ''}`} style={{ '--row-index': index }} key={key}>
+                  <div className="study-schedule__date"><strong>{dayLabel(date)}</strong><small>周{weekday(date)}</small></div>
+                  {['morning', 'afternoon'].map(slot => {
+                    const course = entries[key]?.[slot]
+                    const colors = course ? SUBJECT_COLORS[course.subject] : null
+                    return (
+                      <button key={slot} className={`study-schedule__cell${course ? ' has-course' : ''}`} style={colors ? { background: colors[0], color: colors[1] } : undefined} onClick={() => openEditor(key, slot)}>
+                        {course ? <span><strong>{course.subject}</strong> · {course.stage}</span> : <span>＋</span>}
+                      </button>
+                    )
+                  })}
+                </div>
+              )
+            })}
+          </div>
         </div>
-        <p className="study-schedule__note">课表会保存在云端，常驻 Claude Code 也能按日期读取。</p>
 
         {editing && (
           <div className="study-schedule__picker">
@@ -154,16 +153,15 @@ export default function StudySchedulePanel({ onClose }) {
       <style>{`
         .study-schedule{position:fixed;inset:0;z-index:1000;display:flex;align-items:flex-end;color:#67706f}
         .study-schedule__backdrop{position:absolute;inset:0;border:0;background:rgba(50,43,55,.24);backdrop-filter:blur(3px)}
-        .study-schedule__sheet{position:relative;width:100%;height:min(91dvh,850px);display:flex;flex-direction:column;overflow:hidden;border-radius:30px 30px 0 0;background:linear-gradient(155deg,#fffdfb,#fff9fb 48%,#f7fbf7);box-shadow:0 -18px 55px rgba(68,52,68,.2)}
-        .study-schedule__sheet:before{content:'';position:absolute;inset:0;pointer-events:none;opacity:.38;background:radial-gradient(circle at 8% 9%,#f8dce8 0 3px,transparent 4px),radial-gradient(circle at 92% 16%,#d9edd8 0 4px,transparent 5px),radial-gradient(circle at 96% 76%,#f5e1a8 0 3px,transparent 4px)}
-        .study-schedule__head{position:relative;display:flex;align-items:center;justify-content:space-between;padding:17px 18px 10px}.study-schedule__head>div>span{display:flex;align-items:center;gap:7px;color:#65746f;font:500 17px/1.3 'ZCOOL XiaoWei',serif}.study-schedule__head small{display:block;margin:4px 0 0 23px;color:#a0aaa5;font-size:9px;letter-spacing:.06em}.study-schedule__head>button,.study-schedule__picker-title>button{width:34px;height:34px;display:grid;place-items:center;border:0;border-radius:50%;background:#f4edf1;color:#91858e}
-        .study-schedule__nav{position:relative;display:flex;justify-content:space-between;padding:0 14px 10px}.study-schedule__nav button{display:flex;align-items:center;gap:2px;padding:6px 8px;border:0;background:transparent;color:#9a929e;font-size:10px}.study-schedule__nav button:nth-child(2){color:#b97891;background:#fff0f5;border-radius:999px;padding-inline:13px}
-        .study-schedule__error{margin:0 15px 8px;padding:8px 11px;border-radius:11px;background:#fff0f0;color:#a66666;font-size:11px}
-        .study-schedule__table{position:relative;flex:1;min-height:0;overflow:auto;margin:0 12px;border:1px solid rgba(145,164,151,.18);border-radius:20px;background:rgba(255,255,255,.48)}
-        .study-schedule__row{display:grid;grid-template-columns:52px minmax(0,1fr) minmax(0,1fr);min-height:57px;border-bottom:1px dashed rgba(143,157,147,.18)}.study-schedule__row:last-child{border-bottom:0}.study-schedule__row--head{position:sticky;top:0;z-index:2;min-height:43px;background:rgba(249,246,247,.96);border-bottom:1px solid rgba(143,157,147,.2)}.study-schedule__row--head span{display:flex;align-items:center;justify-content:center;gap:4px;color:#9a98a3;font-size:9px}.study-schedule__row--head span:first-child{background:#faeef1;border-radius:18px 0 0 0}
-        .study-schedule__date{display:flex;flex-direction:column;align-items:center;justify-content:center;background:rgba(250,239,242,.58);color:#9a7e87}.study-schedule__date strong{font:500 13px/1.2 'ZCOOL XiaoWei',serif}.study-schedule__date small{margin-top:3px;font-size:8px;color:#b6a8ae}.study-schedule__row.is-today .study-schedule__date{background:#f7dfe8;color:#ae657f}.study-schedule__row.is-today .study-schedule__date small:after{content:' · 今'}
-        .study-schedule__cell{margin:4px;padding:3px 5px;min-width:0;border:0;border-radius:12px;background:transparent;color:#c1babd}.study-schedule__cell+button{border-left:1px dashed rgba(143,157,147,.14)}.study-schedule__cell span{font-size:9px}.study-schedule__cell strong,.study-schedule__cell small{display:block}.study-schedule__cell strong{font:500 14px/1.25 'ZCOOL XiaoWei',serif}.study-schedule__cell small{margin-top:3px;font-size:9px;opacity:.78}
-        .study-schedule__loading{padding:36px;text-align:center;color:#aaa3ac;font-size:11px}.study-schedule__note{position:relative;margin:8px 14px calc(9px + env(safe-area-inset-bottom));text-align:center;color:#aaa8aa;font-size:9px}
+        .study-schedule__sheet{position:relative;width:min(100%,480px);max-height:94dvh;overflow:hidden;border-radius:28px 28px 0 0;background:#fffaf7;box-shadow:0 -18px 55px rgba(68,52,68,.2)}
+        .study-schedule__canvas-scroll{width:100%;max-height:94dvh;overflow:auto;overscroll-behavior:contain}.study-schedule__table{position:relative;width:100%;aspect-ratio:853/1280;background:url('/assets/study-schedule-garden.jpg') center/100% 100% no-repeat}
+        .study-schedule__head{position:absolute;z-index:3;left:7.8%;right:6.8%;top:4.7%;display:flex;align-items:center;justify-content:space-between}.study-schedule__head>div>span{display:flex;align-items:center;gap:5px;color:#778379;font:500 clamp(12px,4vw,17px)/1.25 'ZCOOL XiaoWei',serif}.study-schedule__head small{display:block;margin:3px 0 0 19px;color:#9fa7a1;font-size:clamp(6px,1.9vw,9px);letter-spacing:.04em}.study-schedule__head>button,.study-schedule__picker-title>button{width:32px;height:32px;display:grid;place-items:center;border:0;border-radius:50%;background:rgba(255,247,250,.82);color:#91858e;box-shadow:0 2px 8px rgba(120,95,110,.08)}
+        .study-schedule__nav{position:absolute;z-index:3;left:7.8%;right:6.8%;top:11.3%;display:flex;justify-content:space-between}.study-schedule__nav button{display:flex;align-items:center;gap:1px;padding:4px 5px;border:0;background:rgba(255,255,255,.42);border-radius:999px;color:#918992;font-size:clamp(7px,2.25vw,10px)}.study-schedule__nav button:nth-child(2){color:#b36f88;background:rgba(255,238,245,.78);padding-inline:10px}
+        .study-schedule__error{position:absolute;z-index:5;left:12%;right:10%;top:18%;padding:7px 9px;border-radius:10px;background:rgba(255,240,240,.94);color:#a66666;font-size:9px;text-align:center}
+        .study-schedule__row{position:absolute;left:7.8%;right:6.8%;top:calc(22.72% + var(--row-index) * 4.5%);height:4.5%;display:grid;grid-template-columns:11.35% 44.35% 44.3%;align-items:stretch}.study-schedule__row--head{top:15.86%;height:6.86%;z-index:2}.study-schedule__row--head span{display:flex;align-items:center;justify-content:center;color:#8f929a;font:500 clamp(7px,2.25vw,10px)/1 'ZCOOL XiaoWei',serif;letter-spacing:.03em}.study-schedule__row--head span:first-child{font-size:clamp(6px,1.8vw,8px);color:#aaa0a4}
+        .study-schedule__date{display:flex;flex-direction:column;align-items:center;justify-content:center;color:#9b7e86}.study-schedule__date strong{font:500 clamp(7px,2.1vw,10px)/1 'ZCOOL XiaoWei',serif}.study-schedule__date small{margin-top:2px;font-size:clamp(5px,1.35vw,7px);line-height:1;color:#b29ca4}.study-schedule__row.is-today .study-schedule__date{color:#b75778;text-shadow:0 0 5px rgba(255,255,255,.9)}.study-schedule__row.is-today .study-schedule__date small:after{content:'·今'}
+        .study-schedule__cell{min-width:0;margin:2px 4px;padding:0 3px;border:0;border-radius:9px;background:transparent;color:rgba(169,153,160,.52)}.study-schedule__cell span{display:block;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;font:500 clamp(7px,2.15vw,10px)/1 'ZCOOL XiaoWei',serif}.study-schedule__cell.has-course{box-shadow:inset 0 0 0 1px rgba(255,255,255,.5),0 1px 4px rgba(121,103,110,.06)}.study-schedule__cell strong{font-weight:600}
+        .study-schedule__loading{position:absolute;left:20%;right:10%;top:48%;text-align:center;color:#aaa3ac;font-size:11px}
         .study-schedule__picker{position:fixed;inset:0;z-index:4;display:flex;align-items:flex-end}.study-schedule__picker-backdrop{position:absolute;inset:0;border:0;background:rgba(62,50,65,.25);backdrop-filter:blur(2px)}.study-schedule__picker-card{position:relative;width:100%;padding:18px 18px calc(18px + env(safe-area-inset-bottom));border-radius:26px 26px 0 0;background:#fffdfd;box-shadow:0 -14px 40px rgba(69,53,69,.2)}
         .study-schedule__picker-title{display:flex;align-items:center;justify-content:space-between;margin-bottom:17px}.study-schedule__picker-title strong{color:#736a75;font:500 18px/1.2 'ZCOOL XiaoWei',serif}.study-schedule__picker-title span{margin-left:9px;color:#aaa0aa;font-size:10px}.study-schedule__picker-card label{display:block;margin:12px 2px 7px;color:#99909a;font-size:10px}.study-schedule__choices{display:flex;gap:8px}.study-schedule__choices button{flex:1;padding:10px 4px;border:1px solid #eee5e9;border-radius:12px;background:#fff;color:#8f858d;font-size:12px}.study-schedule__choices button.selected{border-color:#e5a9be;background:#fff0f5;color:#ad627c;box-shadow:0 3px 10px rgba(205,132,159,.12)}
         .study-schedule__picker-actions{display:flex;gap:9px;margin-top:20px}.study-schedule__picker-actions button{height:43px;border:0;border-radius:14px}.study-schedule__picker-actions .clear{width:82px;display:flex;align-items:center;justify-content:center;gap:5px;background:#f5f1f2;color:#a2999e}.study-schedule__picker-actions .confirm{flex:1;background:linear-gradient(135deg,#ecaac0,#d692ad);color:white;box-shadow:0 7px 17px rgba(197,121,150,.22)}
