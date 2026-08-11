@@ -11,6 +11,8 @@ import clsx from 'clsx'
 const LETTER_SPLIT = /(\{\{LETTER_CARD:[^}]+\}\}|\[LETTER\s+\S+?\s+\S+?\s+\S+?\][\s\S]*?\[\/LETTER\])/g
 const LETTER_CARD_ONE = /^\{\{LETTER_CARD:([^}]+)\}\}$/
 const RAW_LETTER_ONE = /^\[LETTER\s+mood=(\S+?)\s+weather=(\S+?)\s+date=(\S+?)\]([\s\S]*?)\[\/LETTER\]$/
+const DICE_ONE = /^\[DICE:([1-6])\]$/
+const DICE_FACES = ['', '⚀', '⚁', '⚂', '⚃', '⚄', '⚅']
 
 function hasLetter(content) {
   return content.includes('{{LETTER_CARD:') || content.includes('[LETTER')
@@ -97,6 +99,7 @@ function MessageBubble({ message, onLongPress, onRegenerate, onRegenerateRound, 
   const [showVoiceText, setShowVoiceText] = useState(false)
   const [showReasoning, setShowReasoning] = useState(false)
   const isUser = message.role === 'user'
+  const diceValue = message.type === 'text' ? Number(message.content?.match(DICE_ONE)?.[1] || 0) : 0
   const replyQuote = message.type === 'text' ? parseReplyQuote(message.content) : null
   const pressTimer = useRef(null)
   const pressAnimTimer = useRef(null)
@@ -257,7 +260,29 @@ function MessageBubble({ message, onLongPress, onRegenerate, onRegenerateRound, 
             )}
           </div>
         )}
-        {message.type === 'text' && !message.voiceLoading && (
+        {diceValue > 0 && !message.voiceLoading && (
+          <div
+            className={clsx('relative rounded-[20px] select-none cursor-default', pressed ? 'bubble-press' : '')}
+            style={{
+              ...(isUser ? userBubbleStyle : aiBubbleStyle),
+              padding: 8,
+              width: 76,
+              height: 76,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+            }}
+            aria-label={`掷出了 ${diceValue} 点`}
+            title={`${diceValue} 点`}
+            {...pressProps}
+          >
+            <span className={isUser ? '' : 'bubble-ai'} style={{ position: 'absolute', inset: 0, borderRadius: 'inherit', pointerEvents: 'none' }} />
+            <span style={{ position: 'relative', zIndex: 1, fontSize: 55, lineHeight: 1, color: isUser ? (theme?.userBubbleText || '#fff') : (theme?.aiBubbleText || '#3d6b52'), filter: 'drop-shadow(0 2px 2px rgba(0,0,0,.08))' }}>
+              {DICE_FACES[diceValue]}
+            </span>
+          </div>
+        )}
+        {message.type === 'text' && !diceValue && !message.voiceLoading && (
           <div
             className={clsx('relative rounded-[20px] leading-relaxed select-none cursor-default', pressed ? 'bubble-press' : '')}
             style={isUser ? userBubbleStyle : aiBubbleStyle}

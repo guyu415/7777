@@ -10,7 +10,6 @@ import RuntimeStatusBall from './RuntimeStatusBall'
 import CarryOutPetModal from './CarryOutPetModal'
 import VoiceCall from '../Voice/VoiceCall'
 import GomokuBoard from './GomokuBoard'
-import DiceDuel from './DiceDuel'
 import SpicyMonopolyBoard from './SpicyMonopolyBoard'
 import SessionList from '../SessionList'
 import XinchaoPanel from './XinchaoPanel'
@@ -140,7 +139,6 @@ export default function ChatWindow({ theme }) {
   const [toast, setToast] = useState(null)
   const [showCall, setShowCall] = useState(false)
   const [showGomoku, setShowGomoku] = useState(false)
-  const [showDice, setShowDice] = useState(false)
   const [showSpicy, setShowSpicy] = useState(false)
   const [showSessionDrawer, setShowSessionDrawer] = useState(false)
   const [showDivination, setShowDivination] = useState(false)
@@ -923,7 +921,13 @@ export default function ChatWindow({ theme }) {
           replyDraft={replyTarget}
           onCancelReply={() => setReplyTarget(null)}
           onOpenGomoku={() => setShowGomoku(true)}
-          onOpenDice={() => setShowDice(true)}
+          onRollDice={() => {
+            const random = new Uint32Array(1)
+            crypto.getRandomValues(random)
+            const value = (random[0] % 6) + 1
+            updateActiveTime()
+            sendMessage(`[DICE:${value}]`, 'text').catch(e => console.error('[DICE] send failed:', e.message))
+          }}
           onOpenSpicy={() => setShowSpicy(true)}
           spicyEnabled={isVpsSession}
           gomokuEnabled={isFixedVpsSession}
@@ -993,17 +997,6 @@ export default function ChatWindow({ theme }) {
           aiAvatar={effectiveAiAvatar}
           userAvatar={effectiveUserAvatar}
           onClose={() => setShowGomoku(false)}
-        />
-      )}
-
-      {showDice && (
-        <DiceDuel
-          theme={theme}
-          runtime={isCodexSession ? 'codex' : 'claude-code'}
-          aiName={effectiveAiName}
-          aiAvatar={effectiveAiAvatar}
-          userAvatar={effectiveUserAvatar}
-          onClose={() => setShowDice(false)}
         />
       )}
 

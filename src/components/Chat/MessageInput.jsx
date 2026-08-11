@@ -186,7 +186,7 @@ function readDraft(storageKey) {
   } catch { return { text: '', segments: [] } }
 }
 
-const MessageInput = forwardRef(function MessageInput({ onSend, onSendBatch, onStartCall, onSendImage, onSendFile, replyDraft, onCancelReply, onOpenGomoku, onOpenDice, onOpenSpicy, spicyEnabled, gomokuEnabled, onOpenFocus, onOpenDivination, disabled, theme, isLoading, onStop, draftKey }, ref) {
+const MessageInput = forwardRef(function MessageInput({ onSend, onSendBatch, onStartCall, onSendImage, onSendFile, replyDraft, onCancelReply, onOpenGomoku, onRollDice, onOpenSpicy, spicyEnabled, gomokuEnabled, onOpenFocus, onOpenDivination, disabled, theme, isLoading, onStop, draftKey }, ref) {
   const draftStorageKey = draftKey ? `chat.draft.${draftKey}` : null
   const initialDraft = readDraft(draftStorageKey)
   const [text, setTextRaw] = useState(initialDraft.text)
@@ -391,7 +391,7 @@ const MessageInput = forwardRef(function MessageInput({ onSend, onSendBatch, onS
   }
   const handleMenuDice = () => {
     setMenuOpen(false)
-    onOpenDice?.()
+    onRollDice?.()
   }
   const handleMenuSpicy = () => {
     setMenuOpen(false)
@@ -654,7 +654,7 @@ const MessageInput = forwardRef(function MessageInput({ onSend, onSendBatch, onS
           />
           <MenuItem
             icon={<DiceIcon />}
-            label="骰子比大小"
+            label="骰子"
             sub={gomokuEnabled ? undefined : '仅VPS会话支持'}
             onClick={handleMenuDice}
             disabled={!gomokuEnabled}
