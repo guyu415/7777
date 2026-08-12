@@ -26,6 +26,21 @@ const FONT_MAP = {
   mashan: "'Ma Shan Zheng', cursive",
 }
 
+const PROACTIVE_ACTIVITY_STORAGE_KEY = 'eunoia.pendingProactiveActivities.v1'
+const MAX_PENDING_PROACTIVE_ACTIVITIES = 20
+
+function loadPendingProactiveActivities() {
+  try {
+    const value = JSON.parse(localStorage.getItem(PROACTIVE_ACTIVITY_STORAGE_KEY) || '[]')
+    if (!Array.isArray(value)) return []
+    return value
+      .filter(item => item && typeof item.id === 'string' && typeof item.text === 'string')
+      .slice(-MAX_PENDING_PROACTIVE_ACTIVITIES)
+  } catch {
+    return []
+  }
+}
+
 // 用于「settings 是否真的变了」的对比指纹。lastMsgTime/lastMsgPreview 每条消息都在变，
 // 如果不剔除，聊天全程每轮都会触发一次整包 settings 上传，白白消耗 KV 每天
 // 1000 次的写入配额。这两个字段只影响会话列表排序展示，跟着下一次真实变更捎带上传即可。
@@ -84,8 +99,7 @@ export default function App() {
   const [loggedIn, setLoggedIn] = useState(() => !!localStorage.getItem('auth.password'))
   const [syncError, setSyncError] = useState(null)
   const [migrationStatus, setMigrationStatus] = useState(null)
-  const [proactiveActivity, setProactiveActivity] = useState(null)
-  const proactiveActivityTimer = useRef(null)
+  const [pendingProactiveActivities, setPendingProactiveActivities] = useState(loadPendingProactiveActivities)
   const syncReady = useRef(false)
   const syncTimer = useRef(null)
   const lastSyncedSettings = useRef('')
@@ -598,21 +612,30 @@ export default function App() {
     return unsub
   }, [])
 
-  // A self-directed fishing/garden outing is informational rather than a
-  // message from CC, so show it as a short-lived toast and never persist it
-  // into the conversation. Closed/backgrounded clients receive the matching
-  // Web Push from the VPS instead.
+  // Self-directed fishing/garden outings stay outside chat history, but the
+  // notice itself is durable until the user acknowledges it. Queue multiple
+  // outings instead of replacing an unread one; localStorage also preserves
+  // them across a refresh. Closed/backgrounded clients additionally receive
+  // the matching Web Push from the VPS.
   useEffect(() => {
-    const unsub = onProactiveActivity(({ id, text, ts }) => {
-      clearTimeout(proactiveActivityTimer.current)
-      setProactiveActivity({ id, text, ts })
-      proactiveActivityTimer.current = setTimeout(() => setProactiveActivity(null), 8000)
+    return onProactiveActivity(({ id, text, ts }) => {
+      setPendingProactiveActivities(current => {
+        if (current.some(item => item.id === id)) return current
+        return [...current, { id, text, ts }].slice(-MAX_PENDING_PROACTIVE_ACTIVITIES)
+      })
     })
-    return () => {
-      unsub()
-      clearTimeout(proactiveActivityTimer.current)
-    }
   }, [])
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(PROACTIVE_ACTIVITY_STORAGE_KEY, JSON.stringify(pendingProactiveActivities))
+    } catch { /* a full/private storage area must not break the chat UI */ }
+  }, [pendingProactiveActivities])
+
+  const proactiveActivity = pendingProactiveActivities[0] || null
+  const confirmProactiveActivity = () => {
+    setPendingProactiveActivities(current => current.slice(1))
+  }
 
   // CC context reset: the server clears either the whole conversation or
   // only the part newer than the latest completed tidal summary, and
@@ -826,6 +849,9 @@ export default function App() {
       {proactiveActivity && (
         <div
           className="fixed z-50"
+          role="alertdialog"
+          aria-modal="false"
+          aria-labelledby="proactive-activity-title"
           style={{
             bottom: (syncError || migrationStatus) ? 172 : 100, right: 16,
             background: 'linear-gradient(135deg, rgba(91,139,112,.96), rgba(92,116,151,.96))',
@@ -833,13 +859,26 @@ export default function App() {
             WebkitBackdropFilter: 'blur(10px)',
             color: 'white', fontSize: 12, fontWeight: 500,
             lineHeight: 1.5, whiteSpace: 'pre-line',
-            padding: '10px 14px', borderRadius: 16,
+            padding: '12px 14px', borderRadius: 16,
             boxShadow: '0 6px 20px rgba(55,82,70,.24)',
-            maxWidth: 280,
+            width: 'min(300px, calc(100vw - 32px))',
           }}
         >
-          <div style={{ fontSize: 10, opacity: 0.78, marginBottom: 2 }}>CC 的后台小记</div>
-          {proactiveActivity.text}
+          <div id="proactive-activity-title" style={{ fontSize: 10, opacity: 0.78, marginBottom: 4 }}>
+            CC 的后台小记
+            {pendingProactiveActivities.length > 1 ? ` · 还有 ${pendingProactiveActivities.length - 1} 条` : ''}
+          </div>
+          <div>{proactiveActivity.text}</div>
+          <button
+            type="button"
+            onClick={confirmProactiveActivity}
+            style={{
+              display: 'block', margin: '10px 0 0 auto', padding: '5px 12px',
+              border: '1px solid rgba(255,255,255,.46)', borderRadius: 999,
+              background: 'rgba(255,255,255,.17)', color: 'white',
+              font: 'inherit', fontSize: 11, fontWeight: 600, cursor: 'pointer',
+            }}
+          >知道了</button>
         </div>
       )}
     </div>
