@@ -45,6 +45,8 @@ export default function LetterCard({ letterId, letter: inlineLetter }) {
   const isUser = letter.role === 'user'
   const text = letter.content || ''
   const preview = text.length > 20 ? text.slice(0, 20) + '…' : text
+  const mood = letter.mood && letter.mood !== '-' ? letter.mood : ''
+  const weather = letter.weather && letter.weather !== '-' ? letter.weather : ''
 
   return (
     <div
@@ -62,8 +64,8 @@ export default function LetterCard({ letterId, letter: inlineLetter }) {
     >
       <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 6 }}>{isUser ? '✉️ 你写的一封信' : '📔 写给你一封信'}</div>
       <div style={{ fontSize: 13, display: 'flex', gap: 10, alignItems: 'center', marginBottom: 8 }}>
-        <span>{letter.mood}</span>
-        <span>{letter.weather}</span>
+        {mood && <span>{mood}</span>}
+        {weather && <span>{weather}</span>}
         <span style={{ fontSize: 12, color: '#9a8a70' }}>{letter.date}</span>
       </div>
       <div style={{ borderTop: '1px solid rgba(200,180,150,0.35)', paddingTop: 8, fontSize: 13, lineHeight: 1.5, color: '#7a6850' }}>

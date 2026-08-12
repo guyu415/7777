@@ -56,8 +56,9 @@ export default function DiarySection({ theme }) {
   const primary = theme?.primary || '#4aacf0'
   const primaryDark = theme?.primaryDark || '#2196d3'
 
-  const [mood, setMood] = useState('😊')
-  const [weather, setWeather] = useState('☀️')
+  const [mood, setMood] = useState(null)
+  const [weather, setWeather] = useState(null)
+  const [detailsOpen, setDetailsOpen] = useState(false)
   const [content, setContent] = useState('')
   const [sending, setSending] = useState(false)
   const [loading, setLoading] = useState(true)
@@ -98,9 +99,12 @@ export default function DiarySection({ theme }) {
     try {
       const date = todayStr()
       const body = content.trim()
-      const archived = await addLetter({ sessionId: ccSession.id, role: 'user', mood, weather, date, content: body })
+      const archived = await addLetter({
+        sessionId: ccSession.id, role: 'user', date, content: body,
+        mood: mood || '-', weather: weather || '-',
+      })
       const id = `diary-letter-${archived?.id || genId()}`
-      const text = `[LETTER mood=${mood} weather=${weather} date=${date}]\n${body}\n[/LETTER]`
+      const text = `[LETTER mood=${mood || '-'} weather=${weather || '-'} date=${date}]\n${body}\n[/LETTER]`
       if (deliveryMode === 'scheduled') {
         const timestamp = new Date(deliverAt).getTime()
         if (!Number.isFinite(timestamp) || timestamp < Date.now() + 5_000) throw new Error('请选择一个未来的发送时间')
@@ -168,39 +172,47 @@ export default function DiarySection({ theme }) {
           <div style={{ padding: 10, color: '#a06f7c', fontSize: 12 }}>请先绑定 Claude Code 常驻聊天窗。</div>
         ) : (
           <>
-            <div className="flex items-center gap-1 mb-1 overflow-x-auto">
-              <span style={{ fontSize: 11, color: '#7a9cc0', flexShrink: 0 }}>心情</span>
-              {MOOD_OPTIONS.map(m => <button key={m} style={emojiBtn(mood === m)} onClick={() => setMood(m)}>{m}</button>)}
-            </div>
-            <div className="flex items-center gap-1 mb-1.5 overflow-x-auto">
-              <span style={{ fontSize: 11, color: '#7a9cc0', flexShrink: 0 }}>天气</span>
-              {WEATHER_OPTIONS.map(w => <button key={w} style={emojiBtn(weather === w)} onClick={() => setWeather(w)}>{w}</button>)}
-            </div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, margin: '3px 0 7px', fontSize: 12, color: '#7a9cc0' }}>
+            <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8, margin: '3px 0 7px', fontSize: 12, color: '#7a9cc0' }}>
               <button type="button" onClick={() => setDeliveryMode('now')} style={{ border: 0, borderRadius: 999, padding: '5px 10px', color: deliveryMode === 'now' ? '#fff' : '#6d8daf', background: deliveryMode === 'now' ? primary : 'rgba(220,232,248,.7)' }}>立即发送</button>
               <button type="button" onClick={() => setDeliveryMode('scheduled')} style={{ border: 0, borderRadius: 999, padding: '5px 10px', color: deliveryMode === 'scheduled' ? '#fff' : '#6d8daf', background: deliveryMode === 'scheduled' ? primary : 'rgba(220,232,248,.7)' }}>定时发送</button>
-              {deliveryMode === 'scheduled' && <input type="datetime-local" value={deliverAt} min={defaultDeliveryTime()} onChange={e => setDeliverAt(e.target.value)} style={{ minWidth: 0, flex: 1, border: '1px solid rgba(160,190,225,.45)', borderRadius: 9, padding: '5px 6px', color: '#52749a', background: 'rgba(255,255,255,.76)', fontSize: 11 }} />}
+              <button type="button" onClick={() => setDetailsOpen(value => !value)} style={{ marginLeft: deliveryMode === 'scheduled' ? 0 : 'auto', border: 0, borderRadius: 999, padding: '5px 9px', color: detailsOpen ? primaryDark : '#8295aa', background: detailsOpen ? `${primary}18` : 'transparent' }}>
+                {detailsOpen ? '收起心情天气' : `${mood || weather ? `${mood || ''}${weather || ''} ` : ''}心情天气⌄`}
+              </button>
+              {deliveryMode === 'scheduled' && <input type="datetime-local" value={deliverAt} min={defaultDeliveryTime()} onChange={e => setDeliverAt(e.target.value)} style={{ minWidth: 180, flex: '1 1 100%', border: '1px solid rgba(160,190,225,.45)', borderRadius: 9, padding: '5px 6px', color: '#52749a', background: 'rgba(255,255,255,.76)', fontSize: 11 }} />}
             </div>
-            <div className="flex items-end gap-2">
+            {detailsOpen && (
+              <div style={{ marginBottom: 7, padding: '7px 8px', borderRadius: 12, background: 'rgba(235,242,252,.56)' }}>
+                <div className="flex items-center gap-1 overflow-x-auto">
+                  <span style={{ fontSize: 11, color: '#7a9cc0', flexShrink: 0 }}>心情</span>
+                  {MOOD_OPTIONS.map(m => <button key={m} style={emojiBtn(mood === m)} onClick={() => setMood(current => current === m ? null : m)}>{m}</button>)}
+                </div>
+                <div className="flex items-center gap-1 mt-1 overflow-x-auto">
+                  <span style={{ fontSize: 11, color: '#7a9cc0', flexShrink: 0 }}>天气</span>
+                  {WEATHER_OPTIONS.map(w => <button key={w} style={emojiBtn(weather === w)} onClick={() => setWeather(current => current === w ? null : w)}>{w}</button>)}
+                </div>
+              </div>
+            )}
+            <div className="flex items-center gap-2">
               <textarea
                 value={content}
                 onChange={e => setContent(e.target.value)}
                 onFocus={e => setTimeout(() => e.target.scrollIntoView({ block: 'nearest', behavior: 'smooth' }), 250)}
                 placeholder="写点什么..."
-                rows={3}
+                rows={1}
                 style={{
-                  flex: 1, resize: 'none',
+                  flex: 1, height: 44, minHeight: 44, maxHeight: 44, resize: 'none', overflowY: 'auto',
                   background: 'rgba(255,255,255,0.75)',
                   border: '1px solid rgba(200,220,255,0.5)',
-                  borderRadius: 12, padding: '8px 12px', fontSize: 13, color: '#2c5282',
+                  borderRadius: 22, padding: '11px 15px', fontSize: 13, lineHeight: '20px', color: '#2c5282',
                   outline: 'none', fontFamily: 'inherit', boxSizing: 'border-box',
                 }}
               />
               <button
                 onClick={sendLetter}
                 disabled={!content.trim() || sending}
-                className="px-4 py-2 rounded-full text-sm font-medium text-white transition-all duration-200 flex-shrink-0"
+                className="rounded-full text-sm font-medium text-white transition-all duration-200 flex-shrink-0"
                 style={{
+                  width: 44, height: 44, padding: 0,
                   background: (!content.trim() || sending) ? 'rgba(150,170,200,0.4)' : `linear-gradient(135deg, ${primary}, ${primaryDark})`,
                   boxShadow: (!content.trim() || sending) ? 'none' : `0 4px 12px ${primary}55`,
                   border: 'none', cursor: (!content.trim() || sending) ? 'default' : 'pointer',
