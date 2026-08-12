@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { baziSolarMonthContext, careIsSevereOverspend, careOverdueDays, careRoleIsDue, defaultCareHubState, isValidCareTime, ledgerMonthSummary, normalizeCareHubState, sanitizeCareRoleConfig, zonedDateTime } from '../care-hub'
+import { baziSolarMonthContext, careIsSevereOverspend, careOverdueDays, careRoleIsDue, defaultCareHubState, isValidCareTime, ledgerDailySummary, ledgerMonthSummary, normalizeCareHubState, sanitizeCareRoleConfig, zonedDateTime } from '../care-hub'
 
 describe('care hub', () => {
   it('validates push time and sanitizes role config', () => {
@@ -32,19 +32,28 @@ describe('care hub', () => {
   })
 
   it('keeps fixed slots when loading partial old state', () => {
-    const state = normalizeCareHubState({ config: { roles: { news: { enabled: false, time: '09:00' } } } })
+    const state = normalizeCareHubState({
+      config: { roles: { news: { enabled: false, time: '09:00' } } },
+      ledger: { dailyBudget: 45, entries: [{ id: 'old', amount: 10, category: '餐饮', note: '旧记录', date: '2026-08-09', ts: 1 }] },
+    })
     expect(state.config.roles.news.enabled).toBe(false)
     expect(state.config.roles.ledger).toBeTruthy()
     expect(state.config.timezone).toBe('Asia/Shanghai')
+    expect(state.ledger.dailyBudget).toBe(45)
+    expect(state.ledger.entries[0].kind).toBe('daily')
   })
 
   it('builds visual-ledger totals by month and category', () => {
     const result = ledgerMonthSummary([
-      { id: '1', amount: 12.5, category: '餐饮', note: '', date: '2026-08-01', ts: 1 },
-      { id: '2', amount: 20, category: '餐饮', note: '', date: '2026-08-02', ts: 2 },
-      { id: '3', amount: 8, category: '交通', note: '', date: '2026-07-31', ts: 3 },
+      { id: '1', amount: 12.5, category: '餐饮', note: '', date: '2026-08-01', ts: 1, kind: 'daily' },
+      { id: '2', amount: 20, category: '餐饮', note: '', date: '2026-08-02', ts: 2, kind: 'longTerm' },
+      { id: '3', amount: 8, category: '交通', note: '', date: '2026-07-31', ts: 3, kind: 'daily' },
     ], '2026-08')
     expect(result).toEqual({ total: 32.5, byCategory: { 餐饮: 32.5 }, count: 2 })
+    expect(ledgerDailySummary([
+      { id: '1', amount: 12.5, category: '餐饮', note: '', date: '2026-08-02', ts: 1, kind: 'daily' },
+      { id: '2', amount: 20, category: '居住', note: '', date: '2026-08-02', ts: 2, kind: 'longTerm' },
+    ], '2026-08-02')).toEqual({ total: 12.5, count: 1 })
   })
 
   it('only escalates genuinely severe overspending and overdue goals', () => {

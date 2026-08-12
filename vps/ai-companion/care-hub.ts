@@ -27,6 +27,7 @@ export type LedgerEntry = {
   note: string
   date: string
   ts: number
+  kind: 'daily' | 'longTerm'
 }
 
 export type StudyGoal = {
@@ -44,7 +45,7 @@ export type CareHubState = {
     roles: Record<CareRoleId, CareRoleConfig>
   }
   messages: CareMessage[]
-  ledger: { monthlyBudget: number; entries: LedgerEntry[] }
+  ledger: { monthlyBudget: number; dailyBudget: number; entries: LedgerEntry[] }
   study: { goals: StudyGoal[] }
   updatedAt: number
   runningRole?: CareRoleId | null
@@ -62,7 +63,7 @@ export function defaultCareHubState(now = Date.now()): CareHubState {
       },
     },
     messages: [],
-    ledger: { monthlyBudget: 0, entries: [] },
+    ledger: { monthlyBudget: 0, dailyBudget: 0, entries: [] },
     study: { goals: [] },
     updatedAt: now,
   }
@@ -127,12 +128,22 @@ export function normalizeCareHubState(raw: unknown, now = Date.now()): CareHubSt
     ...(typeof input.config?.roles?.[id]?.lastError === 'string' ? { lastError: input.config.roles[id].lastError.slice(0, 300) } : {}),
   }
   const messages = Array.isArray(input.messages) ? input.messages.filter((m: any) => CARE_ROLE_IDS.includes(m?.role) && typeof m?.text === 'string' && Number.isFinite(m?.ts)).slice(-300) : []
-  const entries = Array.isArray(input.ledger?.entries) ? input.ledger.entries.filter((e: any) => Number.isFinite(e?.amount) && e.amount > 0 && typeof e?.date === 'string').slice(-5000) : []
+  const entries = Array.isArray(input.ledger?.entries) ? input.ledger.entries
+    .filter((e: any) => Number.isFinite(e?.amount) && e.amount > 0 && typeof e?.date === 'string')
+    .map((e: any) => ({
+      ...e,
+      kind: e?.kind === 'longTerm' ? 'longTerm' : 'daily',
+    }))
+    .slice(-5000) : []
   const goals = Array.isArray(input.study?.goals) ? input.study.goals.filter((g: any) => typeof g?.title === 'string' && g.title.trim()).slice(-500) : []
   return {
     config: { timezone: 'Asia/Shanghai', roles },
     messages,
-    ledger: { monthlyBudget: Math.max(0, Number(input.ledger?.monthlyBudget) || 0), entries },
+    ledger: {
+      monthlyBudget: Math.max(0, Number(input.ledger?.monthlyBudget) || 0),
+      dailyBudget: Math.max(0, Number(input.ledger?.dailyBudget) || 0),
+      entries,
+    },
     study: { goals },
     updatedAt: Number(input.updatedAt) || now,
   }
@@ -147,6 +158,12 @@ export function ledgerMonthSummary(entries: LedgerEntry[], month: string) {
     byCategory[entry.category] = (byCategory[entry.category] || 0) + entry.amount
   }
   return { total: Math.round(total * 100) / 100, byCategory, count: selected.length }
+}
+
+export function ledgerDailySummary(entries: LedgerEntry[], date: string) {
+  const selected = entries.filter((entry) => entry.date === date && entry.kind !== 'longTerm')
+  const total = selected.reduce((sum, entry) => sum + entry.amount, 0)
+  return { total: Math.round(total * 100) / 100, count: selected.length }
 }
 
 export function careIsSevereOverspend(monthlyBudget: number, total: number): boolean {
