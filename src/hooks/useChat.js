@@ -555,7 +555,13 @@ export function useChat() {
         ? { path: lastUserMsg.filePath, name: lastUserMsg.fileName, size: lastUserMsg.fileSize, mimeType: lastUserMsg.fileType }
         : undefined
       const chunkSource = isVpsProvider
-        ? streamChatViaCompanion({ text: vpsBatchText, imagePath: vpsImagePath, file: vpsFile, signal: controller.signal })
+        ? streamChatViaCompanion({
+            text: vpsBatchText,
+            imagePath: vpsImagePath,
+            file: vpsFile,
+            signal: controller.signal,
+            messageId: lastUserMsg?.id,
+          })
         : streamChat({ apiKey: effectiveApiKey, apiBaseUrl: effectiveBaseUrl, model: effectiveModel, systemPrompt: builtSystemPrompt, messages: trimmedMsgs, workerUrl, useWorkerProxy, signal: controller.signal, disableThinking: effectiveDisableThinking, webSearch: effectiveWebSearch, providerName: effectiveProviderName })
 
       try {

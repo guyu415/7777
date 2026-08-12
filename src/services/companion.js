@@ -1165,12 +1165,18 @@ export function sendDeleteNotice(text) {
  * the module-level `deliveredIds` set, so a reconnect-triggered history
  * replay can never re-yield something already seen live, or vice versa.
  */
-export async function* streamChatViaCompanion({ text, imagePath, file, signal }) {
+export async function* streamChatViaCompanion({ text, imagePath, file, signal, messageId }) {
   if (signal?.aborted) return
 
   await waitUntilOpenOrFail()
 
-  const id = genId()
+  // Reuse the local user bubble id when this turn originated in ChatWindow.
+  // The server broadcasts the accepted user message back to every connected
+  // client (including the sender); App.jsx can then identify that echo as the
+  // bubble already persisted locally instead of appending it a second time.
+  // Callers without a local bubble (voice call, background integrations) keep
+  // the generated wire id they have always used.
+  const id = messageId || genId()
   const turnId = id
 
   const queue = []
