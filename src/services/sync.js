@@ -33,7 +33,7 @@ export async function saveSettings(password, settings) {
 const SYNC_KEYS = [
   'apiKey', 'apiBaseUrl', 'model', 'systemPrompt', 'memoryEnabled',
   'workerUrl', 'useWorkerProxy', 'apiProactiveEnabled', 'userAvatar', 'aiAvatar', 'aiName',
-  'themeId', 'chatBg', 'fontFamily', 'defaultFontSize', 'customFonts',
+  'themeId', 'userBubbleTextColor', 'chatBg', 'fontFamily', 'defaultFontSize', 'customFonts',
   'sessions', 'currentSessionId', 'providers', 'selectedProviderId', 'selectedModelId',
   'ttsApiKey', 'ttsGroupId', 'ttsVoiceId', 'aiVoiceEnabled', 'aiVoiceFrequency',
   'acWorkerUrl',

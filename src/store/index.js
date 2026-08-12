@@ -148,6 +148,9 @@ export const useStore = create(
 
       // Theme, background, font (global defaults)
       themeId: 'pink',
+      // Null follows the selected theme; a hex value overrides only text in
+      // the user's own message bubbles across every single-chat theme.
+      userBubbleTextColor: null,
       chatBg: { type: 'gradient', value: '', opacity: 1.0 },
       fontFamily: 'noto',
       defaultFontSize: 16,
@@ -236,6 +239,7 @@ export const useStore = create(
       setAiAvatar: (v) => set({ aiAvatar: v }),
       setAiName: (name) => set({ aiName: name }),
       setChatTheme: (id) => set({ themeId: id }),
+      setUserBubbleTextColor: (value) => set({ userBubbleTextColor: value }),
       setChatBg: (bg) => set({ chatBg: bg }),
       setFontFamily: (f) => set({ fontFamily: f }),
       setDefaultFontSize: (s) => set({ defaultFontSize: s }),
@@ -458,7 +462,7 @@ export const useStore = create(
     }),
     {
       name: 'pink-chat-settings',
-      version: 20,
+      version: 21,
       migrate: (persisted, version) => {
         if (version < 2) {
           const providers = [
@@ -642,6 +646,9 @@ export const useStore = create(
             })),
           }
         }
+        if (version < 21) {
+          persisted = { userBubbleTextColor: null, ...persisted }
+        }
         return persisted
       },
       partialize: (state) => ({
@@ -657,6 +664,7 @@ export const useStore = create(
         aiAvatar: state.aiAvatar,
         aiName: state.aiName,
         themeId: state.themeId,
+        userBubbleTextColor: state.userBubbleTextColor,
         chatBg: state.chatBg,
         fontFamily: state.fontFamily,
         defaultFontSize: state.defaultFontSize,

@@ -253,6 +253,20 @@ export function onProactiveMessage(fn) {
   return () => proactiveListeners.delete(fn)
 }
 
+const proactiveActivityListeners = new Set()
+/** Subscribe to completed self-directed proactive activities. These are
+ * ephemeral UI hints, deliberately separate from chat messages/history. */
+export function onProactiveActivity(fn) {
+  proactiveActivityListeners.add(fn)
+  return () => proactiveActivityListeners.delete(fn)
+}
+
+function announceProactiveActivity(activity) {
+  for (const fn of proactiveActivityListeners) {
+    try { fn(activity) } catch { /* isolate subscribers */ }
+  }
+}
+
 const remoteUserMessageListeners = new Set()
 /** User messages accepted outside ChatWindow (for example a scheduled
  * diary letter) still belong in the resident CC conversation on every
@@ -961,6 +975,10 @@ listeners.add(evt => {
     const m = evt.wire
     if (m.type === 'reset') {
       maybeAnnounceReset({ resetAt: m.ts, mode: m.mode, boundaryId: m.boundaryId, boundaryTs: m.boundaryTs })
+      return
+    }
+    if (m.type === 'proactive_activity') {
+      announceProactiveActivity({ id: m.id, text: m.text, ts: m.ts })
       return
     }
     if (m.type === 'gomoku_update') {

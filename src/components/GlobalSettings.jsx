@@ -6,6 +6,7 @@ import { pushSupportState, getCurrentSubscription, subscribePush, unsubscribePus
 
 import { THEMES } from '../themes'
 import MemoryPanel from './MemoryPanel'
+import { USER_BUBBLE_TEXT_PALETTE, normalizeBubbleTextColor } from '../utils/bubbleColors'
 
 function genId() {
   return Date.now().toString(36) + Math.random().toString(36).slice(2)
@@ -277,6 +278,7 @@ const THEME_LIST = [
 export default function GlobalSettings({ theme, onLogout, onForceSync }) {
   const {
     themeId, setChatTheme,
+    userBubbleTextColor, setUserBubbleTextColor,
     fontFamily, setFontFamily,
     defaultFontSize, setDefaultFontSize,
     customFonts, addCustomFont, removeCustomFont,
@@ -434,6 +436,73 @@ export default function GlobalSettings({ theme, onLogout, onForceSync }) {
                 {t.label}
               </button>
             ))}
+          </div>
+
+          <div style={{ height: 1, margin: '14px 0 12px', background: 'rgba(90,125,155,.12)' }} />
+          <div className="flex items-center justify-between gap-3 mb-2">
+            <div>
+              <div className="text-sm" style={{ color: '#2c5282' }}>我发出的文字颜色</div>
+              <div className="text-xs mt-0.5" style={{ color: '#8aa2b8' }}>独立于气泡主题，所有单聊生效</div>
+            </div>
+            <div
+              aria-label="消息文字颜色预览"
+              style={{
+                minWidth: 82, padding: '7px 11px', borderRadius: 15,
+                background: theme?.userBubble || 'rgba(255,133,179,.88)',
+                color: normalizeBubbleTextColor(userBubbleTextColor) || theme?.userBubbleText || '#F0C040',
+                textAlign: 'center', fontSize: 12, fontWeight: 600,
+                boxShadow: `0 3px 10px ${theme?.userBubbleShadow || 'rgba(60,80,100,.14)'}`,
+              }}
+            >这样显示</div>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            {USER_BUBBLE_TEXT_PALETTE.map(option => {
+              const active = normalizeBubbleTextColor(userBubbleTextColor) === option.value
+              return (
+                <button
+                  key={option.value}
+                  type="button"
+                  title={option.label}
+                  aria-label={`选择${option.label}文字`}
+                  aria-pressed={active}
+                  onClick={() => setUserBubbleTextColor(option.value)}
+                  style={{
+                    width: 29, height: 29, borderRadius: '50%', padding: 0, cursor: 'pointer',
+                    background: option.value,
+                    border: active ? `3px solid ${primaryDark}` : '2px solid rgba(80,100,120,.18)',
+                    boxShadow: active ? `0 0 0 2px white, 0 2px 8px ${primary}55` : '0 2px 5px rgba(50,70,90,.12)',
+                  }}
+                />
+              )
+            })}
+            <label
+              title="自定义颜色"
+              aria-label="选择自定义文字颜色"
+              style={{
+                width: 29, height: 29, borderRadius: '50%', cursor: 'pointer', overflow: 'hidden',
+                border: normalizeBubbleTextColor(userBubbleTextColor) && !USER_BUBBLE_TEXT_PALETTE.some(option => option.value === normalizeBubbleTextColor(userBubbleTextColor))
+                  ? `3px solid ${primaryDark}` : '2px dashed rgba(80,100,120,.35)',
+                background: 'conic-gradient(#f66,#fc3,#6c6,#6cf,#96f,#f6c,#f66)',
+                position: 'relative',
+              }}
+            >
+              <input
+                type="color"
+                value={normalizeBubbleTextColor(userBubbleTextColor) || '#FFFFFF'}
+                onChange={(event) => setUserBubbleTextColor(event.target.value.toUpperCase())}
+                style={{ position: 'absolute', inset: 0, opacity: 0, cursor: 'pointer' }}
+              />
+            </label>
+            <button
+              type="button"
+              onClick={() => setUserBubbleTextColor(null)}
+              disabled={!normalizeBubbleTextColor(userBubbleTextColor)}
+              style={{
+                ...chipStyle(!normalizeBubbleTextColor(userBubbleTextColor)),
+                marginLeft: 2, padding: '5px 10px', fontSize: 11,
+                opacity: normalizeBubbleTextColor(userBubbleTextColor) ? 1 : .7,
+              }}
+            >跟随主题</button>
           </div>
         </GlassCard>
 

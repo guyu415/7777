@@ -16,8 +16,9 @@ import CodexMemory from './components/CodexMemory'
 import DesktopPet from './components/DesktopPet'
 import { getSettings, saveSettings, extractSettings, saveSessionMsgs, deleteSessionMsgs, putAsset, putAssetDataUrl, loadAsset } from './services/sync'
 import { compressImage, slimSettings } from './utils/image'
-import { ensureConnected as ensureCompanionConnected, getAuthStatus as getCompanionAuthStatus, onProactiveMessage, onRemoteUserMessage, onCcReset } from './services/companion'
+import { ensureConnected as ensureCompanionConnected, getAuthStatus as getCompanionAuthStatus, onProactiveMessage, onProactiveActivity, onRemoteUserMessage, onCcReset } from './services/companion'
 import { fetchTTSAudio } from './services/tts'
+import { themeWithUserBubbleText } from './utils/bubbleColors'
 
 const FONT_MAP = {
   noto: "'Noto Sans SC', 'PingFang SC', -apple-system, sans-serif",
@@ -41,6 +42,7 @@ export default function App() {
     setCurrentSessionId,
     currentGroupChatId, setCurrentGroupChatId,
     themeId: globalThemeId,
+    userBubbleTextColor,
     chatBg: globalChatBg,
     fontFamily: globalFontFamily,
     defaultFontSize,
@@ -82,6 +84,8 @@ export default function App() {
   const [loggedIn, setLoggedIn] = useState(() => !!localStorage.getItem('auth.password'))
   const [syncError, setSyncError] = useState(null)
   const [migrationStatus, setMigrationStatus] = useState(null)
+  const [proactiveActivity, setProactiveActivity] = useState(null)
+  const proactiveActivityTimer = useRef(null)
   const syncReady = useRef(false)
   const syncTimer = useRef(null)
   const lastSyncedSettings = useRef('')
@@ -422,7 +426,7 @@ export default function App() {
   const effectiveFontFamily = currentSession?.fontFamily ?? globalFontFamily
   const effectiveFontSize = currentSession?.fontSize ?? defaultFontSize
 
-  const theme = THEMES[effectiveThemeId] || THEMES.pink
+  const theme = themeWithUserBubbleText(THEMES[effectiveThemeId] || THEMES.pink, userBubbleTextColor)
 
   const [bgUrl, setBgUrl] = useState(null)
 
@@ -592,6 +596,22 @@ export default function App() {
       }
     })
     return unsub
+  }, [])
+
+  // A self-directed fishing/garden outing is informational rather than a
+  // message from CC, so show it as a short-lived toast and never persist it
+  // into the conversation. Closed/backgrounded clients receive the matching
+  // Web Push from the VPS instead.
+  useEffect(() => {
+    const unsub = onProactiveActivity(({ id, text, ts }) => {
+      clearTimeout(proactiveActivityTimer.current)
+      setProactiveActivity({ id, text, ts })
+      proactiveActivityTimer.current = setTimeout(() => setProactiveActivity(null), 8000)
+    })
+    return () => {
+      unsub()
+      clearTimeout(proactiveActivityTimer.current)
+    }
   }, [])
 
   // CC context reset: the server clears either the whole conversation or
@@ -799,6 +819,27 @@ export default function App() {
           }}
         >
           {migrationStatus}
+        </div>
+      )}
+
+      {/* Non-chat note for CC's self-directed proactive activity. */}
+      {proactiveActivity && (
+        <div
+          className="fixed z-50"
+          style={{
+            bottom: (syncError || migrationStatus) ? 172 : 100, right: 16,
+            background: 'linear-gradient(135deg, rgba(91,139,112,.96), rgba(92,116,151,.96))',
+            backdropFilter: 'blur(10px)',
+            WebkitBackdropFilter: 'blur(10px)',
+            color: 'white', fontSize: 12, fontWeight: 500,
+            lineHeight: 1.5, whiteSpace: 'pre-line',
+            padding: '10px 14px', borderRadius: 16,
+            boxShadow: '0 6px 20px rgba(55,82,70,.24)',
+            maxWidth: 280,
+          }}
+        >
+          <div style={{ fontSize: 10, opacity: 0.78, marginBottom: 2 }}>CC 的后台小记</div>
+          {proactiveActivity.text}
         </div>
       )}
     </div>
