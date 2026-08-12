@@ -253,6 +253,22 @@ export function onProactiveMessage(fn) {
   return () => proactiveListeners.delete(fn)
 }
 
+const remoteUserMessageListeners = new Set()
+/** User messages accepted outside ChatWindow (for example a scheduled
+ * diary letter) still belong in the resident CC conversation on every
+ * device. Live wire events and reconnect history snapshots share this path. */
+export function onRemoteUserMessage(fn) {
+  remoteUserMessageListeners.add(fn)
+  return () => remoteUserMessageListeners.delete(fn)
+}
+
+function maybeAnnounceRemoteUserMessage(message) {
+  if (message?.type !== 'msg' || message.from !== 'user' || !message.id || !message.text) return
+  for (const fn of remoteUserMessageListeners) {
+    try { fn({ id: message.id, text: message.text, ts: message.ts }) } catch { /* isolate subscribers */ }
+  }
+}
+
 // Takes the whole wire message (not just id/text/ts) so a proactive reply
 // carries the same kind/voice/style/thinking a normal streamChatViaCompanion()
 // -delivered one does — previously this dropped everything but text, silently
@@ -994,6 +1010,7 @@ listeners.add(evt => {
       // fall through — turn_end/turn_error also matter to any in-flight
       // streamChatViaCompanion() generator, handled further down via `listeners`
     }
+    if (m.type === 'msg' && m.from === 'user') maybeAnnounceRemoteUserMessage(m)
     if (m.type === 'msg' && m.from === 'cc') maybeAnnounceProactive(m)
     return
   }
@@ -1005,6 +1022,7 @@ listeners.add(evt => {
       boundaryTs: evt.resetBoundaryTs,
     })
     for (const item of evt.items) {
+      if (item.from === 'user') maybeAnnounceRemoteUserMessage(item)
       if (item.from === 'cc') maybeAnnounceProactive(item)
     }
     announceCodex({
@@ -1024,6 +1042,31 @@ export function ensureConnected() {
   authFailed = false
   reconnectAttempt = 0
   if (wsState === 'idle' || wsState === 'closed') connect()
+}
+
+export function sendDiaryLetterNow({ id, text }) {
+  return companionJson('/diary-letter/send', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ id, text, clientTime: clientTimeContext() }),
+  })
+}
+
+export function scheduleDiaryLetter({ id, text, deliverAt }) {
+  return companionJson('/diary-letter/schedule', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ id, text, deliverAt, clientTime: clientTimeContext() }),
+  })
+}
+
+export async function getScheduledDiaryLetters() {
+  const { items } = await companionJson('/diary-letter/schedule')
+  return Array.isArray(items) ? items : []
+}
+
+export function cancelScheduledDiaryLetter(id) {
+  return companionJson(`/diary-letter/schedule?id=${encodeURIComponent(id)}`, { method: 'DELETE' })
 }
 
 /** Explicit teardown — used on logout / unbinding the VPS session. */
