@@ -59,6 +59,16 @@ NOW_HOUR="$(TZ="$TZ_NAME" date +%H)"
 NOW_HOUR=$((10#$NOW_HOUR))
 
 if [ "$DREAM_DAY" != "$TODAY" ]; then
+  # A stale latest dream after push hour means the upstream overnight dream
+  # request never completed. Record it once per day instead of silently
+  # returning success every 15 minutes and making the timer look healthy.
+  LAST_MISSING_DAY="$(jq -r '.lastMissingDreamDay // empty' "$STATE_FILE" 2>/dev/null)"
+  if [ "$NOW_HOUR" -ge "$PUSH_HOUR" ] && [ "$LAST_MISSING_DAY" != "$TODAY" ]; then
+    echo "[$(date -Iseconds)] dream-announce-check missing_today latestDreamDay=${DREAM_DAY:-unknown}" >> "$BRAIN_LOG"
+    mkdir -p "$(dirname "$STATE_FILE")"
+    (jq --arg day "$TODAY" '.lastMissingDreamDay = $day' "$STATE_FILE" 2>/dev/null || jq -n --arg day "$TODAY" '{lastMissingDreamDay: $day}') \
+      > "${STATE_FILE}.tmp" && mv "${STATE_FILE}.tmp" "$STATE_FILE"
+  fi
   exit 0
 fi
 if [ "$NOW_HOUR" -lt "$PUSH_HOUR" ]; then
@@ -79,5 +89,6 @@ echo "[$(date -Iseconds)] dream-announce-check fired dreamId=${DREAM_ID}: ${RESU
 OK="$(echo "$RESULT" | jq -r '.ok // false' 2>/dev/null)"
 if [ "$OK" = "true" ]; then
   mkdir -p "$(dirname "$STATE_FILE")"
-  jq -n --arg id "$DREAM_ID" '{lastAnnouncedDreamId: $id}' > "${STATE_FILE}.tmp" && mv "${STATE_FILE}.tmp" "$STATE_FILE"
+  (jq --arg id "$DREAM_ID" '.lastAnnouncedDreamId = $id | del(.lastMissingDreamDay)' "$STATE_FILE" 2>/dev/null || jq -n --arg id "$DREAM_ID" '{lastAnnouncedDreamId: $id}') \
+    > "${STATE_FILE}.tmp" && mv "${STATE_FILE}.tmp" "$STATE_FILE"
 fi
