@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { BookHeart, CalendarDays, Heart, HeartHandshake, MessageCircleHeart, Sparkles, X } from 'lucide-react'
 import { useStore } from '../store'
 import DiarySection from './DiarySection'
@@ -139,7 +140,7 @@ export default function UniverseHome({ theme, onOpenChat, onOpenCareHub }) {
         </section>
       </div>
 
-      {diaryOpen && (
+      {diaryOpen && createPortal((
         <div className="universe-home__diary" role="dialog" aria-modal="true" aria-label="日记信箱">
           <button className="universe-home__diary-backdrop" onClick={closeDiary} aria-label="关闭日记" />
           <div className="universe-home__diary-sheet">
@@ -150,7 +151,7 @@ export default function UniverseHome({ theme, onOpenChat, onOpenCareHub }) {
             <div className="universe-home__diary-body"><DiarySection theme={theme} /></div>
           </div>
         </div>
-      )}
+      ), document.body)}
       {scheduleOpen && <StudySchedulePanel onClose={() => setScheduleOpen(false)} />}
 
       <style>{`
@@ -212,12 +213,12 @@ export default function UniverseHome({ theme, onOpenChat, onOpenCareHub }) {
         .universe-home__shortcut-icon--blue { color:#638997; background:rgba(224,243,239,.78); }
         .universe-home__shortcuts .universe-home__shortcut-wide { width:88%; min-height:72px; margin:5px 0 0 8%; background:rgba(226,242,239,.68); border-radius:41% 59% 54% 46% / 45% 39% 61% 55%; transform:rotate(-.5deg); }
         .universe-home__shortcut-wide i { margin-left:auto; color:#a0a5b6; font:24px/1 sans-serif; }
-        .universe-home__diary { position:fixed; inset:0; z-index:90; display:flex; align-items:flex-end; }
+        .universe-home__diary { position:fixed; inset:0; z-index:1100; display:flex; align-items:flex-end; justify-content:center; }
         .universe-home__diary-backdrop { position:absolute; inset:0; border:0; background:rgba(45,39,60,.22); backdrop-filter:blur(3px); }
-        .universe-home__diary-sheet { position:relative; width:100%; height:min(78dvh,720px); display:flex; flex-direction:column; overflow:hidden; border-radius:30px 30px 0 0; background:rgba(253,250,255,.98); box-shadow:0 -18px 55px rgba(57,44,72,.22); }
+        .universe-home__diary-sheet { position:relative; width:min(100%,480px); height:min(88dvh,780px); max-height:calc(100dvh - env(safe-area-inset-top,0px)); display:flex; flex-direction:column; overflow:hidden; border-radius:30px 30px 0 0; background:rgba(253,250,255,.98); box-shadow:0 -18px 55px rgba(57,44,72,.22); }
         .universe-home__diary-head { display:flex; align-items:center; justify-content:space-between; padding:17px 20px 12px; border-bottom:1px solid rgba(150,150,180,.14); }
         .universe-home__diary-head strong,.universe-home__diary-head span { display:block; } .universe-home__diary-head strong{color:#656476;font-size:15px}.universe-home__diary-head span{margin-top:3px;color:#aaa7b7;font-size:10px}.universe-home__diary-head button{width:34px;height:34px;display:grid;place-items:center;border:0;border-radius:50%;background:#f1edf5;color:#8d8998}
-        .universe-home__diary-body { flex:1; min-height:0; overflow:hidden; padding:10px 12px calc(12px + env(safe-area-inset-bottom)); }
+        .universe-home__diary-body { flex:1; min-height:0; overflow:hidden; padding:10px 12px calc(12px + env(safe-area-inset-bottom)); box-sizing:border-box; }
         @media (max-height:740px){.universe-home__portrait-card{min-height:282px}.universe-home__avatar{width:91px;height:91px}.universe-home__names{margin-top:19px}.universe-home__scroll{padding-top:5px}}
       `}</style>
     </main>

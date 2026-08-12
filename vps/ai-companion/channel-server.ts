@@ -120,6 +120,7 @@ const LOG_FILE = process.env.AI_COMPANION_LOG_FILE ?? join(ROOT, 'logs', 'server
 // reply that never got the chance to happen. Persisting closes that gap.
 const HISTORY_FILE = process.env.AI_COMPANION_HISTORY_FILE ?? join(ROOT, 'state', 'chat-history.json')
 const STUDY_SCHEDULE_FILE = process.env.AI_COMPANION_STUDY_SCHEDULE_FILE ?? join(ROOT, 'state', 'study-schedule.json')
+const DIARY_LETTER_SCHEDULE_FILE = process.env.AI_COMPANION_DIARY_LETTER_SCHEDULE_FILE ?? join(ROOT, 'state', 'diary-letter-schedule.json')
 const COOKIE_NAME = 'ai_companion_token'
 const SELF_ORIGIN = 'https://companion.xiaoman.xyz'
 const TURN_WATCHDOG_MS = 10 * 60 * 1000 // generous — real completion comes from Stop/StopFailure hooks
@@ -3481,6 +3482,60 @@ function beginMainCcTurn(input: QueuedCcMessage) {
   xinchaoHeartbeat(id, XINCHAO_CC_SESSION_ID)
   log('inbound', { id, chars: text.length, turnId: id, hasImage: !!imagePath, hasFile: !!filePath, queued: input.queuedAt < Date.now() - 50 })
 }
+
+type ScheduledDiaryLetter = {
+  id: string
+  text: string
+  deliverAt: number
+  createdAt: number
+  clientTime?: unknown
+}
+
+function loadScheduledDiaryLetters(): ScheduledDiaryLetter[] {
+  try {
+    const raw = JSON.parse(readFileSync(DIARY_LETTER_SCHEDULE_FILE, 'utf8'))
+    if (!Array.isArray(raw)) return []
+    return raw.filter((item): item is ScheduledDiaryLetter => (
+      typeof item?.id === 'string' && typeof item?.text === 'string'
+      && Number.isFinite(item?.deliverAt) && Number.isFinite(item?.createdAt)
+    )).sort((a, b) => a.deliverAt - b.deliverAt)
+  } catch { return [] }
+}
+
+let scheduledDiaryLetters = loadScheduledDiaryLetters()
+
+function saveScheduledDiaryLetters() {
+  mkdirSync(dirname(DIARY_LETTER_SCHEDULE_FILE), { recursive: true })
+  const tmp = `${DIARY_LETTER_SCHEDULE_FILE}.tmp`
+  writeFileSync(tmp, JSON.stringify(scheduledDiaryLetters, null, 2) + '\n')
+  renameSync(tmp, DIARY_LETTER_SCHEDULE_FILE)
+}
+
+function acceptDiaryLetter(input: QueuedCcMessage): 'sent' | 'queued' {
+  if (currentTurn || resetInFlight || tidalIsActive()) {
+    tidalEnqueueMessage(input)
+    return 'queued'
+  }
+  beginMainCcTurn(input)
+  return 'sent'
+}
+
+function dispatchScheduledDiaryLetters() {
+  const due = scheduledDiaryLetters.filter(item => item.deliverAt <= Date.now())
+  if (!due.length) return
+  for (const item of due) {
+    const mode = acceptDiaryLetter({
+      id: item.id, text: item.text, clientTime: item.clientTime,
+      queuedAt: item.createdAt,
+    })
+    scheduledDiaryLetters = scheduledDiaryLetters.filter(candidate => candidate.id !== item.id)
+    saveScheduledDiaryLetters()
+    log('diary_letter_delivered', { id: item.id, deliverAt: item.deliverAt, mode })
+  }
+}
+
+setTimeout(dispatchScheduledDiaryLetters, 3_000)
+setInterval(dispatchScheduledDiaryLetters, 15_000)
 
 function tidalStartupMarker(): string {
   let startupTs = 0
@@ -7466,6 +7521,66 @@ Bun.serve<{ authed: true }>({
         return jsonResponse({ error: 'unauthorized' }, { status: 401, headers: corsHeadersFor(origin) })
       }
       return null
+    }
+
+    // Diary compose always targets the one resident Claude Code chat. Drive
+    // archival remains the Worker's job; these routes own actual delivery.
+    if (url.pathname === '/diary-letter/send' && req.method === 'POST') {
+      const gate = authGate()
+      if (gate) return gate
+      const cors = corsHeadersFor(origin)
+      const body = await req.json().catch(() => ({} as Record<string, unknown>))
+      const id = typeof (body as any)?.id === 'string' ? (body as any).id.slice(0, 200) : ''
+      const text = typeof (body as any)?.text === 'string' ? (body as any).text.trim().slice(0, 20_000) : ''
+      if (!id || !text) return jsonResponse({ error: 'missing letter' }, { status: 400, headers: cors })
+      if (history.some(item => item.id === id) || scheduledDiaryLetters.some(item => item.id === id)) {
+        return jsonResponse({ ok: true, duplicate: true }, { headers: cors })
+      }
+      const mode = acceptDiaryLetter({ id, text, clientTime: (body as any)?.clientTime, queuedAt: Date.now() })
+      log('diary_letter_accepted', { id, mode })
+      return jsonResponse({ ok: true, mode }, { headers: cors })
+    }
+
+    if (url.pathname === '/diary-letter/schedule' && req.method === 'GET') {
+      const gate = authGate()
+      if (gate) return gate
+      const items = scheduledDiaryLetters.map(({ id, text, deliverAt, createdAt }) => ({
+        id, deliverAt, createdAt, preview: text.replace(/\[\/?LETTER[^\]]*\]/g, '').trim().slice(0, 80),
+      }))
+      return jsonResponse({ items }, { headers: { ...corsHeadersFor(origin), 'cache-control': 'no-store' } })
+    }
+
+    if (url.pathname === '/diary-letter/schedule' && req.method === 'POST') {
+      const gate = authGate()
+      if (gate) return gate
+      const cors = corsHeadersFor(origin)
+      const body = await req.json().catch(() => ({} as Record<string, unknown>))
+      const id = typeof (body as any)?.id === 'string' ? (body as any).id.slice(0, 200) : ''
+      const text = typeof (body as any)?.text === 'string' ? (body as any).text.trim().slice(0, 20_000) : ''
+      const deliverAt = Number((body as any)?.deliverAt)
+      if (!id || !text || !Number.isFinite(deliverAt) || deliverAt < Date.now() + 5_000 || deliverAt > Date.now() + 366 * 86400_000) {
+        return jsonResponse({ error: 'invalid schedule' }, { status: 400, headers: cors })
+      }
+      if (history.some(item => item.id === id)) return jsonResponse({ error: 'already delivered' }, { status: 409, headers: cors })
+      scheduledDiaryLetters = scheduledDiaryLetters.filter(item => item.id !== id)
+      scheduledDiaryLetters.push({ id, text, deliverAt, createdAt: Date.now(), clientTime: (body as any)?.clientTime })
+      scheduledDiaryLetters.sort((a, b) => a.deliverAt - b.deliverAt)
+      saveScheduledDiaryLetters()
+      log('diary_letter_scheduled', { id, deliverAt })
+      return jsonResponse({ ok: true, item: { id, deliverAt } }, { headers: cors })
+    }
+
+    if (url.pathname === '/diary-letter/schedule' && req.method === 'DELETE') {
+      const gate = authGate()
+      if (gate) return gate
+      const cors = corsHeadersFor(origin)
+      const id = url.searchParams.get('id') || ''
+      const before = scheduledDiaryLetters.length
+      scheduledDiaryLetters = scheduledDiaryLetters.filter(item => item.id !== id)
+      if (scheduledDiaryLetters.length === before) return jsonResponse({ error: 'not found' }, { status: 404, headers: cors })
+      saveScheduledDiaryLetters()
+      log('diary_letter_cancelled', { id })
+      return jsonResponse({ ok: true }, { headers: cors })
     }
 
     // ---- statusLine-fed usage/model status ----

@@ -16,7 +16,7 @@ import CodexMemory from './components/CodexMemory'
 import DesktopPet from './components/DesktopPet'
 import { getSettings, saveSettings, extractSettings, saveSessionMsgs, deleteSessionMsgs, putAsset, putAssetDataUrl, loadAsset } from './services/sync'
 import { compressImage, slimSettings } from './utils/image'
-import { ensureConnected as ensureCompanionConnected, getAuthStatus as getCompanionAuthStatus, onProactiveMessage, onCcReset } from './services/companion'
+import { ensureConnected as ensureCompanionConnected, getAuthStatus as getCompanionAuthStatus, onProactiveMessage, onRemoteUserMessage, onCcReset } from './services/companion'
 import { fetchTTSAudio } from './services/tts'
 
 const FONT_MAP = {
@@ -496,6 +496,33 @@ export default function App() {
     })
     return () => { cancelled = true }
   }, [sessions])
+
+  // Letters can be delivered while the garden is open, from another device,
+  // or by the VPS scheduler while this tab is closed. Mirror every accepted
+  // server-side user message into the one resident CC chat, idempotently.
+  useEffect(() => {
+    const unsub = onRemoteUserMessage(async ({ id, text, ts }) => {
+      const vpsSession = useStore.getState().sessions?.find(s => s.providerName === 'claude-code-vps')
+      if (!vpsSession) return
+      const existing = await getMessages(vpsSession.id)
+      if (existing.some(m => m.id === id)) return
+      const msg = {
+        id, conversationId: vpsSession.id, role: 'user', type: 'text', content: text,
+        timestamp: ts || Date.now(), source: 'diary-letter',
+      }
+      await saveMessage(msg)
+      const state = useStore.getState()
+      state.updateSession(vpsSession.id, { lastMsgPreview: '寄出了一封信', lastMsgTime: msg.timestamp })
+      if (state.currentSessionId === vpsSession.id) state.addMessage(msg)
+      const password = localStorage.getItem('auth.password')
+      if (password) {
+        const all = [...existing, msg].sort((a, b) => a.timestamp - b.timestamp)
+        saveSessionMsgs(password, vpsSession.id, all.filter(m => !m.streaming))
+          .catch(e => console.warn('[DIARY] 常驻窗消息同步失败:', e.message))
+      }
+    })
+    return unsub
+  }, [])
 
   // Proactive (VPS-initiated) messages: land only in the single VPS-bound
   // session's real message store, deduped by Wire.id against what's already

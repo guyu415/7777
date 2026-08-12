@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
-import { useStore, saveMessage, getMessages } from '../store'
+import { useStore } from '../store'
 import { getLatestLetter, getLetterById, addLetter } from '../services/letters'
-import { saveSessionMsgs } from '../services/sync'
+import { scheduleDiaryLetter, sendDiaryLetterNow } from '../services/companion'
 
 const MOOD_OPTIONS = ['😊', '🥰', '😌', '😔', '🥹', '😤', '🤔', '😶‍🌫️']
 const WEATHER_OPTIONS = ['☀️', '⛅', '☁️', '🌧️', '❄️', '🌙']
@@ -12,6 +12,13 @@ function genId() {
 
 function todayStr() {
   return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date())
+}
+
+function defaultDeliveryTime() {
+  const date = new Date(Date.now() + 60 * 60 * 1000)
+  date.setMinutes(Math.ceil(date.getMinutes() / 5) * 5, 0, 0)
+  const local = new Date(date.getTime() - date.getTimezoneOffset() * 60000)
+  return local.toISOString().slice(0, 16)
 }
 
 // Collapsible letter body — folds when content exceeds ~6 lines
@@ -43,7 +50,8 @@ function LetterBody({ text }) {
 // `diaryTarget` (set when a letter-card bubble in chat is clicked) overrides
 // "show latest" with "show this specific letter, by its Drive fileId".
 export default function DiarySection({ theme }) {
-  const { currentSessionId, diaryTarget, setDiaryTarget } = useStore()
+  const { sessions, diaryTarget, setDiaryTarget } = useStore()
+  const ccSession = sessions?.find(session => session.providerName === 'claude-code-vps')
 
   const primary = theme?.primary || '#4aacf0'
   const primaryDark = theme?.primaryDark || '#2196d3'
@@ -55,6 +63,9 @@ export default function DiarySection({ theme }) {
   const [loading, setLoading] = useState(true)
   const [letter, setLetter] = useState(null)
   const [loadError, setLoadError] = useState(false)
+  const [deliveryMode, setDeliveryMode] = useState('now')
+  const [deliverAt, setDeliverAt] = useState(defaultDeliveryTime)
+  const [sendStatus, setSendStatus] = useState('')
 
   const load = async (targetId) => {
     setLoading(true)
@@ -81,41 +92,30 @@ export default function DiarySection({ theme }) {
   }, [])
 
   const sendLetter = async () => {
-    if (!content.trim() || sending || !currentSessionId) return
+    if (!content.trim() || sending || !ccSession?.id) return
     setSending(true)
+    setSendStatus('')
     try {
       const date = todayStr()
       const body = content.trim()
-      await addLetter({ sessionId: currentSessionId, role: 'user', mood, weather, date, content: body })
-
-      // Also drop a real chat message into the current session so the AI
-      // actually sees "a letter arrived" in its next turn — a Drive-only
-      // write is invisible to it otherwise (the diary index injected into
-      // the system prompt is metadata-only, no content).
-      const chatMsg = {
-        id: genId(),
-        conversationId: currentSessionId,
-        role: 'user',
-        type: 'text',
-        content: `[LETTER mood=${mood} weather=${weather} date=${date}]\n${body}\n[/LETTER]`,
-        timestamp: Date.now(),
-      }
-      await saveMessage(chatMsg)
-      const password = localStorage.getItem('auth.password')
-      if (password) {
-        try {
-          const all = await getMessages(currentSessionId)
-          all.sort((a, b) => a.timestamp - b.timestamp)
-          await saveSessionMsgs(password, currentSessionId, all.filter(m => !m.streaming))
-        } catch (e) {
-          console.warn('[LETTERS] 寄出后同步失败:', e.message)
-        }
+      const archived = await addLetter({ sessionId: ccSession.id, role: 'user', mood, weather, date, content: body })
+      const id = `diary-letter-${archived?.id || genId()}`
+      const text = `[LETTER mood=${mood} weather=${weather} date=${date}]\n${body}\n[/LETTER]`
+      if (deliveryMode === 'scheduled') {
+        const timestamp = new Date(deliverAt).getTime()
+        if (!Number.isFinite(timestamp) || timestamp < Date.now() + 5_000) throw new Error('请选择一个未来的发送时间')
+        await scheduleDiaryLetter({ id, text, deliverAt: timestamp })
+        setSendStatus(`已定时：${new Date(timestamp).toLocaleString('zh-CN', { hour12: false })}`)
+      } else {
+        await sendDiaryLetterNow({ id, text })
+        setSendStatus('已送达 Claude Code 常驻聊天')
       }
 
       setContent('')
       await load()
     } catch (e) {
       console.warn('[LETTERS] 寄出失败:', e.message)
+      setSendStatus(`寄出失败：${e.message}`)
     } finally {
       setSending(false)
     }
@@ -129,7 +129,7 @@ export default function DiarySection({ theme }) {
   })
 
   return (
-    <div className="flex flex-col h-full">
+    <div className="flex flex-col h-full" style={{ minHeight: 0 }}>
       {/* Latest (or targeted) letter — plain semi-transparent blue overlay,
           no avatar/name/mood/weather header, just the text. */}
       <div className="flex-1 overflow-y-auto px-1" style={{ minHeight: 0 }}>
@@ -162,9 +162,11 @@ export default function DiarySection({ theme }) {
         )}
       </div>
 
-      {/* Write panel — always writes to the current conversation */}
-      <div className="flex-shrink-0 pt-2 mt-1" style={{ borderTop: '1px solid rgba(200,220,255,0.3)' }}>
-        {!currentSessionId ? null : (
+      {/* Write panel — always archives to Drive and delivers to resident CC. */}
+      <div className="flex-shrink-0 pt-2 mt-1" style={{ borderTop: '1px solid rgba(200,220,255,0.3)', paddingBottom: 'env(safe-area-inset-bottom, 0px)' }}>
+        {!ccSession ? (
+          <div style={{ padding: 10, color: '#a06f7c', fontSize: 12 }}>请先绑定 Claude Code 常驻聊天窗。</div>
+        ) : (
           <>
             <div className="flex items-center gap-1 mb-1 overflow-x-auto">
               <span style={{ fontSize: 11, color: '#7a9cc0', flexShrink: 0 }}>心情</span>
@@ -174,12 +176,18 @@ export default function DiarySection({ theme }) {
               <span style={{ fontSize: 11, color: '#7a9cc0', flexShrink: 0 }}>天气</span>
               {WEATHER_OPTIONS.map(w => <button key={w} style={emojiBtn(weather === w)} onClick={() => setWeather(w)}>{w}</button>)}
             </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, margin: '3px 0 7px', fontSize: 12, color: '#7a9cc0' }}>
+              <button type="button" onClick={() => setDeliveryMode('now')} style={{ border: 0, borderRadius: 999, padding: '5px 10px', color: deliveryMode === 'now' ? '#fff' : '#6d8daf', background: deliveryMode === 'now' ? primary : 'rgba(220,232,248,.7)' }}>立即发送</button>
+              <button type="button" onClick={() => setDeliveryMode('scheduled')} style={{ border: 0, borderRadius: 999, padding: '5px 10px', color: deliveryMode === 'scheduled' ? '#fff' : '#6d8daf', background: deliveryMode === 'scheduled' ? primary : 'rgba(220,232,248,.7)' }}>定时发送</button>
+              {deliveryMode === 'scheduled' && <input type="datetime-local" value={deliverAt} min={defaultDeliveryTime()} onChange={e => setDeliverAt(e.target.value)} style={{ minWidth: 0, flex: 1, border: '1px solid rgba(160,190,225,.45)', borderRadius: 9, padding: '5px 6px', color: '#52749a', background: 'rgba(255,255,255,.76)', fontSize: 11 }} />}
+            </div>
             <div className="flex items-end gap-2">
               <textarea
                 value={content}
                 onChange={e => setContent(e.target.value)}
+                onFocus={e => setTimeout(() => e.target.scrollIntoView({ block: 'nearest', behavior: 'smooth' }), 250)}
                 placeholder="写点什么..."
-                rows={2}
+                rows={3}
                 style={{
                   flex: 1, resize: 'none',
                   background: 'rgba(255,255,255,0.75)',
@@ -201,6 +209,7 @@ export default function DiarySection({ theme }) {
                 📮
               </button>
             </div>
+            {sendStatus && <div style={{ marginTop: 5, paddingInline: 2, color: sendStatus.startsWith('寄出失败') ? '#b76472' : '#668b78', fontSize: 11 }}>{sendStatus}</div>}
           </>
         )}
       </div>
