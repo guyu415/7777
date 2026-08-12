@@ -41,6 +41,14 @@ function loadPendingProactiveActivities() {
   }
 }
 
+function formatProactiveActivityTime(ts) {
+  const date = new Date(Number(ts))
+  if (!Number.isFinite(date.getTime())) return ''
+  return new Intl.DateTimeFormat('zh-CN', {
+    month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false,
+  }).format(date)
+}
+
 // 用于「settings 是否真的变了」的对比指纹。lastMsgTime/lastMsgPreview 每条消息都在变，
 // 如果不剔除，聊天全程每轮都会触发一次整包 settings 上传，白白消耗 KV 每天
 // 1000 次的写入配额。这两个字段只影响会话列表排序展示，跟着下一次真实变更捎带上传即可。
@@ -869,6 +877,11 @@ export default function App() {
             {pendingProactiveActivities.length > 1 ? ` · 还有 ${pendingProactiveActivities.length - 1} 条` : ''}
           </div>
           <div>{proactiveActivity.text}</div>
+          {formatProactiveActivityTime(proactiveActivity.ts) && (
+            <div style={{ marginTop: 6, fontSize: 10, opacity: .68 }}>
+              {formatProactiveActivityTime(proactiveActivity.ts)}
+            </div>
+          )}
           <button
             type="button"
             onClick={confirmProactiveActivity}
