@@ -310,12 +310,31 @@ const MessageInput = forwardRef(function MessageInput({ onSend, onSendBatch, onS
     } else if (imageDraft) {
       // Keep a staged image and all queued text in one turn.
       const imageCaption = quotePrefix + [...segments, finalText].filter(Boolean).join('\n')
+      const pendingImage = imageDraft
+      const pendingText = text
+      const pendingSegments = segments
+      // Sending a VPS turn can stay pending until the reply finishes. Clear the
+      // composer as soon as the outgoing turn is accepted so the sent image and
+      // caption do not linger under the conversation meanwhile.
+      setImageDraft(null)
+      setSegments([])
+      setText('')
+      setMenuOpen(false)
+      if (textareaRef.current) textareaRef.current.style.height = 'auto'
       setIsSendingAttachment(true)
-      const sent = await Promise.resolve(onSendImage({ imageData: imageDraft.imageData, imageType: imageDraft.imageType, imageUrl: imageDraft.imageUrl, text: imageCaption }))
+      const sent = await Promise.resolve().then(() => onSendImage({ imageData: pendingImage.imageData, imageType: pendingImage.imageType, imageUrl: pendingImage.imageUrl, text: imageCaption }))
         .catch(() => false)
         .finally(() => setIsSendingAttachment(false))
-      if (sent === false) return
-      setImageDraft(null)
+      if (sent === false) {
+        setImageDraft(current => current || pendingImage)
+        if (!textRef.current && segmentsRef.current.length === 0) {
+          setSegments(pendingSegments)
+          setText(pendingText)
+        }
+        return
+      }
+      onCancelReply?.()
+      return
     } else {
       const batch = finalText ? [...segments, finalText] : segments
       if (quotePrefix && batch.length) batch[0] = quotePrefix + batch[0]
@@ -468,7 +487,7 @@ const MessageInput = forwardRef(function MessageInput({ onSend, onSendBatch, onS
           <span style={{ fontSize: 12, color: '#8b5060' }}>
             {imageDraft.compressed
               ? `原图 ${formatImageBytes(imageDraft.originalBytes)} → 压缩后 ${formatImageBytes(imageDraft.compressedBytes)}`
-              : '已选图片，可继续输入文字一起发送'}
+              : `图片 ${formatImageBytes(imageDraft.compressedBytes || imageDraft.originalBytes)} · 可继续输入文字一起发送`}
           </span>
         </div>
       )}
@@ -519,6 +538,23 @@ const MessageInput = forwardRef(function MessageInput({ onSend, onSendBatch, onS
         display: 'flex', alignItems: 'flex-end', gap: 8,
         padding: '6px 12px 10px',
       }}>
+        <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={handleImage} />
+        <input ref={attachmentFileRef} type="file" className="hidden" onChange={handleFile} />
+
+        {/* 展开菜单固定在输入框左侧；旋转后的加号即为收起按钮。 */}
+        <button
+          ref={plusBtnRef}
+          onClick={() => setMenuOpen(v => !v)}
+          title="更多"
+          style={{
+            ...btnBase,
+            transform: menuOpen ? 'rotate(45deg)' : 'rotate(0deg)',
+            background: menuOpen ? `${primaryColor}30` : 'rgba(255,182,209,0.25)',
+          }}
+        >
+          <PlusIcon />
+        </button>
+
         <div style={{
           flex: 1, minWidth: 0, display: 'flex', alignItems: 'flex-end',
           background: 'rgba(255,255,255,0.5)',
@@ -551,24 +587,6 @@ const MessageInput = forwardRef(function MessageInput({ onSend, onSendBatch, onS
             }}
           />
         </div>
-
-        <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={handleImage} />
-        <input ref={attachmentFileRef} type="file" className="hidden" onChange={handleFile} />
-
-        {/* "+"/"×" 始终在发送按钮左侧——切换只改变展开状态和图标（+ 旋转 45°
-            即成 ×），绝不与发送按钮换位置。 */}
-        <button
-          ref={plusBtnRef}
-          onClick={() => setMenuOpen(v => !v)}
-          title="更多"
-          style={{
-            ...btnBase,
-            transform: menuOpen ? 'rotate(45deg)' : 'rotate(0deg)',
-            background: menuOpen ? `${primaryColor}30` : 'rgba(255,182,209,0.25)',
-          }}
-        >
-          <PlusIcon />
-        </button>
 
         {isLoading ? (
           <button
