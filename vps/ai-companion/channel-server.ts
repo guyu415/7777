@@ -80,6 +80,7 @@ import {
   careOverdueDays,
   careRoleIsDue,
   defaultCareHubState,
+  ledgerDailySummary,
   ledgerPeriodSummary,
   normalizeCareHubState,
   sanitizeCareRoleConfig,
@@ -7089,16 +7090,23 @@ function carePublicState(): CareHubState {
 }
 function careCompactProgress() {
   const { date } = zonedDateTime(new Date(), careHubState.config.timezone)
-  const todayTotal = careHubState.ledger.entries
-    .filter((entry) => entry.date === date)
+  const todayTotal = ledgerDailySummary(careHubState.ledger.entries, date).total
+  const periodSummary = ledgerPeriodSummary(careHubState.ledger.entries, date, careHubState.ledger.monthStartDay)
+  const periodLongTermTotal = careHubState.ledger.entries
+    .filter((entry) => entry.date >= periodSummary.start && entry.date <= periodSummary.end && entry.kind === 'longTerm')
     .reduce((sum, entry) => sum + entry.amount, 0)
-  const periodTotal = ledgerPeriodSummary(careHubState.ledger.entries, date, careHubState.ledger.monthStartDay).total
   const todayGoals = careHubState.study.goals.filter((goal) => goal.schedule !== 'dates' || goal.dates?.includes(date))
   const total = todayGoals.length
   const completed = todayGoals.filter((goal) => careGoalDoneOnDate(goal, date)).length
   return {
     date,
-    spending: { todayTotal, monthTotal: periodTotal },
+    spending: {
+      todayTotal,
+      todayBudget: careHubState.ledger.dailyBudget,
+      todayRemaining: careHubState.ledger.dailyBudget > 0 ? Math.round((careHubState.ledger.dailyBudget - todayTotal) * 100) / 100 : null,
+      monthTotal: periodSummary.total,
+      monthLongTermTotal: Math.round(periodLongTermTotal * 100) / 100,
+    },
     study: { completed, total, progressPercent: total ? Math.round(completed / total * 100) : 0 },
   }
 }
@@ -7184,9 +7192,10 @@ function careRolePrompt(role: CareRoleId, today: string, evidence = '', solarMon
   }
   if (role === 'ledger') {
     const summary = ledgerPeriodSummary(careHubState.ledger.entries, today, careHubState.ledger.monthStartDay)
+    const todaySummary = ledgerDailySummary(careHubState.ledger.entries, today)
     return {
       system: `${common}\n你负责每日账本回顾，不评价、不羞辱消费，只帮助看清数据和下一步。`,
-      instruction: `这是 ${summary.start} 至 ${summary.end} 的本期账本（每月 ${careHubState.ledger.monthStartDay} 日起算）：预算 ${careHubState.ledger.monthlyBudget || '未设置'} 元，已记 ${summary.count} 笔，共 ${summary.total} 元；分类合计 ${JSON.stringify(summary.byCategory)}。请做一段不超过 180 字的晚间回顾：预算进度、最大支出类别、一个具体而温和的提醒。没有记录时就提醒用户今天可以补记。`,
+      instruction: `这是 ${summary.start} 至 ${summary.end} 的本期账本（每月 ${careHubState.ledger.monthStartDay} 日起算）：月预算 ${careHubState.ledger.monthlyBudget || '未设置'} 元，每日目标 ${careHubState.ledger.dailyBudget || '未设置'} 元；今天常规支出 ${todaySummary.total} 元（${todaySummary.count} 笔），本期已记 ${summary.count} 笔，共 ${summary.total} 元；分类合计 ${JSON.stringify(summary.byCategory)}。长期开销计入本期总额，但不计入每日目标。请做一段不超过 180 字的晚间回顾：本期进度、今日目标完成情况、最大支出类别、一个具体而温和的提醒。没有记录时就提醒用户今天可以补记。`,
     }
   }
   const goals = careHubState.study.goals.map((g) => ({
@@ -7296,8 +7305,9 @@ function careAddLedgerEntry(raw: any): { ok: boolean; error?: string } {
   const date = /^\d{4}-\d{2}-\d{2}$/.test(raw?.date) ? raw.date : today
   const category = typeof raw?.category === 'string' && raw.category.trim() ? raw.category.trim().slice(0, 20) : '其他'
   const note = typeof raw?.note === 'string' ? raw.note.trim().slice(0, 100) : ''
-  careHubState.ledger.entries.push({ id: nextId(), amount, category, note, date, ts: Date.now() })
-  careAppend('ledger', `已记账：${category} ¥${amount.toFixed(2)}${note ? ` · ${note}` : ''}`, 'record')
+  const kind = raw?.kind === 'longTerm' ? 'longTerm' : 'daily'
+  careHubState.ledger.entries.push({ id: nextId(), amount, category, note, date, ts: Date.now(), kind })
+  careAppend('ledger', `${kind === 'longTerm' ? '已记长期开销' : '已记账'}：${category} ¥${amount.toFixed(2)}${note ? ` · ${note}` : ''}`, 'record')
   careCommit()
   careEvaluateAlerts()
   return { ok: true }
@@ -8759,6 +8769,11 @@ Bun.serve<{ authed: true }>({
         if (!Number.isFinite(budget) || budget < 0) return jsonResponse({ ok: false, error: '预算无效' }, { status: 400, headers: cors })
         careHubState.ledger.monthlyBudget = Math.round(budget * 100) / 100
       }
+      if (body?.dailyBudget !== undefined) {
+        const dailyBudget = Number(body.dailyBudget)
+        if (!Number.isFinite(dailyBudget) || dailyBudget < 0) return jsonResponse({ ok: false, error: '每日目标无效' }, { status: 400, headers: cors })
+        careHubState.ledger.dailyBudget = Math.round(dailyBudget * 100) / 100
+      }
       if (body?.monthStartDay !== undefined) {
         const day = Number(body.monthStartDay)
         if (!Number.isInteger(day) || day < 1 || day > 31) return jsonResponse({ ok: false, error: '每月起始日需为 1—31' }, { status: 400, headers: cors })
@@ -8872,11 +8887,12 @@ Bun.serve<{ authed: true }>({
       let body: any = {}
       try { body = await req.json() } catch {}
       const text = typeof body?.text === 'string' ? body.text.trim() : ''
-      const ledgerMatch = text.match(/^(?:记账[：:\s]*)?(.+?)\s*[¥￥]?([0-9]+(?:\.[0-9]{1,2})?)\s*元?$/)
-      if (ledgerMatch && (/^记账/.test(text) || /[元¥￥]/.test(text))) {
+      const longTerm = /^(?:长期开销|固定开销)/.test(text)
+      const ledgerMatch = text.match(/^(?:(?:记账|长期开销|固定开销)[：:\s]*)?(.+?)\s*[¥￥]?([0-9]+(?:\.[0-9]{1,2})?)\s*元?$/)
+      if (ledgerMatch && (/^记账/.test(text) || longTerm || /[元¥￥]/.test(text))) {
         const note = ledgerMatch[1].trim()
         const category = /饭|餐|吃|喝|咖啡|奶茶/.test(note) ? '餐饮' : /车|地铁|公交|打车|油/.test(note) ? '交通' : /书|课|学习/.test(note) ? '学习' : '其他'
-        const result = careAddLedgerEntry({ amount: ledgerMatch[2], category, note })
+        const result = careAddLedgerEntry({ amount: ledgerMatch[2], category, note, kind: longTerm ? 'longTerm' : 'daily' })
         return jsonResponse(result.ok ? { ...result, state: carePublicState() } : result, { status: result.ok ? 200 : 400, headers: cors })
       }
       const goalMatch = text.match(/^(?:目标|添加目标)[：:\s]*(.+)$/)
