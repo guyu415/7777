@@ -5,6 +5,8 @@ import DiarySection from './DiarySection'
 import StudySchedulePanel from './StudySchedule/StudySchedulePanel'
 import { getXinchaoStatus, onXinchaoUpdate } from '../services/companion'
 
+const TOGETHER_SINCE = new Date(2026, 7, 6).getTime()
+
 function dayNumber(timestamp) {
   if (!timestamp) return 1
   return Math.max(1, Math.floor((Date.now() - timestamp) / 86400000) + 1)
@@ -51,7 +53,7 @@ export default function UniverseHome({ theme, onOpenChat, onOpenCareHub }) {
   const aiName = ccSession?.aiName || ccSession?.name || globalAiName || 'CC'
   const userAvatar = ccSession?.userAvatar || globalUserAvatar
   const aiAvatar = ccSession?.aiAvatar || globalAiAvatar
-  const startAt = ccSession?.createdAt || Date.now()
+  const startAt = TOGETHER_SINCE
   const togetherDays = dayNumber(startAt)
   const legacySignature = ['小满一直在这里等你～', '小满一直在这里等你~'].includes(ccSession?.signature)
   const signature = (!legacySignature && ccSession?.signature) || '还没有写下签名。'
@@ -113,10 +115,10 @@ export default function UniverseHome({ theme, onOpenChat, onOpenCareHub }) {
             <p>{mood ? `「${mood}」` : '心潮暂时没有传来新的波纹。'}</p>
             {xinchao && <small>{xinchao.consciousnessLabel || '—'} · 疲劳 {Math.round((xinchao.fatigue || 0) * 100)}%</small>}
           </section>
-          <button className="universe-home__schedule" type="button" onClick={() => setScheduleOpen(true)}>
-            <span><CalendarDays size={20} /></span>
-            <strong>课表</strong>
-            <small>近半个月</small>
+          <button className="universe-home__schedule" type="button" onClick={() => setDiaryOpen(true)}>
+            <span><BookHeart size={20} /></span>
+            <strong>日记信箱</strong>
+            <small>写给你的信</small>
           </button>
         </div>
 
@@ -125,9 +127,9 @@ export default function UniverseHome({ theme, onOpenChat, onOpenCareHub }) {
             <span className="universe-home__shortcut-icon"><MessageCircleHeart size={23} /></span>
             <span><strong>一起聊天</strong><small>回到 {aiName} 身边</small></span>
           </button>
-          <button onClick={() => setDiaryOpen(true)}>
-            <span className="universe-home__shortcut-icon universe-home__shortcut-icon--violet"><BookHeart size={22} /></span>
-            <span><strong>日记信箱</strong><small>写给你的信</small></span>
+          <button onClick={() => setScheduleOpen(true)}>
+            <span className="universe-home__shortcut-icon universe-home__shortcut-icon--violet"><CalendarDays size={22} /></span>
+            <span><strong>课表</strong><small>近半个月</small></span>
           </button>
           <button type="button" onClick={() => onOpenCareHub?.()} className="universe-home__shortcut-wide">
             <span className="universe-home__shortcut-icon universe-home__shortcut-icon--blue"><HeartHandshake size={22} /></span>
