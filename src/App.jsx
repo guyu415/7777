@@ -16,7 +16,7 @@ import CodexMemory from './components/CodexMemory'
 import DesktopPet from './components/DesktopPet'
 import { getSettings, saveSettings, extractSettings, saveSessionMsgs, deleteSessionMsgs, putAsset, putAssetDataUrl, loadAsset } from './services/sync'
 import { compressImage, slimSettings } from './utils/image'
-import { ensureConnected as ensureCompanionConnected, getAuthStatus as getCompanionAuthStatus, onProactiveMessage, onProactiveActivity, onRemoteUserMessage, onCcReset } from './services/companion'
+import { ensureConnected as ensureCompanionConnected, getAuthStatus as getCompanionAuthStatus, onProactiveMessage, onProactiveActivity, onProactiveActivityAcknowledged, acknowledgeProactiveActivity, onRemoteUserMessage, onCcReset } from './services/companion'
 import { fetchTTSAudio } from './services/tts'
 import { themeWithUserBubbleText } from './utils/bubbleColors'
 
@@ -108,6 +108,7 @@ export default function App() {
   const [syncError, setSyncError] = useState(null)
   const [migrationStatus, setMigrationStatus] = useState(null)
   const [pendingProactiveActivities, setPendingProactiveActivities] = useState(loadPendingProactiveActivities)
+  const [confirmingProactiveActivityId, setConfirmingProactiveActivityId] = useState(null)
   const syncReady = useRef(false)
   const syncTimer = useRef(null)
   const lastSyncedSettings = useRef('')
@@ -635,14 +636,32 @@ export default function App() {
   }, [])
 
   useEffect(() => {
+    return onProactiveActivityAcknowledged(id => {
+      setPendingProactiveActivities(current => current.filter(item => item.id !== id))
+      setConfirmingProactiveActivityId(current => current === id ? null : current)
+    })
+  }, [])
+
+  useEffect(() => {
     try {
       localStorage.setItem(PROACTIVE_ACTIVITY_STORAGE_KEY, JSON.stringify(pendingProactiveActivities))
     } catch { /* a full/private storage area must not break the chat UI */ }
   }, [pendingProactiveActivities])
 
   const proactiveActivity = pendingProactiveActivities[0] || null
-  const confirmProactiveActivity = () => {
-    setPendingProactiveActivities(current => current.slice(1))
+  const confirmProactiveActivity = async () => {
+    if (!proactiveActivity || confirmingProactiveActivityId) return
+    setConfirmingProactiveActivityId(proactiveActivity.id)
+    try {
+      await acknowledgeProactiveActivity(proactiveActivity.id)
+      // The server broadcasts the authoritative ack to every open tab. Also
+      // remove immediately so a slow event loop never makes the button feel stuck.
+      setPendingProactiveActivities(current => current.filter(item => item.id !== proactiveActivity.id))
+    } catch (error) {
+      console.error('[PROACTIVE-ACTIVITY] 确认失败:', error?.message)
+    } finally {
+      setConfirmingProactiveActivityId(null)
+    }
   }
 
   // CC context reset: the server clears either the whole conversation or
@@ -885,13 +904,14 @@ export default function App() {
           <button
             type="button"
             onClick={confirmProactiveActivity}
+            disabled={confirmingProactiveActivityId === proactiveActivity.id}
             style={{
               display: 'block', margin: '10px 0 0 auto', padding: '5px 12px',
               border: '1px solid rgba(255,255,255,.46)', borderRadius: 999,
               background: 'rgba(255,255,255,.17)', color: 'white',
               font: 'inherit', fontSize: 11, fontWeight: 600, cursor: 'pointer',
             }}
-          >知道了</button>
+          >{confirmingProactiveActivityId === proactiveActivity.id ? '确认中…' : '知道了'}</button>
         </div>
       )}
     </div>

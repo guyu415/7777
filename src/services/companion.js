@@ -255,10 +255,22 @@ export function onProactiveMessage(fn) {
 
 const proactiveActivityListeners = new Set()
 /** Subscribe to completed self-directed proactive activities. These are
- * ephemeral UI hints, deliberately separate from chat messages/history. */
+ * durable-until-acknowledged UI hints, deliberately separate from chat history. */
 export function onProactiveActivity(fn) {
   proactiveActivityListeners.add(fn)
   return () => proactiveActivityListeners.delete(fn)
+}
+
+const proactiveActivityAckListeners = new Set()
+export function onProactiveActivityAcknowledged(fn) {
+  proactiveActivityAckListeners.add(fn)
+  return () => proactiveActivityAckListeners.delete(fn)
+}
+
+function announceProactiveActivityAcknowledged(id) {
+  for (const fn of proactiveActivityAckListeners) {
+    try { fn(id) } catch { /* isolate subscribers */ }
+  }
 }
 
 function announceProactiveActivity(activity) {
@@ -981,6 +993,10 @@ listeners.add(evt => {
       announceProactiveActivity({ id: m.id, text: m.text, ts: m.ts })
       return
     }
+    if (m.type === 'proactive_activity_ack') {
+      announceProactiveActivityAcknowledged(m.id)
+      return
+    }
     if (m.type === 'gomoku_update') {
       announceGomoku(m.game, m.runtime || 'claude-code')
       return
@@ -1108,6 +1124,15 @@ function sendRaw(obj) {
     return true
   }
   return false
+}
+
+/** Remove a server-persisted activity note only after the user confirms it. */
+export async function acknowledgeProactiveActivity(id) {
+  if (!id) return false
+  ensureConnected()
+  await waitUntilOpenOrFail()
+  if (!sendRaw({ type: 'proactive_activity_ack', id })) throw new Error('companion 未连接')
+  return true
 }
 
 function waitUntilOpenOrFail(timeoutMs = 8000) {
