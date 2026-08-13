@@ -4,6 +4,7 @@ import {
   startFocus, focusInteract, requestFocus, resumeFocusFromApproval,
   selfPauseFocus, selfResumeFocus, selfEndFocus,
 } from '../services/companion'
+import { armFocusAlarm, playFocusAlarm } from '../services/focusAlarm'
 
 export function formatFocusMs(ms) {
   const seconds = Math.max(0, Math.ceil(ms / 1000))
@@ -39,7 +40,10 @@ export function useFocusRuntime() {
       .catch(() => {})
       .finally(() => { if (!cancelled) setLoaded(true) })
     const unsubUpdate = onFocusUpdate((s) => setState(s))
-    const unsubFinished = onFocusFinished((payload) => setJustFinished(payload))
+    const unsubFinished = onFocusFinished((payload) => {
+      if (payload?.reason === 'completed') playFocusAlarm()
+      setJustFinished(payload)
+    })
     return () => { cancelled = true; unsubUpdate(); unsubFinished() }
   }, [])
 
@@ -85,6 +89,19 @@ export function useFocusRuntime() {
     return () => clearInterval(t)
   }, [])
 
+  // AI-managed timers may start without a local start-button gesture. The
+  // first ordinary tap anywhere on their Focus screen arms the later chime.
+  useEffect(() => {
+    if (!state?.active) return
+    const arm = () => armFocusAlarm()
+    document.addEventListener('pointerdown', arm, { once: true, passive: true })
+    document.addEventListener('keydown', arm, { once: true })
+    return () => {
+      document.removeEventListener('pointerdown', arm)
+      document.removeEventListener('keydown', arm)
+    }
+  }, [state?.active])
+
   const remainingMs = (() => {
     if (!state || !state.active) return 0
     if (state.status === 'running' && state.endAt) return Math.max(0, state.endAt - now)
@@ -105,12 +122,21 @@ export function useFocusRuntime() {
     }
   }, [refresh])
 
-  const start = useCallback((opts) => mutateAndRefresh(startFocus, opts), [mutateAndRefresh])
+  const start = useCallback((opts) => {
+    armFocusAlarm()
+    return mutateAndRefresh(startFocus, opts)
+  }, [mutateAndRefresh])
   const interact = useCallback((text) => mutateAndRefresh(focusInteract, text), [mutateAndRefresh])
   const request = useCallback((kind, reason) => mutateAndRefresh(requestFocus, kind, reason), [mutateAndRefresh])
-  const resume = useCallback(() => mutateAndRefresh(resumeFocusFromApproval), [mutateAndRefresh])
+  const resume = useCallback(() => {
+    armFocusAlarm()
+    return mutateAndRefresh(resumeFocusFromApproval)
+  }, [mutateAndRefresh])
   const selfPause = useCallback(() => mutateAndRefresh(selfPauseFocus), [mutateAndRefresh])
-  const selfResume = useCallback(() => mutateAndRefresh(selfResumeFocus), [mutateAndRefresh])
+  const selfResume = useCallback(() => {
+    armFocusAlarm()
+    return mutateAndRefresh(selfResumeFocus)
+  }, [mutateAndRefresh])
   const selfEnd = useCallback(() => mutateAndRefresh(selfEndFocus), [mutateAndRefresh])
 
   return {

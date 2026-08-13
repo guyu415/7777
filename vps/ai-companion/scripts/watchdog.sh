@@ -42,7 +42,18 @@ rm -f "$STREAK_FILE"
 if curl -fsS --max-time 5 "$HEALTH_URL" >/dev/null 2>&1; then
   echo "[$ts] ok" >> "$WATCHDOG_LOG"
 else
-  echo "[$ts] health check failed, restarting session" >> "$WATCHDOG_LOG"
+  # Claude needs several seconds after tmux creation to resume a large
+  # transcript, confirm its development channel, and start the companion MCP
+  # listener. A timer tick inside that startup window used to kill the healthy
+  # new process and create a restart loop. Give a newly-created session one
+  # full watchdog interval before treating a failed health probe as a hang.
+  created="$(tmux display-message -p -t "$SESSION" '#{session_created}' 2>/dev/null || echo 0)"
+  age=$(( $(date +%s) - ${created:-0} ))
+  if [ "$created" -gt 0 ] && [ "$age" -lt 75 ]; then
+    echo "[$ts] health not ready; startup grace (${age}s)" >> "$WATCHDOG_LOG"
+    exit 0
+  fi
+  echo "[$ts] health check failed after ${age}s, restarting session" >> "$WATCHDOG_LOG"
   "${SCRIPT_DIR}/restart-brain.sh"
   exit 0
 fi
