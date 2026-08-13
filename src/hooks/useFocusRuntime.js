@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import {
-  ensureConnected, getFocusState, onFocusUpdate, onFocusFinished,
+  ensureConnected, reconnectCompanion, getFocusState, onFocusUpdate, onFocusFinished,
   startFocus, focusInteract, requestFocus, resumeFocusFromApproval,
   selfPauseFocus, selfResumeFocus, selfEndFocus,
 } from '../services/companion'
@@ -25,6 +25,12 @@ export function useFocusRuntime() {
   const [justFinished, setJustFinished] = useState(null)
   const [now, setNow] = useState(Date.now())
 
+  const refresh = useCallback(async () => {
+    const next = await getFocusState()
+    setState(next)
+    return next
+  }, [])
+
   useEffect(() => {
     ensureConnected()
     let cancelled = false
@@ -36,6 +42,43 @@ export function useFocusRuntime() {
     const unsubFinished = onFocusFinished((payload) => setJustFinished(payload))
     return () => { cancelled = true; unsubUpdate(); unsubFinished() }
   }, [])
+
+  // Guided Access and other iOS system overlays freeze the page. On return,
+  // Safari can leave the old WebSocket looking OPEN even though it can no
+  // longer receive focus_update events. Rebuild that socket and immediately
+  // re-read the server-authoritative timer. The HTTP refresh also makes the
+  // UI usable before the replacement socket finishes its handshake.
+  useEffect(() => {
+    let wasAway = document.visibilityState === 'hidden'
+
+    const recover = () => {
+      if (document.visibilityState === 'hidden') return
+      reconnectCompanion()
+      refresh().catch(() => {})
+      setNow(Date.now())
+      wasAway = false
+    }
+    const onVisibility = () => {
+      if (document.visibilityState === 'hidden') {
+        wasAway = true
+      } else if (wasAway) {
+        recover()
+      }
+    }
+    const onPageHide = () => { wasAway = true }
+    const onPageShow = (event) => { if (wasAway || event.persisted) recover() }
+
+    document.addEventListener('visibilitychange', onVisibility)
+    window.addEventListener('pagehide', onPageHide)
+    window.addEventListener('pageshow', onPageShow)
+    window.addEventListener('online', recover)
+    return () => {
+      document.removeEventListener('visibilitychange', onVisibility)
+      window.removeEventListener('pagehide', onPageHide)
+      window.removeEventListener('pageshow', onPageShow)
+      window.removeEventListener('online', recover)
+    }
+  }, [refresh])
 
   useEffect(() => {
     const t = setInterval(() => setNow(Date.now()), 1000)
@@ -50,11 +93,32 @@ export function useFocusRuntime() {
 
   const acknowledgeFinished = useCallback(() => setJustFinished(null), [])
 
+  // Focus mutations use HTTP, while their visual updates normally arrive on
+  // the WebSocket. Always reconcile from HTTP as well so a temporarily stale
+  // socket can never leave pause/resume/send looking like a dead button.
+  const mutateAndRefresh = useCallback(async (operation, ...args) => {
+    try {
+      return await operation(...args)
+    } finally {
+      await refresh().catch(() => {})
+      setNow(Date.now())
+    }
+  }, [refresh])
+
+  const start = useCallback((opts) => mutateAndRefresh(startFocus, opts), [mutateAndRefresh])
+  const interact = useCallback((text) => mutateAndRefresh(focusInteract, text), [mutateAndRefresh])
+  const request = useCallback((kind, reason) => mutateAndRefresh(requestFocus, kind, reason), [mutateAndRefresh])
+  const resume = useCallback(() => mutateAndRefresh(resumeFocusFromApproval), [mutateAndRefresh])
+  const selfPause = useCallback(() => mutateAndRefresh(selfPauseFocus), [mutateAndRefresh])
+  const selfResume = useCallback(() => mutateAndRefresh(selfResumeFocus), [mutateAndRefresh])
+  const selfEnd = useCallback(() => mutateAndRefresh(selfEndFocus), [mutateAndRefresh])
+
   return {
     state, loaded, remainingMs, justFinished, acknowledgeFinished,
     todayCount: state?.todayCount ?? 0,
     format: formatFocusMs,
-    startFocus, focusInteract, requestFocus, resumeFocusFromApproval,
-    selfPauseFocus, selfResumeFocus, selfEndFocus,
+    refresh,
+    startFocus: start, focusInteract: interact, requestFocus: request, resumeFocusFromApproval: resume,
+    selfPauseFocus: selfPause, selfResumeFocus: selfResume, selfEndFocus: selfEnd,
   }
 }

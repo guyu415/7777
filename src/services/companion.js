@@ -1078,6 +1078,34 @@ export function ensureConnected() {
   if (wsState === 'idle' || wsState === 'closed') connect()
 }
 
+/**
+ * Rebuild the shared socket after the page has returned from an iOS/system
+ * interruption. Mobile Safari can keep a dead WebSocket in OPEN state after
+ * Guided Access, the app switcher, or a network hand-off, so ensureConnected
+ * alone intentionally cannot repair it. This is only called on an actual
+ * foreground transition, never for routine renders.
+ */
+export function reconnectCompanion() {
+  clearTimeout(reconnectTimer)
+  authFailed = false
+  reconnectAttempt = 0
+  stopHeartbeat()
+
+  const staleSocket = ws
+  ws = null
+  wsState = 'closed'
+  if (staleSocket) {
+    // Detach first: the stale socket's delayed close event must not schedule a
+    // second reconnect or overwrite the fresh singleton's state.
+    staleSocket.onopen = null
+    staleSocket.onmessage = null
+    staleSocket.onerror = null
+    staleSocket.onclose = null
+    try { staleSocket.close() } catch { /* already gone */ }
+  }
+  connect()
+}
+
 export function sendDiaryLetterNow({ id, text }) {
   return companionJson('/diary-letter/send', {
     method: 'POST',

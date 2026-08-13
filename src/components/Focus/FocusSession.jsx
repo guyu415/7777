@@ -43,6 +43,9 @@ export default function FocusSession({ theme, aiName, aiAvatar, focus, onExit })
 
   const [chatText, setChatText] = useState('')
   const [sending, setSending] = useState(false)
+  const [chatError, setChatError] = useState(null)
+  const [controlBusy, setControlBusy] = useState(false)
+  const [controlError, setControlError] = useState(null)
   const [requestKind, setRequestKind] = useState(null)
   const [reasonText, setReasonText] = useState('')
   const [submittingRequest, setSubmittingRequest] = useState(false)
@@ -94,8 +97,33 @@ export default function FocusSession({ theme, aiName, aiAvatar, focus, onExit })
     const text = chatText.trim()
     if (!text || sending) return
     setSending(true)
-    setChatText('')
-    try { await focusInteract(text) } catch { /* best-effort — log stays as the source of truth */ } finally { setSending(false) }
+    setChatError(null)
+    try {
+      const result = await focusInteract(text)
+      if (!result?.ok) throw new Error('send_failed')
+      setChatText('')
+    } catch {
+      // Keep the draft: a suspended/recovered page must never silently eat
+      // what the user was trying to say.
+      setChatError('没发出去，请重试')
+    } finally {
+      setSending(false)
+    }
+  }
+
+  const runControl = async (operation, { exit = false } = {}) => {
+    if (controlBusy) return
+    setControlBusy(true)
+    setControlError(null)
+    try {
+      const result = await operation()
+      if (!result?.ok) throw new Error('control_failed')
+      if (exit) onExit()
+    } catch {
+      setControlError('操作失败，请重试')
+    } finally {
+      setControlBusy(false)
+    }
   }
 
   const openRequest = (kind) => { setRequestKind(kind); setReasonText(''); setRequestError(null) }
@@ -205,11 +233,12 @@ export default function FocusSession({ theme, aiName, aiAvatar, focus, onExit })
             <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6, marginBottom: 10 }}>
               <div style={{ fontSize: 11, color: '#8b5060' }}>已批准暂停</div>
               <button
-                onClick={resumeFocusFromApproval}
+                onClick={() => runControl(resumeFocusFromApproval)}
+                disabled={controlBusy}
                 className="flex items-center gap-1.5"
-                style={{ padding: '10px 24px', borderRadius: 16, border: 'none', fontSize: 13, fontWeight: 600, background: `linear-gradient(135deg, ${primary}, ${primaryDark})`, color: '#fff' }}
+                style={{ padding: '10px 24px', borderRadius: 16, border: 'none', fontSize: 13, fontWeight: 600, background: `linear-gradient(135deg, ${primary}, ${primaryDark})`, color: '#fff', opacity: controlBusy ? 0.6 : 1 }}
               >
-                <Play size={13} /> 继续专注
+                <Play size={13} /> {controlBusy ? '恢复中…' : '继续专注'}
               </button>
             </div>
           ) : pending ? (
@@ -227,13 +256,14 @@ export default function FocusSession({ theme, aiName, aiAvatar, focus, onExit })
           )
         ) : (
           <div className="flex items-center justify-center gap-2" style={{ marginBottom: 10 }}>
-            <button onClick={state.status === 'running' ? selfPauseFocus : selfResumeFocus} className="flex items-center gap-1.5" style={ctrlBtn(primary, true)}>
+            <button onClick={() => runControl(state.status === 'running' ? selfPauseFocus : selfResumeFocus)} disabled={controlBusy} className="flex items-center gap-1.5" style={{ ...ctrlBtn(primary, true), opacity: controlBusy ? 0.6 : 1 }}>
               {state.status === 'running' ? <Pause size={13} /> : <Play size={13} />}
               {state.status === 'running' ? '暂停' : '继续'}
             </button>
-            <button onClick={() => { selfEndFocus(); onExit() }} style={ctrlBtn(primary, false)}>结束</button>
+            <button onClick={() => runControl(selfEndFocus, { exit: true })} disabled={controlBusy} style={{ ...ctrlBtn(primary, false), opacity: controlBusy ? 0.6 : 1 }}>结束</button>
           </div>
         )}
+        {controlError && <div style={{ textAlign: 'center', fontSize: 11, color: '#d45f70', margin: '-4px 0 8px' }}>{controlError}</div>}
       </div>
 
       {/* Interaction area — real chat with the managing AI, same session/
@@ -265,6 +295,7 @@ export default function FocusSession({ theme, aiName, aiAvatar, focus, onExit })
               <Send size={14} />
             </button>
           </div>
+          {chatError && <div style={{ fontSize: 10.5, color: '#d45f70', padding: '0 12px 6px' }}>{chatError}</div>}
         </div>
       ) : (
         <div style={{ paddingBottom: 'max(18px, env(safe-area-inset-bottom, 0px))' }} />
