@@ -108,7 +108,7 @@ export default function App() {
   const [syncError, setSyncError] = useState(null)
   const [migrationStatus, setMigrationStatus] = useState(null)
   const [pendingProactiveActivities, setPendingProactiveActivities] = useState(loadPendingProactiveActivities)
-  const [confirmingProactiveActivityId, setConfirmingProactiveActivityId] = useState(null)
+  const dismissedProactiveActivityIds = useRef(new Set())
   const syncReady = useRef(false)
   const syncTimer = useRef(null)
   const lastSyncedSettings = useRef('')
@@ -628,6 +628,10 @@ export default function App() {
   // the matching Web Push from the VPS.
   useEffect(() => {
     return onProactiveActivity(({ id, text, ts }) => {
+      // A reconnect may replay a server-persisted note while its optimistic
+      // acknowledgement is still travelling. Never make a card the user has
+      // just dismissed jump back onto the screen in that window.
+      if (dismissedProactiveActivityIds.current.has(id)) return
       setPendingProactiveActivities(current => {
         if (current.some(item => item.id === id)) return current
         return [...current, { id, text, ts }].slice(-MAX_PENDING_PROACTIVE_ACTIVITIES)
@@ -637,8 +641,8 @@ export default function App() {
 
   useEffect(() => {
     return onProactiveActivityAcknowledged(id => {
+      dismissedProactiveActivityIds.current.delete(id)
       setPendingProactiveActivities(current => current.filter(item => item.id !== id))
-      setConfirmingProactiveActivityId(current => current === id ? null : current)
     })
   }, [])
 
@@ -649,17 +653,15 @@ export default function App() {
   }, [pendingProactiveActivities])
 
   const confirmProactiveActivity = async (activity) => {
-    if (!activity || confirmingProactiveActivityId) return
-    setConfirmingProactiveActivityId(activity.id)
+    if (!activity || dismissedProactiveActivityIds.current.has(activity.id)) return
+    // Dismiss immediately. Server persistence is durability plumbing, not a
+    // reason for the close button to block behind a reconnect/8s timeout.
+    dismissedProactiveActivityIds.current.add(activity.id)
+    setPendingProactiveActivities(current => current.filter(item => item.id !== activity.id))
     try {
       await acknowledgeProactiveActivity(activity.id)
-      // The server broadcasts the authoritative ack to every open tab. Also
-      // remove immediately so a slow event loop never makes the button feel stuck.
-      setPendingProactiveActivities(current => current.filter(item => item.id !== activity.id))
     } catch (error) {
       console.error('[PROACTIVE-ACTIVITY] 确认失败:', error?.message)
-    } finally {
-      setConfirmingProactiveActivityId(null)
     }
   }
 
@@ -875,7 +877,7 @@ export default function App() {
           them at the top so they never cover the composer or bottom nav. */}
       {pendingProactiveActivities.length > 0 && (
         <div
-          className="fixed z-50"
+          className="fixed"
           role="region"
           aria-label="CC 的后台小记"
           style={{
@@ -885,6 +887,7 @@ export default function App() {
             maxHeight: 'min(46vh, 390px)', overflowY: 'auto',
             display: 'flex', flexDirection: 'column', gap: 7,
             padding: 2, scrollbarWidth: 'none',
+            zIndex: 90,
           }}
         >
           {pendingProactiveActivities.map((activity, index) => (
@@ -915,14 +918,13 @@ export default function App() {
                   aria-label="知道了"
                   title="知道了"
                   onClick={() => confirmProactiveActivity(activity)}
-                  disabled={confirmingProactiveActivityId === activity.id}
                   style={{
                     width: 22, height: 22, padding: 0, flexShrink: 0,
                     border: '1px solid rgba(255,255,255,.34)', borderRadius: 999,
                     background: 'rgba(255,255,255,.12)', color: 'white',
                     font: 'inherit', fontSize: 14, lineHeight: '18px', cursor: 'pointer',
                   }}
-                >{confirmingProactiveActivityId === activity.id ? '…' : '×'}</button>
+                >×</button>
               </div>
               <div>{activity.text}</div>
             </div>
