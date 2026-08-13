@@ -648,15 +648,14 @@ export default function App() {
     } catch { /* a full/private storage area must not break the chat UI */ }
   }, [pendingProactiveActivities])
 
-  const proactiveActivity = pendingProactiveActivities[0] || null
-  const confirmProactiveActivity = async () => {
-    if (!proactiveActivity || confirmingProactiveActivityId) return
-    setConfirmingProactiveActivityId(proactiveActivity.id)
+  const confirmProactiveActivity = async (activity) => {
+    if (!activity || confirmingProactiveActivityId) return
+    setConfirmingProactiveActivityId(activity.id)
     try {
-      await acknowledgeProactiveActivity(proactiveActivity.id)
+      await acknowledgeProactiveActivity(activity.id)
       // The server broadcasts the authoritative ack to every open tab. Also
       // remove immediately so a slow event loop never makes the button feel stuck.
-      setPendingProactiveActivities(current => current.filter(item => item.id !== proactiveActivity.id))
+      setPendingProactiveActivities(current => current.filter(item => item.id !== activity.id))
     } catch (error) {
       console.error('[PROACTIVE-ACTIVITY] 确认失败:', error?.message)
     } finally {
@@ -872,46 +871,62 @@ export default function App() {
         </div>
       )}
 
-      {/* Non-chat note for CC's self-directed proactive activity. */}
-      {proactiveActivity && (
+      {/* Compact, independently dismissible non-chat activity cards. Keep
+          them at the top so they never cover the composer or bottom nav. */}
+      {pendingProactiveActivities.length > 0 && (
         <div
           className="fixed z-50"
-          role="alertdialog"
-          aria-modal="false"
-          aria-labelledby="proactive-activity-title"
+          role="region"
+          aria-label="CC 的后台小记"
           style={{
-            bottom: (syncError || migrationStatus) ? 172 : 100, right: 16,
-            background: 'linear-gradient(135deg, rgba(91,139,112,.96), rgba(92,116,151,.96))',
-            backdropFilter: 'blur(10px)',
-            WebkitBackdropFilter: 'blur(10px)',
-            color: 'white', fontSize: 12, fontWeight: 500,
-            lineHeight: 1.5, whiteSpace: 'pre-line',
-            padding: '12px 14px', borderRadius: 16,
-            boxShadow: '0 6px 20px rgba(55,82,70,.24)',
-            width: 'min(300px, calc(100vw - 32px))',
+            top: 'calc(env(safe-area-inset-top, 0px) + 10px)',
+            left: '50%', transform: 'translateX(-50%)',
+            width: 'min(360px, calc(100vw - 24px))',
+            maxHeight: 'min(46vh, 390px)', overflowY: 'auto',
+            display: 'flex', flexDirection: 'column', gap: 7,
+            padding: 2, scrollbarWidth: 'none',
           }}
         >
-          <div id="proactive-activity-title" style={{ fontSize: 10, opacity: 0.78, marginBottom: 4 }}>
-            CC 的后台小记
-            {pendingProactiveActivities.length > 1 ? ` · 还有 ${pendingProactiveActivities.length - 1} 条` : ''}
-          </div>
-          <div>{proactiveActivity.text}</div>
-          {formatProactiveActivityTime(proactiveActivity.ts) && (
-            <div style={{ marginTop: 6, fontSize: 10, opacity: .68 }}>
-              {formatProactiveActivityTime(proactiveActivity.ts)}
+          {pendingProactiveActivities.map((activity, index) => (
+            <div
+              key={activity.id}
+              role="alertdialog"
+              aria-modal="false"
+              style={{
+                background: 'linear-gradient(135deg, rgba(71,112,91,.72), rgba(73,91,126,.68))',
+                backdropFilter: 'blur(14px) saturate(1.15)',
+                WebkitBackdropFilter: 'blur(14px) saturate(1.15)',
+                border: '1px solid rgba(255,255,255,.24)',
+                color: 'white', fontSize: 11, fontWeight: 500,
+                lineHeight: 1.45, whiteSpace: 'pre-line',
+                padding: '9px 10px 8px 11px', borderRadius: 13,
+                boxShadow: '0 4px 14px rgba(42,61,53,.15)',
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 3 }}>
+                <span style={{ fontSize: 9, opacity: .76, flex: 1 }}>
+                  CC 的后台小记{pendingProactiveActivities.length > 1 ? ` · ${index + 1}/${pendingProactiveActivities.length}` : ''}
+                </span>
+                <span style={{ fontSize: 9, opacity: .65 }}>
+                  {formatProactiveActivityTime(activity.ts)}
+                </span>
+                <button
+                  type="button"
+                  aria-label="知道了"
+                  title="知道了"
+                  onClick={() => confirmProactiveActivity(activity)}
+                  disabled={confirmingProactiveActivityId === activity.id}
+                  style={{
+                    width: 22, height: 22, padding: 0, flexShrink: 0,
+                    border: '1px solid rgba(255,255,255,.34)', borderRadius: 999,
+                    background: 'rgba(255,255,255,.12)', color: 'white',
+                    font: 'inherit', fontSize: 14, lineHeight: '18px', cursor: 'pointer',
+                  }}
+                >{confirmingProactiveActivityId === activity.id ? '…' : '×'}</button>
+              </div>
+              <div>{activity.text}</div>
             </div>
-          )}
-          <button
-            type="button"
-            onClick={confirmProactiveActivity}
-            disabled={confirmingProactiveActivityId === proactiveActivity.id}
-            style={{
-              display: 'block', margin: '10px 0 0 auto', padding: '5px 12px',
-              border: '1px solid rgba(255,255,255,.46)', borderRadius: 999,
-              background: 'rgba(255,255,255,.17)', color: 'white',
-              font: 'inherit', fontSize: 11, fontWeight: 600, cursor: 'pointer',
-            }}
-          >{confirmingProactiveActivityId === proactiveActivity.id ? '确认中…' : '知道了'}</button>
+          ))}
         </div>
       )}
     </div>
