@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect, useCallback, forwardRef, useImperativeHandle } from 'react'
 import { X as CloseIcon } from 'lucide-react'
 import { compressChatImage } from '../../utils/image'
+import { buildReplyQuotePrefix } from '../../utils/replyQuotes'
 
 function formatImageBytes(bytes) {
   if (bytes >= 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)}MB`
@@ -186,7 +187,7 @@ function readDraft(storageKey) {
   } catch { return { text: '', segments: [] } }
 }
 
-const MessageInput = forwardRef(function MessageInput({ onSend, onSendBatch, onStartCall, onSendImage, onSendFile, replyDraft, onCancelReply, onOpenGomoku, onRollDice, onOpenSpicy, spicyEnabled, gomokuEnabled, onOpenFocus, onOpenDivination, disabled, theme, isLoading, onStop, draftKey }, ref) {
+const MessageInput = forwardRef(function MessageInput({ onSend, onSendBatch, onStartCall, onSendImage, onSendFile, replyDrafts = [], onCancelReply, onOpenGomoku, onRollDice, onOpenSpicy, spicyEnabled, gomokuEnabled, onOpenFocus, onOpenDivination, disabled, theme, isLoading, onStop, draftKey }, ref) {
   const draftStorageKey = draftKey ? `chat.draft.${draftKey}` : null
   const initialDraft = readDraft(draftStorageKey)
   const [text, setTextRaw] = useState(initialDraft.text)
@@ -296,9 +297,7 @@ const MessageInput = forwardRef(function MessageInput({ onSend, onSendBatch, onS
     console.log('[PAW] handleSend: canSend=', canSend, 'textLen=', text.trim().length, 'segments=', segments.length, 'hasImageDraft=', !!imageDraft, 'hasFileDraft=', !!fileDraft)
     if (!canSend) return
     const finalText = text.trim()
-    const quotePrefix = replyDraft
-      ? `> 回复${replyDraft.label ? ` ${replyDraft.label}` : ''}：${replyDraft.preview}\n\n`
-      : ''
+    const quotePrefix = buildReplyQuotePrefix(replyDrafts)
     if (fileDraft) {
       const caption = quotePrefix + [...segments, finalText].filter(Boolean).join('\n')
       setIsSendingAttachment(true)
@@ -440,24 +439,30 @@ const MessageInput = forwardRef(function MessageInput({ onSend, onSendBatch, onS
 
   return (
     <div style={{ flexShrink: 0 }}>
-      {replyDraft && (
-        <div style={{ padding: '6px 12px 0' }}>
+      {replyDrafts.length > 0 && (
+        <div style={{ padding: '6px 12px 0', minWidth: 0, maxWidth: '100%' }}>
           <div style={{
-            display: 'flex', alignItems: 'center', gap: 8, padding: '7px 10px',
+            display: 'flex', flexDirection: 'column', gap: 5, padding: '7px 10px',
             borderLeft: `3px solid ${primaryColor}`, borderRadius: '4px 12px 12px 4px',
-            background: 'rgba(255,255,255,0.42)', color: '#8b5060',
+            background: 'rgba(255,255,255,0.42)', color: '#8b5060', minWidth: 0,
+            maxWidth: '100%', maxHeight: 132, overflowY: 'auto', overflowX: 'hidden', boxSizing: 'border-box',
           }}>
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ fontSize: 11, fontWeight: 600, color: primaryColor }}>回复 {replyDraft.label}</div>
-              <div style={{ fontSize: 12, marginTop: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', opacity: 0.82 }}>{replyDraft.preview}</div>
-            </div>
-            <button
-              onClick={onCancelReply}
-              title="取消回复"
-              style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#c47a8a', display: 'flex', padding: 3 }}
-            >
-              <CloseIcon size={15} />
-            </button>
+            {replyDrafts.map((replyDraft) => (
+              <div key={replyDraft.id} style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0, maxWidth: '100%' }}>
+                <div style={{ flex: 1, minWidth: 0, maxWidth: '100%', overflow: 'hidden' }}>
+                  <div style={{ fontSize: 11, fontWeight: 600, color: primaryColor }}>回复 {replyDraft.label}</div>
+                  <div style={{ fontSize: 12, marginTop: 1, maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', opacity: 0.82 }}>{replyDraft.preview}</div>
+                </div>
+                <button
+                  onClick={() => onCancelReply?.(replyDraft.id)}
+                  title="移除这条引用"
+                  aria-label={`移除对 ${replyDraft.label} 的引用`}
+                  style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#c47a8a', display: 'flex', padding: 3, flexShrink: 0 }}
+                >
+                  <CloseIcon size={15} />
+                </button>
+              </div>
+            ))}
           </div>
         </div>
       )}

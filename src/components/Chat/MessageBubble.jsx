@@ -5,6 +5,7 @@ import ImageViewer from '../ImageViewer'
 import AcCard from './AcCard'
 import LetterCard from './LetterCard'
 import clsx from 'clsx'
+import { parseReplyQuotes } from '../../utils/replyQuotes'
 
 // Split content on letter markers — either {{LETTER_CARD:id}} (AI letters, phase 1)
 // or raw [LETTER mood=.. weather=.. date=..]..[/LETTER] (user letters written from diary)
@@ -81,13 +82,6 @@ function formatTime(ts) {
   return new Date(ts).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
 }
 
-function parseReplyQuote(content) {
-  if (typeof content !== 'string') return null
-  const match = content.match(/^> 回复(?: ([^：\n]+))?：([^\n]*)\n\n([\s\S]*)$/)
-  if (!match) return null
-  return { label: match[1] || '', preview: match[2], body: match[3] }
-}
-
 function formatFileBytes(bytes) {
   if (bytes >= 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)}MB`
   return `${Math.max(1, Math.round(bytes / 1024))}KB`
@@ -103,7 +97,7 @@ function MessageBubble({ message, onLongPress, onRegenerate, onRegenerateRound, 
   const [displayDiceValue, setDisplayDiceValue] = useState(() => diceValue || 1)
   const [diceRolling, setDiceRolling] = useState(false)
   const [diceJustSettled, setDiceJustSettled] = useState(false)
-  const replyQuote = message.type === 'text' ? parseReplyQuote(message.content) : null
+  const replyQuote = message.type === 'text' ? parseReplyQuotes(message.content) : null
   const pressTimer = useRef(null)
   const pressAnimTimer = useRef(null)
   // CC creates an empty assistant bubble as soon as it starts thinking, then
@@ -231,7 +225,7 @@ function MessageBubble({ message, onLongPress, onRegenerate, onRegenerateRound, 
     <div className={clsx('flex items-end gap-2 mb-4 animate-fade-up', isUser ? 'flex-row-reverse' : 'flex-row')}>
       {avatarEl}
 
-      <div className={clsx('relative max-w-[72vw] flex flex-col', isUser ? 'items-end' : 'items-start')}>
+      <div className={clsx('relative min-w-0 max-w-[72vw] flex flex-col', isUser ? 'items-end' : 'items-start')}>
         {/* What CC actually did this turn — VPS only, sits above the thinking
             fold because it happened before the reply it belongs to. Deliberately
             plain text rather than another collapsible: the whole point is being
@@ -373,15 +367,20 @@ function MessageBubble({ message, onLongPress, onRegenerate, onRegenerateRound, 
             {message.streaming && !message.content ? (
               <TypingIndicator />
             ) : (
-              <span className="whitespace-pre-wrap break-words">
+              <span className="whitespace-pre-wrap break-words" style={{ display: 'block', minWidth: 0, maxWidth: '100%', overflow: 'hidden' }}>
                 {replyQuote && (
                   <span style={{
                     display: 'block', marginBottom: 7, padding: '5px 8px',
                     borderLeft: '3px solid currentColor', borderRadius: '3px 8px 8px 3px',
                     background: 'rgba(255,255,255,0.18)', fontSize: 12, opacity: 0.8,
+                    minWidth: 0, maxWidth: '100%', overflow: 'hidden', boxSizing: 'border-box',
                   }}>
-                    <span style={{ display: 'block', fontSize: 10, fontWeight: 600, marginBottom: 1 }}>回复 {replyQuote.label}</span>
-                    <span style={{ display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{replyQuote.preview}</span>
+                    {replyQuote.quotes.map((quote, index) => (
+                      <span key={`${quote.label}-${index}`} style={{ display: 'block', minWidth: 0, maxWidth: '100%', overflow: 'hidden', marginTop: index ? 4 : 0 }}>
+                        <span style={{ display: 'block', fontSize: 10, fontWeight: 600, marginBottom: 1 }}>回复 {quote.label}</span>
+                        <span style={{ display: 'block', maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{quote.preview}</span>
+                      </span>
+                    ))}
                   </span>
                 )}
                 {hasLetter(replyQuote?.body ?? message.content) ? renderContentNodes(replyQuote?.body ?? message.content) : (isUser ? (replyQuote?.body ?? message.content) : renderWithActions(replyQuote?.body ?? message.content))}
