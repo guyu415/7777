@@ -706,6 +706,18 @@ export async function getXinchaoStatus(runtime = 'claude-code') {
   return companionJson(`/xinchao/status?runtime=${encodeURIComponent(runtime)}`)
 }
 
+export async function getXinchaoDashboard(runtime = 'claude-code') {
+  return companionJson(`/xinchao/dashboard?runtime=${encodeURIComponent(runtime)}`)
+}
+
+export async function sendXinchaoInteraction(interactionType, eventId = crypto.randomUUID()) {
+  return companionJson('/xinchao/interaction', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ interactionType, eventId }),
+  })
+}
+
 export async function getStudySchedule(startDate, endDate = startDate) {
   return companionJson(`/study-schedule?start=${encodeURIComponent(startDate)}&end=${encodeURIComponent(endDate)}`)
 }
