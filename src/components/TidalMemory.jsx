@@ -1,7 +1,16 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { ChevronDown, ChevronLeft, ChevronUp, RefreshCw, RotateCcw, Save } from 'lucide-react'
 import { getTidalMemoryStatus, saveTidalMemorySummary } from '../services/companion'
-import { EMPTY_ROLLING_SUMMARY, formatTidalCoverage, formatTidalTime, tidalStatusPresentation } from '../utils/tidalMemory'
+import {
+  EMPTY_ROLLING_SUMMARY,
+  formatTidalCoverage,
+  formatTidalTime,
+  mergeTidalLayers,
+  parseTidalSummary,
+  renderTidalLongTerm,
+  renderTidalRecent,
+  tidalStatusPresentation,
+} from '../utils/tidalMemory'
 
 function Card({ children, style }) {
   return (
@@ -20,13 +29,14 @@ export default function TidalMemory({ theme, onBack }) {
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [feedback, setFeedback] = useState(null)
-  const [expanded, setExpanded] = useState(false)
   const [coreOpen, setCoreOpen] = useState(false)
 
   const dirty = draft !== savedText
   const tideView = tidalStatusPresentation(status?.tide)
   const saveBlocked = status?.tide?.status === 'running' || status?.tide?.status === 'retry_wait'
-  const maxChars = status?.limits?.maxSummaryChars || 8000
+  const parsedDraft = useMemo(() => parseTidalSummary(draft), [draft])
+  const longTermDraft = useMemo(() => renderTidalLongTerm(parsedDraft), [parsedDraft])
+  const recentDraft = useMemo(() => renderTidalRecent(parsedDraft), [parsedDraft])
 
   const load = useCallback(async ({ discardDraft = false } = {}) => {
     setLoading(true)
@@ -99,6 +109,14 @@ export default function TidalMemory({ theme, onBack }) {
     }
   }
 
+  const updateLayer = (layer, value) => {
+    const next = layer === 'longTerm'
+      ? mergeTidalLayers(value, recentDraft)
+      : mergeTidalLayers(longTermDraft, value)
+    if (next) setDraft(next)
+    setFeedback(next ? null : { type: 'error', text: '请保留该层的三个固定标题，且每段不要留空。' })
+  }
+
   const metadata = useMemo(() => [
     ['最后更新', formatTidalTime(status?.rollingSummary?.updatedAt)],
     ['摘要模型', status?.rollingSummary?.model || (status?.rollingSummary?.source === 'manual' ? '人工创建' : '—')],
@@ -119,7 +137,7 @@ export default function TidalMemory({ theme, onBack }) {
 
       <div className="flex-1 overflow-y-auto px-4 py-3 space-y-3" style={{ paddingBottom: 'calc(var(--safe-bottom) + 20px)' }}>
         <p className="text-[11px] leading-relaxed" style={{ color: '#7798bb' }}>
-          这里显示 CC 固定聊天窗口正在使用的权威滚动摘要。自动潮汐无需审批；本页只用于查看、纠错和保存。
+          这里显示 CC 固定聊天窗口正在使用的权威分层摘要：长期基线保留稳定关系与事实，近期状态随对话滚动替换。自动潮汐无需审批。
         </p>
 
         {status && (
@@ -147,26 +165,45 @@ export default function TidalMemory({ theme, onBack }) {
           {coreOpen && <div className="mt-3 p-3 rounded-xl text-xs whitespace-pre-wrap overflow-y-auto" style={{ color: '#4f7092', background: 'rgba(235,244,255,0.65)', maxHeight: '45vh', lineHeight: 1.7 }}>{status?.coreMemory?.text || '（无）'}</div>}
         </Card>
 
+        <Card style={{ border: `1.5px solid ${primary}44` }}>
+          <div className="flex items-center justify-between gap-2 mb-2">
+            <div>
+              <div className="text-xs font-medium" style={{ color: '#2c5282' }}>长期记忆摘要</div>
+              <div className="text-[10px] mt-0.5" style={{ color: '#9ab0c7' }}>{status?.rollingSummary ? `版本 ${status.revision}${status.rollingSummary.source === 'manual' ? ' · 已人工修订' : ''}` : '尚无摘要，可按固定六段格式创建'}</div>
+            </div>
+            <span className="px-2.5 py-1 rounded-full text-[10px]" style={{ color: primaryDark, background: `${primary}14` }}>固定上限</span>
+          </div>
+          <textarea
+            value={longTermDraft}
+            onChange={(event) => updateLayer('longTerm', event.target.value)}
+            maxLength={2600}
+            spellCheck={false}
+            className="w-full rounded-xl px-3 py-3 text-sm outline-none"
+            style={{ minHeight: 260, resize: 'vertical', color: '#315778', background: 'rgba(248,252,255,0.9)', border: `1px solid ${dirty ? `${primary}88` : 'rgba(150,185,220,0.38)'}`, lineHeight: 1.7 }}
+            aria-label="长期记忆摘要"
+          />
+          <div className="flex justify-between mt-1 text-[10px]" style={{ color: '#9ab0c7' }}><span>保留身份、关系里程碑、明确约定和稳定偏好</span><span>{longTermDraft.length}/2600</span></div>
+        </Card>
+
         <Card>
           <div className="flex items-center justify-between gap-2 mb-2">
             <div>
-              <div className="text-xs font-medium" style={{ color: '#2c5282' }}>滚动对话摘要</div>
-              <div className="text-[10px] mt-0.5" style={{ color: '#9ab0c7' }}>{status?.rollingSummary ? `版本 ${status.revision}${status.rollingSummary.source === 'manual' ? ' · 已人工修订' : ''}` : '尚无摘要，可按固定六段格式创建'}</div>
+              <div className="text-xs font-medium" style={{ color: '#2c5282' }}>近期状态摘要</div>
+              <div className="text-[10px] mt-0.5" style={{ color: '#9ab0c7' }}>会随新对话滚动替换，已解决的事件会淡出</div>
             </div>
-            <button type="button" onClick={() => setExpanded((v) => !v)} className="px-2.5 py-1 rounded-full text-[11px]" style={{ color: '#5f82a8', background: 'rgba(225,238,252,0.8)' }}>{expanded ? '收起' : '展开'}</button>
           </div>
           <textarea
-            value={draft}
-            onChange={(event) => { setDraft(event.target.value); setFeedback(null) }}
-            maxLength={maxChars}
+            value={recentDraft}
+            onChange={(event) => updateLayer('recent', event.target.value)}
+            maxLength={2400}
             spellCheck={false}
             className="w-full rounded-xl px-3 py-3 text-sm outline-none"
-            style={{ minHeight: expanded ? '58vh' : 300, height: expanded ? '58vh' : 300, resize: 'vertical', color: '#315778', background: 'rgba(248,252,255,0.9)', border: `1px solid ${dirty ? `${primary}88` : 'rgba(150,185,220,0.38)'}`, lineHeight: 1.7 }}
-            aria-label="滚动对话摘要正文"
+            style={{ minHeight: 220, resize: 'vertical', color: '#315778', background: 'rgba(248,252,255,0.9)', border: `1px solid ${dirty ? `${primary}88` : 'rgba(150,185,220,0.38)'}`, lineHeight: 1.7 }}
+            aria-label="近期状态摘要"
           />
-          <div className="flex justify-between mt-1 text-[10px]" style={{ color: '#9ab0c7' }}><span>{dirty ? '有未保存修改' : '已与服务端一致'}</span><span>{draft.length}/{maxChars}</span></div>
+          <div className="flex justify-between mt-1 text-[10px]" style={{ color: '#9ab0c7' }}><span>{dirty ? '有未保存修改' : '已与服务端一致'}</span><span>{recentDraft.length}/2400</span></div>
           <p className="text-[10px] mt-2 leading-relaxed" style={{ color: '#8a7aa0' }}>
-            修改将在下一次潮汐整理或会话恢复时生效；不会从当前上下文删除旧内容，也不会触发 /compact。原始聊天记录不会被修改。
+            两层会作为同一版潮汐记忆一起保存；不会触发 /compact，原始聊天记录不会被修改。
           </p>
           {saveBlocked && <p className="text-[10px] mt-2" style={{ color: '#b87920' }}>潮汐任务正在处理或等待重试，暂不能保存；完成后刷新再试。</p>}
           {feedback && <div className="mt-2 p-2.5 rounded-xl text-xs" style={{ color: feedback.type === 'success' ? '#2f8f5c' : '#c45d65', background: feedback.type === 'success' ? 'rgba(59,159,104,0.08)' : 'rgba(208,95,103,0.08)' }}>{feedback.text}</div>}

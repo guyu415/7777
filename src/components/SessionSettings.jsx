@@ -881,10 +881,11 @@ export default function SessionSettings({ theme }) {
                 </button>
                 <button
                   onClick={() => setCurrentView('tidalMemory')}
-                  className="w-full mt-2 py-2 rounded-full text-xs font-medium"
+                  className="w-full mt-2 py-2 rounded-2xl text-xs font-medium"
                   style={{ background: 'rgba(255,255,255,0.5)', color: '#4a7aaa', border: '1px solid rgba(120,160,220,0.35)' }}
                 >
-                  🌊 潮汐记忆
+                  <span className="block">🌊 潮汐记忆</span>
+                  <span className="block mt-0.5 text-[10px] font-normal" style={{ color: '#8aa6c2' }}>长期记忆摘要 · 近期状态</span>
                 </button>
                 <div className="flex items-center justify-between mt-3 pt-3" style={{ borderTop: '1px solid rgba(120,160,220,0.2)' }}>
                   <div>
