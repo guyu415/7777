@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef } from 'react'
+import { lazy, Suspense, useEffect, useState, useRef } from 'react'
 import { useStore, getCustomFont, getBlob, getMessages, saveMessage, saveBlob, deleteMessageFromDB, deleteMessagesForSession } from './store'
 import { THEMES } from './themes'
 import ChatWindow from './components/Chat/ChatWindow'
@@ -7,7 +7,6 @@ import CareHubWindow from './components/CareHub/CareHubWindow'
 import GlobalSettings from './components/GlobalSettings'
 import SessionSettings from './components/SessionSettings'
 import UniverseHome from './components/UniverseHome'
-import XinchaoDashboard from './components/XinchaoDashboard'
 import BottomNav from './components/BottomNav'
 import LoginPage from './components/LoginPage'
 import VoiceFavorites from './components/VoiceFavorites'
@@ -20,6 +19,8 @@ import { compressImage, slimSettings } from './utils/image'
 import { ensureConnected as ensureCompanionConnected, getAuthStatus as getCompanionAuthStatus, onProactiveMessage, onProactiveActivity, onProactiveActivityAcknowledged, acknowledgeProactiveActivity, onRemoteUserMessage, onCcReset } from './services/companion'
 import { fetchTTSAudio } from './services/tts'
 import { themeWithUserBubbleText } from './utils/bubbleColors'
+
+const XinchaoDashboard = lazy(() => import('./components/XinchaoDashboard'))
 
 const FONT_MAP = {
   noto: "'Noto Sans SC', 'PingFang SC', -apple-system, sans-serif",
@@ -813,7 +814,11 @@ export default function App() {
             <GroupChatWindow theme={theme} chatId={currentGroupChatId} onClose={() => setCurrentView('sessions')} />
           )}
           {currentView === 'careHub' && <CareHubWindow theme={theme} onClose={() => setCurrentView('sessions')} />}
-          {currentView === 'xinchao' && <XinchaoDashboard onClose={() => setCurrentView('sessions')} />}
+          {currentView === 'xinchao' && (
+            <Suspense fallback={<div className="h-full grid place-items-center text-sm text-gray-500">正在打开心潮…</div>}>
+              <XinchaoDashboard onClose={() => setCurrentView('sessions')} />
+            </Suspense>
+          )}
           {currentView === 'sessions' && (
             <UniverseHome
               theme={theme}

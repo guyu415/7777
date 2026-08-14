@@ -1,4 +1,4 @@
-import React from 'react'
+import React, { useCallback, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import App from './App'
 import OpeningSplash from './components/OpeningSplash'
@@ -19,9 +19,18 @@ for (const evt of ['gesturestart', 'gesturechange', 'gestureend']) {
   document.addEventListener(evt, e => e.preventDefault(), { passive: false })
 }
 
+function AppBoot() {
+  const [splashDone, setSplashDone] = useState(false)
+  const finishSplash = useCallback(() => setSplashDone(true), [])
+
+  // Do not start settings hydration, IndexedDB reads, WebSockets and the
+  // full app compositor underneath the animated splash.  Running both at
+  // once was especially expensive in iOS WebKit's memory-limited process.
+  return splashDone ? <App /> : <OpeningSplash onComplete={finishSplash} />
+}
+
 createRoot(document.getElementById('root')).render(
   <React.StrictMode>
-    <OpeningSplash />
-    <App />
+    <AppBoot />
   </React.StrictMode>
 )
