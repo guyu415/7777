@@ -132,7 +132,7 @@ export default function ChatWindow({ theme }) {
   const inputRef = useRef(null)
   const [menuMsg, setMenuMsg] = useState(null)
   const [selectedMessageIds, setSelectedMessageIds] = useState(() => new Set())
-  const [replyTarget, setReplyTarget] = useState(null)
+  const [replyTargets, setReplyTargets] = useState([])
   const [memoryMsg, setMemoryMsg] = useState(null)
   const [editMsg, setEditMsg] = useState(null)
   const [editText, setEditText] = useState('')
@@ -163,7 +163,7 @@ export default function ChatWindow({ theme }) {
   const tidalNoticeTimerRef = useRef(null)
 
   useEffect(() => {
-    setReplyTarget(null)
+    setReplyTargets([])
     setMenuMsg(null)
     setSelectedMessageIds(new Set())
   }, [currentSessionId])
@@ -440,6 +440,32 @@ export default function ChatWindow({ theme }) {
     showToast(failed ? `已删除 ${ids.length - failed} 条，${failed} 条失败` : `已删除 ${ids.length} 条消息`)
   }, [deleteMsg, messages, selectedMessageIds])
 
+  const handleReplySelected = useCallback(() => {
+    const targets = messages
+      .filter((message) => selectedMessageIds.has(message.id))
+      .map((msg) => {
+        const raw = msg.type === 'voice'
+          ? (msg.voiceText || '语音消息')
+          : msg.type === 'image'
+            ? (msg.content || '图片')
+            : msg.type === 'file'
+              ? (msg.fileName || '文件')
+              : (msg.content || '')
+        return {
+          id: msg.id,
+          label: msg.role === 'user' ? '我' : effectiveAiName,
+          preview: raw.replace(/\s+/g, ' ').trim().slice(0, 80) || '消息',
+        }
+      })
+    if (!targets.length) return
+    setReplyTargets((current) => {
+      const existingIds = new Set(current.map((target) => target.id))
+      return [...current, ...targets.filter((target) => !existingIds.has(target.id))]
+    })
+    setSelectedMessageIds(new Set())
+    setTimeout(() => inputRef.current?.focus?.(), 0)
+  }, [effectiveAiName, messages, selectedMessageIds])
+
   const handleReply = (msg) => {
     const raw = msg.type === 'voice'
       ? (msg.voiceText || '语音消息')
@@ -449,11 +475,13 @@ export default function ChatWindow({ theme }) {
           ? (msg.fileName || '文件')
           : (msg.content || '')
     const preview = raw.replace(/\s+/g, ' ').trim().slice(0, 80)
-    setReplyTarget({
-      id: msg.id,
-      label: msg.role === 'user' ? '我' : effectiveAiName,
-      preview: preview || '消息',
-    })
+    setReplyTargets((current) => current.some((target) => target.id === msg.id)
+      ? current
+      : [...current, {
+          id: msg.id,
+          label: msg.role === 'user' ? '我' : effectiveAiName,
+          preview: preview || '消息',
+        }])
     setMenuMsg(null)
     setTimeout(() => inputRef.current?.focus?.(), 0)
   }
@@ -814,7 +842,7 @@ export default function ChatWindow({ theme }) {
               className="w-full flex items-center gap-3 px-5 py-3.5 text-sm hover:bg-pink-50 transition-colors"
               style={{ color: '#8b5060', borderTop: '1px solid rgba(255,182,209,0.25)' }}
             >
-              ☑️ 多选删除
+              ☑️ 多选
             </button>
           </div>
         </div>
@@ -824,6 +852,7 @@ export default function ChatWindow({ theme }) {
         <div className="fixed left-1/2 -translate-x-1/2 flex items-center gap-2 rounded-full px-2 py-2" style={{ bottom: 'calc(var(--safe-bottom) + 78px)', zIndex: 45, background: 'rgba(255,255,255,.96)', boxShadow: '0 8px 30px rgba(70,45,60,.2)', border: `1px solid ${primaryColor}30`, backdropFilter: 'blur(16px)' }}>
           <button onClick={cancelMultiSelect} className="w-9 h-9 rounded-full grid place-items-center" style={{ color: '#8b7580', background: '#f5f0f2' }} aria-label="取消多选"><X size={17} /></button>
           <span className="px-2 text-sm font-medium" style={{ color: '#76525e', minWidth: 74, textAlign: 'center' }}>已选 {selectedMessageIds.size} 条</span>
+          <button onClick={handleReplySelected} className="h-9 rounded-full px-4 flex items-center gap-1.5 text-sm" style={{ color: '#8b5060', background: '#f8e9ef' }}>↩️ 引用</button>
           <button onClick={handleDeleteSelected} className="h-9 rounded-full px-4 flex items-center gap-1.5 text-sm text-white" style={{ background: '#df6f7b' }}><Trash2 size={15} />删除</button>
         </div>
       )}
@@ -918,8 +947,8 @@ export default function ChatWindow({ theme }) {
           onStartCall={handleStartCall}
           onSendImage={handleSendImage}
           onSendFile={isFixedVpsSession ? handleSendFile : undefined}
-          replyDraft={replyTarget}
-          onCancelReply={() => setReplyTarget(null)}
+          replyDrafts={replyTargets}
+          onCancelReply={(id) => setReplyTargets((current) => id ? current.filter((target) => target.id !== id) : [])}
           onOpenGomoku={() => setShowGomoku(true)}
           onRollDice={() => {
             const random = new Uint32Array(1)
