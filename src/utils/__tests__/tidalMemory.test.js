@@ -1,5 +1,13 @@
 import { describe, expect, it } from 'vitest'
-import { EMPTY_ROLLING_SUMMARY, formatTidalCoverage, tidalStatusPresentation } from '../tidalMemory'
+import {
+  EMPTY_ROLLING_SUMMARY,
+  formatTidalCoverage,
+  mergeTidalLayers,
+  parseTidalSummary,
+  renderTidalLongTerm,
+  renderTidalRecent,
+  tidalStatusPresentation,
+} from '../tidalMemory'
 
 describe('tidal memory settings presentation', () => {
   it('shows no-summary, retry, failed and success states distinctly', () => {
@@ -19,5 +27,18 @@ describe('tidal memory settings presentation', () => {
     const value = formatTidalCoverage({ boundaryId: 'message-1234567890', boundaryTs: 1_700_000_000_000 })
     expect(value).toContain('…1234567890')
     expect(value).not.toContain('/opt/')
+  })
+
+  it('splits and recombines long-term and recent layers without losing fields', () => {
+    const fields = {
+      relationshipIdentity: '长期关系',
+      emotionInteraction: '近期情绪',
+      factsCommitments: '稳定事实',
+      ongoing: '进行中',
+      todos: '无',
+      preferences: '稳定偏好',
+    }
+    const merged = mergeTidalLayers(renderTidalLongTerm(fields), renderTidalRecent(fields))
+    expect(parseTidalSummary(merged)).toEqual(fields)
   })
 })
