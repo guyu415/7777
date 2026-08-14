@@ -199,6 +199,9 @@ function MessageBubble({ message, onLongPress, onRegenerate, onRegenerateRound, 
 
   const userBubbleStyle = {
     padding: '10px 16px',
+    minWidth: 0,
+    maxWidth: '100%',
+    boxSizing: 'border-box',
     background: theme?.userBubble || 'rgba(255,133,179,0.88)',
     backdropFilter: 'blur(12px)',
     WebkitBackdropFilter: 'blur(12px)',
@@ -211,6 +214,9 @@ function MessageBubble({ message, onLongPress, onRegenerate, onRegenerateRound, 
 
   const aiBubbleStyle = {
     padding: '10px 16px',
+    minWidth: 0,
+    maxWidth: '100%',
+    boxSizing: 'border-box',
     background: theme?.aiBubble || 'rgba(200,235,210,0.6)',
     backdropFilter: 'blur(12px)',
     WebkitBackdropFilter: 'blur(12px)',
@@ -222,10 +228,13 @@ function MessageBubble({ message, onLongPress, onRegenerate, onRegenerateRound, 
   }
 
   return (
-    <div className={clsx('flex items-end gap-2 mb-4 animate-fade-up', isUser ? 'flex-row-reverse' : 'flex-row')}>
+    <div className={clsx('flex w-full min-w-0 items-end gap-2 mb-4 animate-fade-up', isUser ? 'flex-row-reverse' : 'flex-row')}>
       {avatarEl}
 
-      <div className={clsx('relative min-w-0 max-w-[72vw] flex flex-col', isUser ? 'items-end' : 'items-start')}>
+      <div
+        className={clsx('relative min-w-0 flex flex-col', isUser ? 'items-end' : 'items-start')}
+        style={{ width: 'calc(100% - 88px)', maxWidth: '72vw' }}
+      >
         {/* What CC actually did this turn — VPS only, sits above the thinking
             fold because it happened before the reply it belongs to. Deliberately
             plain text rather than another collapsible: the whole point is being
