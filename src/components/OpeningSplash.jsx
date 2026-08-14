@@ -2,13 +2,6 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 
 const EXIT_MS = 680
 
-function needsLightweightSplash() {
-  const ua = navigator.userAgent || ''
-  const iOS = /iP(?:hone|ad|od)/.test(ua)
-    || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1)
-  return iOS || window.matchMedia('(prefers-reduced-motion: reduce)').matches
-}
-
 function getScene() {
   const preview = new URLSearchParams(window.location.search).get('splash')
   if (preview === 'day' || preview === 'night') return preview
@@ -18,7 +11,6 @@ function getScene() {
 
 export default function OpeningSplash({ onComplete }) {
   const [scene] = useState(getScene)
-  const [lightweight] = useState(needsLightweightSplash)
   const [leaving, setLeaving] = useState(false)
   const [visible, setVisible] = useState(true)
   const closingRef = useRef(false)
@@ -31,22 +23,22 @@ export default function OpeningSplash({ onComplete }) {
     timersRef.current.push(window.setTimeout(() => {
       setVisible(false)
       onComplete?.()
-    }, lightweight ? 220 : EXIT_MS))
-  }, [lightweight, onComplete])
+    }, EXIT_MS))
+  }, [onComplete])
 
   useEffect(() => {
-    timersRef.current.push(window.setTimeout(close, lightweight ? 900 : 3200))
+    timersRef.current.push(window.setTimeout(close, 3200))
     return () => {
       timersRef.current.forEach(window.clearTimeout)
       timersRef.current = []
     }
-  }, [close, lightweight])
+  }, [close])
 
   if (!visible) return null
 
   return (
     <div
-      className={`opening-splash opening-splash--${scene}${lightweight ? ' opening-splash--lightweight' : ''}${leaving ? ' opening-splash--leaving' : ''}`}
+      className={`opening-splash opening-splash--${scene}${leaving ? ' opening-splash--leaving' : ''}`}
       onPointerDown={close}
       aria-label="Eunoia 启动画面，轻触进入"
       role="button"
@@ -404,39 +396,6 @@ export default function OpeningSplash({ onComplete }) {
           50% { transform: translate(-1%, 2%); }
           75% { transform: translate(1%, 1%); }
           100% { transform: translate(-2%, -1%); }
-        }
-
-        /* iOS WebKit gives each tab/PWA a relatively small graphics-memory
-           budget. Keep one static full-screen texture and the title there;
-           the oversized animated/filter/blend layers are decorative. */
-        .opening-splash--lightweight,
-        .opening-splash--lightweight * {
-          animation: none !important;
-        }
-        .opening-splash--lightweight .opening-splash__scene-photo {
-          inset: 0;
-          transform: none;
-          filter: none;
-          will-change: auto;
-        }
-        .opening-splash--lightweight .opening-splash__scene-photo--night::after,
-        .opening-splash--lightweight .opening-splash__sunlight,
-        .opening-splash--lightweight .opening-splash__sea,
-        .opening-splash--lightweight .opening-splash__foam,
-        .opening-splash--lightweight .opening-splash__shallows,
-        .opening-splash--lightweight .opening-splash__sunset-glow,
-        .opening-splash--lightweight .opening-splash__cloud,
-        .opening-splash--lightweight .opening-splash__horizon,
-        .opening-splash--lightweight .opening-splash__grain {
-          display: none;
-        }
-        .opening-splash--lightweight .opening-splash__brand {
-          mix-blend-mode: normal;
-          filter: none;
-        }
-        .opening-splash--lightweight.opening-splash--leaving {
-          opacity: 0;
-          transition: opacity 180ms ease;
         }
 
         @media (prefers-reduced-motion: reduce) {

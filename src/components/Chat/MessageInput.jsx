@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect, useCallback, forwardRef, useImperativeHandle } from 'react'
 import { X as CloseIcon } from 'lucide-react'
 import { compressChatImage } from '../../utils/image'
-import { buildQuotedReplyContent, buildReplyQuotePrefix } from '../../utils/replyQuotes'
+import { buildReplyMessage, buildReplyMessageBatch, buildReplyQuotePrefix, parseReplyQuotes } from '../../utils/replyQuotes'
 
 function formatImageBytes(bytes) {
   if (bytes >= 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)}MB`
@@ -335,12 +335,11 @@ const MessageInput = forwardRef(function MessageInput({ onSend, onSendBatch, onS
       onCancelReply?.()
       return
     } else {
-      const batch = finalText ? [...segments, finalText] : segments
-      // A quoted reply is one semantic message. Enter may queue several text
-      // segments, but they all belong beneath the same set of references and
-      // must not leak into later unquoted bubbles.
-      if (quotePrefix && batch.length) onSend(buildQuotedReplyContent(replyDrafts, batch))
-      else if (batch.length > 1) onSendBatch?.(batch)
+      // Each queued line is already a complete outgoing bubble. Only the
+      // line composed while replyDrafts is active receives those quotes;
+      // normal lines stay normal, and a later reply forms its own group.
+      const batch = buildReplyMessageBatch(segments, finalText, replyDrafts)
+      if (batch.length > 1) onSendBatch?.(batch)
       else if (batch.length === 1) onSend(batch[0])
     }
     onCancelReply?.()
@@ -356,8 +355,9 @@ const MessageInput = forwardRef(function MessageInput({ onSend, onSendBatch, onS
     e.preventDefault()
     const trimmed = text.trim()
     if (!trimmed) return
-    setSegments(prev => [...prev, trimmed])
+    setSegments(prev => [...prev, buildReplyMessage(trimmed, replyDrafts)])
     setText('')
+    onCancelReply?.()
     if (textareaRef.current) textareaRef.current.style.height = 'auto'
   }
 
@@ -523,13 +523,18 @@ const MessageInput = forwardRef(function MessageInput({ onSend, onSendBatch, onS
           可以单独撤回某一条，真正发出前还能反悔。 */}
       {segments.length > 0 && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 6, padding: '6px 12px 0' }}>
-          {segments.map((seg, i) => (
+          {segments.map((seg, i) => {
+            const queuedReply = parseReplyQuotes(seg)
+            return (
             <div key={`${i}-${seg}`} style={{
               display: 'flex', alignItems: 'flex-start', gap: 8,
               background: 'rgba(255,182,209,0.18)',
               border: `1px solid ${primaryColor}25`, borderRadius: 14, padding: '6px 10px',
             }}>
-              <span style={{ flex: 1, minWidth: 0, fontSize: 14, lineHeight: '1.4', color: '#8b5060', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{seg}</span>
+              <span style={{ flex: 1, minWidth: 0, fontSize: 14, lineHeight: '1.4', color: '#8b5060', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+                {queuedReply && <small style={{ display: 'block', marginBottom: 2, color: primaryColor }}>回复 {queuedReply.quotes.map(quote => quote.label || '消息').join('、')}</small>}
+                {queuedReply?.body ?? seg}
+              </span>
               <button
                 onClick={() => setSegments(prev => prev.filter((_, idx) => idx !== i))}
                 title="移除这一条"
@@ -538,7 +543,7 @@ const MessageInput = forwardRef(function MessageInput({ onSend, onSendBatch, onS
                 <CloseIcon size={14} />
               </button>
             </div>
-          ))}
+          )})}
         </div>
       )}
 

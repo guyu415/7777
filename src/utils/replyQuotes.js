@@ -17,6 +17,21 @@ export function buildQuotedReplyContent(quotes, parts) {
   return `${buildReplyQuotePrefix(quotes)}${body}`
 }
 
+export function buildReplyMessage(content, quotes) {
+  const body = typeof content === 'string' ? content.trim() : ''
+  if (!body) return ''
+  return Array.isArray(quotes) && quotes.length
+    ? buildQuotedReplyContent(quotes, [body])
+    : body
+}
+
+export function buildReplyMessageBatch(queuedMessages, currentText, currentQuotes) {
+  const queued = (Array.isArray(queuedMessages) ? queuedMessages : [])
+    .filter((message) => typeof message === 'string' && message.trim())
+  const current = buildReplyMessage(currentText, currentQuotes)
+  return current ? [...queued, current] : queued
+}
+
 export function parseReplyQuotes(content) {
   if (typeof content !== 'string' || !content.startsWith('> 回复')) return null
 
