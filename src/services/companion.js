@@ -706,6 +706,13 @@ export async function getXinchaoStatus(runtime = 'claude-code') {
   return companionJson(`/xinchao/status?runtime=${encodeURIComponent(runtime)}`)
 }
 
+// Full, privacy-filtered Dashboard projection. The companion server keeps the
+// xinchao service token on the VPS and only returns xinchao's documented
+// /v1/dashboard DTO to this already cookie-authenticated browser.
+export async function getXinchaoDashboard(runtime = 'claude-code') {
+  return companionJson(`/xinchao/dashboard?runtime=${encodeURIComponent(runtime)}`)
+}
+
 export async function getStudySchedule(startDate, endDate = startDate) {
   return companionJson(`/study-schedule?start=${encodeURIComponent(startDate)}&end=${encodeURIComponent(endDate)}`)
 }
