@@ -4,6 +4,7 @@ import { BookHeart, CalendarDays, Heart, HeartHandshake, MessageCircleHeart, Spa
 import { useStore } from '../store'
 import DiarySection from './DiarySection'
 import StudySchedulePanel from './StudySchedule/StudySchedulePanel'
+import XinchaoDashboard from './XinchaoDashboard'
 import { getXinchaoStatus, onXinchaoUpdate } from '../services/companion'
 
 const TOGETHER_SINCE = new Date(2026, 7, 6).getTime()
@@ -26,6 +27,7 @@ export default function UniverseHome({ theme, onOpenChat, onOpenCareHub }) {
   } = useStore()
   const [diaryOpen, setDiaryOpen] = useState(false)
   const [scheduleOpen, setScheduleOpen] = useState(false)
+  const [xinchaoOpen, setXinchaoOpen] = useState(false)
   const [xinchao, setXinchao] = useState(null)
 
   const ccSession = useMemo(() => (
@@ -111,11 +113,12 @@ export default function UniverseHome({ theme, onOpenChat, onOpenCareHub }) {
         </section>
 
         <div className="universe-home__status-row">
-          <section className="universe-home__quote">
+          <button className="universe-home__quote" type="button" onClick={() => setXinchaoOpen(true)} aria-label="打开心潮可视化">
             <div className="universe-home__quote-label"><Sparkles size={12} /> 它的心情 · 心潮</div>
             <p>{mood ? `「${mood}」` : '心潮暂时没有传来新的波纹。'}</p>
             {xinchao && <small>{xinchao.consciousnessLabel || '—'} · 疲劳 {Math.round((xinchao.fatigue || 0) * 100)}%</small>}
-          </section>
+            <i className="universe-home__quote-enter">轻触进入 ›</i>
+          </button>
           <button className="universe-home__schedule" type="button" onClick={() => setDiaryOpen(true)}>
             <span><BookHeart size={20} /></span>
             <strong>日记信箱</strong>
@@ -153,6 +156,9 @@ export default function UniverseHome({ theme, onOpenChat, onOpenCareHub }) {
         </div>
       ), document.body)}
       {scheduleOpen && <StudySchedulePanel onClose={() => setScheduleOpen(false)} />}
+      {xinchaoOpen && createPortal((
+        <XinchaoDashboard liveState={xinchao} onClose={() => setXinchaoOpen(false)} />
+      ), document.body)}
 
       <style>{`
         .universe-home {
@@ -193,10 +199,11 @@ export default function UniverseHome({ theme, onOpenChat, onOpenCareHub }) {
         .universe-home__days span { display:block; margin-top:7px; color:#a2a6b9; font:italic 11px/1.2 serif; letter-spacing:.06em; }
         .universe-home__days-heart { margin-left:auto; color:${primary}82; }
         .universe-home__status-row { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr); align-items:stretch; gap:10px; margin:15px 5px 0 8px; }
-        .universe-home__quote { min-width:0; margin:0; padding:15px 13px 17px; background:rgba(239,245,250,.63); border-radius:52% 48% 61% 39% / 29% 39% 61% 71%; transform:rotate(.8deg); }
+        .universe-home__quote { min-width:0; margin:0; padding:15px 13px 14px; text-align:left; cursor:pointer; background:rgba(239,245,250,.63); border-radius:52% 48% 61% 39% / 29% 39% 61% 71%; transform:rotate(.8deg); }
         .universe-home__quote-label { display:flex; align-items:center; gap:7px; color:#97a1bd; font-size:10px; letter-spacing:.12em; }
         .universe-home__quote p { margin:10px 0 0; color:#676878; font:14px/1.65 'ZCOOL XiaoWei',serif; }
         .universe-home__quote small { display:block; margin-top:7px; color:#9ba1b4; font-size:9px; letter-spacing:.06em; }
+        .universe-home__quote-enter { display:block; margin-top:7px; color:#a49caf; font:8px/1.2 sans-serif; font-style:normal; letter-spacing:.06em; }
         .universe-home__schedule { min-width:0; min-height:98px; display:flex; flex-direction:column; align-items:center; justify-content:center; padding:12px; border:0; color:#8b7180; background:rgba(255,233,240,.66); border-radius:44% 56% 49% 51% / 38% 47% 53% 62%; box-shadow:none; backdrop-filter:blur(3px); transform:rotate(-1.1deg); }
         .universe-home__schedule span { width:38px; height:38px; display:grid; place-items:center; margin-bottom:5px; color:#b66d86; background:rgba(255,255,255,.58); border-radius:55% 45% 58% 42% / 48% 59% 41% 52%; }
         .universe-home__schedule strong { font:500 14px/1.25 'ZCOOL XiaoWei',serif; }
