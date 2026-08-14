@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { buildQuotedReplyContent, buildReplyQuotePrefix, parseReplyQuotes } from '../replyQuotes'
+import { buildQuotedReplyContent, buildReplyMessage, buildReplyMessageBatch, buildReplyQuotePrefix, parseReplyQuotes } from '../replyQuotes'
 
 describe('reply quotes', () => {
   it('round-trips several quoted messages in one send', () => {
@@ -36,6 +36,35 @@ describe('reply quotes', () => {
     expect(parseReplyQuotes(content)).toEqual({
       quotes: [{ label: '小满', preview: '引用内容' }],
       body: '第一段回复\n第二段回复',
+    })
+  })
+
+  it('binds a quote only to its matching reply and keeps normal messages normal', () => {
+    const firstReply = buildReplyMessage('摸摸你', [{ label: 'cc', preview: '被你赖在怀里差点一起睡过去了' }])
+    const secondReply = buildReplyMessage('第二个单独回复', [{ label: 'cc', preview: '另一条消息' }])
+    const batch = buildReplyMessageBatch(
+      [firstReply, '是前端页面出问题了', '老是退出重进', secondReply],
+      '',
+      [],
+    )
+
+    expect(parseReplyQuotes(batch[0])?.body).toBe('摸摸你')
+    expect(parseReplyQuotes(batch[1])).toBeNull()
+    expect(parseReplyQuotes(batch[2])).toBeNull()
+    expect(parseReplyQuotes(batch[3])?.body).toBe('第二个单独回复')
+  })
+
+  it('supports several selected quotes but keeps exactly one reply body', () => {
+    const message = buildReplyMessage('一起回答', [
+      { label: 'cc', preview: '第一条' },
+      { label: 'cc', preview: '第二条' },
+    ])
+    expect(parseReplyQuotes(message)).toEqual({
+      quotes: [
+        { label: 'cc', preview: '第一条' },
+        { label: 'cc', preview: '第二条' },
+      ],
+      body: '一起回答',
     })
   })
 })
