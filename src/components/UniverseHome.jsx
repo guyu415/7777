@@ -4,7 +4,6 @@ import { BookHeart, CalendarDays, Heart, HeartHandshake, MessageCircleHeart, Spa
 import { useStore } from '../store'
 import DiarySection from './DiarySection'
 import StudySchedulePanel from './StudySchedule/StudySchedulePanel'
-import XinchaoDashboard from './XinchaoDashboard'
 import { getXinchaoStatus, onXinchaoUpdate } from '../services/companion'
 
 const TOGETHER_SINCE = new Date(2026, 7, 6).getTime()
@@ -27,7 +26,6 @@ export default function UniverseHome({ theme, onOpenChat, onOpenCareHub }) {
   } = useStore()
   const [diaryOpen, setDiaryOpen] = useState(false)
   const [scheduleOpen, setScheduleOpen] = useState(false)
-  const [xinchaoOpen, setXinchaoOpen] = useState(false)
   const [xinchao, setXinchao] = useState(null)
 
   const ccSession = useMemo(() => (
@@ -113,11 +111,11 @@ export default function UniverseHome({ theme, onOpenChat, onOpenCareHub }) {
         </section>
 
         <div className="universe-home__status-row">
-          <button className="universe-home__quote" type="button" onClick={() => setXinchaoOpen(true)} aria-label="打开心潮可视化">
+          <button className="universe-home__quote" type="button" onClick={() => window.location.assign('https://xinchaomind.uk')} aria-label="打开官方心潮可视化">
             <div className="universe-home__quote-label"><Sparkles size={12} /> 它的心情 · 心潮</div>
             <p>{mood ? `「${mood}」` : '心潮暂时没有传来新的波纹。'}</p>
             {xinchao && <small>{xinchao.consciousnessLabel || '—'} · 疲劳 {Math.round((xinchao.fatigue || 0) * 100)}%</small>}
-            <i className="universe-home__quote-enter">轻触进入 ›</i>
+            <i className="universe-home__quote-enter">进入官方心潮 ›</i>
           </button>
           <button className="universe-home__schedule" type="button" onClick={() => setDiaryOpen(true)}>
             <span><BookHeart size={20} /></span>
@@ -156,9 +154,6 @@ export default function UniverseHome({ theme, onOpenChat, onOpenCareHub }) {
         </div>
       ), document.body)}
       {scheduleOpen && <StudySchedulePanel onClose={() => setScheduleOpen(false)} />}
-      {xinchaoOpen && createPortal((
-        <XinchaoDashboard liveState={xinchao} onClose={() => setXinchaoOpen(false)} />
-      ), document.body)}
 
       <style>{`
         .universe-home {
