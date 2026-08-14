@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { buildReplyQuotePrefix, parseReplyQuotes } from '../replyQuotes'
+import { buildQuotedReplyContent, buildReplyQuotePrefix, parseReplyQuotes } from '../replyQuotes'
 
 describe('reply quotes', () => {
   it('round-trips several quoted messages in one send', () => {
@@ -26,5 +26,16 @@ describe('reply quotes', () => {
   it('normalizes line breaks so quote metadata cannot overflow the format', () => {
     expect(buildReplyQuotePrefix([{ label: '小\n满', preview: '很长\n的消息' }]))
       .toBe('> 回复 小 满：很长 的消息\n\n')
+  })
+
+  it('keeps every queued response segment inside the same quoted reply', () => {
+    const content = buildQuotedReplyContent(
+      [{ label: '小满', preview: '引用内容' }],
+      ['第一段回复', '第二段回复'],
+    )
+    expect(parseReplyQuotes(content)).toEqual({
+      quotes: [{ label: '小满', preview: '引用内容' }],
+      body: '第一段回复\n第二段回复',
+    })
   })
 })
