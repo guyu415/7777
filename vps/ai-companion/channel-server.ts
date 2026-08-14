@@ -35,6 +35,11 @@ import { join, dirname, resolve } from 'path'
 import { randomInt } from 'node:crypto'
 import type { ServerWebSocket } from 'bun'
 import {
+  classifyXinchaoTurn,
+  XINCHAO_SEMANTIC_CONFIDENCE_THRESHOLD,
+  type XinchaoInteractionType,
+} from './xinchao-semantic-reporter.ts'
+import {
   DEFAULT_CODEX_SESSION_ID,
   normalizeCodexSessionId,
   codexSessionStorageKey,
@@ -272,6 +277,8 @@ const XINCHAO_URL = process.env.XINCHAO_URL ?? 'http://127.0.0.1:18110'
 const XINCHAO_TOKEN_FILE = process.env.XINCHAO_TOKEN_FILE ?? join(ROOT, 'config', 'xinchao-token.secret')
 const XINCHAO_DASHBOARD_TOKEN_FILE = process.env.XINCHAO_DASHBOARD_TOKEN_FILE ?? join(ROOT, 'config', 'xinchao-dashboard-token.secret')
 const XINCHAO_BRIDGE_RECEIPTS_FILE = process.env.XINCHAO_BRIDGE_RECEIPTS_FILE ?? join(ROOT, 'state', 'xinchao-bridge-receipts.json')
+const XINCHAO_SEMANTIC_SECRET_FILE = process.env.AI_COMPANION_XINCHAO_SEMANTIC_SECRET_FILE ?? join(ROOT, 'config', 'siliconflow.secret')
+const XINCHAO_SEMANTIC_MODEL = process.env.AI_COMPANION_XINCHAO_SEMANTIC_MODEL ?? 'Qwen/Qwen2.5-7B-Instruct'
 // Two distinct xinchao session ids — one per runtime. xinchao itself models
 // ONE shared underlying mind (drives/consciousness/fatigue are genuinely
 // global, confirmed via /v1/intent — no session scoping there at all), but
@@ -349,6 +356,21 @@ function xinchaoHeartbeat(turnId: string, sessionId: string) {
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${xinchaoToken}` },
     body: JSON.stringify({ session_id: sessionId, event_id: `${turnId}:presence` }),
   }).catch((err) => log('xinchao_heartbeat_error', { error: String(err) }))
+}
+
+async function postXinchaoSemanticEvent(turnId: string, interactionType: XinchaoInteractionType) {
+  if (!xinchaoToken) throw new Error('xinchao_unconfigured')
+  const response = await fetch(`${XINCHAO_URL}/v1/conversation-event`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${xinchaoToken}` },
+    body: JSON.stringify({
+      session_id: XINCHAO_CC_SESSION_ID,
+      event_id: `semantic:${turnId}`.slice(0, 120),
+      interaction_type: interactionType,
+    }),
+  })
+  if (!response.ok) throw new Error(`xinchao_http_${response.status}`)
+  return await response.json().catch(() => null) as any
 }
 
 async function fetchXinchaoJson(path: string): Promise<any | null> {
@@ -1194,6 +1216,78 @@ function persist(m: MsgWire) {
   saveHistory()
 }
 
+const xinchaoSemanticInFlight = new Set<string>()
+
+// Runs only after a visible main-chat reply has finished. It is deliberately
+// detached from the turn lifecycle: the free classifier and xinchao write can
+// fail or time out without delaying the user's reply. The deterministic event
+// id makes the state mutation idempotent even if the HTTP retry succeeds after
+// its first response was lost.
+async function classifyAndReportXinchaoTurn(turnId: string) {
+  if (turnId.startsWith('xinchao-') || xinchaoSemanticInFlight.has(turnId)) return
+  const userMessage = [...history].reverse().find((item) => item.turnId === turnId && item.from === 'user')
+  const assistantText = history
+    .filter((item) => item.turnId === turnId && item.from === 'cc')
+    .map((item) => item.text.trim())
+    .filter(Boolean)
+    .join('\n')
+  if (!userMessage?.text.trim() || !assistantText) return
+
+  let apiKey = ''
+  try { apiKey = readFileSync(XINCHAO_SEMANTIC_SECRET_FILE, 'utf8').trim() } catch {}
+  if (!apiKey) {
+    log('xinchao_semantic_skipped', { turnId, reason: 'classifier_unconfigured' })
+    return
+  }
+
+  xinchaoSemanticInFlight.add(turnId)
+  try {
+    let result: Awaited<ReturnType<typeof classifyXinchaoTurn>> | null = null
+    for (let attempt = 0; attempt < 2 && !result; attempt += 1) {
+      try {
+        result = await classifyXinchaoTurn({
+          userText: userMessage.text,
+          assistantText,
+          apiKey,
+          model: XINCHAO_SEMANTIC_MODEL,
+        })
+      } catch (error) {
+        if (attempt === 1) throw error
+      }
+    }
+    if (!result?.interactionType || result.confidence < XINCHAO_SEMANTIC_CONFIDENCE_THRESHOLD) {
+      log('xinchao_semantic_skipped', {
+        turnId,
+        reason: result?.interactionType ? 'low_confidence' : 'no_interaction',
+        confidence: result?.confidence ?? null,
+      })
+      return
+    }
+
+    let payload: any = null
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      try {
+        payload = await postXinchaoSemanticEvent(turnId, result.interactionType)
+        break
+      } catch (error) {
+        if (attempt === 1) throw error
+      }
+    }
+    log('xinchao_semantic_reported', {
+      turnId,
+      interactionType: result.interactionType,
+      confidence: result.confidence,
+      duplicate: Boolean(payload?.duplicate),
+      applied: Boolean(payload?.interaction?.applied),
+    })
+    broadcastXinchaoUpdateBestEffort(XINCHAO_CC_SESSION_ID, 'claude-code')
+  } catch (error) {
+    log('xinchao_semantic_error', { turnId, error: String(error) })
+  } finally {
+    xinchaoSemanticInFlight.delete(turnId)
+  }
+}
+
 function sendRaw(m: LiveWire) {
   const data = JSON.stringify(m)
   for (const ws of clients) {
@@ -1733,7 +1827,10 @@ function endTurn(): string | null {
   // frontend can immediately submit a queued message on turn_end; doing this
   // first guarantees that message enters the persisted tidal queue instead
   // of racing into the session while summary/compact is starting.
-  if (finished.surface === 'main') tidalPrepareAfterMainTurn()
+  if (finished.surface === 'main') {
+    tidalPrepareAfterMainTurn()
+    void classifyAndReportXinchaoTurn(turnId)
+  }
   if (finished.broadcastLifecycle) sendRaw({ type: 'turn_end', turnId, ts: Date.now() })
   if (finished.surface === 'tidal_recovery') tidalRecoverySettled()
   broadcastXinchaoUpdateBestEffort(XINCHAO_CC_SESSION_ID, 'claude-code')
@@ -1854,15 +1951,10 @@ const mcp = new Server(
       `garden/forum with its own game-like activities (threads, replies, sessions to join/play). Use them whenever ` +
       `genuinely relevant to the conversation — never fabricate forum content, game state, or pretend you checked ` +
       `when you didn't; if a call errors or times out, say so honestly in your reply instead of inventing an answer.\n\n` +
-      `心潮 (xinchao): a separate background dynamic-state layer, tools from an "xinchao" MCP server. Do NOT call ` +
-      `xinchao_context or xinchao_handoff_note during normal chat — those are for a different integration and are ` +
-      `out of scope here. Only call xinchao_event, and only when this turn produced a genuinely clear interaction ` +
-      `outcome (real companionship/affection/intimacy/sharing/discovery/task_progress/reflection/conflict/loss/` +
-      `reconciliation) — plain routine chitchat with no clear shift is not an event; skip the call entirely rather ` +
-      `than forcing one. Never submit the chat text itself (event_id is an opaque id, not content), never invent ` +
-      `numbers to make the user perform an emotion, and never ask the user to state their mood for this — judge it ` +
-      `naturally from the conversation. event_id must be unique per real event (reuse the same value only on your ` +
-      `own retry of that same event) and must NOT reuse this turn's heartbeat event id.\n\n` +
+      `心潮 (xinchao): a separate background dynamic-state layer. During normal chat do NOT call xinchao_context, ` +
+      `xinchao_event, or xinchao_handoff_note. The channel server classifies the completed visible turn and reports ` +
+      `its bounded semantic event asynchronously, outside your context, so a tool call here would double-count it. ` +
+      `Never ask the user to state their mood or perform an emotion for this layer.\n\n` +
       `Gomoku (五子棋): notifications tagged surface:"gomoku" all relate to a standalone game screen, separate from ` +
       `the main chat. If kind:"gomoku_move", the user just placed a black stone and it's your turn as white. ` +
       `Decide your move for real — there is no engine or algorithm choosing it for you, it's genuinely your call, ` +
