@@ -1,0 +1,21 @@
+[Unit]
+Description=Xinchao user-interaction runtime bridge
+After=network-online.target ai-companion-brain.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=companion
+Group=companion
+WorkingDirectory=/opt/xinchao-runtime-bridge
+EnvironmentFile=/opt/xinchao-runtime-bridge/.env
+ExecStart=/usr/bin/node /opt/xinchao-runtime-bridge/src/cli.js run
+Restart=always
+RestartSec=4
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+
+[Install]
+WantedBy=multi-user.target

@@ -270,6 +270,8 @@ const SPICY_VISUAL_STATE_FILE = process.env.AI_COMPANION_SPICY_VISUAL_STATE_FILE
 // the whole companion service, just disable this one optional feature.
 const XINCHAO_URL = process.env.XINCHAO_URL ?? 'http://127.0.0.1:18110'
 const XINCHAO_TOKEN_FILE = process.env.XINCHAO_TOKEN_FILE ?? join(ROOT, 'config', 'xinchao-token.secret')
+const XINCHAO_DASHBOARD_TOKEN_FILE = process.env.XINCHAO_DASHBOARD_TOKEN_FILE ?? join(ROOT, 'config', 'xinchao-dashboard-token.secret')
+const XINCHAO_BRIDGE_RECEIPTS_FILE = process.env.XINCHAO_BRIDGE_RECEIPTS_FILE ?? join(ROOT, 'state', 'xinchao-bridge-receipts.json')
 // Two distinct xinchao session ids — one per runtime. xinchao itself models
 // ONE shared underlying mind (drives/consciousness/fatigue are genuinely
 // global, confirmed via /v1/intent — no session scoping there at all), but
@@ -281,10 +283,16 @@ const XINCHAO_TOKEN_FILE = process.env.XINCHAO_TOKEN_FILE ?? join(ROOT, 'config'
 const XINCHAO_CC_SESSION_ID = 'cc-main'
 const XINCHAO_CODEX_SESSION_ID = 'codex-main'
 let xinchaoToken = ''
+let xinchaoDashboardToken = ''
 try {
   xinchaoToken = readFileSync(XINCHAO_TOKEN_FILE, 'utf8').trim()
 } catch (err) {
   log('xinchao_token_missing', { file: XINCHAO_TOKEN_FILE, error: String(err) })
+}
+try {
+  xinchaoDashboardToken = readFileSync(XINCHAO_DASHBOARD_TOKEN_FILE, 'utf8').trim()
+} catch (err) {
+  log('xinchao_dashboard_token_missing', { file: XINCHAO_DASHBOARD_TOKEN_FILE, error: String(err) })
 }
 
 // Real OS-level Web Push for VPS-originated messages sent while the app may
@@ -355,6 +363,66 @@ async function fetchXinchaoJson(path: string): Promise<any | null> {
   }
 }
 
+let xinchaoDashboardSession: { token: string; expiresAt: number } | null = null
+async function getXinchaoDashboardSession(force = false): Promise<string | null> {
+  if (!xinchaoDashboardToken) return null
+  if (!force && xinchaoDashboardSession && xinchaoDashboardSession.expiresAt > Date.now() + 60_000) {
+    return xinchaoDashboardSession.token
+  }
+  try {
+    const response = await fetch(`${XINCHAO_URL}/dashboard/session`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ accessToken: xinchaoDashboardToken, mode: 'header' }),
+    })
+    const payload: any = await response.json().catch(() => null)
+    if (!response.ok || typeof payload?.token !== 'string') return null
+    xinchaoDashboardSession = { token: payload.token, expiresAt: Date.parse(payload.expiresAt) || Date.now() + 3_600_000 }
+    return payload.token
+  } catch (err) {
+    log('xinchao_dashboard_session_error', { error: String(err) })
+    return null
+  }
+}
+
+async function postXinchaoDashboardInteraction(interactionType: string, eventId: string): Promise<{ status: number; payload: any }> {
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const token = await getXinchaoDashboardSession(attempt > 0)
+    if (!token) return { status: 503, payload: { error: 'dashboard unavailable' } }
+    try {
+      const response = await fetch(`${XINCHAO_URL}/dashboard/api/interactions`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ event_id: eventId, interaction_type: interactionType }),
+      })
+      if (response.status === 401 && attempt === 0) continue
+      return { status: response.status, payload: await response.json().catch(() => ({ error: 'invalid dashboard response' })) }
+    } catch (err) {
+      log('xinchao_dashboard_interaction_error', { eventId, error: String(err) })
+      return { status: 503, payload: { error: 'dashboard unavailable' } }
+    }
+  }
+  return { status: 503, payload: { error: 'dashboard unavailable' } }
+}
+
+function loadXinchaoBridgeReceipts(): string[] {
+  try {
+    const value = JSON.parse(readFileSync(XINCHAO_BRIDGE_RECEIPTS_FILE, 'utf8'))
+    return Array.isArray(value) ? value.filter((id): id is string => typeof id === 'string').slice(-500) : []
+  } catch {
+    return []
+  }
+}
+const xinchaoBridgeReceipts = new Set(loadXinchaoBridgeReceipts())
+function rememberXinchaoBridgeReceipt(deliveryId: string) {
+  xinchaoBridgeReceipts.add(deliveryId)
+  while (xinchaoBridgeReceipts.size > 500) xinchaoBridgeReceipts.delete(xinchaoBridgeReceipts.values().next().value!)
+  mkdirSync(dirname(XINCHAO_BRIDGE_RECEIPTS_FILE), { recursive: true })
+  const temp = `${XINCHAO_BRIDGE_RECEIPTS_FILE}.tmp`
+  writeFileSync(temp, JSON.stringify([...xinchaoBridgeReceipts]) + '\n')
+  renameSync(temp, XINCHAO_BRIDGE_RECEIPTS_FILE)
+}
+
 // Compact, best-effort background reference for the proactive-check prompt
 // AND (redacted further) the frontend status endpoint — never used for
 // normal chat turns, never injected as a persona/prompt override. Reads
@@ -384,6 +452,12 @@ const XINCHAO_DRIVE_SHORT_LABELS: Record<string, string> = {
   libido: '身体上想靠近你', curiosity: '对新鲜事好奇', boredom: '有点无聊',
   social: '想跟你聊聊', duty: '惦记着没做完的事', reflection: '在自己消化点事',
   grieve: '有点失落', anger: '有点不满',
+}
+const XINCHAO_DRIVE_LABELS: Record<string, string> = {
+  possess: '想她、占有与靠近', monitor: '惦记她、想知道她在做什么', crave: '馋她、想黏着她',
+  share: '想分享自己的发现和感受', libido: '性欲和身体上的渴望', curiosity: '好奇、想探索新东西',
+  boredom: '无聊、想找点事情做', social: '想聊天、想接触热闹', duty: '责任感、想把未完成的事推进',
+  reflection: '想沉淀、整理和理解自己', grieve: '难过与失落', anger: '生气与不满',
 }
 
 type XinchaoSummary = {
@@ -445,6 +519,85 @@ function xinchaoFrontendPayload(summary: XinchaoSummary) {
       label: XINCHAO_INTERACTION_LABELS[e.interactionType] ?? e.interactionType,
       at: e.at,
     })),
+  }
+}
+
+// Compatibility projection for xinchao 2.3.x. The documented Dashboard DTO
+// landed in 2.4; production may intentionally remain on an older customized
+// build. Derive only the same redacted structural fields from /v1/state and
+// never pass thought/dream text, session ids, fingerprints, or credentials.
+function xinchaoDashboardCompatibility(state: any) {
+  const clamp = (value: unknown) => Math.max(0, Math.min(1, Number(value) || 0))
+  const drives = Object.keys(XINCHAO_DRIVE_LABELS).map((key) => {
+    const value = Number(clamp(state?.drives?.[key]).toFixed(4))
+    return {
+      key,
+      label: XINCHAO_DRIVE_LABELS[key],
+      value,
+      percent: Math.round(value * 100),
+      level: value >= .75 ? 'surging' : value >= .5 ? 'rising' : value >= .25 ? 'present' : 'quiet',
+    }
+  })
+  const flash = Array.isArray(state?.thoughtPool?.flash) ? state.thoughtPool.flash : []
+  const obsessions = Array.isArray(state?.thoughtPool?.obsessions) ? state.thoughtPool.obsessions : []
+  const signalMap: Record<string, number> = {}
+  for (const item of [...flash, ...obsessions]) {
+    if (!(item?.key in XINCHAO_DRIVE_LABELS)) continue
+    signalMap[item.key] = Math.max(signalMap[item.key] ?? 0, clamp(item?.intensity))
+  }
+  const now = Date.now()
+  const activeSessions = Object.values(state?.sessionOverlays ?? {}).filter((session: any) => {
+    const expiresAt = Date.parse(session?.expiresAt ?? '')
+    return !Number.isFinite(expiresAt) || expiresAt > now
+  }).length
+  const recentEvents = (Array.isArray(state?.recentConversationEvents) ? state.recentConversationEvents : [])
+    .filter((item: any) => item?.interactionType)
+    .slice(-40)
+    .reverse()
+    .map((item: any, index: number) => ({
+      id: `compat-${index}-${String(item?.processedAt ?? '')}`,
+      at: item?.processedAt ?? null,
+      type: 'conversation_event',
+      source: 'runtime',
+      label: XINCHAO_INTERACTION_LABELS[item.interactionType] ?? item.interactionType,
+      delta: {},
+    }))
+  return {
+    snapshot: {
+      schemaVersion: 1,
+      system: 'xinchao-dynamic-mind',
+      generatedAt: new Date().toISOString(),
+      revision: Number(state?.revision ?? 0),
+      identity: { agentName: '心潮', recipient: '你' },
+      runtime: {
+        mode: 'active',
+        consciousness: String(state?.consciousness ?? 'unknown'),
+        fatigue: Number(clamp(state?.fatigue).toFixed(4)),
+        lastConversationAt: state?.lastConversationAt ?? null,
+        lastHeartbeatAt: state?.lastHeartbeatAt ?? null,
+        lastSettledAt: state?.lastSettledAt ?? null,
+        activeSessions,
+      },
+      drives,
+      topDrives: [...drives].sort((a, b) => b.value - a.value).slice(0, 4),
+      thoughts: {
+        flashCount: flash.length,
+        obsessionCount: obsessions.length,
+        signals: Object.entries(signalMap).map(([key, intensity]) => ({ key, intensity })),
+      },
+      dreams: (Array.isArray(state?.recentDreams) ? state.recentDreams : []).slice(-12).reverse().map((dream: any) => ({
+        id: String(dream?.id ?? ''),
+        createdAt: dream?.createdAt ?? null,
+        source: String(dream?.source ?? 'unknown'),
+        hasDream: Boolean(dream?.dream),
+        hasResidue: Boolean(dream?.residue),
+        hasSummary: Boolean(dream?.awareness),
+        hasAwareness: Boolean(dream?.awareness),
+        lucidity: null,
+      })),
+      capabilities: { privateDreamText: false },
+    },
+    timeline: recentEvents,
   }
 }
 
@@ -7604,6 +7757,61 @@ Bun.serve<{ authed: true }>({
       return jsonResponse({ available: true, ...xinchaoFrontendPayload(summary) }, { headers: corsHeadersFor(origin) })
     }
 
+    // Full visual Dashboard projection. The browser never receives the
+    // SERVICE_TOKEN: this authenticated same-user endpoint performs the two
+    // server-to-server reads and returns the upstream's stable, redacted DTO.
+    // Keep the per-runtime compact summary alongside it because tone is a
+    // session overlay while the twelve drives are one shared underlying mind.
+    if (url.pathname === '/xinchao/dashboard' && req.method === 'GET') {
+      const gate = authGate()
+      if (gate) return gate
+      const runtime = url.searchParams.get('runtime') === 'codex' ? 'codex' : 'claude-code'
+      const sessionId = runtime === 'codex' ? XINCHAO_CODEX_SESSION_ID : XINCHAO_CC_SESSION_ID
+      let [snapshot, timeline, summary] = await Promise.all([
+        fetchXinchaoJson('/v1/dashboard/snapshot'),
+        fetchXinchaoJson('/v1/dashboard/timeline?limit=40'),
+        fetchXinchaoSummary(sessionId),
+      ])
+      if (!snapshot) {
+        const state = await fetchXinchaoJson('/v1/state')
+        if (state) {
+          const compatible = xinchaoDashboardCompatibility(state)
+          snapshot = compatible.snapshot
+          timeline = { items: compatible.timeline }
+        }
+      }
+      if (!snapshot) return jsonResponse({ available: false }, { headers: corsHeadersFor(origin) })
+      return jsonResponse({
+        available: true,
+        snapshot,
+        timeline: Array.isArray(timeline?.items) ? timeline.items : [],
+        summary: summary ? xinchaoFrontendPayload(summary) : null,
+      }, { headers: { ...corsHeadersFor(origin), 'cache-control': 'no-store' } })
+    }
+
+    // A bounded Dashboard interaction initiated by this authenticated user.
+    // The long-lived Dashboard access token stays on the VPS; the browser
+    // supplies only the semantic interaction and its idempotency id. Xinchao
+    // computes the drive effects and enqueues the matching Runtime Bridge wake.
+    if (url.pathname === '/xinchao/interaction' && req.method === 'POST') {
+      const gate = authGate()
+      if (gate) return gate
+      const cors = corsHeadersFor(origin)
+      let body: any = {}
+      try { body = await req.json() } catch { return jsonResponse({ error: 'bad json' }, { status: 400, headers: cors }) }
+      const interactionType = typeof body?.interactionType === 'string' ? body.interactionType.trim().toLowerCase() : ''
+      const eventId = typeof body?.eventId === 'string' ? body.eventId.trim() : ''
+      if (!Object.prototype.hasOwnProperty.call(XINCHAO_INTERACTION_LABELS, interactionType)) {
+        return jsonResponse({ error: 'unsupported interaction' }, { status: 400, headers: cors })
+      }
+      if (eventId.length < 8 || eventId.length > 120) {
+        return jsonResponse({ error: 'invalid event id' }, { status: 400, headers: cors })
+      }
+      const result = await postXinchaoDashboardInteraction(interactionType, eventId)
+      log('xinchao_dashboard_interaction', { eventId, interactionType, status: result.status, bridgeQueued: !!result.payload?.bridge?.queued })
+      return jsonResponse(result.payload, { status: result.status, headers: cors })
+    }
+
     // ---- Codex (codex-vps) — same cookie/Origin gate as everything else.
     // Opening this (GET /codex/state) is what lazily spawns/resumes the
     // real codex app-server process and thread — nothing runs before the
@@ -9492,6 +9700,34 @@ Bun.serve<{ authed: true }>({
 
 const internalFetch = async (req: Request): Promise<Response> => {
     const url = new URL(req.url)
+
+    // Runtime Adapter endpoint for the official xinchao-runtime-bridge. Only
+    // the local bridge process can reach this listener and it must also know
+    // the companion internal secret. A matching delivery id is persisted so
+    // an SSE reconnect/retry cannot inject the same user action twice.
+    if (url.pathname === '/internal/xinchao-bridge' && req.method === 'POST') {
+      const bridgeBearer = (req.headers.get('authorization') || '').replace(/^Bearer\s+/i, '').trim()
+      if (!internalAuthOk(req) && bridgeBearer !== INTERNAL_SECRET) return unauthorized()
+      const body: any = await req.json().catch(() => null)
+      const protocol = typeof body?.protocol === 'string' ? body.protocol : ''
+      const deliveryId = typeof body?.deliveryId === 'string' ? body.deliveryId.trim() : ''
+      const headerDeliveryId = req.headers.get('x-xinchao-delivery-id') || ''
+      const reason = typeof body?.reason === 'string' ? body.reason : ''
+      const message = typeof body?.message === 'string' ? body.message.trim() : ''
+      if (protocol !== 'xinchao-runtime-wake/1' || deliveryId.length < 8 || deliveryId.length > 160 || headerDeliveryId !== deliveryId) {
+        return jsonResponse({ accepted: false, error: 'invalid envelope' }, { status: 400 })
+      }
+      if (!['user_interaction', 'user_note', 'scheduled_interaction'].includes(reason) || !message || message.length > 1200) {
+        return jsonResponse({ accepted: false, error: 'unsupported delivery' }, { status: 400 })
+      }
+      if (xinchaoBridgeReceipts.has(deliveryId)) {
+        return jsonResponse({ accepted: true, deliveryId, duplicate: true })
+      }
+      const mode = acceptDiaryLetter({ id: `xinchao-${deliveryId}`, text: message, queuedAt: Date.now() })
+      rememberXinchaoBridgeReceipt(deliveryId)
+      log('xinchao_bridge_accepted', { deliveryId, reason, mode })
+      return jsonResponse({ accepted: true, deliveryId, mode })
+    }
 
     if (url.pathname === '/internal/turn-end' && req.method === 'POST') {
       if (!internalAuthOk(req)) return unauthorized()

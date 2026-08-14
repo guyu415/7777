@@ -18,7 +18,7 @@ function formatDate(timestamp) {
   return `${date.getFullYear()}.${String(date.getMonth() + 1).padStart(2, '0')}.${String(date.getDate()).padStart(2, '0')}`
 }
 
-export default function UniverseHome({ theme, onOpenChat, onOpenCareHub }) {
+export default function UniverseHome({ theme, onOpenChat, onOpenCareHub, onOpenXinchao }) {
   const {
     sessions, currentSessionId, setCurrentSessionId, setMessages,
     userAvatar: globalUserAvatar, aiAvatar: globalAiAvatar, aiName: globalAiName,
@@ -111,11 +111,11 @@ export default function UniverseHome({ theme, onOpenChat, onOpenCareHub }) {
         </section>
 
         <div className="universe-home__status-row">
-          <button className="universe-home__quote" type="button" onClick={() => window.location.assign('https://xinchaomind.uk')} aria-label="打开官方心潮可视化">
+          <button className="universe-home__quote" type="button" onClick={onOpenXinchao} aria-label="打开我的心潮">
             <div className="universe-home__quote-label"><Sparkles size={12} /> 它的心情 · 心潮</div>
             <p>{mood ? `「${mood}」` : '心潮暂时没有传来新的波纹。'}</p>
             {xinchao && <small>{xinchao.consciousnessLabel || '—'} · 疲劳 {Math.round((xinchao.fatigue || 0) * 100)}%</small>}
-            <i className="universe-home__quote-enter">进入官方心潮 ›</i>
+            <i className="universe-home__quote-enter">进入我的心潮 ›</i>
           </button>
           <button className="universe-home__schedule" type="button" onClick={() => setDiaryOpen(true)}>
             <span><BookHeart size={20} /></span>
