@@ -10,6 +10,13 @@ export function buildReplyQuotePrefix(quotes) {
   return `${lines.join('\n')}\n\n`
 }
 
+export function buildQuotedReplyContent(quotes, parts) {
+  const body = (Array.isArray(parts) ? parts : [])
+    .filter((part) => typeof part === 'string' && part.trim())
+    .join('\n')
+  return `${buildReplyQuotePrefix(quotes)}${body}`
+}
+
 export function parseReplyQuotes(content) {
   if (typeof content !== 'string' || !content.startsWith('> 回复')) return null
 

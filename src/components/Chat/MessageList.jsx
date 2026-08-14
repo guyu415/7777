@@ -217,7 +217,7 @@ const MessageList = forwardRef(function MessageList({
                     {selectedIds?.has(msg.id) && <span style={{ fontSize: 14, lineHeight: 1 }}>✓</span>}
                   </button>
                 )}
-                <div style={{ paddingLeft: selectionMode ? 28 : 0, transition: 'padding .15s ease' }}>
+                <div style={{ width: '100%', minWidth: 0, paddingLeft: selectionMode ? 28 : 0, transition: 'padding .15s ease', boxSizing: 'border-box' }}>
                 <MessageBubble
                   message={msg}
                   onLongPress={selectionMode ? null : onLongPress}

@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect, useCallback, forwardRef, useImperativeHandle } from 'react'
 import { X as CloseIcon } from 'lucide-react'
 import { compressChatImage } from '../../utils/image'
-import { buildReplyQuotePrefix } from '../../utils/replyQuotes'
+import { buildQuotedReplyContent, buildReplyQuotePrefix } from '../../utils/replyQuotes'
 
 function formatImageBytes(bytes) {
   if (bytes >= 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)}MB`
@@ -336,8 +336,11 @@ const MessageInput = forwardRef(function MessageInput({ onSend, onSendBatch, onS
       return
     } else {
       const batch = finalText ? [...segments, finalText] : segments
-      if (quotePrefix && batch.length) batch[0] = quotePrefix + batch[0]
-      if (batch.length > 1) onSendBatch?.(batch)
+      // A quoted reply is one semantic message. Enter may queue several text
+      // segments, but they all belong beneath the same set of references and
+      // must not leak into later unquoted bubbles.
+      if (quotePrefix && batch.length) onSend(buildQuotedReplyContent(replyDrafts, batch))
+      else if (batch.length > 1) onSendBatch?.(batch)
       else if (batch.length === 1) onSend(batch[0])
     }
     onCancelReply?.()
