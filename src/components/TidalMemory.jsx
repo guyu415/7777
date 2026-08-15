@@ -30,6 +30,7 @@ export default function TidalMemory({ theme, onBack }) {
   const [saving, setSaving] = useState(false)
   const [feedback, setFeedback] = useState(null)
   const [coreOpen, setCoreOpen] = useState(false)
+  const [checkpointOpen, setCheckpointOpen] = useState(false)
 
   const dirty = draft !== savedText
   const tideView = tidalStatusPresentation(status?.tide)
@@ -137,7 +138,7 @@ export default function TidalMemory({ theme, onBack }) {
 
       <div className="flex-1 overflow-y-auto px-4 py-3 space-y-3" style={{ paddingBottom: 'calc(var(--safe-bottom) + 20px)' }}>
         <p className="text-[11px] leading-relaxed" style={{ color: '#7798bb' }}>
-          这里显示 CC 固定聊天窗口正在使用的权威分层摘要：长期基线保留稳定关系与事实，近期状态随对话滚动替换。自动潮汐无需审批。
+          这里显示 CC 固定聊天窗口正在使用的分层记忆：长期基线保留稳定关系与事实，最老的闭合事件才会逐渐模糊；边界之后的原文会尽可能完整保留。每次整理前由 CC 自己确认闭合边界并留下主观检查点。
         </p>
 
         {status && (
@@ -165,6 +166,27 @@ export default function TidalMemory({ theme, onBack }) {
           {coreOpen && <div className="mt-3 p-3 rounded-xl text-xs whitespace-pre-wrap overflow-y-auto" style={{ color: '#4f7092', background: 'rgba(235,244,255,0.65)', maxHeight: '45vh', lineHeight: 1.7 }}>{status?.coreMemory?.text || '（无）'}</div>}
         </Card>
 
+        <Card>
+          <button type="button" onClick={() => setCheckpointOpen((v) => !v)} className="w-full flex items-center justify-between text-left">
+            <div>
+              <div className="text-xs font-medium" style={{ color: '#2c5282' }}>CC 的主观连续性检查点</div>
+              <div className="text-[10px] mt-0.5" style={{ color: '#9ab0c7' }}>{status?.subjectiveCheckpoint ? `由 CC 写于 ${formatTidalTime(status.subjectiveCheckpoint.updatedAt)}` : '尚未形成检查点'}</div>
+            </div>
+            {checkpointOpen ? <ChevronUp size={16} color="#7394b6" /> : <ChevronDown size={16} color="#7394b6" />}
+          </button>
+          {checkpointOpen && (
+            <div className="mt-3 p-3 rounded-xl text-xs whitespace-pre-wrap overflow-y-auto" style={{ color: '#4f7092', background: 'rgba(235,244,255,0.65)', maxHeight: '45vh', lineHeight: 1.7 }}>
+              {status?.subjectiveCheckpoint?.value ? [
+                ['对自己的当前理解', status.subjectiveCheckpoint.value.selfUnderstanding],
+                ['对用户与关系的当前理解', status.subjectiveCheckpoint.value.relationshipUnderstanding],
+                ['最近改变或加深的看法', status.subjectiveCheckpoint.value.changedViews],
+                ['仍未闭合的部分', status.subjectiveCheckpoint.value.unresolved],
+                ['自然继续的位置', status.subjectiveCheckpoint.value.continuation],
+              ].map(([label, value]) => `${label}：${value}`).join('\n') : '（无）'}
+            </div>
+          )}
+        </Card>
+
         <Card style={{ border: `1.5px solid ${primary}44` }}>
           <div className="flex items-center justify-between gap-2 mb-2">
             <div>
@@ -188,8 +210,8 @@ export default function TidalMemory({ theme, onBack }) {
         <Card>
           <div className="flex items-center justify-between gap-2 mb-2">
             <div>
-              <div className="text-xs font-medium" style={{ color: '#2c5282' }}>近期状态摘要</div>
-              <div className="text-[10px] mt-0.5" style={{ color: '#9ab0c7' }}>会随新对话滚动替换，已解决的事件会淡出</div>
+              <div className="text-xs font-medium" style={{ color: '#2c5282' }}>已模糊的早期事件概括</div>
+              <div className="text-[10px] mt-0.5" style={{ color: '#9ab0c7' }}>只覆盖 CC 已确认闭合的旧前缀；当前状态以检查点和边界后原文为准</div>
             </div>
           </div>
           <textarea
@@ -199,7 +221,7 @@ export default function TidalMemory({ theme, onBack }) {
             spellCheck={false}
             className="w-full rounded-xl px-3 py-3 text-sm outline-none"
             style={{ minHeight: 220, resize: 'vertical', color: '#315778', background: 'rgba(248,252,255,0.9)', border: `1px solid ${dirty ? `${primary}88` : 'rgba(150,185,220,0.38)'}`, lineHeight: 1.7 }}
-            aria-label="近期状态摘要"
+            aria-label="已模糊的早期事件概括"
           />
           <div className="flex justify-between mt-1 text-[10px]" style={{ color: '#9ab0c7' }}><span>{dirty ? '有未保存修改' : '已与服务端一致'}</span><span>{recentDraft.length}/2400</span></div>
           <p className="text-[10px] mt-2 leading-relaxed" style={{ color: '#8a7aa0' }}>
