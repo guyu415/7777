@@ -493,7 +493,14 @@ export function useChat() {
           storedReasoning = fullReasoning
         }
         if (contentStarted && fullContent !== storedContent) {
-          updates.content = stripDisplayTags(fullContent)
+          // A companion chunk is one complete reply() bubble, not a token
+          // delta. Showing the joined accumulator here briefly paints the
+          // entire turn as one bubble; the completion pass then replaces it
+          // with bubble 1 and adds the rest, which looks like the answer
+          // flashed and disappeared. Keep the typing state stable until the
+          // authoritative bubble split is ready. Ordinary API streams still
+          // render token-by-token exactly as before.
+          if (!isVpsProvider) updates.content = stripDisplayTags(fullContent)
           storedContent = fullContent
         }
         if (toolUses.length !== storedToolCount) {
@@ -805,6 +812,7 @@ export function useChat() {
       const lastIdx = tokens.length - 1
 
       const voicePlaceholders = []  // { id, text } in render order
+      const deferredVpsSaves = []
       let placed = 0
       let lastPreview = ''
 
@@ -813,7 +821,10 @@ export function useChat() {
         const tk = tokens[i]
         const isLastToken = i === lastIdx
         const attachAc = isLastToken && acStatus ? { acStatus } : {}
-        if (i > 0) await new Promise(r => setTimeout(r, 300))
+        // API-provider paragraphs retain the chat-like stagger. Companion
+        // reply() calls have already completed by this point, so delaying
+        // them only makes later bubbles look as if they are still loading.
+        if (i > 0 && !isVpsProvider) await new Promise(r => setTimeout(r, 300))
 
         if (tk.type === 'voice') {
           const id = placed === 0 ? assistantId : genId()
@@ -829,16 +840,25 @@ export function useChat() {
           if (i === lastTextIdx && acNote) content = `${content}\n${acNote}`
           if (placed === 0) {
             updateMessage(assistantId, { content, streaming: false, ...attachAc, ...wireIdsField() })
-            await saveMessage({ ...assistantMsg, content, streaming: false, ...attachAc, ...wireIdsField() })
+            const save = saveMessage({ ...assistantMsg, content, streaming: false, ...attachAc, ...wireIdsField() })
+            if (isVpsProvider) deferredVpsSaves.push(save)
+            else await save
           } else {
             const partMsg = { id: genId(), conversationId: CONVERSATION_ID, role: 'assistant', type: 'text', content, timestamp: Date.now(), streaming: false, ...attachAc, ...wireIdsField() }
             addMessage(partMsg)
-            await saveMessage(partMsg)
+            const save = saveMessage(partMsg)
+            if (isVpsProvider) deferredVpsSaves.push(save)
+            else await save
           }
           lastPreview = tk.content
         }
         placed++
       }
+
+      // All companion bubbles have been placed synchronously above. Persist
+      // them together afterwards so IndexedDB latency cannot serialize what
+      // the user sees on screen.
+      if (deferredVpsSaves.length) await Promise.all(deferredVpsSaves)
 
       updateSession(CONVERSATION_ID, { lastMsgPreview: (lastPreview || '').slice(0, 40), lastMsgTime: Date.now() })
 
