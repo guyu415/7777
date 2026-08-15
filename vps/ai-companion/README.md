@@ -44,6 +44,39 @@ the CC channel server talks to its companion-only Unix socket through
 or restarting either unit never propagates a stop to the other. Existing Codex
 thread ids remain persisted and are resumed after a daemon cold start.
 
+## Self-directed fishing and garden activity hints
+
+The CC MCP surface exposes a compact string-only `play_fishing` tool backed by
+the vendored v2 blind-play engine under `vendor/ai-fishing-game/`. Its one
+authoritative save is `/opt/ai-companion/state/fishing-save.json` (override
+with `AI_COMPANION_FISHING_SAVE_FILE`); game progress never depends on chat
+history or a rolling summary. Python 3 is required on the VPS.
+
+During a `proactive_check`, CC may independently fish or browse Galatea. One
+completed activity hint is emitted outside the conversation: connected clients
+receive `proactive_activity`, and background clients receive the same text by
+Web Push. Fishing is summarized from the real engine result. Galatea has a
+PreToolUse safety-net notice that is replaced by CC's more specific
+`report_proactive_activity` summary when supplied. These hints are never added
+to `chat-history.json` and therefore never enter tidal summaries.
+
+The MCP instruction prefix is deliberately kept below Claude Code's 2048-character
+server-instruction limit. It names the deferred capabilities CC should search
+for when relevant: `diary_write`, `search_chat_history`, Galatea,
+`get_study_schedule`, `get_plans`, `get_life_progress`, and `play_fishing`.
+`diary_write` uses the Worker's VPS-authenticated Google Drive path and is
+silent in chat; `get_plans` returns concrete goal names, schedules, dates, and
+completion/overdue state rather than only aggregate progress.
+
+Maintenance pruning keeps the latest 400 transcript entries intact. Older
+`play_fishing` results over 600 characters collapse to a marker plus their
+final `📊` row; the external save remains authoritative.
+
+Older Galatea garden/forum tool results over 1000 characters are also folded
+after they leave that 400-entry protection window. The compact form keeps the
+first 500 characters plus the original tool name/input, retaining thread
+titles and ids so CC can locate and read the content again when needed.
+
 `ai-companion-codex-runtime.service` and the bridge's `adopt` mode are retained
 only as one-time migration tools for transferring an already-running stdio
 process. Normal boot uses bridge `serve` mode and requires a fixed executable

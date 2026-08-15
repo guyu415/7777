@@ -362,12 +362,32 @@ export function useCodexChat() {
     }
   }, [codexPrompt, codexSessionId, sendMessage])
 
+  const sendImageMessageBatch = useCallback(async ({ imageUrl, messages: contents }) => {
+    const trimmed = (contents || []).map(c => (c || '').trim()).filter(Boolean)
+    stopRequestedRef.current = false
+    stoppedTurnIdRef.current = null
+    setSendError(null)
+    const ok = sendCodexMessage(trimmed.join('\n'), imageUrl, {
+      sessionId: codexSessionId,
+      prompt: codexPrompt,
+      segments: trimmed,
+      imageSeparate: true,
+    })
+    if (!ok) {
+      lastFailedSendRef.current = { kind: 'image-batch', imageUrl, contents: trimmed }
+      setSendError('未连接，请稍后重试')
+    } else {
+      lastFailedSendRef.current = null
+    }
+  }, [codexPrompt, codexSessionId])
+
   const retryFailed = useCallback(async () => {
     const attempt = lastFailedSendRef.current
     if (!attempt) return
     if (attempt.kind === 'batch') await sendMessageBatch(attempt.contents)
+    else if (attempt.kind === 'image-batch') await sendImageMessageBatch({ imageUrl: attempt.imageUrl, messages: attempt.contents })
     else await sendMessage(attempt.content, attempt.type, attempt.extra)
-  }, [sendMessage, sendMessageBatch])
+  }, [sendMessage, sendMessageBatch, sendImageMessageBatch])
 
   const deleteMsg = useCallback(async (id) => {
     await deleteCodexMessage(codexSessionId, id)
@@ -404,7 +424,7 @@ export function useCodexChat() {
   const isLoading = status === 'thinking' || status === 'working'
 
   return {
-    messages, sendMessage, sendMessageBatch, loadHistory, isLoading,
+    messages, sendMessage, sendMessageBatch, sendImageMessageBatch, loadHistory, isLoading,
     regenerate: notSupported, regenerateRound: notSupported, retryFailed,
     deleteMsg, editMessage,
     stopStreaming,

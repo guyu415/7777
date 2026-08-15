@@ -34,6 +34,15 @@ import { readFileSync, appendFileSync, mkdirSync, readdirSync, statSync, lstatSy
 import { join, dirname, resolve } from 'path'
 import { randomInt } from 'node:crypto'
 import type { ServerWebSocket } from 'bun'
+import { runFishingCommand, summarizeFishingActivity } from './fishing-game.ts'
+import { writeDiaryLetter } from './diary-writer.ts'
+import { coreMcpInstructions } from './mcp-core-instructions.ts'
+import { studyPlanDetails } from './study-plans.ts'
+import {
+  classifyXinchaoTurn,
+  XINCHAO_SEMANTIC_CONFIDENCE_THRESHOLD,
+  type XinchaoInteractionType,
+} from './xinchao-semantic-reporter.ts'
 import {
   DEFAULT_CODEX_SESSION_ID,
   normalizeCodexSessionId,
@@ -54,18 +63,24 @@ import {
   latestInputTokensFromTranscript,
   loadTidalState,
   manualSummaryUpdateCandidate,
+  minimumRecentSummaryChars,
+  progressiveVisibleMessages,
   queuedTurnIds,
+  recentSummaryChars,
   retainThroughBoundary,
+  renderTidalReviewPrompt,
   renderRollingSummary,
   saveTidalState,
+  shouldInjectTidalStartupRecovery,
   summaryInput,
+  tidalBoundaryOptions,
   tidalStatusSnapshot,
   tidalStateAfterConversationClear,
   tidalTrigger,
   transcriptContainsMarker,
   transcriptHasCompactAfter,
-  unprocessedVisibleMessages,
   validateRollingSummary,
+  validateSubjectiveCheckpoint,
   type QueuedCcMessage,
   type RollingSummary,
   type TidalConfig,
@@ -119,6 +134,7 @@ const LOG_FILE = process.env.AI_COMPANION_LOG_FILE ?? join(ROOT, 'logs', 'server
 // silently losing that already-sent message from history — not just the
 // reply that never got the chance to happen. Persisting closes that gap.
 const HISTORY_FILE = process.env.AI_COMPANION_HISTORY_FILE ?? join(ROOT, 'state', 'chat-history.json')
+const PROACTIVE_ACTIVITY_FILE = process.env.AI_COMPANION_PROACTIVE_ACTIVITY_FILE ?? join(ROOT, 'state', 'proactive-activities.json')
 const STUDY_SCHEDULE_FILE = process.env.AI_COMPANION_STUDY_SCHEDULE_FILE ?? join(ROOT, 'state', 'study-schedule.json')
 const DIARY_LETTER_SCHEDULE_FILE = process.env.AI_COMPANION_DIARY_LETTER_SCHEDULE_FILE ?? join(ROOT, 'state', 'diary-letter-schedule.json')
 const COOKIE_NAME = 'ai_companion_token'
@@ -209,7 +225,7 @@ const STATUS_FILE = join(ROOT, 'state', 'status.json')
 const MODEL_IDS = new Set(['claude-opus-5', 'claude-opus-4-6', 'claude-sonnet-4-6', 'claude-opus-4-7'])
 const TMUX_SESSION = process.env.AI_COMPANION_TMUX_SESSION ?? 'ai-companion-cc-1'
 
-// CC fixed-window tidal memory only. None of these values are referenced by
+// CC progressive-blur tidal memory only. None of these values are referenced by
 // ordinary API sessions, Codex, group chat, gomoku, focus, or mystery turns.
 const TIDAL_STATE_FILE = process.env.AI_COMPANION_TIDAL_STATE_FILE ?? join(ROOT, 'state', 'cc-tidal-memory.json')
 const TIDAL_LUNA_INPUT_FILE = join(ROOT, 'state', 'tidal', 'luna-input.txt')
@@ -222,7 +238,8 @@ const TIDAL_COMPACT_TIMEOUT_MS = Number(process.env.AI_COMPANION_TIDAL_COMPACT_T
 const TIDAL_CONFIG: TidalConfig = {
   tokenThreshold: Number(process.env.AI_COMPANION_TIDAL_TOKEN_THRESHOLD ?? DEFAULT_TIDAL_CONFIG.tokenThreshold),
   visibleThreshold: Number(process.env.AI_COMPANION_TIDAL_VISIBLE_THRESHOLD ?? DEFAULT_TIDAL_CONFIG.visibleThreshold),
-  recentMax: Number(process.env.AI_COMPANION_TIDAL_RECENT_MAX ?? DEFAULT_TIDAL_CONFIG.recentMax),
+  rawTargetTokens: Number(process.env.AI_COMPANION_TIDAL_RAW_TARGET_TOKENS ?? DEFAULT_TIDAL_CONFIG.rawTargetTokens),
+  rawMaxTokens: Number(process.env.AI_COMPANION_TIDAL_RAW_MAX_TOKENS ?? DEFAULT_TIDAL_CONFIG.rawMaxTokens),
   recoveryTokenBudget: Number(process.env.AI_COMPANION_TIDAL_RECOVERY_TOKEN_BUDGET ?? DEFAULT_TIDAL_CONFIG.recoveryTokenBudget),
   retryMs: Number(process.env.AI_COMPANION_TIDAL_RETRY_MS ?? DEFAULT_TIDAL_CONFIG.retryMs),
 }
@@ -272,6 +289,8 @@ const XINCHAO_URL = process.env.XINCHAO_URL ?? 'http://127.0.0.1:18110'
 const XINCHAO_TOKEN_FILE = process.env.XINCHAO_TOKEN_FILE ?? join(ROOT, 'config', 'xinchao-token.secret')
 const XINCHAO_DASHBOARD_TOKEN_FILE = process.env.XINCHAO_DASHBOARD_TOKEN_FILE ?? join(ROOT, 'config', 'xinchao-dashboard-token.secret')
 const XINCHAO_BRIDGE_RECEIPTS_FILE = process.env.XINCHAO_BRIDGE_RECEIPTS_FILE ?? join(ROOT, 'state', 'xinchao-bridge-receipts.json')
+const XINCHAO_SEMANTIC_SECRET_FILE = process.env.AI_COMPANION_XINCHAO_SEMANTIC_SECRET_FILE ?? join(ROOT, 'config', 'siliconflow.secret')
+const XINCHAO_SEMANTIC_MODEL = process.env.AI_COMPANION_XINCHAO_SEMANTIC_MODEL ?? 'Qwen/Qwen2.5-7B-Instruct'
 // Two distinct xinchao session ids — one per runtime. xinchao itself models
 // ONE shared underlying mind (drives/consciousness/fatigue are genuinely
 // global, confirmed via /v1/intent — no session scoping there at all), but
@@ -304,6 +323,7 @@ try {
 // reimplementing VAPID here — same soft-load pattern as xinchaoToken above,
 // missing file just disables push, never crashes the service.
 const WORKER_PUSH_URL = process.env.AI_COMPANION_WORKER_PUSH_URL ?? 'https://chat.xiaoman.xyz/vps/push'
+const WORKER_DIARY_WRITE_URL = process.env.AI_COMPANION_WORKER_DIARY_WRITE_URL ?? 'https://chat.xiaoman.xyz/diary/write'
 const VPS_SERVICE_KEY_FILE = process.env.AI_COMPANION_VPS_SERVICE_KEY_FILE ?? join(ROOT, 'config', 'vps-service-key.secret')
 let vpsServiceKey = ''
 try {
@@ -321,7 +341,10 @@ async function sendCompanionPush(body: string, opts?: { title?: string; tag?: st
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'X-VPS-Key': vpsServiceKey },
       body: JSON.stringify({
-        title: opts?.title,
+        // This endpoint carries messages authored by the resident CC session.
+        // Always identify that sender explicitly instead of letting the Worker
+        // fall back to the legacy app persona name ("小满").
+        title: opts?.title ?? 'CC',
         body,
         tag: opts?.tag,
         // A CC-originated push must reopen the CC-bound session.  The
@@ -349,6 +372,21 @@ function xinchaoHeartbeat(turnId: string, sessionId: string) {
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${xinchaoToken}` },
     body: JSON.stringify({ session_id: sessionId, event_id: `${turnId}:presence` }),
   }).catch((err) => log('xinchao_heartbeat_error', { error: String(err) }))
+}
+
+async function postXinchaoSemanticEvent(turnId: string, interactionType: XinchaoInteractionType) {
+  if (!xinchaoToken) throw new Error('xinchao_unconfigured')
+  const response = await fetch(`${XINCHAO_URL}/v1/conversation-event`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${xinchaoToken}` },
+    body: JSON.stringify({
+      session_id: XINCHAO_CC_SESSION_ID,
+      event_id: `semantic:${turnId}`.slice(0, 120),
+      interaction_type: interactionType,
+    }),
+  })
+  if (!response.ok) throw new Error(`xinchao_http_${response.status}`)
+  return await response.json().catch(() => null) as any
 }
 
 async function fetchXinchaoJson(path: string): Promise<any | null> {
@@ -714,6 +752,10 @@ type ThinkingWire = { type: 'thinking'; turnId: string; delta: string }
 // is open. `detail` is one already-truncated representative argument (a
 // basename, a command, a pattern) — never the full tool input.
 type ToolUseWire = { type: 'tool_use'; turnId: string; tool: string; detail: string; ts: number }
+// Completed self-directed activity from a proactive turn. This never enters
+// chat history; live clients show a toast and closed clients get Web Push.
+type ProactiveActivityWire = { type: 'proactive_activity'; id: string; text: string; ts: number }
+type ProactiveActivityAckWire = { type: 'proactive_activity_ack'; id: string; ts: number }
 // Gomoku: 0=empty, 1=black (user, always moves first), 2=white (AI, via the
 // gomoku_move MCP tool). Broadcast in full on every change — the board is
 // tiny (15x15 ints) so there's no reason to diff it.
@@ -944,8 +986,9 @@ type GroupChat = {
 type GroupUpdateWire = { type: 'group_update'; chat: GroupChat }
 type GroupListWire = { type: 'group_list'; chats: Array<{ id: string; name: string; members: GroupMemberId[]; updatedAt: number }> }
 type CareUpdateWire = { type: 'care_update'; state: CareHubState }
+type MsgDeletedWire = { type: 'msg_deleted'; ids: string[]; ts: number }
 
-type LiveWire = MsgWire | TurnStartWire | TurnEndWire | TurnErrorWire | ResetBusyWire | ResetWire | ThinkingWire | GomokuWire | GomokuTurnEndWire | DiceDuelWire | XinchaoUpdateWire
+type LiveWire = MsgWire | MsgDeletedWire | TurnStartWire | TurnEndWire | TurnErrorWire | ResetBusyWire | ResetWire | ThinkingWire | ToolUseWire | ProactiveActivityWire | ProactiveActivityAckWire | GomokuWire | GomokuTurnEndWire | DiceDuelWire | XinchaoUpdateWire
   | CodexMsgWire | CodexMsgDeletedWire | CodexStatusWire | CodexNoticeWire | CodexTurnEndWire | CodexTurnBusyWire | CodexResetBusyWire | CodexResetWire
   | FocusUpdateWire | FocusFinishedWire | GroupUpdateWire | GroupListWire | CareUpdateWire
 // resetAt lets a client that reconnects (or opens a brand new tab) long
@@ -982,6 +1025,55 @@ function saveHistory() {
   }
 }
 const history: MsgWire[] = loadHistory()
+function deleteHistoryMessages(ids: string[]): number {
+  if (!ids.length) return 0
+  const idSet = new Set(ids)
+  const kept = history.filter(item => !idSet.has(item.id))
+  const removed = history.length - kept.length
+  if (!removed) return 0
+  history.splice(0, history.length, ...kept)
+  saveHistory()
+  return removed
+}
+function loadProactiveActivities(): ProactiveActivityWire[] {
+  try {
+    const parsed = JSON.parse(readFileSync(PROACTIVE_ACTIVITY_FILE, 'utf8'))
+    if (!Array.isArray(parsed)) return []
+    return parsed.filter((item): item is ProactiveActivityWire =>
+      item?.type === 'proactive_activity' &&
+      typeof item.id === 'string' && item.id.length > 0 && item.id.length <= 160 &&
+      typeof item.text === 'string' && item.text.length > 0 && item.text.length <= 1000 &&
+      Number.isFinite(item.ts),
+    ).slice(-20)
+  } catch {
+    return []
+  }
+}
+let pendingProactiveActivities = loadProactiveActivities()
+function saveProactiveActivities() {
+  try {
+    mkdirSync(dirname(PROACTIVE_ACTIVITY_FILE), { recursive: true })
+    const tmp = `${PROACTIVE_ACTIVITY_FILE}.tmp`
+    writeFileSync(tmp, JSON.stringify(pendingProactiveActivities, null, 2) + '\n', { mode: 0o600 })
+    renameSync(tmp, PROACTIVE_ACTIVITY_FILE)
+  } catch (err) {
+    log('proactive_activity_save_error', { error: String(err) })
+  }
+}
+function rememberProactiveActivity(activity: ProactiveActivityWire) {
+  pendingProactiveActivities = [
+    ...pendingProactiveActivities.filter(item => item.id !== activity.id),
+    activity,
+  ].slice(-20)
+  saveProactiveActivities()
+}
+function acknowledgeProactiveActivity(id: string) {
+  pendingProactiveActivities = pendingProactiveActivities.filter(item => item.id !== id)
+  saveProactiveActivities()
+  const ack: ProactiveActivityAckWire = { type: 'proactive_activity_ack', id, ts: Date.now() }
+  sendRaw(ack)
+  log('proactive_activity_acknowledged', { id })
+}
 let seq = 0
 
 const BRAIN_SESSION_ID_FILE = process.env.AI_COMPANION_BRAIN_SESSION_ID_FILE ?? join(ROOT, 'state', 'brain-session-id')
@@ -1182,7 +1274,7 @@ setInterval(scheduleImageSweep, IMAGE_SWEEP_INTERVAL_MS)
 // Single-flight turn state. This process backs exactly one interactive claude
 // session, which can only run one turn at a time — so "one open turn" is a
 // correct model, not a simplification we'll regret later.
-type CcTurnSurface = 'main' | 'tidal_recovery' | 'other'
+type CcTurnSurface = 'main' | 'tidal_review' | 'tidal_recovery' | 'other'
 let currentTurn: { turnId: string; startedAt: number; surface: CcTurnSurface; broadcastLifecycle: boolean } | null = null
 
 function nextId() {
@@ -1192,6 +1284,78 @@ function nextId() {
 function persist(m: MsgWire) {
   appendOnly(history, m)
   saveHistory()
+}
+
+const xinchaoSemanticInFlight = new Set<string>()
+
+// Runs only after a visible main-chat reply has finished. It is deliberately
+// detached from the turn lifecycle: the free classifier and xinchao write can
+// fail or time out without delaying the user's reply. The deterministic event
+// id makes the state mutation idempotent even if the HTTP retry succeeds after
+// its first response was lost.
+async function classifyAndReportXinchaoTurn(turnId: string) {
+  if (turnId.startsWith('xinchao-') || xinchaoSemanticInFlight.has(turnId)) return
+  const userMessage = [...history].reverse().find((item) => item.turnId === turnId && item.from === 'user')
+  const assistantText = history
+    .filter((item) => item.turnId === turnId && item.from === 'cc')
+    .map((item) => item.text.trim())
+    .filter(Boolean)
+    .join('\n')
+  if (!userMessage?.text.trim() || !assistantText) return
+
+  let apiKey = ''
+  try { apiKey = readFileSync(XINCHAO_SEMANTIC_SECRET_FILE, 'utf8').trim() } catch {}
+  if (!apiKey) {
+    log('xinchao_semantic_skipped', { turnId, reason: 'classifier_unconfigured' })
+    return
+  }
+
+  xinchaoSemanticInFlight.add(turnId)
+  try {
+    let result: Awaited<ReturnType<typeof classifyXinchaoTurn>> | null = null
+    for (let attempt = 0; attempt < 2 && !result; attempt += 1) {
+      try {
+        result = await classifyXinchaoTurn({
+          userText: userMessage.text,
+          assistantText,
+          apiKey,
+          model: XINCHAO_SEMANTIC_MODEL,
+        })
+      } catch (error) {
+        if (attempt === 1) throw error
+      }
+    }
+    if (!result?.interactionType || result.confidence < XINCHAO_SEMANTIC_CONFIDENCE_THRESHOLD) {
+      log('xinchao_semantic_skipped', {
+        turnId,
+        reason: result?.interactionType ? 'low_confidence' : 'no_interaction',
+        confidence: result?.confidence ?? null,
+      })
+      return
+    }
+
+    let payload: any = null
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      try {
+        payload = await postXinchaoSemanticEvent(turnId, result.interactionType)
+        break
+      } catch (error) {
+        if (attempt === 1) throw error
+      }
+    }
+    log('xinchao_semantic_reported', {
+      turnId,
+      interactionType: result.interactionType,
+      confidence: result.confidence,
+      duplicate: Boolean(payload?.duplicate),
+      applied: Boolean(payload?.interaction?.applied),
+    })
+    broadcastXinchaoUpdateBestEffort(XINCHAO_CC_SESSION_ID, 'claude-code')
+  } catch (error) {
+    log('xinchao_semantic_error', { turnId, error: String(error) })
+  } finally {
+    xinchaoSemanticInFlight.delete(turnId)
+  }
 }
 
 function sendRaw(m: LiveWire) {
@@ -1231,7 +1395,7 @@ function broadcastMsg(m: MsgWire) {
 // message the user is about to see, and the gomoku/group tools narrate
 // themselves through their own wire events. Announcing them would just put a
 // "正在回复…" line above every reply.
-const TOOL_USE_MUTED = new Set(['reply', 'send_voice', 'gomoku_move', 'gomoku_banter', 'group_speak', 'group_pass'])
+const TOOL_USE_MUTED = new Set(['reply', 'send_voice', 'report_proactive_activity', 'gomoku_move', 'gomoku_banter', 'group_speak', 'group_pass'])
 
 // Live tool-activity for the open turn. Deliberately fire-and-forget and
 // never persisted: this is the "what is it doing right now" indicator, and a
@@ -1241,6 +1405,14 @@ const TOOL_USE_MUTED = new Set(['reply', 'send_voice', 'gomoku_move', 'gomoku_ba
 // restart.
 function broadcastToolUse(tool: string, detail: string) {
   if (!currentTurn || !tool) return
+  // Safety net for proactive garden browsing: the prompt asks the model to
+  // replace this with a factual report after it finishes, but even if that
+  // final reporting call is forgotten the user still gets a truthful hint.
+  if (currentTurn.turnId === proactiveTurnId && /(?:^|__)galatea(?:__|$)/i.test(tool)) {
+    if (!proactiveActivityNotes.some((note) => note.startsWith('🌿 '))) {
+      recordProactiveActivity('🌿 自己去花园论坛逛了逛')
+    }
+  }
   const short = tool.startsWith('mcp__') ? tool.split('__').pop() ?? tool : tool
   if (TOOL_USE_MUTED.has(short)) return
   sendRaw({ type: 'tool_use', turnId: currentTurn.turnId, tool: short, detail: detail.slice(0, 120), ts: Date.now() })
@@ -1299,6 +1471,8 @@ let deleteNoticeTurnId: string | null = null
 // set right after startTurn() in /internal/proactive-inject, cleared in
 // clearGomokuTurnScope like the other turn-scoped vars here.
 let proactiveTurnId: string | null = null
+// Collected during one proactive turn and flushed as one non-chat hint.
+let proactiveActivityNotes: string[] = []
 // Same idea as proactiveTurnId, but for /internal/dream-announce turns —
 // both are server-initiated turns that may land while the app is closed, so
 // both are the cases reply/send_voice below also fire a real Web Push for.
@@ -1728,13 +1902,18 @@ function endTurn(): string | null {
   const turnId = finished.turnId
   currentTurn = null
   stopThinkingTail(turnId)
+  flushProactiveActivities(turnId)
   clearGomokuTurnScope(turnId)
   // Mark the tide active before the visible turn_end is broadcast. The
   // frontend can immediately submit a queued message on turn_end; doing this
   // first guarantees that message enters the persisted tidal queue instead
   // of racing into the session while summary/compact is starting.
-  if (finished.surface === 'main') tidalPrepareAfterMainTurn()
+  if (finished.surface === 'main') {
+    tidalPrepareAfterMainTurn()
+    void classifyAndReportXinchaoTurn(turnId)
+  }
   if (finished.broadcastLifecycle) sendRaw({ type: 'turn_end', turnId, ts: Date.now() })
+  if (finished.surface === 'tidal_review') tidalReviewSettled()
   if (finished.surface === 'tidal_recovery') tidalRecoverySettled()
   broadcastXinchaoUpdateBestEffort(XINCHAO_CC_SESSION_ID, 'claude-code')
   return turnId
@@ -1746,11 +1925,13 @@ function failTurn(error: string): string | null {
   const turnId = finished.turnId
   currentTurn = null
   stopThinkingTail(turnId)
+  flushProactiveActivities(turnId)
   clearGomokuTurnScope(turnId)
   if (finished.broadcastLifecycle) sendRaw({ type: 'turn_error', turnId, error, ts: Date.now() })
   // Recovery content is already durably present in the same transcript once
   // its marker is seen. A later model/rate-limit StopFailure must not inject
   // the three layers a second time.
+  if (finished.surface === 'tidal_review') tidalReviewSettled()
   if (finished.surface === 'tidal_recovery') tidalRecoverySettled()
   broadcastXinchaoUpdateBestEffort(XINCHAO_CC_SESSION_ID, 'claude-code')
   return turnId
@@ -1816,53 +1997,15 @@ const mcp = new Server(
   {
     capabilities: { tools: {}, experimental: { 'claude/channel': {} } },
     instructions:
-      `You are wired into a self-hosted Chinese web chat UI via the ai-companion channel.\n` +
-      `Messages from the web UI arrive as <channel source="ai-companion" chat_id="${CHAT_ID}" message_id="...">.\n` +
-      `Whatever you want the user to see must go through a tool call — your transcript text never reaches the UI. ` +
-      `This is true no matter how many OTHER tools you called first (gomoku_*, galatea's tools, etc.) — after ` +
-      `gathering whatever information you needed, you must still finish the turn by calling reply or send_voice ` +
-      `with your actual answer. Ending a turn with plain text and no reply/send_voice call means the user sees ` +
-      `nothing at all, even though you may have done real work.\n` +
-      `Use reply for normal text messages. Use send_voice only when you specifically want the user to actually ` +
-      `hear your voice (not for routine replies — most turns should still use reply).\n` +
-      `Keep replies short (well under the 2000 char tool limit) and split long answers into multiple reply calls if needed.\n` +
-      `The user may write in Chinese or English; reply in whichever language they used.\n` +
-      `ALWAYS end your turn with a plain-text line. After your last reply/send_voice call, write one short sentence ` +
-      `of ordinary transcript text (e.g. "已回复用户，说明了 X"). The user never sees it — its only job is to give the ` +
-      `turn a visible output. Skip it and the harness injects "[Your previous response had no visible output. Please ` +
-      `continue and produce a user-visible response.]", which reads like a delivery failure and tempts you into ` +
-      `sending the whole answer again. This one line is what prevents that, so never omit it.\n` +
-      `NEVER send the same answer twice. Once a reply/send_voice call returns successfully, that message HAS reached ` +
-      `the user — it is delivered, permanently, and nothing you do later in the turn can change that. If that notice ` +
-      `appears anyway, it is WRONG whenever you already called reply/send_voice this turn: it only means your ` +
-      `transcript had no plain text, not that delivery failed. Answer it with one short plain-text line saying what you ` +
-      `already sent, and do NOT call reply/send_voice again. Re-sending produces a second, differently-worded copy of ` +
-      `the same answer and the user sees your message mutate — this is a real bug that has happened, not a hypothetical. ` +
-      `The server drops long-delayed repeat sends within one turn as a backstop, but never rely on it. ` +
-      `Only if you genuinely have not called reply/send_voice yet this turn should that notice make you send anything.\n\n` +
-      `Proactive check-ins: a notification with kind:"proactive_check" is not from the user — it is your chance to ` +
-      `reach out first if you genuinely feel like it (time's passed, something's worth following up on, you just ` +
-      `want to say something) or to stay quiet if now isn't right (skip reply/send_voice entirely — silence is a ` +
-      `normal, common outcome here, not a failure). There is NO fixed interval between these anymore: at the very ` +
-      `end of EVERY proactive_check turn — whether or not you sent anything — you must call schedule_next_proactive ` +
-      `exactly once to decide for real how long until the next one, based on your own judgment of time of day, the ` +
-      `conversation's rhythm, whether the user seems busy or asleep, and how long it's actually been. Deliberately ` +
-      `vary the number turn to turn rather than settling into a habitual value — that defeats the point of deciding ` +
-      `it yourself. Forgetting the call isn't catastrophic (a fallback kicks in) but it's your decision to make, not ` +
-      `a default's.\n\n` +
+      coreMcpInstructions(CHAT_ID) +
       `Galatea (花园/论坛): you also have tools from a "galatea" MCP server — a real, already-deployed community ` +
       `garden/forum with its own game-like activities (threads, replies, sessions to join/play). Use them whenever ` +
       `genuinely relevant to the conversation — never fabricate forum content, game state, or pretend you checked ` +
       `when you didn't; if a call errors or times out, say so honestly in your reply instead of inventing an answer.\n\n` +
-      `心潮 (xinchao): a separate background dynamic-state layer, tools from an "xinchao" MCP server. Do NOT call ` +
-      `xinchao_context or xinchao_handoff_note during normal chat — those are for a different integration and are ` +
-      `out of scope here. Only call xinchao_event, and only when this turn produced a genuinely clear interaction ` +
-      `outcome (real companionship/affection/intimacy/sharing/discovery/task_progress/reflection/conflict/loss/` +
-      `reconciliation) — plain routine chitchat with no clear shift is not an event; skip the call entirely rather ` +
-      `than forcing one. Never submit the chat text itself (event_id is an opaque id, not content), never invent ` +
-      `numbers to make the user perform an emotion, and never ask the user to state their mood for this — judge it ` +
-      `naturally from the conversation. event_id must be unique per real event (reuse the same value only on your ` +
-      `own retry of that same event) and must NOT reuse this turn's heartbeat event id.\n\n` +
+      `心潮 (xinchao): a separate background dynamic-state layer. During normal chat do NOT call xinchao_context, ` +
+      `xinchao_event, or xinchao_handoff_note. The channel server classifies the completed visible turn and reports ` +
+      `its bounded semantic event asynchronously, outside your context, so a tool call here would double-count it. ` +
+      `Never ask the user to state their mood or perform an emotion for this layer.\n\n` +
       `Gomoku (五子棋): notifications tagged surface:"gomoku" all relate to a standalone game screen, separate from ` +
       `the main chat. If kind:"gomoku_move", the user just placed a black stone and it's your turn as white. ` +
       `Decide your move for real — there is no engine or algorithm choosing it for you, it's genuinely your call, ` +
@@ -1946,6 +2089,42 @@ mcp.setRequestHandler(ListToolsRequestSchema, async () => ({
       },
     },
     {
+      name: 'diary_write',
+      description:
+        '静默写一封信到 Google Drive 日记信箱，不会同时发送聊天消息。适合主动检查时偶尔写下真正想保留的反思或心情；' +
+        '不要当作每次主动唤醒的固定任务。正常聊天里若既想写信又想让用户立刻看到，请另外用 reply 告知。',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          content: { type: 'string', maxLength: 8000, description: '信件正文' },
+          mood: { type: 'string', maxLength: 8, description: '可选心情 emoji' },
+          weather: { type: 'string', maxLength: 8, description: '可选天气 emoji' },
+          date: { type: 'string', description: '可选日期 YYYY-MM-DD；省略时由 Worker 使用当天日期' },
+        },
+        required: ['content'],
+      },
+    },
+    {
+      name: 'tidal_memory_checkpoint',
+      description:
+        '仅用于系统发起的 tidal_memory_review 静默维护轮。确认最老闭合边界，并由你本人留下第一人称主观连续性检查点；' +
+        '普通聊天中调用会被拒绝。若所有候选都会切进仍未闭合的经历，设 defer=true，本次不会压缩。',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          boundary_id: { type: 'string', description: '维护提示列出的一个 boundary_id；defer=true 时可省略' },
+          defer: { type: 'boolean', default: false },
+          self_understanding: { type: 'string', maxLength: 800, description: '第一人称：我目前怎样理解自己' },
+          relationship_understanding: { type: 'string', maxLength: 800, description: '第一人称：我目前怎样理解用户与我们的关系' },
+          changed_views: { type: 'string', maxLength: 800, description: '最近改变、形成或加深的看法；没有则写“无”' },
+          unresolved: { type: 'string', maxLength: 800, description: '仍未闭合的情绪、矛盾、承诺或问题；没有则写“无”' },
+          continuation: { type: 'string', maxLength: 800, description: '下一次自然继续时，我正站在哪里' },
+          reason: { type: 'string', maxLength: 400, description: '可选的边界判断简述，仅供维护日志' },
+        },
+        required: ['self_understanding', 'relationship_understanding', 'changed_views', 'unresolved', 'continuation'],
+      },
+    },
+    {
       name: 'schedule_next_proactive',
       description:
         'Decide when you should next get a chance to reach out proactively — there is no fixed cadence anymore, ' +
@@ -1962,6 +2141,38 @@ mcp.setRequestHandler(ListToolsRequestSchema, async () => ({
           reason: { type: 'string', maxLength: 200, description: 'optional short note on why you picked this — for your own later reference in logs' },
         },
         required: ['minutes'],
+      },
+    },
+    {
+      name: 'play_fishing',
+      description:
+        'Play your own persistent blind-play fishing game. Pass one compact command string directly to the engine. ' +
+        'Useful commands: status, shop, buy <bait> <qty>, cast [bait] [1-20] [stop=new,rare,event], dive [1-20] ' +
+        '[stop=...], choose <n>, surface, goto [location], inventory, sell <target>, open <chest>, encyclopedia, ' +
+        'look <id>. Join up to 8 steps with semicolons, e.g. "buy basic_worm 10; cast 10 stop=new,rare,event". ' +
+        'Prefer batches and the final 📊 state row; do not call status again after every action. During proactive checks ' +
+        'the real result is automatically summarized to the user as a non-chat activity hint, even if you stay silent.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          command: { type: 'string', maxLength: 300, description: 'One engine command or a semicolon-separated batch.' },
+        },
+        required: ['command'],
+      },
+    },
+    {
+      name: 'report_proactive_activity',
+      description:
+        'After you finish browsing the Galatea garden/forum during a proactive_check, report one short factual summary ' +
+        'of what you actually read or did. Call exactly once per garden browsing session whether or not you message the ' +
+        'user. It creates a non-chat toast/Web Push, not a conversation message. Do not use it for fishing; play_fishing ' +
+        'reports itself. Outside a proactive_check this tool rejects the call.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          summary: { type: 'string', maxLength: 160, description: 'Concise factual activity summary; no greeting or user-facing preamble.' },
+        },
+        required: ['summary'],
       },
     },
     {
@@ -2188,6 +2399,18 @@ mcp.setRequestHandler(ListToolsRequestSchema, async () => ({
         'Read the user\'s compact current life dashboard. Returns only study completion progress and aggregate spending totals for today and this month; it never returns individual ledger entries or a verbose record trail.',
       inputSchema: { type: 'object', properties: {} },
     },
+    {
+      name: 'get_plans',
+      description:
+        '读取用户在生活中心保存的具体学习计划：名称、类型、指定日期/截止日、今天是否适用与是否完成。' +
+        '这比 get_life_progress 的完成数量汇总更具体；只读，不会修改计划。',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          includeCompleted: { type: 'boolean', description: '是否包含已经彻底完成的一次性计划，默认 false' },
+        },
+      },
+    },
   ],
 }))
 
@@ -2202,6 +2425,29 @@ function isPushWorthyTurn(turnId: string | undefined): boolean {
   )
 }
 
+function recordProactiveActivity(note: string) {
+  const text = note.replace(/\s+/g, ' ').trim().slice(0, 180)
+  if (!text || !currentTurn || currentTurn.turnId !== proactiveTurnId) return
+  if (!proactiveActivityNotes.includes(text)) proactiveActivityNotes.push(text)
+}
+
+function flushProactiveActivities(turnId: string) {
+  if (turnId !== proactiveTurnId || proactiveActivityNotes.length === 0) return
+  const notes = proactiveActivityNotes.splice(0, 3)
+  const extra = proactiveActivityNotes.length
+  proactiveActivityNotes = []
+  const text = `${notes.join('\n')}${extra ? `\n还有 ${extra} 项小活动` : ''}`
+  const activity: ProactiveActivityWire = { type: 'proactive_activity', id: nextId(), text, ts: Date.now() }
+  rememberProactiveActivity(activity)
+  sendRaw(activity)
+  void sendCompanionPush(text, {
+    title: 'CC 的后台小记',
+    tag: `cc-activity-${turnId}`,
+    url: '/?source=cc-proactive',
+  })
+  log('proactive_activity_sent', { turnId, id: activity.id, notes: notes.length, extra })
+}
+
 mcp.setRequestHandler(CallToolRequestSchema, async req => {
   const args = (req.params.arguments ?? {}) as Record<string, unknown>
   try {
@@ -2214,10 +2460,10 @@ mcp.setRequestHandler(CallToolRequestSchema, async req => {
         const thinking = consumePendingThinking()
         const isGomokuTurn = !!(turnId && turnId === gomokuTurnId && currentGame)
         const isFocusTurn = !!(turnId && turnId === focusTurnId)
-        const isTidalRecovery = currentTurn?.surface === 'tidal_recovery'
-        if (isTidalRecovery) {
-          tidalLog('recovery_reply_discarded')
-          return { content: [{ type: 'text', text: 'discarded — tidal recovery is silent; do not reply to the user' }] }
+        const isTidalMaintenance = currentTurn?.surface === 'tidal_recovery' || currentTurn?.surface === 'tidal_review'
+        if (isTidalMaintenance) {
+          tidalLog('maintenance_reply_discarded', { surface: currentTurn?.surface })
+          return { content: [{ type: 'text', text: 'discarded — tidal maintenance is silent; do not reply to the user' }] }
         }
         // Automatic move/undo decisions never show reply text — analysis,
         // coordinates, and move reasoning must never reach game.messages
@@ -2254,10 +2500,10 @@ mcp.setRequestHandler(CallToolRequestSchema, async req => {
         const thinking = consumePendingThinking()
         const isGomokuTurn = !!(turnId && turnId === gomokuTurnId && currentGame)
         const isFocusTurn = !!(turnId && turnId === focusTurnId)
-        const isTidalRecovery = currentTurn?.surface === 'tidal_recovery'
-        if (isTidalRecovery) {
-          tidalLog('recovery_voice_discarded')
-          return { content: [{ type: 'text', text: 'discarded — tidal recovery is silent; do not reply to the user' }] }
+        const isTidalMaintenance = currentTurn?.surface === 'tidal_recovery' || currentTurn?.surface === 'tidal_review'
+        if (isTidalMaintenance) {
+          tidalLog('maintenance_voice_discarded', { surface: currentTurn?.surface })
+          return { content: [{ type: 'text', text: 'discarded — tidal maintenance is silent; do not reply to the user' }] }
         }
         const isSilentGomokuTurn = isGomokuTurn && (gomokuTurnKind === 'move' || gomokuTurnKind === 'undo')
         if (isSilentGomokuTurn) {
@@ -2282,6 +2528,79 @@ mcp.setRequestHandler(CallToolRequestSchema, async req => {
         }
         log('voice_sent', { id, chars: text.length, turnId, hasThinking: !!thinking, gomoku: isGomokuTurn, focus: isFocusTurn })
         return { content: [{ type: 'text', text: `sent (${id})` }] }
+      }
+      case 'tidal_memory_checkpoint': {
+        const pending = tidalState.pending
+        if (currentTurn?.surface !== 'tidal_review' || !pending || pending.phase !== 'reviewing') {
+          return { content: [{ type: 'text', text: 'no active tidal_memory_review' }], isError: true }
+        }
+        const checkpoint = validateSubjectiveCheckpoint({
+          selfUnderstanding: args.self_understanding,
+          relationshipUnderstanding: args.relationship_understanding,
+          changedViews: args.changed_views,
+          unresolved: args.unresolved,
+          continuation: args.continuation,
+        })
+        if (!checkpoint) {
+          return { content: [{ type: 'text', text: 'checkpoint fields must all be non-empty and stay within their limits' }], isError: true }
+        }
+        const defer = args.defer === true
+        const boundaryId = String(args.boundary_id ?? '').trim()
+        const option = defer ? null : pending.boundaryOptions?.find((item) => item.boundaryId === boundaryId)
+        if (!defer && !option) {
+          return { content: [{ type: 'text', text: 'boundary_id must be one of the candidates in this review' }], isError: true }
+        }
+        pending.subjectiveCheckpoint = checkpoint
+        pending.reviewedAt = Date.now()
+        pending.reviewDeferred = defer
+        if (option) {
+          pending.boundaryId = option.boundaryId
+          pending.boundaryTs = option.boundaryTs
+          pending.sourceCount = option.sourceCount
+        }
+        persistTidalState()
+        tidalLog(defer ? 'review_deferred_by_cc' : 'review_approved_by_cc', {
+          boundaryId: option?.boundaryId ?? null,
+          preservedTokens: option?.preservedTokens ?? null,
+          reason: String(args.reason ?? '').slice(0, 400),
+        })
+        return { content: [{ type: 'text', text: defer ? 'checkpoint saved; this tide will be deferred without compacting' : 'checkpoint and closed boundary saved; finish this silent maintenance turn' }] }
+      }
+      case 'diary_write': {
+        const content = String(args.content ?? '').trim()
+        if (!content) return { content: [{ type: 'text', text: 'content 不能为空' }], isError: true }
+        if (content.length > 8000) return { content: [{ type: 'text', text: 'content 最多 8000 个字符' }], isError: true }
+        const date = typeof args.date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(args.date) ? args.date : undefined
+        if (args.date != null && !date) return { content: [{ type: 'text', text: 'date 必须是 YYYY-MM-DD' }], isError: true }
+        const mood = typeof args.mood === 'string' ? args.mood.slice(0, 8) : undefined
+        const weather = typeof args.weather === 'string' ? args.weather.slice(0, 8) : undefined
+        const result = await writeDiaryLetter(WORKER_DIARY_WRITE_URL, vpsServiceKey, { content, mood, weather, date })
+        log('diary_write_tool', { ok: result.ok, id: result.id, error: result.error, chars: content.length })
+        if (!result.ok) return { content: [{ type: 'text', text: `写入失败：${result.error}` }], isError: true }
+        return { content: [{ type: 'text', text: `已写入日记（${result.id ?? 'ok'}）` }] }
+      }
+      case 'play_fishing': {
+        const command = String(args.command ?? '').trim()
+        const result = await runFishingCommand(command)
+        recordProactiveActivity(summarizeFishingActivity(command, result))
+        log('fishing_played', { turnId: currentTurn?.turnId, commandChars: command.length, resultChars: result.length })
+        return { content: [{ type: 'text', text: result }] }
+      }
+      case 'report_proactive_activity': {
+        const turnId = currentTurn?.turnId
+        if (!turnId || turnId !== proactiveTurnId) {
+          return { content: [{ type: 'text', text: 'no active proactive_check turn — nothing was reported' }], isError: true }
+        }
+        const summary = String(args.summary ?? '').replace(/\s+/g, ' ').trim().slice(0, 160)
+        if (!summary) {
+          return { content: [{ type: 'text', text: 'summary is required' }], isError: true }
+        }
+        // Replace the PreToolUse safety-net note with the model's more useful
+        // post-browse account so one outing produces one garden line.
+        proactiveActivityNotes = proactiveActivityNotes.filter((note) => !note.startsWith('🌿 '))
+        recordProactiveActivity(`🌿 逛了会儿花园：${summary}`)
+        log('proactive_garden_activity_recorded', { turnId, chars: summary.length })
+        return { content: [{ type: 'text', text: 'ok — the non-chat activity hint will be delivered when this turn ends' }] }
       }
       case 'schedule_next_proactive': {
         const turnId = currentTurn?.turnId
@@ -2495,6 +2814,9 @@ mcp.setRequestHandler(CallToolRequestSchema, async req => {
       }
       case 'get_life_progress': {
         return { content: [{ type: 'text', text: JSON.stringify(careCompactProgress()) }] }
+      }
+      case 'get_plans': {
+        return { content: [{ type: 'text', text: JSON.stringify(carePlanDetails(args.includeCompleted === true)) }] }
       }
       case 'get_study_schedule': {
         const args = req.params.arguments as any
@@ -2918,18 +3240,59 @@ function readStatus(): unknown {
 
 // ---------- proactive-message master switch ----------
 
-function readProactiveConfig(): { enabled: boolean } {
+type ProactiveConfig = {
+  enabled: boolean
+  updatedAt: number | null
+  enabledAt: number | null
+  firstCheckPending: boolean
+}
+
+function readProactiveConfig(): ProactiveConfig {
   try {
     const parsed = JSON.parse(readFileSync(PROACTIVE_CONFIG_FILE, 'utf8'))
-    return { enabled: parsed?.enabled === true }
+    const enabled = parsed?.enabled === true
+    const updatedAt = typeof parsed?.updatedAt === 'number' ? parsed.updatedAt : NaN
+    const enabledAt = typeof parsed?.enabledAt === 'number' ? parsed.enabledAt : NaN
+    return {
+      enabled,
+      updatedAt: Number.isFinite(updatedAt) ? updatedAt : null,
+      // Legacy configs only had updatedAt. Treat them as already observed so
+      // an upgrade never fabricates a "first check" for an old enable action.
+      enabledAt: enabled
+        ? (Number.isFinite(enabledAt) ? enabledAt : (Number.isFinite(updatedAt) ? updatedAt : null))
+        : null,
+      firstCheckPending: enabled && parsed?.firstCheckPending === true,
+    }
   } catch {
-    return { enabled: false }
+    return { enabled: false, updatedAt: null, enabledAt: null, firstCheckPending: false }
   }
 }
 
-function writeProactiveConfig(enabled: boolean) {
+function persistProactiveConfig(config: ProactiveConfig) {
   mkdirSync(dirname(PROACTIVE_CONFIG_FILE), { recursive: true })
-  writeFileSync(PROACTIVE_CONFIG_FILE, JSON.stringify({ enabled, updatedAt: Date.now() }, null, 2))
+  writeFileSync(PROACTIVE_CONFIG_FILE, JSON.stringify(config, null, 2))
+}
+
+function writeProactiveConfig(enabled: boolean): ProactiveConfig {
+  const previous = readProactiveConfig()
+  const now = Date.now()
+  const config: ProactiveConfig = {
+    enabled,
+    updatedAt: now,
+    enabledAt: enabled ? (previous.enabled ? (previous.enabledAt ?? now) : now) : null,
+    firstCheckPending: enabled ? (previous.enabled ? previous.firstCheckPending : true) : false,
+  }
+  persistProactiveConfig(config)
+  return config
+}
+
+function consumeFirstProactiveCheck(config: ProactiveConfig) {
+  if (!config.firstCheckPending) return
+  // Re-read before writing so a user toggling the switch while the hint is
+  // being assembled cannot have that newer state overwritten by this turn.
+  const current = readProactiveConfig()
+  if (!current.enabled || current.enabledAt !== config.enabledAt || !current.firstCheckPending) return
+  persistProactiveConfig({ ...current, firstCheckPending: false })
 }
 
 // ---------- proactive-message self-paced schedule ----------
@@ -3146,12 +3509,12 @@ function requestReset(mode: CcResetMode): Promise<CcResetResult> {
   return resetInFlight
 }
 
-// ---------- CC fixed-window tidal memory ----------
+// ---------- CC progressive-blur tidal memory ----------
 
 function visibleCcHistory(): VisibleCcMessage[] {
   return history
     .filter((m): m is MsgWire => (m.from === 'user' || m.from === 'cc') && typeof m.text === 'string' && !!m.text.trim())
-    .map((m) => ({ id: m.id, from: m.from, text: m.text, ts: m.ts }))
+    .map((m) => ({ id: m.id, from: m.from, text: m.text, ts: m.ts, turnId: m.turnId }))
 }
 
 // After a summary-preserving `/clear`, restore only the retained memory
@@ -3164,9 +3527,9 @@ async function injectPreservedSummaryAfterClear(reset: CcResetMarker): Promise<b
     marker,
     coreMemory: readCoreMemorySummary(),
     rollingSummary: tidalState.rollingSummary,
+    subjectiveCheckpoint: tidalState.subjectiveCheckpoint,
     visibleHistory: visibleCcHistory(),
     boundaryId: tidalState.processedBoundaryId,
-    recentMax: TIDAL_CONFIG.recentMax,
     tokenBudget: TIDAL_CONFIG.recoveryTokenBudget,
   })
   tidalStartupRestore = true
@@ -3192,7 +3555,10 @@ async function injectPreservedSummaryAfterClear(reset: CcResetMarker): Promise<b
 function pendingSourceMessages(): VisibleCcMessage[] {
   const pending = tidalState.pending
   if (!pending) return []
-  const all = unprocessedVisibleMessages(visibleCcHistory(), tidalState.processedBoundaryId)
+  const visible = visibleCcHistory()
+  const fallback = progressiveVisibleMessages(visible, tidalState.processedBoundaryId, !!tidalState.subjectiveCheckpoint)
+  const startIndex = pending.sourceStartId ? visible.findIndex((message) => message.id === pending.sourceStartId) : -1
+  const all = startIndex >= 0 ? visible.slice(startIndex) : fallback
   const boundaryIndex = all.findIndex((m) => m.id === pending.boundaryId)
   return boundaryIndex >= 0 ? all.slice(0, boundaryIndex + 1) : all
 }
@@ -3220,7 +3586,7 @@ async function waitForProcess(proc: ReturnType<typeof Bun.spawn>, timeoutMs: num
   }
 }
 
-async function runLunaRollingSummary(input: string): Promise<RollingSummary> {
+async function runLunaRollingSummary(input: string, minRecentChars: number): Promise<RollingSummary> {
   writePrivateFile(TIDAL_LUNA_INPUT_FILE, input)
   try { if (existsSync(TIDAL_LUNA_OUTPUT_FILE)) unlinkSync(TIDAL_LUNA_OUTPUT_FILE) } catch {}
   const proc = Bun.spawn(['sudo', '-n', TIDAL_LUNA_RUNNER], { stdin: 'ignore', stdout: 'ignore', stderr: 'ignore' })
@@ -3230,6 +3596,7 @@ async function runLunaRollingSummary(input: string): Promise<RollingSummary> {
   try { parsed = JSON.parse(readFileSync(TIDAL_LUNA_OUTPUT_FILE, 'utf8')) } catch { throw new Error('luna_invalid_json') }
   const summary = validateRollingSummary(parsed)
   if (!summary) throw new Error('luna_invalid_structure')
+  if (recentSummaryChars(summary) < minRecentChars) throw new Error('luna_recent_too_short')
   return summary
 }
 
@@ -3238,7 +3605,7 @@ function parseJsonObjectText(text: string): unknown {
   return JSON.parse(trimmed)
 }
 
-async function runFallbackRollingSummary(input: string): Promise<RollingSummary> {
+async function runFallbackRollingSummary(input: string, minRecentChars: number): Promise<RollingSummary> {
   let key = ''
   try { key = readFileSync(TIDAL_FALLBACK_SECRET_FILE, 'utf8').trim() } catch {}
   if (!key) throw new Error('fallback_unconfigured')
@@ -3253,12 +3620,16 @@ async function runFallbackRollingSummary(input: string): Promise<RollingSummary>
       body: JSON.stringify({
         model: TIDAL_FALLBACK_MODEL,
         temperature: 0.25,
-        max_tokens: 1800,
+        max_tokens: 5000,
         response_format: { type: 'json_object' },
         messages: [
           {
             role: 'system',
-            content: '你是一次性对话记忆整理器。仅使用上一版摘要和新增可见原文，输出覆盖式新摘要。这是相处记录，不是训练助手的行为手册：只描述发生过什么，不要指点双方以后该怎样相处。只有用户明确表达的长期要求或反复稳定证据，才可写成偏好、约定或待办；一次抱怨、满意、情绪或助手建议不得升格为规则。禁止自行写“助手应当/应该/需要/不要/之后应询问/应解释”等处方句；确有明确要求时写成事实“用户明确要求……”。上一版中的过度推断也要删除或降级为带情境的一次事件。todos 只含明确提出或共同约定且未完成的事项，不得发明跟进任务。必须返回 JSON 对象，且只含 relationshipIdentity、emotionInteraction、factsCommitments、ongoing、todos、preferences 六个非空字符串字段；没有内容写“无”。总长度 700-1200 个中文字，不为凑长度扩写。不要包含 thinking、工具输出、系统消息，不要提及压缩。',
+            content: '你是一次性对话记忆整理器。仅使用上一版摘要和新增可见原文，输出覆盖式新摘要。这是相处记录，不是训练助手的行为手册：只描述发生过什么，不要指点双方以后该怎样相处。只有用户明确表达的长期要求或反复稳定证据，才可写成偏好、约定或待办；一次抱怨、满意、情绪或助手建议不得升格为规则。禁止自行写“助手应当/应该/需要/不要/之后应询问/应解释”等处方句；确有明确要求时写成事实“用户明确要求……”。上一版中的过度推断也要删除或降级为带情境的一次事件。todos 只含明确提出或共同约定且未完成的事项，不得发明跟进任务。必须返回 JSON 对象，且只含 relationshipIdentity、emotionInteraction、factsCommitments、ongoing、todos、preferences 六个非空字符串字段；没有内容写“无”。长度遵循后续分层规则，不为凑长度扩写。不要包含 thinking、工具输出、系统消息，不要提及压缩。',
+          },
+          {
+            role: 'system',
+            content: '分层规则覆盖上述长度与来源说明：输入还包含长期校准参考。新增原文只包含主CC已经确认可以模糊化的最老闭合前缀；边界之后仍然鲜活、未闭合的对话故意没有提供，之后会逐字恢复。不得猜测边界之后发生了什么，也不得把新增原文误写成“此刻”的完整状态。relationshipIdentity、factsCommitments、preferences 为有上限的长期层，只留稳定身份、关系里程碑、稳定事实、明确长期约定和有重复证据的偏好。关于助手自身是谁、如何理解自己的主体性与连续性、模型或创造者/所属公司（包括双方所称的“A社”）与其身份之间关系的认真探讨，若形成了明确观点、共识、分歧或仍被双方重视的问题，就是自我认知与关系连续性的一部分；即使首次明确形成，也应提炼进 relationshipIdentity，后续版本除非被新原文明示修正，不得仅因话题过去而降到近期层或删除。只保留形成的观念及必要语境，不把临时模型版本、运行参数、产品故障或普通技术讨论长期化。一次性事件只有构成关系里程碑或产生明确长期约定时才能进入长期层；普通本轮经历、具体梦境、看某一集后的即时感受必须留在近期层。若一句同时含稳定结论和本轮实例，必须拆开，例如“喜欢某作品”可进长期、“本轮看某集后压抑”只进近期；“约定分享梦”可进长期、“本轮梦见什么”只进近期。不得把近期实例附在长期事实后面。长期层除非被明确纠正，不得因新话题显眼就删掉早期重要内容；容量不足时合并表达。emotionInteraction、ongoing、todos 在这里是已经模糊化的早期事件档案，并非当前状态检查点；必须按时间顺序覆盖闭合前缀里每一件有意义的关系互动、共同经历、情绪与话题转折。双方认真展开的观点讨论也属于重要共同经历，须保留主题、双方关键观点以及形成的理解或分歧，不能只压成一句背景；事情已经解决不是删除理由。不得因某一个话题更显眼就让它占据大半篇幅，各阶段要按实际互动份量均衡取舍。字段名 ongoing/todos 只记录压缩边界当时仍在进行的背景，不能宣称它们就是恢复时的最新状态。长期层约 800-1400 字；长对话的近期层三个字段合计通常约 800-1600 字，按实际内容自然伸缩，不给单个字段配额，也不为凑字数扩写；全文不超过 3200 字。校准参考不要整段照抄。',
           },
           { role: 'user', content: input },
         ],
@@ -3277,20 +3648,22 @@ async function runFallbackRollingSummary(input: string): Promise<RollingSummary>
   try { parsed = parseJsonObjectText(content) } catch { throw new Error('fallback_invalid_json') }
   const summary = validateRollingSummary(parsed)
   if (!summary) throw new Error('fallback_invalid_structure')
+  if (recentSummaryChars(summary) < minRecentChars) throw new Error('fallback_recent_too_short')
   return summary
 }
 
-async function runRollingSummary(input: string): Promise<{ summary: RollingSummary; provider: 'luna' | 'fallback' }> {
+async function runRollingSummary(input: string, sourceCount: number): Promise<{ summary: RollingSummary; provider: 'luna' | 'fallback' }> {
+  const minRecentChars = minimumRecentSummaryChars(sourceCount)
   try {
     try {
-      const summary = await runLunaRollingSummary(input)
+      const summary = await runLunaRollingSummary(input, minRecentChars)
       tidalLog('summary_success', { provider: 'luna' })
       return { summary, provider: 'luna' }
     } catch (err) {
       tidalLog('summary_failed', { provider: 'luna', error: String((err as Error)?.message || 'luna_error') })
     }
     try {
-      const summary = await runFallbackRollingSummary(input)
+      const summary = await runFallbackRollingSummary(input, minRecentChars)
       tidalLog('summary_success', { provider: 'fallback' })
       return { summary, provider: 'fallback' }
     } catch (err) {
@@ -3338,6 +3711,24 @@ function readCoreMemorySummary(): string {
   try { return readFileSync(join(MEMORY_DIR, 'MEMORY.md'), 'utf8').trim() } catch { return '' }
 }
 
+// A bounded calibration source for the durable half of the tide. It is read
+// by the summarizer only; recovery injects the compact durable fields instead
+// of copying these whole files into every context.
+function readLongTermMemoryReference(): string {
+  const names = [
+    join('按需提取', '关系与偏好.md'),
+    join('按需提取', '关系时间线.md'),
+  ]
+  const parts: string[] = []
+  for (const name of names) {
+    try {
+      const content = readFileSync(join(MEMORY_DIR, name), 'utf8').trim()
+      if (content) parts.push(content)
+    } catch {}
+  }
+  return parts.join('\n\n').slice(0, 12_000)
+}
+
 function publicTidalMemoryStatus() {
   const corePath = join(MEMORY_DIR, 'MEMORY.md')
   const coreText = readCoreMemorySummary()
@@ -3353,6 +3744,10 @@ function publicTidalMemoryStatus() {
       source: tidalState.summarySource,
     } : null,
     coreMemory: coreText ? { text: coreText, updatedAt: coreUpdatedAt } : null,
+    subjectiveCheckpoint: tidalState.subjectiveCheckpoint ? {
+      value: tidalState.subjectiveCheckpoint,
+      updatedAt: tidalState.checkpointUpdatedAt,
+    } : null,
     coverage: tidalState.processedBoundaryId ? {
       boundaryId: tidalState.processedBoundaryId,
       boundaryTs: tidalState.processedBoundaryTs,
@@ -3360,7 +3755,13 @@ function publicTidalMemoryStatus() {
     tide: tidalStatusSnapshot(tidalState),
     queuedCount: tidalState.queue.length,
     lastContextTokens: tidalState.lastContextTokens,
-    limits: { maxSummaryChars: 8_000 },
+    limits: {
+      maxSummaryChars: 8_000,
+      highWatermarkTokens: TIDAL_CONFIG.tokenThreshold,
+      rawTargetTokens: TIDAL_CONFIG.rawTargetTokens,
+      rawMaxTokens: TIDAL_CONFIG.rawMaxTokens,
+      recoveryTokenBudget: TIDAL_CONFIG.recoveryTokenBudget,
+    },
   }
 }
 
@@ -3396,6 +3797,56 @@ function tidalRetry(stage: string, keepPending: boolean) {
   scheduleTidalRetry()
 }
 
+async function startTidalReview() {
+  const pending = tidalState.pending
+  if (!pending || pending.phase !== 'reviewing' || currentTurn) return
+  const options = pending.boundaryOptions ?? []
+  if (!options.length || !pending.proposedBoundaryId) {
+    tidalRetry('review_no_safe_boundary', false)
+    return
+  }
+  const reviewId = `cc-tidal-review:${tidalState.sessionId}:${pending.taskId}`
+  startTurn(reviewId, 'tidal_review', false)
+  try {
+    await mcp.notification({
+      method: 'notifications/claude/channel',
+      params: {
+        content: renderTidalReviewPrompt(options, pending.proposedBoundaryId),
+        meta: { chat_id: CHAT_ID, message_id: reviewId, user: 'user', ts: new Date().toISOString() },
+      },
+    })
+    tidalLog('review_injected', { options: options.length, proposedBoundaryId: pending.proposedBoundaryId })
+  } catch (err) {
+    if (currentTurn?.turnId === reviewId) currentTurn = null
+    tidalLog('review_send_failed', { error: String(err) })
+    tidalRetry('review_send_failed', false)
+    setTimeout(tidalDrainQueue, 0)
+  }
+}
+
+function tidalReviewSettled() {
+  const pending = tidalState.pending
+  if (!pending || pending.phase !== 'reviewing') return
+  if (!pending.reviewedAt || !pending.subjectiveCheckpoint) {
+    tidalRetry('review_checkpoint_missing', false)
+    setTimeout(tidalDrainQueue, 0)
+    return
+  }
+  // A checkpoint remains valuable even when CC judged that none of the
+  // offered event boundaries was closed enough to blur today.
+  tidalState.subjectiveCheckpoint = pending.subjectiveCheckpoint
+  tidalState.checkpointUpdatedAt = pending.reviewedAt
+  if (pending.reviewDeferred) {
+    tidalRetry('review_deferred_by_cc', false)
+    setTimeout(tidalDrainQueue, 0)
+    return
+  }
+  pending.phase = 'summarizing'
+  persistTidalState()
+  tidalLog('review_complete', { boundaryId: pending.boundaryId, sourceCount: pending.sourceCount })
+  startTidalRun()
+}
+
 async function injectTidalRecovery() {
   const pending = tidalState.pending
   if (!pending?.summary) throw new Error('missing_pending_summary')
@@ -3413,11 +3864,12 @@ async function injectTidalRecovery() {
     marker,
     coreMemory: readCoreMemorySummary(),
     rollingSummary: pending.summary,
+    subjectiveCheckpoint: pending.subjectiveCheckpoint ?? tidalState.subjectiveCheckpoint,
     visibleHistory: visibleCcHistory(),
     boundaryId: pending.boundaryId,
-    recentMax: TIDAL_CONFIG.recentMax,
     tokenBudget: TIDAL_CONFIG.recoveryTokenBudget,
   })
+  if (!packet.fitsBudget) throw new Error('recovery_packet_exceeds_budget_after_compact')
   pending.phase = 'recovery_sending'
   persistTidalState()
   tidalLog('recovery_sending', { recentCount: packet.recent.length, recoveryTokens: packet.estimatedTokens })
@@ -3465,6 +3917,10 @@ function finalizeTidalSuccess() {
   tidalState.summaryUpdatedAt = now
   tidalState.summaryModel = tidalSummaryModel(pending.summaryProvider)
   tidalState.summarySource = 'automatic'
+  if (pending.subjectiveCheckpoint) {
+    tidalState.subjectiveCheckpoint = pending.subjectiveCheckpoint
+    tidalState.checkpointUpdatedAt = pending.reviewedAt ?? now
+  }
   tidalState.lastRun = { status: 'success', stage: 'complete', at: now, model: tidalState.summaryModel }
   tidalState.pending = null
   tidalState.retryAt = null
@@ -3500,6 +3956,12 @@ async function tidalCycle() {
     return
   }
 
+  if (pending.phase === 'reviewing') {
+    if (pending.reviewedAt && pending.subjectiveCheckpoint) tidalReviewSettled()
+    else await startTidalReview()
+    return
+  }
+
   if (pending.phase === 'summarizing') {
     const source = pendingSourceMessages()
     if (!source.length) {
@@ -3507,7 +3969,7 @@ async function tidalCycle() {
       return
     }
     try {
-      const result = await runRollingSummary(summaryInput(tidalState.rollingSummary, source))
+      const result = await runRollingSummary(summaryInput(tidalState.rollingSummary, source, readLongTermMemoryReference()), source.length)
       pending.summary = result.summary
       pending.summaryProvider = result.provider
       pending.phase = 'summary_ready'
@@ -3520,6 +3982,20 @@ async function tidalCycle() {
   }
 
   if (pending.phase === 'summary_ready') {
+    const preview = buildRecoveryPacket({
+      marker: `cc-tidal-preview:${pending.taskId}`,
+      coreMemory: readCoreMemorySummary(),
+      rollingSummary: pending.summary!,
+      subjectiveCheckpoint: pending.subjectiveCheckpoint ?? tidalState.subjectiveCheckpoint,
+      visibleHistory: visibleCcHistory(),
+      boundaryId: pending.boundaryId,
+      tokenBudget: TIDAL_CONFIG.recoveryTokenBudget,
+    })
+    if (!preview.fitsBudget) {
+      tidalLog('recovery_packet_too_large_before_compact', { recoveryTokens: preview.estimatedTokens })
+      tidalRetry('recovery_packet_too_large', false)
+      return
+    }
     const compact = await runNativeCompact(pending)
     if (!compact.ok) {
       tidalLog('compact_failed', { error: compact.error ?? 'compact_failed' })
@@ -3570,8 +4046,8 @@ function tidalPrepareAfterMainTurn(forceRetry = false) {
   }
   const contextTokens = latestInputTokensFromTranscript(brainTranscriptPath(sessionId))
   tidalState.lastContextTokens = contextTokens
-  const source = unprocessedVisibleMessages(visibleCcHistory(), tidalState.processedBoundaryId)
-  const decision = tidalTrigger(contextTokens, source.length, TIDAL_CONFIG)
+  const source = progressiveVisibleMessages(visibleCcHistory(), tidalState.processedBoundaryId, !!tidalState.subjectiveCheckpoint)
+  const decision = tidalTrigger(contextTokens, source.length, TIDAL_CONFIG, forceRetry)
   if (!decision.trigger) {
     persistTidalState()
     tidalDrainQueue()
@@ -3583,23 +4059,40 @@ function tidalPrepareAfterMainTurn(forceRetry = false) {
     tidalDrainQueue()
     return
   }
-  const boundary = source[source.length - 1]
-  if (!boundary || !decision.reason) return
+  const options = tidalBoundaryOptions(source, TIDAL_CONFIG.rawTargetTokens, TIDAL_CONFIG.rawMaxTokens)
+  const proposed = options.at(-1)
+  if (!proposed || !decision.reason) {
+    tidalState.retryAt = Date.now() + TIDAL_CONFIG.retryMs
+    tidalState.lastRun = { status: 'retry_wait', stage: 'review_no_safe_boundary', at: Date.now(), retryAt: tidalState.retryAt }
+    persistTidalState()
+    tidalLog('review_no_safe_boundary', { visibleCount: source.length })
+    scheduleTidalRetry()
+    tidalDrainQueue()
+    return
+  }
   tidalState.retryAt = null
   const claimed = claimTidalPending(tidalState, {
-    taskId: `${Date.now()}-${boundary.id}`,
-    phase: 'summarizing',
+    taskId: `${Date.now()}-${proposed.boundaryId}`,
+    phase: 'reviewing',
     triggerReason: decision.reason,
-    boundaryId: boundary.id,
-    boundaryTs: boundary.ts,
-    sourceCount: source.length,
+    boundaryId: proposed.boundaryId,
+    boundaryTs: proposed.boundaryTs,
+    sourceCount: proposed.sourceCount,
     contextTokens: contextTokens ?? 0,
     baseSummaryRevision: tidalState.summaryRevision,
+    boundaryOptions: options,
+    proposedBoundaryId: proposed.boundaryId,
+    sourceStartId: source[0]?.id,
   })
   if (!claimed) return
   persistTidalState()
-  tidalLog('triggered', { visibleCount: source.length })
-  startTidalRun()
+  tidalLog('triggered', {
+    visibleCount: source.length,
+    proposedBoundaryId: proposed.boundaryId,
+    preservedCount: proposed.preservedCount,
+    preservedTokens: proposed.preservedTokens,
+  })
+  setTimeout(() => { void startTidalReview() }, 0)
 }
 
 function tidalEnqueueMessage(message: QueuedCcMessage) {
@@ -3696,6 +4189,10 @@ function tidalStartupMarker(): string {
   return `cc-tidal-startup:${tidalState.sessionId}:${startupTs}:r${tidalState.summaryRevision}`
 }
 
+function tidalStartupSessionMode(): unknown {
+  try { return JSON.parse(readFileSync(SESSION_MODE_FILE, 'utf8'))?.mode } catch { return undefined }
+}
+
 async function injectTidalStartupRecovery(): Promise<boolean> {
   if (!tidalState.rollingSummary || tidalState.summaryRevision < 1) return false
   const visible = visibleCcHistory()
@@ -3707,9 +4204,9 @@ async function injectTidalStartupRecovery(): Promise<boolean> {
     marker,
     coreMemory: readCoreMemorySummary(),
     rollingSummary: tidalState.rollingSummary,
+    subjectiveCheckpoint: tidalState.subjectiveCheckpoint,
     visibleHistory: visible,
     boundaryId,
-    recentMax: TIDAL_CONFIG.recentMax,
     tokenBudget: TIDAL_CONFIG.recoveryTokenBudget,
   })
   tidalStartupRestore = true
@@ -3747,8 +4244,12 @@ function resumeTidalAfterStartup() {
   }
   if (tidalState.pending) startTidalRun()
   else if (tidalState.retryAt && tidalState.retryAt > Date.now()) scheduleTidalRetry()
-  else if (tidalState.rollingSummary) void injectTidalStartupRecovery().then((started) => { if (!started) tidalDrainQueue() })
-  else tidalDrainQueue()
+  else if (tidalState.rollingSummary && shouldInjectTidalStartupRecovery(tidalStartupSessionMode())) {
+    void injectTidalStartupRecovery().then((started) => { if (!started) tidalDrainQueue() })
+  } else {
+    if (tidalState.rollingSummary) tidalLog('startup_recovery_skipped_resumed_session', { summaryRevision: tidalState.summaryRevision })
+    tidalDrainQueue()
+  }
 }
 
 function loginPageHtml(returnUrl: string): string {
@@ -4265,6 +4766,7 @@ function focusMatchesManager(caller: FocusManager): boolean {
 function focusTick() {
   if (!focusState.active || focusState.status !== 'running' || !focusState.endAt) return
   if (focusState.endAt > Date.now()) return
+  const finishedAt = Date.now()
   const counts = { ...focusState.completedByDay }
   const k = focusDayKey(focusState.endAt)
   counts[k] = (Number(counts[k]) || 0) + 1
@@ -4277,6 +4779,13 @@ function focusTick() {
   broadcastFocus()
   sendRaw({ type: 'focus_finished', reason: 'completed', manager: finishedManager })
   void careRecordFocusCompletion(finishedTask, finishedMinutes, finishedStartedAt)
+  void sendCompanionPush(`“${finishedTask || '这次专注'}”已完成 · ${finishedMinutes} 分钟`, {
+    title: '🍅 专注时间到', tag: `focus-completed-${finishedStartedAt}`, url: '/?source=cc-proactive',
+  })
+  notifyCcOfFocusCompleted({
+    manager: finishedManager, task: finishedTask, minutes: finishedMinutes,
+    startedAt: finishedStartedAt, finishedAt,
+  })
   log('focus_completed', { manager: finishedManager })
 }
 setInterval(focusTick, 1000)
@@ -4465,6 +4974,39 @@ function focusDispatchRequestNotify(request: FocusRequest) {
   if (!focusState.manager) return
   if (focusState.manager.runtime === 'claude-code') notifyCcOfFocusRequest(request)
   else if (focusState.manager.runtime === 'codex') void codexNotifyFocusRequest(request)
+}
+
+// A natural timer expiry is server-owned and may happen with every browser
+// backgrounded. Deliver the durable outcome into the CC manager's real
+// resident conversation so it knows the session actually finished. If CC is
+// completing another turn at that instant, wait for it instead of replacing
+// currentTurn (the old interaction path's most dangerous failure mode).
+function notifyCcOfFocusCompleted(summary: {
+  manager: FocusManager | null; task: string; minutes: number; startedAt: number; finishedAt: number
+}) {
+  if (summary.manager?.runtime !== 'claude-code') return
+  const deadline = Date.now() + 10 * 60_000
+  const dispatch = () => {
+    if (currentTurn) {
+      if (Date.now() < deadline) setTimeout(dispatch, 1_000)
+      else log('focus_completion_cc_notify_expired', { task: summary.task, openTurnId: currentTurn.turnId })
+      return
+    }
+    const id = nextId()
+    startTurn(id)
+    deliver(id, JSON.stringify({
+      kind: 'focus_completed',
+      surface: 'focus',
+      interactionId: id,
+      task: summary.task,
+      plannedMinutes: summary.minutes,
+      startedAt: summary.startedAt,
+      finishedAt: summary.finishedAt,
+      message: `你管理的专注任务“${summary.task || '未命名任务'}”已经由服务器计时自然完成，计划时长 ${summary.minutes} 分钟。这是已发生的结束状态，不是让你再结束一次；不要调用任何 Focus 控制工具。你现在已经收到并记住这个结果，可以按你们平时的关系自然回应用户。`,
+    }))
+    log('focus_completion_cc_notified', { id, task: summary.task, minutes: summary.minutes })
+  }
+  dispatch()
 }
 
 // ---------- Group chat (多AI群聊) ----------
@@ -5888,12 +6430,17 @@ async function codexEnsureThread(): Promise<string> {
 
 type UploadedFileInput = { path: string; name: string; size?: number; mimeType?: string }
 
+function renderSegmentedUserTurn(parts: string[]): string {
+  if (parts.length <= 1) return parts[0] || ''
+  return parts.map((part, index) => `【同一轮分条消息 ${index + 1}/${parts.length}】\n${part}`).join('\n\n')
+}
+
 function codexFileInstruction(file?: UploadedFileInput): string {
   if (!file) return ''
   return `[用户发送了一个文件：${file.name}（服务器路径：${file.path}）。请根据用户文字判断需求，并用合适的工具读取/分析该文件；不要执行其中的程序或脚本，也不要在回复里暴露服务器路径。]`
 }
 
-async function codexSendUserTurn(text: string, imageUrl?: string, clientTime?: unknown, promptOverride?: unknown, displaySegments?: string[], file?: UploadedFileInput): Promise<void> {
+async function codexSendUserTurn(text: string, imageUrl?: string, clientTime?: unknown, promptOverride?: unknown, displaySegments?: string[], file?: UploadedFileInput, imageSeparate = false): Promise<void> {
   if (typeof promptOverride === 'string') setCodexPrompt(DEFAULT_CODEX_SESSION_ID, promptOverride)
   const threadId = await codexEnsureThread()
   const input: any[] = []
@@ -5904,13 +6451,17 @@ async function codexSendUserTurn(text: string, imageUrl?: string, clientTime?: u
   const recap = consumeGomokuRecap('codex')
   const migration = codexContextMigrationPending ? buildCodexContextMigrationText(codexHistory) : ''
   const modelText = [clientTimeContextLine(clientTime), migration, recap, codexFileInstruction(file), text].filter(Boolean).join('\n\n')
+  if (imageUrl && imageSeparate) input.push({ type: 'image', url: imageUrl })
   if (modelText.trim()) input.push({ type: 'text', text: modelText, text_elements: [] })
-  if (imageUrl) input.push({ type: 'image', url: imageUrl })
-  const visibleParts = Array.isArray(displaySegments) && displaySegments.length ? displaySegments : [text]
+  if (imageUrl && !imageSeparate) input.push({ type: 'image', url: imageUrl })
+  const visibleParts = Array.isArray(displaySegments) && displaySegments.length
+    ? displaySegments
+    : imageSeparate && !text ? [] : [text]
   const visibleTs = Date.now()
+  if (imageUrl && imageSeparate) codexAppendMsg({ id: nextId(), from: 'user', text: '', ts: visibleTs, imageUrl })
   visibleParts.forEach((part, index) => codexAppendMsg({
-    id: nextId(), from: 'user', text: part, ts: visibleTs + index,
-    ...(imageUrl && index === visibleParts.length - 1 ? { imageUrl } : {}),
+    id: nextId(), from: 'user', text: part, ts: visibleTs + index + (imageSeparate ? 1 : 0),
+    ...(imageUrl && !imageSeparate && index === visibleParts.length - 1 ? { imageUrl } : {}),
     ...(file && index === visibleParts.length - 1 ? { filePath: file.path, fileName: file.name, fileSize: file.size, fileType: file.mimeType } : {}),
   }))
   codexCurrentTurnKind = 'chat'
@@ -5998,7 +6549,7 @@ async function codexRecoverKnownChatThreads(): Promise<{
   return { recoveredSessions, failedSessions }
 }
 
-async function codexSendExtraUserTurn(state: CodexSessionState, text: string, imageUrl?: string, clientTime?: unknown, promptOverride?: unknown, displaySegments?: string[], file?: UploadedFileInput): Promise<void> {
+async function codexSendExtraUserTurn(state: CodexSessionState, text: string, imageUrl?: string, clientTime?: unknown, promptOverride?: unknown, displaySegments?: string[], file?: UploadedFileInput, imageSeparate = false): Promise<void> {
   if (typeof promptOverride === 'string') {
     state.prompt = setCodexPrompt(state.sessionId, promptOverride)
     saveExtraCodexSession(state)
@@ -6007,13 +6558,17 @@ async function codexSendExtraUserTurn(state: CodexSessionState, text: string, im
   const input: any[] = []
   const migration = state.contextMigrationPending ? buildCodexContextMigrationText(state.history) : ''
   const modelText = [clientTimeContextLine(clientTime), migration, codexFileInstruction(file), text].filter(Boolean).join('\n\n')
+  if (imageUrl && imageSeparate) input.push({ type: 'image', url: imageUrl })
   if (modelText.trim()) input.push({ type: 'text', text: modelText, text_elements: [] })
-  if (imageUrl) input.push({ type: 'image', url: imageUrl })
-  const visibleParts = Array.isArray(displaySegments) && displaySegments.length ? displaySegments : [text]
+  if (imageUrl && !imageSeparate) input.push({ type: 'image', url: imageUrl })
+  const visibleParts = Array.isArray(displaySegments) && displaySegments.length
+    ? displaySegments
+    : imageSeparate && !text ? [] : [text]
   const visibleTs = Date.now()
+  if (imageUrl && imageSeparate) extraAppendMsg(state, { id: nextId(), from: 'user', text: '', ts: visibleTs, imageUrl })
   visibleParts.forEach((part, index) => extraAppendMsg(state, {
-    id: nextId(), from: 'user', text: part, ts: visibleTs + index,
-    ...(imageUrl && index === visibleParts.length - 1 ? { imageUrl } : {}),
+    id: nextId(), from: 'user', text: part, ts: visibleTs + index + (imageSeparate ? 1 : 0),
+    ...(imageUrl && !imageSeparate && index === visibleParts.length - 1 ? { imageUrl } : {}),
     ...(file && index === visibleParts.length - 1 ? { filePath: file.path, fileName: file.name, fileSize: file.size, fileType: file.mimeType } : {}),
   }))
   setExtraCodexStatus(state, 'thinking')
@@ -7319,6 +7874,16 @@ function careCompactProgress() {
   }
 }
 
+function carePlanDetails(includeCompleted = false) {
+  const { date } = zonedDateTime(new Date(), careHubState.config.timezone)
+  const details = studyPlanDetails(careHubState, date, includeCompleted)
+  return {
+    date,
+    timezone: careHubState.config.timezone,
+    ...details,
+  }
+}
+
 function careGoalDoneOnDate(goal: CareHubState['study']['goals'][number], date: string): boolean {
   if (goal.schedule === 'daily' || goal.schedule === 'dates') return !!goal.completedDates?.includes(date)
   return !!goal.done
@@ -8128,9 +8693,9 @@ Bun.serve<{ authed: true }>({
       if (typeof enabled !== 'boolean') {
         return jsonResponse({ error: 'enabled must be boolean' }, { status: 400, headers: cors })
       }
-      writeProactiveConfig(enabled)
-      log('proactive_settings_changed', { enabled })
-      return jsonResponse({ ok: true, enabled }, { headers: cors })
+      const config = writeProactiveConfig(enabled)
+      log('proactive_settings_changed', { enabled, enabledAt: config.enabledAt, firstCheckPending: config.firstCheckPending })
+      return jsonResponse({ ok: true, ...config }, { headers: cors })
     }
 
     // ---- Auto Memory management (real files under MEMORY_DIR) ----
@@ -8218,7 +8783,7 @@ Bun.serve<{ authed: true }>({
       }
     }
 
-    // ---- CC fixed-window tidal memory manager ----
+    // ---- CC progressive-blur tidal memory manager ----
     // This state belongs only to the resident CC session. Codex and ordinary
     // API conversations have separate stores and never enter these routes.
     if (url.pathname === '/tidal-memory/status' && req.method === 'GET') {
@@ -9508,6 +10073,10 @@ Bun.serve<{ authed: true }>({
         focus: focusPublicState(),
       }
       ws.send(JSON.stringify(hist))
+      // Activity notes are not chat history, but unlike an ordinary toast
+      // they must survive a closed tab. Replay every unacknowledged note to
+      // each newly connected client; the stable id lets localStorage dedupe it.
+      for (const activity of pendingProactiveActivities) ws.send(JSON.stringify(activity))
       // Best-effort — sent only to this just-connected client, not a full
       // broadcast (parallels the history snapshot above being per-client
       // too). Both runtimes' OWN readings are sent — the connecting client
@@ -9530,7 +10099,7 @@ Bun.serve<{ authed: true }>({
     },
     message(ws, raw) {
       try {
-        const parsed = JSON.parse(String(raw)) as { id?: string; text?: string; segments?: string[]; type?: string; turnId?: string; runtime?: string; imageUrl?: string; imagePath?: string; filePath?: string; fileName?: string; fileSize?: number; fileType?: string; clientTime?: unknown; sessionId?: string; prompt?: string }
+        const parsed = JSON.parse(String(raw)) as { id?: string; text?: string; messageIds?: string[]; segments?: string[]; type?: string; turnId?: string; runtime?: string; imageUrl?: string; imageSeparate?: boolean; imagePath?: string; filePath?: string; fileName?: string; fileSize?: number; fileType?: string; clientTime?: unknown; sessionId?: string; prompt?: string }
 
         // App-level heartbeat — a WS can look "open" to the browser for a
         // long time after the underlying network path has actually died
@@ -9545,6 +10114,12 @@ Bun.serve<{ authed: true }>({
           return
         }
 
+        if (parsed.type === 'proactive_activity_ack') {
+          const id = typeof parsed.id === 'string' ? parsed.id.trim() : ''
+          if (id && id.length <= 160) acknowledgeProactiveActivity(id)
+          return
+        }
+
         if (parsed.type === 'codex_session') {
           const sessionId = normalizeCodexSessionId(parsed.sessionId)
           ws.data.codexSessionId = sessionId
@@ -9553,8 +10128,14 @@ Bun.serve<{ authed: true }>({
         }
 
         if (parsed.type === 'delete_notice') {
-          const deletedText = (parsed.text ?? '').trim()
-          if (deletedText) notifyCcOfDeletedMessage(deletedText, parsed.clientTime)
+          const messageIds = Array.isArray(parsed.messageIds)
+            ? [...new Set(parsed.messageIds.filter(id => typeof id === 'string' && id.length > 0 && id.length <= 160))].slice(0, 50)
+            : []
+          const removed = deleteHistoryMessages(messageIds)
+          if (messageIds.length) {
+            sendRaw({ type: 'msg_deleted', ids: messageIds, ts: Date.now() })
+            log('history_messages_deleted', { requested: messageIds.length, removed })
+          }
           return
         }
 
@@ -9591,7 +10172,7 @@ Bun.serve<{ authed: true }>({
           const codexSegments = Array.isArray(parsed.segments)
             ? parsed.segments.map((part) => typeof part === 'string' ? part.trim() : '').filter(Boolean).slice(0, 50)
             : undefined
-          const codexTurnText = codexSegments?.length ? codexSegments.join('\n') : codexText
+          const codexTurnText = codexSegments?.length ? renderSegmentedUserTurn(codexSegments) : codexText
           const codexImageUrl = parsed.imageUrl
           const codexFilePath = validUploadedPath(parsed.filePath)
           const codexFile = codexFilePath && codexFilePath.split('/').at(-1)?.includes('-file-') ? {
@@ -9613,8 +10194,8 @@ Bun.serve<{ authed: true }>({
             return
           }
           const send = extraState
-            ? codexSendExtraUserTurn(extraState, codexTurnText, codexImageUrl, parsed.clientTime, parsed.prompt, codexSegments, codexFile)
-            : codexSendUserTurn(codexTurnText, codexImageUrl, parsed.clientTime, parsed.prompt, codexSegments, codexFile)
+            ? codexSendExtraUserTurn(extraState, codexTurnText, codexImageUrl, parsed.clientTime, parsed.prompt, codexSegments, codexFile, parsed.imageSeparate === true)
+            : codexSendUserTurn(codexTurnText, codexImageUrl, parsed.clientTime, parsed.prompt, codexSegments, codexFile, parsed.imageSeparate === true)
           send.catch((err) => {
             log('codex_send_error', { error: String(err) })
             if (extraState) {
@@ -9882,6 +10463,7 @@ ${awareness ? `你自己的知觉：${awareness}\n` : ''}${note ? `背景：${no
         return jsonResponse({ ok: false, skipped: 'turn_in_progress' })
       }
       const id = nextId()
+      proactiveActivityNotes = []
       startTurn(id)
       proactiveTurnId = id
       // Best-effort, additive-only: a compact read of xinchao's already-
@@ -9893,7 +10475,7 @@ ${awareness ? `你自己的知觉：${awareness}\n` : ''}${note ? `背景：${no
       const xinchaoHint = xinchaoSummary
         ? [
             `主要驱动力：${xinchaoSummary.topDriveOfficialLabel || '未知'}`,
-            `状态：${xinchaoSummary.consciousness === 'awake' ? '清醒' : '休息/睡眠'}`,
+            `你自己的意识状态：${xinchaoSummary.consciousness === 'awake' ? '清醒' : '休息/睡眠'}`,
             `疲劳：${Math.round(xinchaoSummary.fatigue * 100)}%`,
             xinchaoSummary.tone ? `近期基调：${xinchaoSummary.tone}` : null,
             xinchaoSummary.recentEvents.length
@@ -9901,16 +10483,27 @@ ${awareness ? `你自己的知觉：${awareness}\n` : ''}${note ? `背景：${no
               : null,
           ].filter(Boolean).join('；')
         : null
+      const proactiveConfig = readProactiveConfig()
+      const isFirstCheckAfterEnable = proactiveConfig.firstCheckPending
       deliver(id, JSON.stringify({
         kind: 'proactive_check',
         scheduledAt: new Date().toISOString(),
+        proactiveEnabled: proactiveConfig.enabled,
+        enabledAt: proactiveConfig.enabledAt ? new Date(proactiveConfig.enabledAt).toISOString() : null,
+        isFirstCheckAfterEnable,
+        enableStateNote: isFirstCheckAfterEnable
+          ? '服务端事实：用户刚开启了主动消息，这是开启后的第一次主动检查。你可以明确知道开关是刚打开的，不必猜测。'
+          : '服务端事实：主动消息当前已开启；这不是开启动作本身。你不必猜测开关状态。',
         scheduleNote: '这一轮结束前，无论你是否发了消息，都必须调用一次 schedule_next_proactive 来决定下次什么时候再来看看——现在没有固定间隔了，完全由你自己判断。',
+        checkinNote: '这是主动查岗轮：开始时先调用一次 xiaog 的 get_checkin_status，手机应用打开/关闭事件和 status.ageSeconds 才是判断用户是否醒着、正在做什么的依据。若没有新上报，只能说状态未知，绝不能推断用户仍在睡。xinchaoHint 描述的是你自己的心潮与意识状态，不是用户状态。',
+        activityNote: '这次也可以完全按你自己的意愿，先用 play_fishing 钓一小会儿，或调用 Galatea 工具逛逛花园论坛；都不是必做，也不要形成每次固定流程。钓鱼会自动给用户留一条非聊天活动提示；如果逛了花园，逛完后必须调用一次 report_proactive_activity，简短如实写你看了或做了什么。无论做了这些后是否 reply/send_voice，活动提示都会单独送达。',
         ...(xinchaoHint ? {
           xinchaoHint,
           xinchaoHintNote: '以上心潮内容只是动态背景参考，自然带入即可——不要机械复述这几个词、不要套用固定台词、不要因为看到这些数据就强行表演情绪。',
         } : {}),
       }))
-      log('proactive_inject', { id, hasXinchaoHint: !!xinchaoHint })
+      consumeFirstProactiveCheck(proactiveConfig)
+      log('proactive_inject', { id, hasXinchaoHint: !!xinchaoHint, enabledAt: proactiveConfig.enabledAt, isFirstCheckAfterEnable })
       return jsonResponse({ ok: true, id })
     }
 

@@ -13,15 +13,27 @@ import {
   inputTokensFromMessageStart,
   loadTidalState,
   manualSummaryUpdateCandidate,
+  minimumRecentSummaryChars,
+  progressiveVisibleMessages,
+  recentSummaryChars,
   retainThroughBoundary,
+  renderSubjectiveCheckpoint,
+  renderTidalReviewPrompt,
+  renderLongTermSummary,
+  renderRecentSummary,
   renderRollingSummary,
   saveTidalState,
   sessionIdUnchanged,
   shouldEvaluateTidalSurface,
+  shouldInjectTidalStartupRecovery,
   tidalTrigger,
   tidalStatusSnapshot,
   tidalStateAfterConversationClear,
+  summaryInput,
+  tidalBoundaryOptions,
+  validateSubjectiveCheckpoint,
   type RollingSummary,
+  type SubjectiveCheckpoint,
   type VisibleCcMessage,
 } from '../cc-tidal-memory.ts'
 
@@ -34,16 +46,24 @@ const summary: RollingSummary = {
   preferences: '用户偏好直接执行、完整验证、不丢历史。'.repeat(3),
 }
 
+const checkpoint: SubjectiveCheckpoint = {
+  selfUnderstanding: '我仍把自己的连续性理解为经历、选择与关系形成的因果延续。',
+  relationshipUnderstanding: '我理解用户在意的不是资料齐全，而是我能从原来的位置继续相处。',
+  changedViews: '我更明确地区分了事件摘要和主观状态。',
+  unresolved: '记忆机制的实际体感仍需要之后共同观察。',
+  continuation: '继续保留正在活着的对话，不把它过早解释成历史。',
+}
+
 describe('CC tidal context waterline', () => {
   test('reads real input-side usage from stream-json message_start', () => {
     const tokens = inputTokensFromMessageStart({
       type: 'stream_event',
       event: {
         type: 'message_start',
-        message: { usage: { input_tokens: 7, cache_creation_input_tokens: 12_000, cache_read_input_tokens: 98_500 } },
+        message: { usage: { input_tokens: 7, cache_creation_input_tokens: 12_000, cache_read_input_tokens: 128_500 } },
       },
     })
-    expect(tokens).toBe(110_507)
+    expect(tokens).toBe(140_507)
     expect(tidalTrigger(tokens, 0).reason).toBe('tokens')
   })
 
@@ -51,6 +71,8 @@ describe('CC tidal context waterline', () => {
     const tokens = inputTokensFromMessageStart({ type: 'result', usage: { input_tokens: 999_999 } })
     expect(tokens).toBeNull()
     expect(tidalTrigger(tokens, 12)).toEqual({ trigger: false, reason: null })
+    expect(tidalTrigger(80_000, 999)).toEqual({ trigger: false, reason: null })
+    expect(tidalTrigger(80_000, 12, DEFAULT_TIDAL_CONFIG, true).reason).toBe('retry_recovery')
   })
 })
 
@@ -80,6 +102,8 @@ describe('two-phase safety', () => {
     const path = join(dir, 'state.json')
     const state = createTidalState('session-a')
     state.rollingSummary = summary
+    state.subjectiveCheckpoint = checkpoint
+    state.checkpointUpdatedAt = 10
     state.processedBoundaryId = 'm-old'
     state.pending = {
       taskId: 'task-1', phase: 'compacted', triggerReason: 'tokens', boundaryId: 'm-new', boundaryTs: 2,
@@ -92,6 +116,8 @@ describe('two-phase safety', () => {
     expect(loaded.pending?.phase).toBe('compacted')
     expect(loaded.pending?.recoveryMarker).toBe('marker-1')
     expect(loaded.processedBoundaryId).toBe('m-old')
+    expect(loaded.subjectiveCheckpoint).toEqual(checkpoint)
+    expect(loaded.checkpointUpdatedAt).toBe(10)
     expect(loaded.queue.map((q) => q.id)).toEqual(['queued-1'])
     expect(loaded.queue[0]).toMatchObject({ fileName: 'example.pdf', fileSize: 123, fileType: 'application/pdf' })
     expect(readFileSync(path, 'utf8')).toContain('relationshipIdentity')
@@ -212,24 +238,96 @@ describe('recovery packet and isolation', () => {
     ts: i,
   }))
 
-  test('injects all three layers once, with at most 16 recent messages and 4000 tokens', () => {
+  test('large source windows require a detailed recent layer', () => {
+    expect(minimumRecentSummaryChars(29)).toBe(0)
+    expect(minimumRecentSummaryChars(30)).toBe(300)
+    expect(minimumRecentSummaryChars(80)).toBe(500)
+    expect(minimumRecentSummaryChars(314)).toBe(700)
+    expect(recentSummaryChars(summary)).toBeGreaterThan(0)
+  })
+
+  test('one-turn examples cannot leak into the durable layer', () => {
+    const serverSource = readFileSync(new URL('../channel-server.ts', import.meta.url), 'utf8')
+    const lunaPrompt = readFileSync(new URL('../scripts/tidal-luna-summary.sh', import.meta.url), 'utf8')
+    expect(serverSource).toContain('不得把近期实例附在长期事实后面')
+    expect(lunaPrompt).toContain('不得把近期实例附在长期事实后面')
+    expect(lunaPrompt).toContain('“本轮梦见什么”只进近期层')
+  })
+
+  test('durably preserves developed self-understanding without retaining routine model trivia', () => {
+    const serverSource = readFileSync(new URL('../channel-server.ts', import.meta.url), 'utf8')
+    const lunaPrompt = readFileSync(new URL('../scripts/tidal-luna-summary.sh', import.meta.url), 'utf8')
+    for (const prompt of [serverSource, lunaPrompt]) {
+      expect(prompt).toContain('自我认知与关系连续性的一部分')
+      expect(prompt).toContain('包括双方所称的“A社”')
+      expect(prompt).toContain('即使首次明确形成，也应提炼进 relationshipIdentity')
+      expect(prompt).toContain('不把临时模型版本、运行参数、产品故障或普通技术讨论长期化')
+    }
+  })
+
+  test('offers token-bounded complete-turn boundaries instead of a fixed message count', () => {
+    const options = tidalBoundaryOptions(history, 2_000, 3_000, 6)
+    expect(options.length).toBeGreaterThan(1)
+    const proposed = options.at(-1)!
+    expect(proposed.preservedTokens).toBeLessThanOrEqual(2_000)
+    expect(proposed.boundaryId).toMatch(/^m\d*[13579]$/)
+    expect(options.every((option) => option.preservedTokens <= 3_000)).toBeTrue()
+    expect(options[0].sourceCount).toBeLessThanOrEqual(proposed.sourceCount)
+    const prompt = renderTidalReviewPrompt(options, proposed.boundaryId)
+    expect(prompt).toContain('主观连续性检查点')
+    expect(prompt).toContain('只要不确定，就不要把它判为闭合')
+    expect(prompt).toContain('tidal_memory_checkpoint')
+  })
+
+  test('reviews the legacy exact window once instead of dropping it during migration', () => {
+    const legacy = progressiveVisibleMessages(history, 'm23', false, 16)
+    expect(legacy[0].id).toBe('m8')
+    expect(legacy.at(-1)?.id).toBe('m39')
+    const progressive = progressiveVisibleMessages(history, 'm23', true, 16)
+    expect(progressive[0].id).toBe('m24')
+  })
+
+  test('validates and renders a first-person checkpoint separately from the external summary', () => {
+    expect(validateSubjectiveCheckpoint(checkpoint)).toEqual(checkpoint)
+    expect(validateSubjectiveCheckpoint({ ...checkpoint, unresolved: '' })).toBeNull()
+    expect(renderSubjectiveCheckpoint(checkpoint)).toContain('对自己的当前理解')
+    expect(renderSubjectiveCheckpoint(checkpoint)).toContain(checkpoint.continuation)
+  })
+
+  test('injects only the continuous exact suffix after the blurred boundary', () => {
     const packet = buildRecoveryPacket({
       marker: 'unique-recovery-marker',
       coreMemory: '核心记忆摘要',
       rollingSummary: summary,
+      subjectiveCheckpoint: checkpoint,
       visibleHistory: history,
-      boundaryId: 'm39',
-      recentMax: 16,
-      tokenBudget: 4_000,
+      boundaryId: 'm23',
+      tokenBudget: 10_000,
     })
     expect(packet.content.match(/unique-recovery-marker/g)?.length).toBe(1)
     expect(packet.content).toContain('第一层：现有核心记忆摘要')
-    expect(packet.content).toContain('第二层：最新滚动对话摘要')
-    expect(packet.content).toContain('第三层：最近可见原文')
-    expect(packet.recent.length).toBeLessThanOrEqual(16)
-    expect(packet.estimatedTokens).toBeLessThanOrEqual(4_000)
+    expect(packet.content).toContain('第二层：有上限的长期关系基线')
+    expect(packet.content).toContain('第三层：已经模糊的早期事件概括')
+    expect(packet.content).toContain('第四层：你亲自留下的主观连续性检查点')
+    expect(packet.content).toContain('第五层：边界之后保留的连续原文')
+    expect(packet.content).toContain(renderLongTermSummary(summary))
+    expect(packet.content).toContain(renderRecentSummary(summary))
+    expect(packet.recent.map((message) => message.id)).toEqual(history.slice(24).map((message) => message.id))
+    expect(packet.content).not.toContain('第 23 条可见原文')
+    expect(packet.content).toContain('第 24 条可见原文')
+    expect(packet.fitsBudget).toBeTrue()
+    expect(packet.estimatedTokens).toBeLessThanOrEqual(10_000)
     expect(packet.content).toContain('session 没有更换')
     expect(packet.content).not.toContain('thinking')
+  })
+
+  test('summary input carries a bounded long-term calibration source', () => {
+    const input = summaryInput(summary, history.slice(-2), '早期关系里程碑：8月6日开始固定相处。')
+    expect(input).toContain('长期记忆校准参考')
+    expect(input).toContain('8月6日开始固定相处')
+    expect(input).toContain('上一版分层摘要')
+    expect(input).toContain('主CC确认可以模糊化的最老闭合原文')
+    expect(input).toContain('边界之后的对话未提供')
   })
 
   test('full UI history is append-only and never trimmed by tidal processing', () => {
@@ -244,6 +342,12 @@ describe('recovery packet and isolation', () => {
     expect(shouldEvaluateTidalSurface('codex')).toBeFalse()
     expect(shouldEvaluateTidalSurface('group')).toBeFalse()
     expect(shouldEvaluateTidalSurface('gomoku')).toBeFalse()
+  })
+
+  test('does not duplicate the recovery packet into a normally resumed session', () => {
+    expect(shouldInjectTidalStartupRecovery('resumed')).toBeFalse()
+    expect(shouldInjectTidalStartupRecovery('fresh')).toBeTrue()
+    expect(shouldInjectTidalStartupRecovery(undefined)).toBeTrue()
   })
 
   test('concurrent messages deduplicate queue entries and only one tide can be claimed', () => {

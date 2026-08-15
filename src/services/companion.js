@@ -53,6 +53,16 @@ let reconnectTimer = null
 let authFailed = false // definitive: stop auto-reconnecting until explicit ensureConnected() after re-login
 const listeners = new Set() // Set<(evt) => void>
 let selectedCodexSessionId = DEFAULT_CODEX_SESSION_ID
+let lastServerActivityAt = 0
+const connectionProbeWaiters = new Set()
+
+const PRE_SEND_STALE_MS = 12000
+const CONNECTION_PROBE_TIMEOUT_MS = 2500
+
+function settleConnectionProbes(ok) {
+  for (const settle of connectionProbeWaiters) settle(ok)
+  connectionProbeWaiters.clear()
+}
 
 // ---------- app-level heartbeat ----------
 // A browser WebSocket can report itself as 'open' for a long time after the
@@ -178,6 +188,7 @@ function connect() {
     everOpenedThisAttempt = true
     reconnectAttempt = 0
     authFailed = false
+    lastServerActivityAt = Date.now()
     startHeartbeat()
     notify({ kind: 'open' })
     // The server sends a main-session snapshot on open for backwards
@@ -187,6 +198,7 @@ function connect() {
   }
 
   socket.onmessage = ev => {
+    lastServerActivityAt = Date.now()
     let m
     try {
       m = JSON.parse(ev.data)
@@ -196,6 +208,7 @@ function connect() {
     if (m.type === 'pong') {
       clearTimeout(pongTimeout)
       pongTimeout = null
+      settleConnectionProbes(true)
       return
     }
     if (m.type === 'inbound_ack') {
@@ -216,6 +229,7 @@ function connect() {
     wsState = 'closed'
     ws = null
     stopHeartbeat()
+    settleConnectionProbes(false)
     notify({ kind: 'close', wasClean: ev.wasClean, code: ev.code })
 
     if (!openedBefore) {
@@ -292,6 +306,21 @@ function maybeAnnounceRemoteUserMessage(message) {
   if (message?.type !== 'msg' || message.from !== 'user' || !message.id || !message.text) return
   for (const fn of remoteUserMessageListeners) {
     try { fn({ id: message.id, text: message.text, ts: message.ts }) } catch { /* isolate subscribers */ }
+  }
+}
+
+const ccMessageDeletedListeners = new Set()
+/** A delete is display-history state, shared across tabs/devices. The server
+ * sends stable wire ids; callers map those back to local aggregate bubbles. */
+export function onCcMessageDeleted(fn) {
+  ccMessageDeletedListeners.add(fn)
+  return () => ccMessageDeletedListeners.delete(fn)
+}
+
+function announceCcMessageDeleted(ids) {
+  if (!Array.isArray(ids) || ids.length === 0) return
+  for (const fn of ccMessageDeletedListeners) {
+    try { fn(ids) } catch { /* isolate subscribers */ }
   }
 }
 
@@ -891,7 +920,7 @@ export function sendCodexMessage(text, imageUrl, options = {}) {
   const sessionId = normalizeCodexSessionId(options?.sessionId || selectedCodexSessionId)
   const prompt = typeof options?.prompt === 'string' ? options.prompt : ''
   const id = `codex-eunoia-${Date.now()}-${++codexSeq}`
-  return sendRaw(buildCodexMessagePayload({ id, text, segments: options?.segments, imageUrl, file: options?.file, sessionId, prompt, clientTime: clientTimeContext() }))
+  return sendRaw(buildCodexMessagePayload({ id, text, segments: options?.segments, imageUrl, imageSeparate: options?.imageSeparate, file: options?.file, sessionId, prompt, clientTime: clientTimeContext() }))
 }
 
 /**
@@ -1056,6 +1085,10 @@ listeners.add(evt => {
       // fall through — turn_end/turn_error also matter to any in-flight
       // streamChatViaCompanion() generator, handled further down via `listeners`
     }
+    if (m.type === 'msg_deleted') {
+      announceCcMessageDeleted(m.ids)
+      return
+    }
     if (m.type === 'msg' && m.from === 'user') maybeAnnounceRemoteUserMessage(m)
     if (m.type === 'msg' && m.from === 'cc') maybeAnnounceProactive(m)
     return
@@ -1104,6 +1137,14 @@ export function reconnectCompanion() {
   stopHeartbeat()
 
   const staleSocket = ws
+  // This manual replacement deliberately detaches the old socket's onclose
+  // handler below, so an in-flight chat generator would otherwise never
+  // learn that it must recover its turn from the new connection's history
+  // snapshot. Announce the transport break before detaching it.
+  if (staleSocket && (wsState === 'open' || wsState === 'connecting')) {
+    settleConnectionProbes(false)
+    notify({ kind: 'close', wasClean: false, code: 0, forced: true })
+  }
   ws = null
   wsState = 'closed'
   if (staleSocket) {
@@ -1209,6 +1250,35 @@ function waitUntilOpenOrFail(timeoutMs = 8000) {
   })
 }
 
+// After a quiet/background period, do not trust WebSocket.OPEN by itself:
+// browsers can retain that state for a dead mobile connection. Probe only
+// when we have not heard from the server recently, so normal back-and-forth
+// turns pay no extra round trip. A failed probe replaces the socket before
+// the user message is sent, avoiding the old 20s heartbeat wait and a send
+// that vanished into a half-dead connection.
+async function ensureFreshConnectionBeforeSend() {
+  await waitUntilOpenOrFail()
+  if (Date.now() - lastServerActivityAt <= PRE_SEND_STALE_MS) return
+
+  const probedSocket = ws
+  const alive = await new Promise(resolve => {
+    let settled = false
+    const finish = ok => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      connectionProbeWaiters.delete(finish)
+      resolve(ok)
+    }
+    const timer = setTimeout(() => finish(false), CONNECTION_PROBE_TIMEOUT_MS)
+    connectionProbeWaiters.add(finish)
+    if (!sendRaw({ type: 'ping' })) finish(false)
+  })
+  if (alive && ws === probedSocket && wsState === 'open') return
+  reconnectCompanion()
+  await waitUntilOpenOrFail()
+}
+
 let seq = 0
 function genId() {
   return `eunoia-${Date.now()}-${++seq}`
@@ -1221,9 +1291,9 @@ function genId() {
 // dropped notice (offline, or CC mid-turn on something else, see
 // notifyCcOfDeletedMessage's own currentTurn check server-side) just means
 // this one deletion doesn't get flagged, not a broken feature.
-export function sendDeleteNotice(text) {
-  if (!text) return
-  sendRaw({ type: 'delete_notice', text, clientTime: clientTimeContext() })
+export function sendDeleteNotice(text, messageIds = []) {
+  if (!text && messageIds.length === 0) return
+  sendRaw({ type: 'delete_notice', text, messageIds, clientTime: clientTimeContext() })
 }
 
 /**
@@ -1251,7 +1321,7 @@ export function sendDeleteNotice(text) {
 export async function* streamChatViaCompanion({ text, imagePath, file, signal, messageId }) {
   if (signal?.aborted) return
 
-  await waitUntilOpenOrFail()
+  await ensureFreshConnectionBeforeSend()
 
   // Reuse the local user bubble id when this turn originated in ChatWindow.
   // The server broadcasts the accepted user message back to every connected
@@ -1608,7 +1678,7 @@ export async function deleteMemoryFile(name) {
   })
 }
 
-// ---------- CC fixed-window tidal memory ----------
+// ---------- CC progressive-blur tidal memory ----------
 // These endpoints address only the authoritative rolling summary owned by
 // the resident CC session. They never read the retired compression-review
 // drafts, Codex memory, or ordinary API conversation state.

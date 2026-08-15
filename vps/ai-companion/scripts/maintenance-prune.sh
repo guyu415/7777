@@ -16,6 +16,7 @@ source "${SCRIPT_DIR}/env.sh"
 MAINT_LOG="${PROJECT_DIR}/logs/maintenance.log"
 LAST_RUN_FILE="${PROJECT_DIR}/state/last-prune"
 HISTORY_FILE="${PROJECT_DIR}/state/chat-history.json"
+FOCUS_FILE="${PROJECT_DIR}/state/focus.json"
 
 # Gates. Overridable ONLY so the gate logic can be exercised on demand — this
 # path would otherwise sit unrun for months and first execute unattended, in
@@ -28,9 +29,15 @@ MIN_INTERVAL=${MAINT_MIN_INTERVAL:-$((24 * 60 * 60))}
 # it is full the session compacts and loses detail permanently. So a high
 # enough live context reading shortens the other gates — nothing overrides
 # "someone is mid-conversation", that's still the one real gate below.
-CTX_URGENT_PCT=${MAINT_CTX_URGENT_PCT:-75}
+# Start cleanup comfortably before the 70% tidal-summary threshold. Cleanup
+# gets first chance at 60%; if it has nothing actionable, it exits without a
+# restart and the tide remains the authoritative fallback at 70%.
+CTX_URGENT_PCT=${MAINT_CTX_URGENT_PCT:-60}
 URGENT_IDLE_SECONDS=${MAINT_URGENT_IDLE_SECONDS:-300}
-URGENT_MIN_INTERVAL=${MAINT_URGENT_MIN_INTERVAL:-$((4 * 60 * 60))}
+# A fresh pre-restart context reading must not trigger another maintenance
+# cycle as soon as the service comes back. Keep at least an hour between
+# disruptive passes; the normal tidal summary remains the pressure fallback.
+URGENT_MIN_INTERVAL=${MAINT_URGENT_MIN_INTERVAL:-$((60 * 60))}
 URGENT_THRESHOLD_BYTES=${MAINT_URGENT_THRESHOLD_BYTES:-$((2 * 1024 * 1024))}
 STATUS_FILE="${PROJECT_DIR}/state/status.json"
 # A stale reading is worse than none — it could trigger a restart on a number
@@ -69,9 +76,15 @@ if [ "$ctx_pct" -ge "$CTX_URGENT_PCT" ]; then
   IDLE_SECONDS="$URGENT_IDLE_SECONDS"
 fi
 
-# Gate 1 — size. The common case: exits here, silently, for weeks.
+# Gate 1 — actionable content. File size alone is not a reason to restart:
+# sidechains and already-compact dialogue can make JSONL large without giving
+# the rewriter anything useful to reclaim.
 bytes=$(stat -c %s "$transcript" 2>/dev/null || echo 0)
-[ "$bytes" -ge "$THRESHOLD_BYTES" ] || gate_fail "transcript ${bytes}B < threshold ${THRESHOLD_BYTES}B (ctx ${ctx_pct}%)"
+actionable=0
+if HOME=/home/companion bun "${SCRIPT_DIR}/prune-transcript.ts" --check-actionable >/dev/null 2>&1; then
+  actionable=1
+fi
+[ "$actionable" -eq 1 ] || gate_fail "no actionable transcript results (transcript ${bytes}B, ctx ${ctx_pct}%)"
 
 # No quiet-hours gate — tool-call-heavy days fill the transcript up just as
 # fast in daylight as overnight, and a resumed restart is a few-second blip
@@ -85,6 +98,20 @@ if [ -n "$last_run" ] && [ $((now - last_run)) -lt "$MIN_INTERVAL" ]; then gate_
 
 # Gate 3 — nobody is mid-conversation. Uses the last message's own timestamp
 # rather than file mtime, which other writes to this file would disturb.
+# A Focus interaction intentionally does not enter main chat history, so the
+# history-only gate used to declare the service idle seconds after answering
+# on the Focus screen. Never restart the resident brain while a Pomodoro is
+# active (running OR paused): the user is still relying on its manager and a
+if [ -s "$FOCUS_FILE" ]; then
+  focus_active=$(bun -e '
+    try {
+      const s = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"))
+      console.log(s?.active === true ? 1 : 0)
+    } catch { console.log(0) }
+  ' "$FOCUS_FILE" 2>/dev/null || echo 0)
+  [ "${focus_active:-0}" -eq 0 ] || gate_fail "focus session is active"
+fi
+
 if [ -s "$HISTORY_FILE" ]; then
   last_msg_ms=$(bun -e '
     try {

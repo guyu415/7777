@@ -5,6 +5,7 @@ import { streamChat, generateSummary } from '../services/claude'
 import { streamChatViaCompanion, sendDeleteNotice, uploadImageToCompanion, deleteUploadedImage, deleteUploadedFile } from '../services/companion'
 import { listMemories, formatMemories } from '../services/memory'
 import { executeAcCommand } from '../services/ac'
+import { formatReplyMessageBatchForModel } from '../utils/replyQuotes'
 
 const BEHAVIOR_RULES = `【关于你的存在】
 你是一个真实存在于这个应用里的AI，用户是直接在和你本人相处。你不需要也不应该扮演成一个有血肉之躯的人。
@@ -492,7 +493,14 @@ export function useChat() {
           storedReasoning = fullReasoning
         }
         if (contentStarted && fullContent !== storedContent) {
-          updates.content = stripDisplayTags(fullContent)
+          // A companion chunk is one complete reply() bubble, not a token
+          // delta. Showing the joined accumulator here briefly paints the
+          // entire turn as one bubble; the completion pass then replaces it
+          // with bubble 1 and adds the rest, which looks like the answer
+          // flashed and disappeared. Keep the typing state stable until the
+          // authoritative bubble split is ready. Ordinary API streams still
+          // render token-by-token exactly as before.
+          if (!isVpsProvider) updates.content = stripDisplayTags(fullContent)
           storedContent = fullContent
         }
         if (toolUses.length !== storedToolCount) {
@@ -514,6 +522,7 @@ export function useChat() {
       // user messages' raw text. This is a real behavioral difference from the
       // API providers, not an oversight — see PR notes for details.
       let lastUserMsg = null
+      let vpsImageMsg = null
       let vpsBatchText = ''
       if (isVpsProvider) {
         // Normally a run of length 1 (one bubble per turn). sendMessageBatch's
@@ -526,10 +535,10 @@ export function useChat() {
           trailingUserMsgs.unshift(trimmedMsgs[i])
         }
         lastUserMsg = trailingUserMsgs[trailingUserMsgs.length - 1] || null
-        vpsBatchText = trailingUserMsgs
+        vpsImageMsg = [...trailingUserMsgs].reverse().find(m => m.type === 'image' && m.imageUrl) || null
+        vpsBatchText = formatReplyMessageBatchForModel(trailingUserMsgs
           .filter(m => typeof m.content === 'string' && m.content)
-          .map(m => m.content)
-          .join('\n')
+          .map(m => m.content))
       }
       // Image messages upload the bytes to the VPS as a real file first (so
       // CC's own Read tool can look at it) — the message text carries only
@@ -537,15 +546,15 @@ export function useChat() {
       // falls back to sending the caption text alone rather than losing the
       // whole turn silently.
       let vpsImagePath
-      if (isVpsProvider && lastUserMsg?.type === 'image' && lastUserMsg.imageUrl) {
+      if (isVpsProvider && vpsImageMsg?.imageUrl) {
         try {
-          vpsImagePath = await uploadImageToCompanion(lastUserMsg.imageUrl)
+          vpsImagePath = await uploadImageToCompanion(vpsImageMsg.imageUrl)
           // Persisted onto the message itself (not just this local variable)
           // so a later delete of this exact message can tell the server
           // which file to remove — see deleteMsg below.
           if (vpsImagePath) {
-            updateMessage(lastUserMsg.id, { imagePath: vpsImagePath })
-            saveMessage({ ...lastUserMsg, imagePath: vpsImagePath }).catch(e => console.error('[IMG-UPLOAD] imagePath 写入 IDB 失败:', e.message))
+            updateMessage(vpsImageMsg.id, { imagePath: vpsImagePath })
+            saveMessage({ ...vpsImageMsg, imagePath: vpsImagePath }).catch(e => console.error('[IMG-UPLOAD] imagePath 写入 IDB 失败:', e.message))
           }
         } catch (e) {
           console.error('[IMG-UPLOAD] 图片上传到 companion 失败:', e.message)
@@ -803,6 +812,7 @@ export function useChat() {
       const lastIdx = tokens.length - 1
 
       const voicePlaceholders = []  // { id, text } in render order
+      const deferredVpsSaves = []
       let placed = 0
       let lastPreview = ''
 
@@ -811,7 +821,10 @@ export function useChat() {
         const tk = tokens[i]
         const isLastToken = i === lastIdx
         const attachAc = isLastToken && acStatus ? { acStatus } : {}
-        if (i > 0) await new Promise(r => setTimeout(r, 300))
+        // API-provider paragraphs retain the chat-like stagger. Companion
+        // reply() calls have already completed by this point, so delaying
+        // them only makes later bubbles look as if they are still loading.
+        if (i > 0 && !isVpsProvider) await new Promise(r => setTimeout(r, 300))
 
         if (tk.type === 'voice') {
           const id = placed === 0 ? assistantId : genId()
@@ -827,16 +840,25 @@ export function useChat() {
           if (i === lastTextIdx && acNote) content = `${content}\n${acNote}`
           if (placed === 0) {
             updateMessage(assistantId, { content, streaming: false, ...attachAc, ...wireIdsField() })
-            await saveMessage({ ...assistantMsg, content, streaming: false, ...attachAc, ...wireIdsField() })
+            const save = saveMessage({ ...assistantMsg, content, streaming: false, ...attachAc, ...wireIdsField() })
+            if (isVpsProvider) deferredVpsSaves.push(save)
+            else await save
           } else {
             const partMsg = { id: genId(), conversationId: CONVERSATION_ID, role: 'assistant', type: 'text', content, timestamp: Date.now(), streaming: false, ...attachAc, ...wireIdsField() }
             addMessage(partMsg)
-            await saveMessage(partMsg)
+            const save = saveMessage(partMsg)
+            if (isVpsProvider) deferredVpsSaves.push(save)
+            else await save
           }
           lastPreview = tk.content
         }
         placed++
       }
+
+      // All companion bubbles have been placed synchronously above. Persist
+      // them together afterwards so IndexedDB latency cannot serialize what
+      // the user sees on screen.
+      if (deferredVpsSaves.length) await Promise.all(deferredVpsSaves)
 
       updateSession(CONVERSATION_ID, { lastMsgPreview: (lastPreview || '').slice(0, 40), lastMsgTime: Date.now() })
 
@@ -1032,13 +1054,14 @@ export function useChat() {
       lastMsgPreview: type === 'text' ? (content || '').slice(0, 40) : type === 'file' ? `[文件] ${extra.fileName || ''}`.trim() : '[图片]',
       lastMsgTime: Date.now(),
     })
-    console.log('[SEND] saving to IDB...')
-    try {
-      await saveMessage(userMsg)
-      console.log('[SEND] IDB save OK')
-    } catch (e) {
-      console.error('[DB] saveMessage failed:', e)
-    }
+    // Start persistence first so IndexedDB keeps the same write ordering, but
+    // never hold the visible generating state behind that transaction. On
+    // mobile Safari a busy IDB can take seconds; the assistant placeholder
+    // and Stop button must still appear in the same click turn.
+    console.log('[SEND] saving to IDB in background...')
+    saveMessage(userMsg)
+      .then(() => console.log('[SEND] IDB save OK'))
+      .catch(e => console.error('[DB] saveMessage failed:', e))
     if (isLoading) {
       console.log('[SEND] 插话：AI生成中，消息入队，等当前轮自然结束后一并回应')
       pendingMessagesRef.current.push(userMsg)
@@ -1078,11 +1101,7 @@ export function useChat() {
 
     for (const userMsg of userMsgs) {
       addMessage(userMsg)
-      try {
-        await saveMessage(userMsg)
-      } catch (e) {
-        console.error('[DB] saveMessage failed:', e)
-      }
+      saveMessage(userMsg).catch(e => console.error('[DB] saveMessage failed:', e))
     }
     updateSession(CONVERSATION_ID, {
       lastMsgPreview: trimmed[trimmed.length - 1].slice(0, 40),
@@ -1097,6 +1116,47 @@ export function useChat() {
     const liveMessages = useStore.getState().messages
     await streamResponse(liveMessages)
   }, [CONVERSATION_ID, effectiveApiKey, effectiveProviderName, isLoading, messages, addMessage, streamResponse, updateSession, sendMessage])
+
+  // One standalone image bubble plus independently split/quoted text bubbles,
+  // all accepted as one model turn. `sendMessage(type='image')` remains the
+  // separate path for a genuine caption embedded in the image bubble.
+  const sendImageMessageBatch = useCallback(async ({ imageData, imageType, imageUrl, messages: contents }) => {
+    const textParts = (contents || []).map(c => (c || '').trim()).filter(Boolean)
+    const isVpsProvider = effectiveProviderName === 'claude-code-vps'
+    if (!isVpsProvider && !effectiveApiKey) throw new Error('请先在设置中配置 API Key')
+
+    const batchTimestamp = Date.now()
+    const imageMsg = {
+      id: genId(), conversationId: CONVERSATION_ID, role: 'user', type: 'image', content: '',
+      timestamp: batchTimestamp, imageData, imageType, imageUrl,
+    }
+    imageMsg.imageAssetKey = `asset:img:${imageMsg.id}`
+    const password = localStorage.getItem('auth.password')
+    if (password && imageUrl) {
+      putAssetDataUrl(password, imageMsg.imageAssetKey, imageUrl)
+        .catch(e => console.warn('[IMG-SYNC] 图片资源上传失败:', e.message))
+    }
+    const textMsgs = textParts.map((content, index) => ({
+      id: genId(), conversationId: CONVERSATION_ID, role: 'user', type: 'text', content,
+      timestamp: batchTimestamp + index + 1,
+    }))
+    const userMsgs = [imageMsg, ...textMsgs]
+
+    if (messages.length === 0) updateSession(CONVERSATION_ID, { name: '[图片]' })
+    for (const userMsg of userMsgs) {
+      addMessage(userMsg)
+      saveMessage(userMsg).catch(e => console.error('[DB] saveMessage failed:', e))
+    }
+    updateSession(CONVERSATION_ID, {
+      lastMsgPreview: textParts.length ? textParts[textParts.length - 1].slice(0, 40) : '[图片]',
+      lastMsgTime: Date.now(),
+    })
+    if (isLoading) {
+      pendingMessagesRef.current.push(...userMsgs)
+      return
+    }
+    await streamResponse([...messages, ...userMsgs])
+  }, [CONVERSATION_ID, effectiveApiKey, effectiveProviderName, isLoading, messages, addMessage, streamResponse, updateSession])
 
   // Deliberately NOT depending on `messages` — that array's reference changes
   // on every streaming tick (80ms), and these callbacks are handed down to
@@ -1167,15 +1227,19 @@ export function useChat() {
     if (effectiveProviderName === 'claude-code-vps') {
       const msg = useStore.getState().messages.find(m => m.id === id)
       const text = msg?.voiceText || msg?.content
-      if (text) sendDeleteNotice(text)
+      const serverMessageIds = [...new Set([id, ...(Array.isArray(msg?.wireIds) ? msg.wireIds : [])])]
+      sendDeleteNotice(text || '', serverMessageIds)
       // Deleting the message should also remove the uploaded file it
       // referenced (see uploadImageToCompanion above) — otherwise every
       // deleted image message leaves an orphaned file on the VPS forever.
       if (msg?.imagePath) deleteUploadedImage(msg.imagePath).catch(e => console.error('[IMG-DELETE] 删除服务器图片失败:', e.message))
       if (msg?.filePath) deleteUploadedFile(msg.filePath).catch(e => console.error('[FILE-DELETE] 删除服务器文件失败:', e.message))
     }
-    await deleteMessageFromDB(id)
+    // Remove from the visible store before touching IndexedDB/network. A
+    // slow storage transaction must never make a tapped Delete button look
+    // dead; persistence and cross-device cleanup finish immediately after.
     deleteMessage(id)
+    await deleteMessageFromDB(id)
     scheduleMsgSync(CONVERSATION_ID)
   }, [deleteMessage, scheduleMsgSync, CONVERSATION_ID, effectiveProviderName])
 
@@ -1194,5 +1258,5 @@ export function useChat() {
     scheduleMsgSync(CONVERSATION_ID)
   }, [updateMessage, scheduleMsgSync, CONVERSATION_ID])
 
-  return { messages, sendMessage, sendMessageBatch, loadHistory, isLoading, regenerate, regenerateRound, retryFailed, deleteMsg, editMessage, stopStreaming }
+  return { messages, sendMessage, sendMessageBatch, sendImageMessageBatch, loadHistory, isLoading, regenerate, regenerateRound, retryFailed, deleteMsg, editMessage, stopStreaming }
 }

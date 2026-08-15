@@ -4,6 +4,10 @@ const CORS = {
   'Access-Control-Allow-Headers': 'Content-Type, X-Api-Key, X-Target-Url, X-VPS-Key',
 }
 
+export function vpsPushTitle(payload) {
+  return typeof payload?.title === 'string' && payload.title.trim() ? payload.title : 'CC'
+}
+
 export default {
   async fetch(request, env) {
     if (request.method === 'OPTIONS') {
@@ -209,7 +213,9 @@ export default {
       const body = typeof payload?.body === 'string' ? payload.body.trim() : ''
       if (!body) return Response.json({ error: 'missing body' }, { status: 400, headers: CORS })
       const result = await sendPushToUser(env, password, {
-        title: typeof payload?.title === 'string' ? payload.title : '小满 🌸',
+        // /vps/push is the resident CC channel. Keep the fallback aligned
+        // with that sender even if an older VPS caller omits the title.
+        title: vpsPushTitle(payload),
         body: body.slice(0, 120),
         tag: typeof payload?.tag === 'string' ? payload.tag : 'eunoia-cc-proactive',
         url: typeof payload?.url === 'string' ? payload.url : '/?source=cc-proactive',
