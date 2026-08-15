@@ -32,6 +32,20 @@ export function buildReplyMessageBatch(queuedMessages, currentText, currentQuote
   return current ? [...queued, current] : queued
 }
 
+// Persistent runtimes accept one physical turn even when the composer shows
+// several user bubbles. A plain newline join loses the boundary before a
+// later quote (`normal\n> 回复...`), because that quote is no longer at the
+// start of a message. Give every part the same explicit envelope.
+export function formatReplyMessageBatchForModel(messages) {
+  const parts = (Array.isArray(messages) ? messages : [])
+    .filter((message) => typeof message === 'string' && message.trim())
+    .map((message) => message.trim())
+  if (parts.length <= 1) return parts[0] || ''
+  return parts
+    .map((message, index) => `【同一轮分条消息 ${index + 1}/${parts.length}】\n${message}`)
+    .join('\n\n')
+}
+
 export function parseReplyQuotes(content) {
   if (typeof content !== 'string' || !content.startsWith('> 回复')) return null
 

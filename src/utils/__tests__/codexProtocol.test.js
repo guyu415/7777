@@ -19,6 +19,12 @@ describe('Codex session request protocol', () => {
     })
   })
 
+  it('marks an image as its own bubble beside split text messages', () => {
+    expect(buildCodexMessagePayload({
+      id: 'm-image', text: '一\n二', segments: ['一', '二'], imageUrl: 'data:image/png;base64,x', imageSeparate: true, sessionId: 's1',
+    })).toMatchObject({ segments: ['一', '二'], imageSeparate: true, imageUrl: 'data:image/png;base64,x' })
+  })
+
   it('carries a server-uploaded file without embedding its bytes', () => {
     const payload = buildCodexMessagePayload({
       id: 'm4', text: '帮我看看', sessionId: 's1',

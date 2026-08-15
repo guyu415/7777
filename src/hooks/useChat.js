@@ -5,6 +5,7 @@ import { streamChat, generateSummary } from '../services/claude'
 import { streamChatViaCompanion, sendDeleteNotice, uploadImageToCompanion, deleteUploadedImage, deleteUploadedFile } from '../services/companion'
 import { listMemories, formatMemories } from '../services/memory'
 import { executeAcCommand } from '../services/ac'
+import { formatReplyMessageBatchForModel } from '../utils/replyQuotes'
 
 const BEHAVIOR_RULES = `【关于你的存在】
 你是一个真实存在于这个应用里的AI，用户是直接在和你本人相处。你不需要也不应该扮演成一个有血肉之躯的人。
@@ -514,6 +515,7 @@ export function useChat() {
       // user messages' raw text. This is a real behavioral difference from the
       // API providers, not an oversight — see PR notes for details.
       let lastUserMsg = null
+      let vpsImageMsg = null
       let vpsBatchText = ''
       if (isVpsProvider) {
         // Normally a run of length 1 (one bubble per turn). sendMessageBatch's
@@ -526,10 +528,10 @@ export function useChat() {
           trailingUserMsgs.unshift(trimmedMsgs[i])
         }
         lastUserMsg = trailingUserMsgs[trailingUserMsgs.length - 1] || null
-        vpsBatchText = trailingUserMsgs
+        vpsImageMsg = [...trailingUserMsgs].reverse().find(m => m.type === 'image' && m.imageUrl) || null
+        vpsBatchText = formatReplyMessageBatchForModel(trailingUserMsgs
           .filter(m => typeof m.content === 'string' && m.content)
-          .map(m => m.content)
-          .join('\n')
+          .map(m => m.content))
       }
       // Image messages upload the bytes to the VPS as a real file first (so
       // CC's own Read tool can look at it) — the message text carries only
@@ -537,15 +539,15 @@ export function useChat() {
       // falls back to sending the caption text alone rather than losing the
       // whole turn silently.
       let vpsImagePath
-      if (isVpsProvider && lastUserMsg?.type === 'image' && lastUserMsg.imageUrl) {
+      if (isVpsProvider && vpsImageMsg?.imageUrl) {
         try {
-          vpsImagePath = await uploadImageToCompanion(lastUserMsg.imageUrl)
+          vpsImagePath = await uploadImageToCompanion(vpsImageMsg.imageUrl)
           // Persisted onto the message itself (not just this local variable)
           // so a later delete of this exact message can tell the server
           // which file to remove — see deleteMsg below.
           if (vpsImagePath) {
-            updateMessage(lastUserMsg.id, { imagePath: vpsImagePath })
-            saveMessage({ ...lastUserMsg, imagePath: vpsImagePath }).catch(e => console.error('[IMG-UPLOAD] imagePath 写入 IDB 失败:', e.message))
+            updateMessage(vpsImageMsg.id, { imagePath: vpsImagePath })
+            saveMessage({ ...vpsImageMsg, imagePath: vpsImagePath }).catch(e => console.error('[IMG-UPLOAD] imagePath 写入 IDB 失败:', e.message))
           }
         } catch (e) {
           console.error('[IMG-UPLOAD] 图片上传到 companion 失败:', e.message)
@@ -1098,6 +1100,47 @@ export function useChat() {
     await streamResponse(liveMessages)
   }, [CONVERSATION_ID, effectiveApiKey, effectiveProviderName, isLoading, messages, addMessage, streamResponse, updateSession, sendMessage])
 
+  // One standalone image bubble plus independently split/quoted text bubbles,
+  // all accepted as one model turn. `sendMessage(type='image')` remains the
+  // separate path for a genuine caption embedded in the image bubble.
+  const sendImageMessageBatch = useCallback(async ({ imageData, imageType, imageUrl, messages: contents }) => {
+    const textParts = (contents || []).map(c => (c || '').trim()).filter(Boolean)
+    const isVpsProvider = effectiveProviderName === 'claude-code-vps'
+    if (!isVpsProvider && !effectiveApiKey) throw new Error('请先在设置中配置 API Key')
+
+    const batchTimestamp = Date.now()
+    const imageMsg = {
+      id: genId(), conversationId: CONVERSATION_ID, role: 'user', type: 'image', content: '',
+      timestamp: batchTimestamp, imageData, imageType, imageUrl,
+    }
+    imageMsg.imageAssetKey = `asset:img:${imageMsg.id}`
+    const password = localStorage.getItem('auth.password')
+    if (password && imageUrl) {
+      putAssetDataUrl(password, imageMsg.imageAssetKey, imageUrl)
+        .catch(e => console.warn('[IMG-SYNC] 图片资源上传失败:', e.message))
+    }
+    const textMsgs = textParts.map((content, index) => ({
+      id: genId(), conversationId: CONVERSATION_ID, role: 'user', type: 'text', content,
+      timestamp: batchTimestamp + index + 1,
+    }))
+    const userMsgs = [imageMsg, ...textMsgs]
+
+    if (messages.length === 0) updateSession(CONVERSATION_ID, { name: '[图片]' })
+    for (const userMsg of userMsgs) {
+      addMessage(userMsg)
+      try { await saveMessage(userMsg) } catch (e) { console.error('[DB] saveMessage failed:', e) }
+    }
+    updateSession(CONVERSATION_ID, {
+      lastMsgPreview: textParts.length ? textParts[textParts.length - 1].slice(0, 40) : '[图片]',
+      lastMsgTime: Date.now(),
+    })
+    if (isLoading) {
+      pendingMessagesRef.current.push(...userMsgs)
+      return
+    }
+    await streamResponse([...messages, ...userMsgs])
+  }, [CONVERSATION_ID, effectiveApiKey, effectiveProviderName, isLoading, messages, addMessage, streamResponse, updateSession])
+
   // Deliberately NOT depending on `messages` — that array's reference changes
   // on every streaming tick (80ms), and these callbacks are handed down to
   // every message bubble. Reading the live array via getState() at call time
@@ -1194,5 +1237,5 @@ export function useChat() {
     scheduleMsgSync(CONVERSATION_ID)
   }, [updateMessage, scheduleMsgSync, CONVERSATION_ID])
 
-  return { messages, sendMessage, sendMessageBatch, loadHistory, isLoading, regenerate, regenerateRound, retryFailed, deleteMsg, editMessage, stopStreaming }
+  return { messages, sendMessage, sendMessageBatch, sendImageMessageBatch, loadHistory, isLoading, regenerate, regenerateRound, retryFailed, deleteMsg, editMessage, stopStreaming }
 }

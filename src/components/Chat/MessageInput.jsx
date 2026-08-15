@@ -307,8 +307,9 @@ const MessageInput = forwardRef(function MessageInput({ onSend, onSendBatch, onS
       if (sent === false) return
       setFileDraft(null)
     } else if (imageDraft) {
-      // Keep a staged image and all queued text in one turn.
-      const imageCaption = quotePrefix + [...segments, finalText].filter(Boolean).join('\n')
+      // The image is a real bubble of its own. Text keeps the same per-bubble
+      // quote binding as a text-only batch while sharing this model turn.
+      const imageMessages = buildReplyMessageBatch(segments, finalText, replyDrafts)
       const pendingImage = imageDraft
       const pendingText = text
       const pendingSegments = segments
@@ -321,7 +322,7 @@ const MessageInput = forwardRef(function MessageInput({ onSend, onSendBatch, onS
       setMenuOpen(false)
       if (textareaRef.current) textareaRef.current.style.height = 'auto'
       setIsSendingAttachment(true)
-      const sent = await Promise.resolve().then(() => onSendImage({ imageData: pendingImage.imageData, imageType: pendingImage.imageType, imageUrl: pendingImage.imageUrl, text: imageCaption }))
+      const sent = await Promise.resolve().then(() => onSendImage({ imageData: pendingImage.imageData, imageType: pendingImage.imageType, imageUrl: pendingImage.imageUrl, messages: imageMessages }))
         .catch(() => false)
         .finally(() => setIsSendingAttachment(false))
       if (sent === false) {

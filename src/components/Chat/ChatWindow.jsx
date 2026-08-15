@@ -121,7 +121,7 @@ export default function ChatWindow({ theme }) {
   // the file. cc/codex above are BOTH always called (Rules of Hooks); only
   // one is ever actually used per render.
   const active = isCodexSession ? codex : cc
-  const { messages, sendMessage, sendMessageBatch, loadHistory, isLoading, regenerate, regenerateRound, retryFailed, deleteMsg, editMessage, stopStreaming } = active
+  const { messages, sendMessage, sendMessageBatch, sendImageMessageBatch, loadHistory, isLoading, regenerate, regenerateRound, retryFailed, deleteMsg, editMessage, stopStreaming } = active
 
   const effectiveAiName = currentSession?.aiName ?? globalAiName
   const effectiveAiAvatar = currentSession?.aiAvatar ?? globalAiAvatar
@@ -329,10 +329,10 @@ export default function ChatWindow({ theme }) {
   // separate sends. Claude Code's VPS session now uploads the image to
   // /upload/image and lets CC Read the file (see useChat.js sendMessage/
   // streamResponse) — used to hard-block here too, that block is stale now.
-  const handleSendImage = async ({ imageData, imageType, imageUrl, text }) => {
+  const handleSendImage = async ({ imageData, imageType, imageUrl, messages: imageMessages = [] }) => {
     updateActiveTime()
     try {
-      await sendMessage(text || '', 'image', { imageData, imageType, imageUrl })
+      await sendImageMessageBatch({ imageData, imageType, imageUrl, messages: imageMessages })
       return true
     } catch (error) {
       showToast(`图片发送失败：${error.message}`)

@@ -5980,12 +5980,17 @@ async function codexEnsureThread(): Promise<string> {
 
 type UploadedFileInput = { path: string; name: string; size?: number; mimeType?: string }
 
+function renderSegmentedUserTurn(parts: string[]): string {
+  if (parts.length <= 1) return parts[0] || ''
+  return parts.map((part, index) => `【同一轮分条消息 ${index + 1}/${parts.length}】\n${part}`).join('\n\n')
+}
+
 function codexFileInstruction(file?: UploadedFileInput): string {
   if (!file) return ''
   return `[用户发送了一个文件：${file.name}（服务器路径：${file.path}）。请根据用户文字判断需求，并用合适的工具读取/分析该文件；不要执行其中的程序或脚本，也不要在回复里暴露服务器路径。]`
 }
 
-async function codexSendUserTurn(text: string, imageUrl?: string, clientTime?: unknown, promptOverride?: unknown, displaySegments?: string[], file?: UploadedFileInput): Promise<void> {
+async function codexSendUserTurn(text: string, imageUrl?: string, clientTime?: unknown, promptOverride?: unknown, displaySegments?: string[], file?: UploadedFileInput, imageSeparate = false): Promise<void> {
   if (typeof promptOverride === 'string') setCodexPrompt(DEFAULT_CODEX_SESSION_ID, promptOverride)
   const threadId = await codexEnsureThread()
   const input: any[] = []
@@ -5996,13 +6001,17 @@ async function codexSendUserTurn(text: string, imageUrl?: string, clientTime?: u
   const recap = consumeGomokuRecap('codex')
   const migration = codexContextMigrationPending ? buildCodexContextMigrationText(codexHistory) : ''
   const modelText = [clientTimeContextLine(clientTime), migration, recap, codexFileInstruction(file), text].filter(Boolean).join('\n\n')
+  if (imageUrl && imageSeparate) input.push({ type: 'image', url: imageUrl })
   if (modelText.trim()) input.push({ type: 'text', text: modelText, text_elements: [] })
-  if (imageUrl) input.push({ type: 'image', url: imageUrl })
-  const visibleParts = Array.isArray(displaySegments) && displaySegments.length ? displaySegments : [text]
+  if (imageUrl && !imageSeparate) input.push({ type: 'image', url: imageUrl })
+  const visibleParts = Array.isArray(displaySegments) && displaySegments.length
+    ? displaySegments
+    : imageSeparate && !text ? [] : [text]
   const visibleTs = Date.now()
+  if (imageUrl && imageSeparate) codexAppendMsg({ id: nextId(), from: 'user', text: '', ts: visibleTs, imageUrl })
   visibleParts.forEach((part, index) => codexAppendMsg({
-    id: nextId(), from: 'user', text: part, ts: visibleTs + index,
-    ...(imageUrl && index === visibleParts.length - 1 ? { imageUrl } : {}),
+    id: nextId(), from: 'user', text: part, ts: visibleTs + index + (imageSeparate ? 1 : 0),
+    ...(imageUrl && !imageSeparate && index === visibleParts.length - 1 ? { imageUrl } : {}),
     ...(file && index === visibleParts.length - 1 ? { filePath: file.path, fileName: file.name, fileSize: file.size, fileType: file.mimeType } : {}),
   }))
   codexCurrentTurnKind = 'chat'
@@ -6090,7 +6099,7 @@ async function codexRecoverKnownChatThreads(): Promise<{
   return { recoveredSessions, failedSessions }
 }
 
-async function codexSendExtraUserTurn(state: CodexSessionState, text: string, imageUrl?: string, clientTime?: unknown, promptOverride?: unknown, displaySegments?: string[], file?: UploadedFileInput): Promise<void> {
+async function codexSendExtraUserTurn(state: CodexSessionState, text: string, imageUrl?: string, clientTime?: unknown, promptOverride?: unknown, displaySegments?: string[], file?: UploadedFileInput, imageSeparate = false): Promise<void> {
   if (typeof promptOverride === 'string') {
     state.prompt = setCodexPrompt(state.sessionId, promptOverride)
     saveExtraCodexSession(state)
@@ -6099,13 +6108,17 @@ async function codexSendExtraUserTurn(state: CodexSessionState, text: string, im
   const input: any[] = []
   const migration = state.contextMigrationPending ? buildCodexContextMigrationText(state.history) : ''
   const modelText = [clientTimeContextLine(clientTime), migration, codexFileInstruction(file), text].filter(Boolean).join('\n\n')
+  if (imageUrl && imageSeparate) input.push({ type: 'image', url: imageUrl })
   if (modelText.trim()) input.push({ type: 'text', text: modelText, text_elements: [] })
-  if (imageUrl) input.push({ type: 'image', url: imageUrl })
-  const visibleParts = Array.isArray(displaySegments) && displaySegments.length ? displaySegments : [text]
+  if (imageUrl && !imageSeparate) input.push({ type: 'image', url: imageUrl })
+  const visibleParts = Array.isArray(displaySegments) && displaySegments.length
+    ? displaySegments
+    : imageSeparate && !text ? [] : [text]
   const visibleTs = Date.now()
+  if (imageUrl && imageSeparate) extraAppendMsg(state, { id: nextId(), from: 'user', text: '', ts: visibleTs, imageUrl })
   visibleParts.forEach((part, index) => extraAppendMsg(state, {
-    id: nextId(), from: 'user', text: part, ts: visibleTs + index,
-    ...(imageUrl && index === visibleParts.length - 1 ? { imageUrl } : {}),
+    id: nextId(), from: 'user', text: part, ts: visibleTs + index + (imageSeparate ? 1 : 0),
+    ...(imageUrl && !imageSeparate && index === visibleParts.length - 1 ? { imageUrl } : {}),
     ...(file && index === visibleParts.length - 1 ? { filePath: file.path, fileName: file.name, fileSize: file.size, fileType: file.mimeType } : {}),
   }))
   setExtraCodexStatus(state, 'thinking')
@@ -9622,7 +9635,7 @@ Bun.serve<{ authed: true }>({
     },
     message(ws, raw) {
       try {
-        const parsed = JSON.parse(String(raw)) as { id?: string; text?: string; segments?: string[]; type?: string; turnId?: string; runtime?: string; imageUrl?: string; imagePath?: string; filePath?: string; fileName?: string; fileSize?: number; fileType?: string; clientTime?: unknown; sessionId?: string; prompt?: string }
+        const parsed = JSON.parse(String(raw)) as { id?: string; text?: string; segments?: string[]; type?: string; turnId?: string; runtime?: string; imageUrl?: string; imageSeparate?: boolean; imagePath?: string; filePath?: string; fileName?: string; fileSize?: number; fileType?: string; clientTime?: unknown; sessionId?: string; prompt?: string }
 
         // App-level heartbeat — a WS can look "open" to the browser for a
         // long time after the underlying network path has actually died
@@ -9683,7 +9696,7 @@ Bun.serve<{ authed: true }>({
           const codexSegments = Array.isArray(parsed.segments)
             ? parsed.segments.map((part) => typeof part === 'string' ? part.trim() : '').filter(Boolean).slice(0, 50)
             : undefined
-          const codexTurnText = codexSegments?.length ? codexSegments.join('\n') : codexText
+          const codexTurnText = codexSegments?.length ? renderSegmentedUserTurn(codexSegments) : codexText
           const codexImageUrl = parsed.imageUrl
           const codexFilePath = validUploadedPath(parsed.filePath)
           const codexFile = codexFilePath && codexFilePath.split('/').at(-1)?.includes('-file-') ? {
@@ -9705,8 +9718,8 @@ Bun.serve<{ authed: true }>({
             return
           }
           const send = extraState
-            ? codexSendExtraUserTurn(extraState, codexTurnText, codexImageUrl, parsed.clientTime, parsed.prompt, codexSegments, codexFile)
-            : codexSendUserTurn(codexTurnText, codexImageUrl, parsed.clientTime, parsed.prompt, codexSegments, codexFile)
+            ? codexSendExtraUserTurn(extraState, codexTurnText, codexImageUrl, parsed.clientTime, parsed.prompt, codexSegments, codexFile, parsed.imageSeparate === true)
+            : codexSendUserTurn(codexTurnText, codexImageUrl, parsed.clientTime, parsed.prompt, codexSegments, codexFile, parsed.imageSeparate === true)
           send.catch((err) => {
             log('codex_send_error', { error: String(err) })
             if (extraState) {

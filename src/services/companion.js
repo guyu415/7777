@@ -891,7 +891,7 @@ export function sendCodexMessage(text, imageUrl, options = {}) {
   const sessionId = normalizeCodexSessionId(options?.sessionId || selectedCodexSessionId)
   const prompt = typeof options?.prompt === 'string' ? options.prompt : ''
   const id = `codex-eunoia-${Date.now()}-${++codexSeq}`
-  return sendRaw(buildCodexMessagePayload({ id, text, segments: options?.segments, imageUrl, file: options?.file, sessionId, prompt, clientTime: clientTimeContext() }))
+  return sendRaw(buildCodexMessagePayload({ id, text, segments: options?.segments, imageUrl, imageSeparate: options?.imageSeparate, file: options?.file, sessionId, prompt, clientTime: clientTimeContext() }))
 }
 
 /**

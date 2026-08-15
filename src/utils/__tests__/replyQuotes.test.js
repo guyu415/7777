@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { buildQuotedReplyContent, buildReplyMessage, buildReplyMessageBatch, buildReplyQuotePrefix, parseReplyQuotes } from '../replyQuotes'
+import { buildQuotedReplyContent, buildReplyMessage, buildReplyMessageBatch, buildReplyQuotePrefix, formatReplyMessageBatchForModel, parseReplyQuotes } from '../replyQuotes'
 
 describe('reply quotes', () => {
   it('round-trips several quoted messages in one send', () => {
@@ -66,5 +66,20 @@ describe('reply quotes', () => {
       ],
       body: '一起回答',
     })
+  })
+
+  it('preserves a later quoted reply as a distinct model-side message', () => {
+    const laterReply = buildReplyMessage('第二条回复', [{ label: 'cc', preview: '被引用原文' }])
+    expect(formatReplyMessageBatchForModel(['第一条普通消息', laterReply])).toBe(
+      '【同一轮分条消息 1/2】\n第一条普通消息\n\n' +
+      '【同一轮分条消息 2/2】\n> 回复 cc：被引用原文\n\n第二条回复',
+    )
+  })
+
+  it('uses the same explicit boundaries when the quoted reply comes first', () => {
+    const firstReply = buildReplyMessage('第一条回复', [{ label: 'cc', preview: '被引用原文' }])
+    const rendered = formatReplyMessageBatchForModel([firstReply, '第二条普通消息'])
+    expect(rendered).toContain('【同一轮分条消息 1/2】\n> 回复 cc：被引用原文\n\n第一条回复')
+    expect(rendered).toContain('【同一轮分条消息 2/2】\n第二条普通消息')
   })
 })
