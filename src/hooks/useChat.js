@@ -1034,13 +1034,14 @@ export function useChat() {
       lastMsgPreview: type === 'text' ? (content || '').slice(0, 40) : type === 'file' ? `[文件] ${extra.fileName || ''}`.trim() : '[图片]',
       lastMsgTime: Date.now(),
     })
-    console.log('[SEND] saving to IDB...')
-    try {
-      await saveMessage(userMsg)
-      console.log('[SEND] IDB save OK')
-    } catch (e) {
-      console.error('[DB] saveMessage failed:', e)
-    }
+    // Start persistence first so IndexedDB keeps the same write ordering, but
+    // never hold the visible generating state behind that transaction. On
+    // mobile Safari a busy IDB can take seconds; the assistant placeholder
+    // and Stop button must still appear in the same click turn.
+    console.log('[SEND] saving to IDB in background...')
+    saveMessage(userMsg)
+      .then(() => console.log('[SEND] IDB save OK'))
+      .catch(e => console.error('[DB] saveMessage failed:', e))
     if (isLoading) {
       console.log('[SEND] 插话：AI生成中，消息入队，等当前轮自然结束后一并回应')
       pendingMessagesRef.current.push(userMsg)
@@ -1080,11 +1081,7 @@ export function useChat() {
 
     for (const userMsg of userMsgs) {
       addMessage(userMsg)
-      try {
-        await saveMessage(userMsg)
-      } catch (e) {
-        console.error('[DB] saveMessage failed:', e)
-      }
+      saveMessage(userMsg).catch(e => console.error('[DB] saveMessage failed:', e))
     }
     updateSession(CONVERSATION_ID, {
       lastMsgPreview: trimmed[trimmed.length - 1].slice(0, 40),
@@ -1128,7 +1125,7 @@ export function useChat() {
     if (messages.length === 0) updateSession(CONVERSATION_ID, { name: '[图片]' })
     for (const userMsg of userMsgs) {
       addMessage(userMsg)
-      try { await saveMessage(userMsg) } catch (e) { console.error('[DB] saveMessage failed:', e) }
+      saveMessage(userMsg).catch(e => console.error('[DB] saveMessage failed:', e))
     }
     updateSession(CONVERSATION_ID, {
       lastMsgPreview: textParts.length ? textParts[textParts.length - 1].slice(0, 40) : '[图片]',
@@ -1210,15 +1207,19 @@ export function useChat() {
     if (effectiveProviderName === 'claude-code-vps') {
       const msg = useStore.getState().messages.find(m => m.id === id)
       const text = msg?.voiceText || msg?.content
-      if (text) sendDeleteNotice(text)
+      const serverMessageIds = [...new Set([id, ...(Array.isArray(msg?.wireIds) ? msg.wireIds : [])])]
+      sendDeleteNotice(text || '', serverMessageIds)
       // Deleting the message should also remove the uploaded file it
       // referenced (see uploadImageToCompanion above) — otherwise every
       // deleted image message leaves an orphaned file on the VPS forever.
       if (msg?.imagePath) deleteUploadedImage(msg.imagePath).catch(e => console.error('[IMG-DELETE] 删除服务器图片失败:', e.message))
       if (msg?.filePath) deleteUploadedFile(msg.filePath).catch(e => console.error('[FILE-DELETE] 删除服务器文件失败:', e.message))
     }
-    await deleteMessageFromDB(id)
+    // Remove from the visible store before touching IndexedDB/network. A
+    // slow storage transaction must never make a tapped Delete button look
+    // dead; persistence and cross-device cleanup finish immediately after.
     deleteMessage(id)
+    await deleteMessageFromDB(id)
     scheduleMsgSync(CONVERSATION_ID)
   }, [deleteMessage, scheduleMsgSync, CONVERSATION_ID, effectiveProviderName])
 

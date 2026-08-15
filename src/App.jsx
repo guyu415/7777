@@ -16,7 +16,7 @@ import CodexMemory from './components/CodexMemory'
 import DesktopPet from './components/DesktopPet'
 import { getSettings, saveSettings, extractSettings, saveSessionMsgs, deleteSessionMsgs, putAsset, putAssetDataUrl, loadAsset } from './services/sync'
 import { compressImage, slimSettings } from './utils/image'
-import { ensureConnected as ensureCompanionConnected, getAuthStatus as getCompanionAuthStatus, onProactiveMessage, onProactiveActivity, onProactiveActivityAcknowledged, acknowledgeProactiveActivity, onRemoteUserMessage, onCcReset } from './services/companion'
+import { ensureConnected as ensureCompanionConnected, getAuthStatus as getCompanionAuthStatus, onProactiveMessage, onProactiveActivity, onProactiveActivityAcknowledged, acknowledgeProactiveActivity, onRemoteUserMessage, onCcMessageDeleted, onCcReset } from './services/companion'
 import { fetchTTSAudio } from './services/tts'
 import { themeWithUserBubbleText } from './utils/bubbleColors'
 
@@ -618,6 +618,33 @@ export default function App() {
       await saveMessage(msg)
       if (useStore.getState().currentSessionId === vpsSession.id) {
         useStore.getState().addMessage(msg)
+      }
+    })
+    return unsub
+  }, [])
+
+  // A CC bubble may combine several reply() calls and therefore have a local
+  // id plus multiple server wireIds. Apply the server's deletion broadcast
+  // to every matching local bubble so other tabs/devices update immediately
+  // and cannot resurrect it from their own IndexedDB/cloud copy later.
+  useEffect(() => {
+    const unsub = onCcMessageDeleted(async (serverIds) => {
+      const vpsSession = useStore.getState().sessions?.find(s => s.providerName === 'claude-code-vps')
+      if (!vpsSession) return
+      const idSet = new Set(serverIds)
+      const existing = await getMessages(vpsSession.id)
+      const removed = existing.filter(m => idSet.has(m.id) || (Array.isArray(m.wireIds) && m.wireIds.some(id => idSet.has(id))))
+      if (!removed.length) return
+      for (const msg of removed) await deleteMessageFromDB(msg.id)
+      const state = useStore.getState()
+      if (state.currentSessionId === vpsSession.id) {
+        for (const msg of removed) state.deleteMessage(msg.id)
+      }
+      const password = localStorage.getItem('auth.password')
+      if (password) {
+        const removedIds = new Set(removed.map(m => m.id))
+        saveSessionMsgs(password, vpsSession.id, existing.filter(m => !removedIds.has(m.id) && !m.streaming))
+          .catch(e => console.warn('[CC-DELETE] 云端消息同步失败:', e.message))
       }
     })
     return unsub

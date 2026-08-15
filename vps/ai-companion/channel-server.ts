@@ -966,8 +966,9 @@ type GroupChat = {
 type GroupUpdateWire = { type: 'group_update'; chat: GroupChat }
 type GroupListWire = { type: 'group_list'; chats: Array<{ id: string; name: string; members: GroupMemberId[]; updatedAt: number }> }
 type CareUpdateWire = { type: 'care_update'; state: CareHubState }
+type MsgDeletedWire = { type: 'msg_deleted'; ids: string[]; ts: number }
 
-type LiveWire = MsgWire | TurnStartWire | TurnEndWire | TurnErrorWire | ResetBusyWire | ResetWire | ThinkingWire | GomokuWire | GomokuTurnEndWire | DiceDuelWire | XinchaoUpdateWire
+type LiveWire = MsgWire | MsgDeletedWire | TurnStartWire | TurnEndWire | TurnErrorWire | ResetBusyWire | ResetWire | ThinkingWire | GomokuWire | GomokuTurnEndWire | DiceDuelWire | XinchaoUpdateWire
   | CodexMsgWire | CodexMsgDeletedWire | CodexStatusWire | CodexNoticeWire | CodexTurnEndWire | CodexTurnBusyWire | CodexResetBusyWire | CodexResetWire
   | FocusUpdateWire | FocusFinishedWire | GroupUpdateWire | GroupListWire | CareUpdateWire
 // resetAt lets a client that reconnects (or opens a brand new tab) long
@@ -1004,6 +1005,16 @@ function saveHistory() {
   }
 }
 const history: MsgWire[] = loadHistory()
+function deleteHistoryMessages(ids: string[]): number {
+  if (!ids.length) return 0
+  const idSet = new Set(ids)
+  const kept = history.filter(item => !idSet.has(item.id))
+  const removed = history.length - kept.length
+  if (!removed) return 0
+  history.splice(0, history.length, ...kept)
+  saveHistory()
+  return removed
+}
 let seq = 0
 
 const BRAIN_SESSION_ID_FILE = process.env.AI_COMPANION_BRAIN_SESSION_ID_FILE ?? join(ROOT, 'state', 'brain-session-id')
@@ -9635,7 +9646,7 @@ Bun.serve<{ authed: true }>({
     },
     message(ws, raw) {
       try {
-        const parsed = JSON.parse(String(raw)) as { id?: string; text?: string; segments?: string[]; type?: string; turnId?: string; runtime?: string; imageUrl?: string; imageSeparate?: boolean; imagePath?: string; filePath?: string; fileName?: string; fileSize?: number; fileType?: string; clientTime?: unknown; sessionId?: string; prompt?: string }
+        const parsed = JSON.parse(String(raw)) as { id?: string; text?: string; messageIds?: string[]; segments?: string[]; type?: string; turnId?: string; runtime?: string; imageUrl?: string; imageSeparate?: boolean; imagePath?: string; filePath?: string; fileName?: string; fileSize?: number; fileType?: string; clientTime?: unknown; sessionId?: string; prompt?: string }
 
         // App-level heartbeat — a WS can look "open" to the browser for a
         // long time after the underlying network path has actually died
@@ -9659,6 +9670,14 @@ Bun.serve<{ authed: true }>({
 
         if (parsed.type === 'delete_notice') {
           const deletedText = (parsed.text ?? '').trim()
+          const messageIds = Array.isArray(parsed.messageIds)
+            ? [...new Set(parsed.messageIds.filter(id => typeof id === 'string' && id.length > 0 && id.length <= 160))].slice(0, 50)
+            : []
+          const removed = deleteHistoryMessages(messageIds)
+          if (messageIds.length) {
+            sendRaw({ type: 'msg_deleted', ids: messageIds, ts: Date.now() })
+            log('history_messages_deleted', { requested: messageIds.length, removed })
+          }
           if (deletedText) notifyCcOfDeletedMessage(deletedText, parsed.clientTime)
           return
         }

@@ -309,6 +309,21 @@ function maybeAnnounceRemoteUserMessage(message) {
   }
 }
 
+const ccMessageDeletedListeners = new Set()
+/** A delete is display-history state, shared across tabs/devices. The server
+ * sends stable wire ids; callers map those back to local aggregate bubbles. */
+export function onCcMessageDeleted(fn) {
+  ccMessageDeletedListeners.add(fn)
+  return () => ccMessageDeletedListeners.delete(fn)
+}
+
+function announceCcMessageDeleted(ids) {
+  if (!Array.isArray(ids) || ids.length === 0) return
+  for (const fn of ccMessageDeletedListeners) {
+    try { fn(ids) } catch { /* isolate subscribers */ }
+  }
+}
+
 // Takes the whole wire message (not just id/text/ts) so a proactive reply
 // carries the same kind/voice/style/thinking a normal streamChatViaCompanion()
 // -delivered one does — previously this dropped everything but text, silently
@@ -1070,6 +1085,10 @@ listeners.add(evt => {
       // fall through — turn_end/turn_error also matter to any in-flight
       // streamChatViaCompanion() generator, handled further down via `listeners`
     }
+    if (m.type === 'msg_deleted') {
+      announceCcMessageDeleted(m.ids)
+      return
+    }
     if (m.type === 'msg' && m.from === 'user') maybeAnnounceRemoteUserMessage(m)
     if (m.type === 'msg' && m.from === 'cc') maybeAnnounceProactive(m)
     return
@@ -1272,9 +1291,9 @@ function genId() {
 // dropped notice (offline, or CC mid-turn on something else, see
 // notifyCcOfDeletedMessage's own currentTurn check server-side) just means
 // this one deletion doesn't get flagged, not a broken feature.
-export function sendDeleteNotice(text) {
-  if (!text) return
-  sendRaw({ type: 'delete_notice', text, clientTime: clientTimeContext() })
+export function sendDeleteNotice(text, messageIds = []) {
+  if (!text && messageIds.length === 0) return
+  sendRaw({ type: 'delete_notice', text, messageIds, clientTime: clientTimeContext() })
 }
 
 /**

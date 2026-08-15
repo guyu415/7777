@@ -102,4 +102,15 @@ describe('companion connection recovery', () => {
     await expect(firstChunk).resolves.toEqual({ value: { text: '嗯', wireId: 'reply-2' }, done: false })
     await expect(stream.next()).resolves.toEqual({ value: undefined, done: true })
   })
+
+  it('broadcasts server-side message deletions to subscribers', async () => {
+    const companion = await import('../companion.js')
+    const deleted = []
+    companion.onCcMessageDeleted(ids => deleted.push(ids))
+    companion.ensureConnected()
+    const socket = MockWebSocket.instances[0]
+    socket.open()
+    socket.message({ type: 'msg_deleted', ids: ['reply-1', 'reply-2'], ts: Date.now() })
+    expect(deleted).toEqual([['reply-1', 'reply-2']])
+  })
 })
