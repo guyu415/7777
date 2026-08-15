@@ -18,6 +18,7 @@ import {
   saveTidalState,
   sessionIdUnchanged,
   shouldEvaluateTidalSurface,
+  shouldInjectTidalStartupRecovery,
   tidalTrigger,
   tidalStatusSnapshot,
   tidalStateAfterConversationClear,
@@ -244,6 +245,12 @@ describe('recovery packet and isolation', () => {
     expect(shouldEvaluateTidalSurface('codex')).toBeFalse()
     expect(shouldEvaluateTidalSurface('group')).toBeFalse()
     expect(shouldEvaluateTidalSurface('gomoku')).toBeFalse()
+  })
+
+  test('does not duplicate the recovery packet into a normally resumed session', () => {
+    expect(shouldInjectTidalStartupRecovery('resumed')).toBeFalse()
+    expect(shouldInjectTidalStartupRecovery('fresh')).toBeTrue()
+    expect(shouldInjectTidalStartupRecovery(undefined)).toBeTrue()
   })
 
   test('concurrent messages deduplicate queue entries and only one tide can be claimed', () => {

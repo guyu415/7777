@@ -512,6 +512,13 @@ export function shouldEvaluateTidalSurface(surface: string): boolean {
   return surface === 'main'
 }
 
+// A resumed Claude Code session already contains its own full conversation
+// state. Re-injecting the recovery packet on every service restart duplicates
+// memory and grows the prompt. Fresh/unknown starts still need the packet.
+export function shouldInjectTidalStartupRecovery(sessionMode: unknown): boolean {
+  return sessionMode !== 'resumed'
+}
+
 export async function guardedSummaryBeforeCompact(args: {
   summarize: () => Promise<unknown>
   compact: (summary: RollingSummary) => Promise<void>

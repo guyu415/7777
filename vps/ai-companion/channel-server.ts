@@ -63,6 +63,7 @@ import {
   retainThroughBoundary,
   renderRollingSummary,
   saveTidalState,
+  shouldInjectTidalStartupRecovery,
   summaryInput,
   tidalStatusSnapshot,
   tidalStateAfterConversationClear,
@@ -3799,6 +3800,10 @@ function tidalStartupMarker(): string {
   return `cc-tidal-startup:${tidalState.sessionId}:${startupTs}:r${tidalState.summaryRevision}`
 }
 
+function tidalStartupSessionMode(): unknown {
+  try { return JSON.parse(readFileSync(SESSION_MODE_FILE, 'utf8'))?.mode } catch { return undefined }
+}
+
 async function injectTidalStartupRecovery(): Promise<boolean> {
   if (!tidalState.rollingSummary || tidalState.summaryRevision < 1) return false
   const visible = visibleCcHistory()
@@ -3850,8 +3855,12 @@ function resumeTidalAfterStartup() {
   }
   if (tidalState.pending) startTidalRun()
   else if (tidalState.retryAt && tidalState.retryAt > Date.now()) scheduleTidalRetry()
-  else if (tidalState.rollingSummary) void injectTidalStartupRecovery().then((started) => { if (!started) tidalDrainQueue() })
-  else tidalDrainQueue()
+  else if (tidalState.rollingSummary && shouldInjectTidalStartupRecovery(tidalStartupSessionMode())) {
+    void injectTidalStartupRecovery().then((started) => { if (!started) tidalDrainQueue() })
+  } else {
+    if (tidalState.rollingSummary) tidalLog('startup_recovery_skipped_resumed_session', { summaryRevision: tidalState.summaryRevision })
+    tidalDrainQueue()
+  }
 }
 
 function loginPageHtml(returnUrl: string): string {
