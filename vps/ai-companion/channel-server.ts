@@ -9678,7 +9678,6 @@ Bun.serve<{ authed: true }>({
         }
 
         if (parsed.type === 'delete_notice') {
-          const deletedText = (parsed.text ?? '').trim()
           const messageIds = Array.isArray(parsed.messageIds)
             ? [...new Set(parsed.messageIds.filter(id => typeof id === 'string' && id.length > 0 && id.length <= 160))].slice(0, 50)
             : []
@@ -9687,7 +9686,6 @@ Bun.serve<{ authed: true }>({
             sendRaw({ type: 'msg_deleted', ids: messageIds, ts: Date.now() })
             log('history_messages_deleted', { requested: messageIds.length, removed })
           }
-          if (deletedText) notifyCcOfDeletedMessage(deletedText, parsed.clientTime)
           return
         }
 
