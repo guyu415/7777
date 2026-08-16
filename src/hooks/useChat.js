@@ -855,10 +855,16 @@ export function useChat() {
         placed++
       }
 
-      // All companion bubbles have been placed synchronously above. Persist
-      // them together afterwards so IndexedDB latency cannot serialize what
-      // the user sees on screen.
-      if (deferredVpsSaves.length) await Promise.all(deferredVpsSaves)
+      // All companion bubbles have been placed synchronously above. Their
+      // IndexedDB writes were already started; do not keep the stop button /
+      // "replying" state alive merely to await local persistence after the
+      // complete answer is visible. The debounced cloud sync below runs two
+      // seconds later, leaving these writes ample time to settle first.
+      if (deferredVpsSaves.length) {
+        void Promise.all(deferredVpsSaves).catch((error) => {
+          console.warn('[VPS-MESSAGE-SAVE] 本地保存失败:', error?.message)
+        })
+      }
 
       updateSession(CONVERSATION_ID, { lastMsgPreview: (lastPreview || '').slice(0, 40), lastMsgTime: Date.now() })
 

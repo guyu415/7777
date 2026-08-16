@@ -208,10 +208,20 @@ export default function ChatWindow({ theme }) {
       return
     }
     let live = true
+    let poller = null
+    const scheduleNext = (delay) => {
+      clearTimeout(poller)
+      if (live && document.visibilityState === 'visible') poller = setTimeout(refresh, delay)
+    }
     const refresh = async () => {
+      let nextDelay = 30_000
       try {
         const status = await getTidalMemoryStatus()
         if (!live) return
+        // Only an active tide needs close stage tracking. An idle CC window
+        // previously fetched this endpoint every 1.5 seconds forever, which
+        // kept mobile radios and JS wakeups unnecessarily busy.
+        if (status?.tide?.status === 'running') nextDelay = 1_500
         const next = chatTidalNotice(status)
         if (!next) {
           if (!tidalNoticeTimerRef.current) setTidalNotice(null)
@@ -231,17 +241,27 @@ export default function ChatWindow({ theme }) {
       } catch {
         // Chat delivery has its own connection/error UI. A status-poll error
         // must not invent a tide failure or interfere with sending messages.
+      } finally {
+        scheduleNext(nextDelay)
       }
     }
+    const refreshWhenVisible = () => {
+      clearTimeout(poller)
+      if (document.visibilityState === 'visible') void refresh()
+    }
     void refresh()
-    const poller = setInterval(refresh, 1_500)
+    document.addEventListener('visibilitychange', refreshWhenVisible)
     return () => {
       live = false
-      clearInterval(poller)
+      clearTimeout(poller)
+      document.removeEventListener('visibilitychange', refreshWhenVisible)
       if (tidalNoticeTimerRef.current) clearTimeout(tidalNoticeTimerRef.current)
       tidalNoticeTimerRef.current = null
     }
-  }, [isVpsSession])
+  // A normal reply ending is the moment a tide can be claimed server-side;
+  // restarting this lightweight poll once on that transition detects it
+  // immediately without paying the 1.5-second idle polling cost.
+  }, [isVpsSession, isLoading])
 
   const showToast = (msg = '✨ 已记住~') => {
     setToast(msg)
