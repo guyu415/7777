@@ -33,18 +33,18 @@ const Deck = ({ type, disabled, active, onClick }) => (
 )
 
 const CouplesTruthOrDare = forwardRef(function CouplesTruthOrDare({
-  theme, sessionId, aiName, onRequestUserRoll, onCardReady, onClearCard, onClose,
+  theme, sessionId, aiName, onRequestUserRoll, onCardReady, onAiCardReady, onClearCard, onClose,
 }, ref) {
   const storageKey = `couples-truth-dare:${sessionId}`
   const saved = useMemo(() => readGame(storageKey), [storageKey])
   const [round, setRound] = useState(Number(saved?.round) || 1)
-  const [rollResult, setRollResult] = useState(null)
-  const [current, setCurrent] = useState(null)
+  const [rollResult, setRollResult] = useState(saved?.rollResult?.ai != null ? saved.rollResult : null)
+  const [current, setCurrent] = useState(saved?.current || null)
   const [lastCardId, setLastCardId] = useState(saved?.lastCardId || '')
   const [waitingForAi, setWaitingForAi] = useState(false)
   const [aiPicking, setAiPicking] = useState(false)
-  const [pickedDeck, setPickedDeck] = useState('')
-  const [cardSent, setCardSent] = useState(false)
+  const [pickedDeck, setPickedDeck] = useState(saved?.pickedDeck || saved?.current?.type || '')
+  const [cardSent, setCardSent] = useState(!!saved?.cardSent)
   const timersRef = useRef([])
   const primary = theme?.primary || '#ff6f9f'
   const primaryDark = theme?.primaryDark || '#c94f78'
@@ -57,8 +57,17 @@ const CouplesTruthOrDare = forwardRef(function CouplesTruthOrDare({
   useEffect(() => () => timersRef.current.forEach(clearTimeout), [])
 
   useEffect(() => {
-    try { sessionStorage.setItem(storageKey, JSON.stringify({ round, lastCardId })) } catch { /* optional */ }
-  }, [storageKey, round, lastCardId])
+    try { sessionStorage.setItem(storageKey, JSON.stringify({ round, lastCardId, rollResult, current, pickedDeck, cardSent })) } catch { /* optional */ }
+  }, [storageKey, round, lastCardId, rollResult, current, pickedDeck, cardSent])
+
+  // Reopening the folded game must restore a user-drawn card as the pending
+  // question for the composer. CC cards are marked dispatched before closing
+  // and therefore never trigger a duplicate model turn on remount.
+  useEffect(() => {
+    if (current?.target === 'user' && !cardSent) onCardReady?.(current)
+    // This is intentionally mount-only restoration from sessionStorage.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   const revealCard = (type, target) => {
     // There are exactly two piles. Intensity is not a third choice: each pile
@@ -69,8 +78,13 @@ const CouplesTruthOrDare = forwardRef(function CouplesTruthOrDare({
     setPickedDeck(type)
     setCurrent(next)
     setLastCardId(card.id)
-    setCardSent(false)
-    onCardReady?.(next)
+    if (target === 'ai') {
+      setCardSent(true)
+      onAiCardReady?.(next)
+    } else {
+      setCardSent(false)
+      onCardReady?.(next)
+    }
   }
 
   useImperativeHandle(ref, () => ({
@@ -121,7 +135,7 @@ const CouplesTruthOrDare = forwardRef(function CouplesTruthOrDare({
 
   const isTie = rollResult?.ai != null && rollResult.ai === rollResult.user
   const status = current
-    ? (cardSent ? '已经跟着你的消息发出' : '等你开口')
+    ? (current.target === 'ai' ? `${aiName || 'CC'} 的回合` : (cardSent ? '已经跟着你的消息发出' : '等你回答'))
     : waitingForAi
       ? `${aiName || 'CC'} 正在掷骰…`
       : isTie

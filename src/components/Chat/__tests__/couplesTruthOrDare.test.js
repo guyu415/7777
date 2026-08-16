@@ -22,4 +22,9 @@ describe('couples truth or dare deck', () => {
     const message = composeCouplesCardMessage({ round: 3, target: 'user', aiName: 'CC', type: 'truth', card: { text: '测试题' } }, '这是我的回答')
     expect(message).toBe('【第 3 轮｜我抽到真心话】\n测试题\n\n这是我的回答')
   })
+
+  it('sends a CC-drawn card as one concise turn without fake instructions', () => {
+    const message = composeCouplesCardMessage({ round: 2, target: 'ai', aiName: 'CC', type: 'dare', card: { text: '完成这个挑战' } }, '')
+    expect(message).toBe('【第 2 轮｜CC抽到大冒险】\n完成这个挑战')
+  })
 })

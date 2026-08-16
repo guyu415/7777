@@ -754,6 +754,12 @@ export default function ChatWindow({ theme }) {
             aiName={effectiveAiName}
             onRequestUserRoll={() => playTruthDareRoll(rollD6())}
             onCardReady={setPendingTruthDareCard}
+            onAiCardReady={(card) => {
+              setPendingTruthDareCard(null)
+              updateActiveTime()
+              sendMessage(composeCouplesCardMessage({ ...card, aiName: effectiveAiName }, ''), 'text')
+                .catch(e => console.error('[TRUTH-DARE] CC card turn failed:', e.message))
+            }}
             onClearCard={() => setPendingTruthDareCard(null)}
             onClose={() => setShowTruthDare(false)}
           />
