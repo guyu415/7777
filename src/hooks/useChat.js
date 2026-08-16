@@ -1018,6 +1018,30 @@ export function useChat() {
     }
   }, [CONVERSATION_ID, effectiveApiKey, effectiveBaseUrl, effectiveModel, effectiveSystemPrompt, effectiveMemoryEnabled, workerUrl, useWorkerProxy, acWorkerUrl, effectiveTtsApiKey, effectiveTtsGroupId, effectiveTtsVoiceId, aiVoiceEnabled, effectiveVoiceFrequency, effectiveDisableThinking, effectiveWebSearch, effectiveProviderName, addMessage, updateMessage, deleteMessage, setIsLoading, setStreamingMessageId, updateSession, scheduleMsgSync, setSummaryToast])
 
+  // Game actions such as a physical dice throw belong in the transcript, but
+  // they are not a conversational turn by themselves. Persist the bubble and
+  // deliberately do not call streamResponse; the game decides when CC should
+  // act and the user's next real message remains the next model turn.
+  const appendLocalMessage = useCallback((content, role = 'user') => {
+    const message = {
+      id: genId(),
+      conversationId: CONVERSATION_ID,
+      role: role === 'assistant' ? 'assistant' : 'user',
+      type: 'text',
+      content,
+      timestamp: Date.now(),
+    }
+    addMessage(message)
+    updateSession(CONVERSATION_ID, {
+      lastMsgPreview: content.slice(0, 40),
+      lastMsgTime: message.timestamp,
+    })
+    saveMessage(message)
+      .then(() => scheduleMsgSync(CONVERSATION_ID))
+      .catch(e => console.error('[DB] local game message save failed:', e))
+    return message
+  }, [CONVERSATION_ID, addMessage, scheduleMsgSync, updateSession])
+
   const sendMessage = useCallback(async (content, type = 'text', extra = {}) => {
     console.log('[SEND] sendMessage called | keyLen=', effectiveApiKey?.length ?? 0, '| baseUrl=', effectiveBaseUrl, '| isLoading=', isLoading)
     const isVpsProvider = effectiveProviderName === 'claude-code-vps'
@@ -1264,5 +1288,5 @@ export function useChat() {
     scheduleMsgSync(CONVERSATION_ID)
   }, [updateMessage, scheduleMsgSync, CONVERSATION_ID])
 
-  return { messages, sendMessage, sendMessageBatch, sendImageMessageBatch, loadHistory, isLoading, regenerate, regenerateRound, retryFailed, deleteMsg, editMessage, stopStreaming }
+  return { messages, sendMessage, sendMessageBatch, sendImageMessageBatch, appendLocalMessage, loadHistory, isLoading, regenerate, regenerateRound, retryFailed, deleteMsg, editMessage, stopStreaming }
 }
