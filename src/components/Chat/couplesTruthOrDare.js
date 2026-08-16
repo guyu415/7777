@@ -108,9 +108,15 @@ export function drawCouplesCard({ level, type, previousId, random = Math.random 
   return candidates[Math.floor(normalized * candidates.length)]
 }
 
-export function composeCouplesCardMessage({ round, target, aiName, type, card }, response) {
+export function composeCouplesCardMessage(turn, response) {
+  const { round, target, aiName, type } = turn || {}
   const targetName = target === 'ai' ? (aiName || 'CC') : '我'
   const typeLabel = type === 'truth' ? '真心话' : '大冒险'
+  // The live game stores a drawn card as one flat object (`{ text, type,
+  // target, round }`). Older callers/tests used `{ card: { text } }`. Accept
+  // both shapes so a card can never make the composer throw and eat the
+  // user's send action again.
+  const question = String(turn?.text ?? turn?.card?.text ?? '').trim()
   const answer = String(response || '').trim()
-  return `【第 ${round} 轮｜${targetName}抽到${typeLabel}】\n${card.text}${answer ? `\n\n${answer}` : ''}`
+  return `【第 ${round} 轮｜${targetName}抽到${typeLabel}】\n${question}${answer ? `\n\n${answer}` : ''}`
 }

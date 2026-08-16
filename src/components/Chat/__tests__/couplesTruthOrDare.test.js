@@ -27,4 +27,10 @@ describe('couples truth or dare deck', () => {
     const message = composeCouplesCardMessage({ round: 2, target: 'ai', aiName: 'CC', type: 'dare', card: { text: '完成这个挑战' } }, '')
     expect(message).toBe('【第 2 轮｜CC抽到大冒险】\n完成这个挑战')
   })
+
+  it('sends the flat card object produced by the live game', () => {
+    const drawnCard = { id: 'adult-truth-1', text: '实际牌面', round: 4, target: 'user', type: 'truth' }
+    expect(composeCouplesCardMessage(drawnCard, '我的实际回答'))
+      .toBe('【第 4 轮｜我抽到真心话】\n实际牌面\n\n我的实际回答')
+  })
 })
