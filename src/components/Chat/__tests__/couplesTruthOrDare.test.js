@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { buildCouplesTurnPrompt, COUPLES_TOD_CARDS, drawCouplesCard } from '../couplesTruthOrDare'
+import { composeCouplesCardMessage, COUPLES_TOD_CARDS, drawCouplesCard } from '../couplesTruthOrDare'
 
 describe('couples truth or dare deck', () => {
   it('draws from the requested level and type', () => {
@@ -13,11 +13,8 @@ describe('couples truth or dare deck', () => {
     expect(next.id).not.toBe(first.id)
   })
 
-  it('builds a CC-addressed turn prompt with consent-aware instructions', () => {
-    const prompt = buildCouplesTurnPrompt({ round: 3, target: 'ai', aiName: 'CC', type: 'truth', level: 'intimate', card: { text: '测试题' } })
-    expect(prompt).toContain('第 3 轮')
-    expect(prompt).toContain('轮到CC')
-    expect(prompt).toContain('测试题')
-    expect(prompt).toContain('伴侣身份')
+  it('combines the drawn card and the next real message into one turn', () => {
+    const message = composeCouplesCardMessage({ round: 3, target: 'user', aiName: 'CC', type: 'truth', card: { text: '测试题' } }, '这是我的回答')
+    expect(message).toBe('【第 3 轮｜我抽到真心话】\n测试题\n\n这是我的回答')
   })
 })

@@ -12,6 +12,7 @@ import VoiceCall from '../Voice/VoiceCall'
 import GomokuBoard from './GomokuBoard'
 import SpicyMonopolyBoard from './SpicyMonopolyBoard'
 import CouplesTruthOrDare from './CouplesTruthOrDare'
+import { composeCouplesCardMessage } from './couplesTruthOrDare'
 import SessionList from '../SessionList'
 import XinchaoPanel from './XinchaoPanel'
 import FocusPomodoroSheet from '../Focus/FocusPomodoroSheet'
@@ -123,7 +124,7 @@ export default function ChatWindow({ theme }) {
   // the file. cc/codex above are BOTH always called (Rules of Hooks); only
   // one is ever actually used per render.
   const active = isCodexSession ? codex : cc
-  const { messages, sendMessage, sendMessageBatch, sendImageMessageBatch, loadHistory, isLoading, regenerate, regenerateRound, retryFailed, deleteMsg, editMessage, stopStreaming } = active
+  const { messages, sendMessage, sendMessageBatch, sendImageMessageBatch, appendLocalMessage, loadHistory, isLoading, regenerate, regenerateRound, retryFailed, deleteMsg, editMessage, stopStreaming } = active
 
   const effectiveAiName = currentSession?.aiName ?? globalAiName
   const effectiveAiAvatar = currentSession?.aiAvatar ?? globalAiAvatar
@@ -132,6 +133,8 @@ export default function ChatWindow({ theme }) {
   const effectiveWebSearch = currentSession?.webSearch ?? false
 
   const inputRef = useRef(null)
+  const truthDareRef = useRef(null)
+  const [pendingTruthDareCard, setPendingTruthDareCard] = useState(null)
   const [menuMsg, setMenuMsg] = useState(null)
   const [selectedMessageIds, setSelectedMessageIds] = useState(() => new Set())
   const [replyTargets, setReplyTargets] = useState([])
@@ -169,6 +172,7 @@ export default function ChatWindow({ theme }) {
     setReplyTargets([])
     setMenuMsg(null)
     setSelectedMessageIds(new Set())
+    setPendingTruthDareCard(null)
   }, [currentSessionId])
   const [showXinchaoPanel, setShowXinchaoPanel] = useState(false)
   const [showSearch, setShowSearch] = useState(false)
@@ -727,27 +731,13 @@ export default function ChatWindow({ theme }) {
 
         {showTruthDare && isVpsSession && (
           <CouplesTruthOrDare
+            ref={truthDareRef}
             theme={theme}
             sessionId={currentSessionId}
             aiName={effectiveAiName}
-            messages={messages}
-            isLoading={isLoading}
-            onSendTurn={(prompt) => {
-              updateActiveTime()
-              return sendMessage(prompt, 'text')
-            }}
-            onRollRound={(result, gameRound) => {
-              updateActiveTime()
-              const loserName = result.loser === 'user' ? '我' : effectiveAiName
-              const instruction = result.loser === 'ai'
-                ? `${effectiveAiName} 输了。请你先只明确回复“我选真心话”或“我选大冒险”，等牌桌抽题后再作答。`
-                : '我输了，由我在牌桌选择真心话或大冒险；请先等我抽题。'
-              return sendMessageBatch([
-                '我掷骰', `[DICE:${result.user}]`,
-                `${effectiveAiName} 掷骰`, `[DICE:${result.ai}]`,
-                `【情侣真心话大冒险｜第 ${gameRound} 轮】我掷出 ${result.user}，${effectiveAiName} 掷出 ${result.ai}。${loserName} 点数更小，本轮输了。${instruction}`,
-              ])
-            }}
+            onAppendDice={(value, role) => appendLocalMessage?.(`[DICE:${value}]`, role)}
+            onCardReady={setPendingTruthDareCard}
+            onClearCard={() => setPendingTruthDareCard(null)}
             onClose={() => setShowTruthDare(false)}
           />
         )}
@@ -988,11 +978,25 @@ export default function ChatWindow({ theme }) {
           onSend={(text) => {
             console.log('[PAW] onSend received, text:', JSON.stringify(text))
             updateActiveTime()
-            sendMessage(text, 'text').catch(e => console.error('[PAW] sendMessage error:', e.message))
+            const content = pendingTruthDareCard
+              ? composeCouplesCardMessage({ ...pendingTruthDareCard, aiName: effectiveAiName }, text)
+              : text
+            if (pendingTruthDareCard) {
+              setPendingTruthDareCard(null)
+              truthDareRef.current?.markCardSent()
+            }
+            sendMessage(content, 'text').catch(e => console.error('[PAW] sendMessage error:', e.message))
           }}
           onSendBatch={(contents) => {
             updateActiveTime()
-            sendMessageBatch(contents).catch(e => console.error('[PAW] sendMessageBatch error:', e.message))
+            const next = pendingTruthDareCard && contents.length
+              ? [composeCouplesCardMessage({ ...pendingTruthDareCard, aiName: effectiveAiName }, contents[0]), ...contents.slice(1)]
+              : contents
+            if (pendingTruthDareCard) {
+              setPendingTruthDareCard(null)
+              truthDareRef.current?.markCardSent()
+            }
+            sendMessageBatch(next).catch(e => console.error('[PAW] sendMessageBatch error:', e.message))
           }}
           onStartCall={handleStartCall}
           onSendImage={handleSendImage}
@@ -1003,6 +1007,10 @@ export default function ChatWindow({ theme }) {
           onRollDice={() => {
             const value = rollD6()
             updateActiveTime()
+            if (showTruthDare && isVpsSession) {
+              truthDareRef.current?.userRolled(value)
+              return
+            }
             sendMessage(`[DICE:${value}]`, 'text').catch(e => console.error('[DICE] send failed:', e.message))
           }}
           onOpenSpicy={() => { setShowTruthDare(false); setShowSpicy(true) }}

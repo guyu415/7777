@@ -106,12 +106,8 @@ export function drawCouplesCard({ level, type, previousId, random = Math.random 
   return candidates[Math.floor(normalized * candidates.length)]
 }
 
-export function buildCouplesTurnPrompt({ round, target, aiName, type, level, card }) {
+export function composeCouplesCardMessage({ round, target, aiName, type, card }, response) {
   const targetName = target === 'ai' ? (aiName || 'CC') : '我'
   const typeLabel = type === 'truth' ? '真心话' : '大冒险'
-  const levelLabel = COUPLES_TOD_LEVELS.find(item => item.id === level)?.label || level
-  const instruction = target === 'ai'
-    ? '现在轮到你。请以伴侣身份直接、真诚地回答或完成，不要替我跳过；若涉及现实身体动作，就用你能做到的语音、文字或想象情境完成。'
-    : '现在轮到我。请以伴侣身份主持这一题，不要替我回答；可以追问，但要接受我完成、协商修改或跳过。'
-  return `【情侣真心话大冒险｜第 ${round} 轮｜${levelLabel}｜${typeLabel}｜轮到${targetName}】\n${card.text}\n\n${instruction}`
+  return `【第 ${round} 轮｜${targetName}抽到${typeLabel}】\n${card.text}\n\n${String(response || '').trim()}`
 }
