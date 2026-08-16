@@ -11,6 +11,7 @@ import CarryOutPetModal from './CarryOutPetModal'
 import VoiceCall from '../Voice/VoiceCall'
 import GomokuBoard from './GomokuBoard'
 import SpicyMonopolyBoard from './SpicyMonopolyBoard'
+import CouplesTruthOrDare from './CouplesTruthOrDare'
 import SessionList from '../SessionList'
 import XinchaoPanel from './XinchaoPanel'
 import FocusPomodoroSheet from '../Focus/FocusPomodoroSheet'
@@ -22,6 +23,7 @@ import { useScheduledMessages } from '../../hooks/useScheduledMessages'
 import { useFocusRuntime } from '../../hooks/useFocusRuntime'
 import { useStore, deleteMessageFromDB, getBlob } from '../../store'
 import { putAsset } from '../../services/sync'
+import { rollD6 } from '../../utils/dice'
 import { getXinchaoStatus, onXinchaoUpdate, getCodexMemoryFile, putCodexMemoryFile, uploadFileToCompanion, getTidalMemoryStatus } from '../../services/companion'
 
 const SYNC_BASE = 'https://chat.xiaoman.xyz'
@@ -140,6 +142,7 @@ export default function ChatWindow({ theme }) {
   const [showCall, setShowCall] = useState(false)
   const [showGomoku, setShowGomoku] = useState(false)
   const [showSpicy, setShowSpicy] = useState(false)
+  const [showTruthDare, setShowTruthDare] = useState(false)
   const [showSessionDrawer, setShowSessionDrawer] = useState(false)
   const [showDivination, setShowDivination] = useState(false)
   const [showCarryOut, setShowCarryOut] = useState(false)
@@ -722,6 +725,33 @@ export default function ChatWindow({ theme }) {
           />
         )}
 
+        {showTruthDare && isVpsSession && (
+          <CouplesTruthOrDare
+            theme={theme}
+            sessionId={currentSessionId}
+            aiName={effectiveAiName}
+            messages={messages}
+            isLoading={isLoading}
+            onSendTurn={(prompt) => {
+              updateActiveTime()
+              return sendMessage(prompt, 'text')
+            }}
+            onRollRound={(result, gameRound) => {
+              updateActiveTime()
+              const loserName = result.loser === 'user' ? '我' : effectiveAiName
+              const instruction = result.loser === 'ai'
+                ? `${effectiveAiName} 输了。请你先只明确回复“我选真心话”或“我选大冒险”，等牌桌抽题后再作答。`
+                : '我输了，由我在牌桌选择真心话或大冒险；请先等我抽题。'
+              return sendMessageBatch([
+                '我掷骰', `[DICE:${result.user}]`,
+                `${effectiveAiName} 掷骰`, `[DICE:${result.ai}]`,
+                `【情侣真心话大冒险｜第 ${gameRound} 轮】我掷出 ${result.user}，${effectiveAiName} 掷出 ${result.ai}。${loserName} 点数更小，本轮输了。${instruction}`,
+              ])
+            }}
+            onClose={() => setShowTruthDare(false)}
+          />
+        )}
+
         {isVpsSession && tidalNotice && (
           <div className="flex-shrink-0 flex justify-center px-4 pt-1.5" style={{ position: 'relative', zIndex: 4 }}>
             <div
@@ -971,13 +1001,13 @@ export default function ChatWindow({ theme }) {
           onCancelReply={(id) => setReplyTargets((current) => id ? current.filter((target) => target.id !== id) : [])}
           onOpenGomoku={() => setShowGomoku(true)}
           onRollDice={() => {
-            const random = new Uint32Array(1)
-            crypto.getRandomValues(random)
-            const value = (random[0] % 6) + 1
+            const value = rollD6()
             updateActiveTime()
             sendMessage(`[DICE:${value}]`, 'text').catch(e => console.error('[DICE] send failed:', e.message))
           }}
-          onOpenSpicy={() => setShowSpicy(true)}
+          onOpenSpicy={() => { setShowTruthDare(false); setShowSpicy(true) }}
+          onOpenTruthDare={() => { setShowSpicy(false); setShowTruthDare(true) }}
+          truthDareEnabled={isVpsSession}
           spicyEnabled={isVpsSession}
           gomokuEnabled={isFixedVpsSession}
           onOpenFocus={() => setShowFocusSheet(true)}

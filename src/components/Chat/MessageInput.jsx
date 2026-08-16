@@ -61,6 +61,15 @@ function DiceIcon() {
   )
 }
 
+function TruthDareIcon() {
+  return (
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M12 20s-7-4.35-7-10a4 4 0 0 1 7-2.65A4 4 0 0 1 19 10c0 5.65-7 10-7 10Z"/>
+      <path d="M9.3 11.2h.01M14.7 11.2h.01M9.5 15h5"/>
+    </svg>
+  )
+}
+
 function MonopolyIcon() {
   return (
     <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
@@ -187,7 +196,7 @@ function readDraft(storageKey) {
   } catch { return { text: '', segments: [] } }
 }
 
-const MessageInput = forwardRef(function MessageInput({ onSend, onSendBatch, onStartCall, onSendImage, onSendFile, replyDrafts = [], onCancelReply, onOpenGomoku, onRollDice, onOpenSpicy, spicyEnabled, gomokuEnabled, onOpenFocus, onOpenDivination, disabled, theme, isLoading, onStop, draftKey }, ref) {
+const MessageInput = forwardRef(function MessageInput({ onSend, onSendBatch, onStartCall, onSendImage, onSendFile, replyDrafts = [], onCancelReply, onOpenGomoku, onRollDice, onOpenSpicy, onOpenTruthDare, truthDareEnabled, spicyEnabled, gomokuEnabled, onOpenFocus, onOpenDivination, disabled, theme, isLoading, onStop, draftKey }, ref) {
   const draftStorageKey = draftKey ? `chat.draft.${draftKey}` : null
   const initialDraft = readDraft(draftStorageKey)
   const [text, setTextRaw] = useState(initialDraft.text)
@@ -418,6 +427,10 @@ const MessageInput = forwardRef(function MessageInput({ onSend, onSendBatch, onS
   const handleMenuSpicy = () => {
     setMenuOpen(false)
     onOpenSpicy?.()
+  }
+  const handleMenuTruthDare = () => {
+    setMenuOpen(false)
+    onOpenTruthDare?.()
   }
 
   const handleMenuFocus = () => {
@@ -697,6 +710,13 @@ const MessageInput = forwardRef(function MessageInput({ onSend, onSendBatch, onS
             sub={spicyEnabled ? undefined : '仅CC窗支持'}
             onClick={handleMenuSpicy}
             disabled={!spicyEnabled}
+          />
+          <MenuItem
+            icon={<TruthDareIcon />}
+            label="真心话大冒险"
+            sub={truthDareEnabled ? '情侣版' : '仅CC窗支持'}
+            onClick={handleMenuTruthDare}
+            disabled={!truthDareEnabled}
           />
           <MenuItem icon={<FocusIcon />} label="专注" onClick={handleMenuFocus} />
           <MenuItem icon={<DivinationIcon />} label="抽签" onClick={handleMenuDivination} />
