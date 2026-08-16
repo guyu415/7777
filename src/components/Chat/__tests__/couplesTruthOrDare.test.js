@@ -13,6 +13,11 @@ describe('couples truth or dare deck', () => {
     expect(next.id).not.toBe(first.id)
   })
 
+  it('draws randomly across the complete deck when no intensity is selected', () => {
+    const last = drawCouplesCard({ level: 'all', type: 'truth', random: () => 0.999999 })
+    expect(COUPLES_TOD_CARDS.adult.truth).toContainEqual(last)
+  })
+
   it('combines the drawn card and the next real message into one turn', () => {
     const message = composeCouplesCardMessage({ round: 3, target: 'user', aiName: 'CC', type: 'truth', card: { text: '测试题' } }, '这是我的回答')
     expect(message).toBe('【第 3 轮｜我抽到真心话】\n测试题\n\n这是我的回答')

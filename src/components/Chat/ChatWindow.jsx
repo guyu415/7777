@@ -134,6 +134,7 @@ export default function ChatWindow({ theme }) {
 
   const inputRef = useRef(null)
   const truthDareRef = useRef(null)
+  const truthDareAiTimerRef = useRef(null)
   const [pendingTruthDareCard, setPendingTruthDareCard] = useState(null)
   const [menuMsg, setMenuMsg] = useState(null)
   const [selectedMessageIds, setSelectedMessageIds] = useState(() => new Set())
@@ -167,6 +168,22 @@ export default function ChatWindow({ theme }) {
   const [tidalNotice, setTidalNotice] = useState(null)
   const tidalNoticeKeyRef = useRef('')
   const tidalNoticeTimerRef = useRef(null)
+
+  const playTruthDareRoll = useCallback((value) => {
+    if (!truthDareRef.current?.userRolled(value)) return
+    appendLocalMessage?.(`[DICE:${value}]`, 'user')
+    clearTimeout(truthDareAiTimerRef.current)
+    // ChatWindow owns the opponent throw. Unlike a timer inside the folding
+    // game panel, this survives panel state changes and guarantees that every
+    // accepted user throw gets exactly one CC throw in the real transcript.
+    truthDareAiTimerRef.current = setTimeout(() => {
+      const aiValue = rollD6()
+      appendLocalMessage?.(`[DICE:${aiValue}]`, 'assistant')
+      truthDareRef.current?.aiRolled(value, aiValue)
+    }, 850)
+  }, [appendLocalMessage])
+
+  useEffect(() => () => clearTimeout(truthDareAiTimerRef.current), [currentSessionId])
 
   useEffect(() => {
     setReplyTargets([])
@@ -735,8 +752,7 @@ export default function ChatWindow({ theme }) {
             theme={theme}
             sessionId={currentSessionId}
             aiName={effectiveAiName}
-            onAppendDice={(value, role) => appendLocalMessage?.(`[DICE:${value}]`, role)}
-            onRequestUserRoll={() => truthDareRef.current?.userRolled(rollD6())}
+            onRequestUserRoll={() => playTruthDareRoll(rollD6())}
             onCardReady={setPendingTruthDareCard}
             onClearCard={() => setPendingTruthDareCard(null)}
             onClose={() => setShowTruthDare(false)}
@@ -1009,7 +1025,7 @@ export default function ChatWindow({ theme }) {
             const value = rollD6()
             updateActiveTime()
             if (showTruthDare && isVpsSession) {
-              truthDareRef.current?.userRolled(value)
+              playTruthDareRoll(value)
               return
             }
             sendMessage(`[DICE:${value}]`, 'text').catch(e => console.error('[DICE] send failed:', e.message))
