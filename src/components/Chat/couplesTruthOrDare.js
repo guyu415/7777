@@ -111,5 +111,6 @@ export function drawCouplesCard({ level, type, previousId, random = Math.random 
 export function composeCouplesCardMessage({ round, target, aiName, type, card }, response) {
   const targetName = target === 'ai' ? (aiName || 'CC') : '我'
   const typeLabel = type === 'truth' ? '真心话' : '大冒险'
-  return `【第 ${round} 轮｜${targetName}抽到${typeLabel}】\n${card.text}\n\n${String(response || '').trim()}`
+  const answer = String(response || '').trim()
+  return `【第 ${round} 轮｜${targetName}抽到${typeLabel}】\n${card.text}${answer ? `\n\n${answer}` : ''}`
 }
