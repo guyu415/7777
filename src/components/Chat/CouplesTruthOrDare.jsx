@@ -1,5 +1,5 @@
 import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react'
-import { ChevronLeft, Heart, RefreshCcw, ShieldCheck } from 'lucide-react'
+import { ChevronLeft, Dices, Heart, RefreshCcw, ShieldCheck } from 'lucide-react'
 import { COUPLES_TOD_LEVELS, drawCouplesCard } from './couplesTruthOrDare'
 import { rollD6 } from '../../utils/dice'
 
@@ -33,7 +33,7 @@ const Deck = ({ type, disabled, active, onClick, dark }) => (
 )
 
 const CouplesTruthOrDare = forwardRef(function CouplesTruthOrDare({
-  theme, sessionId, aiName, onAppendDice, onCardReady, onClearCard, onClose,
+  theme, sessionId, aiName, onAppendDice, onRequestUserRoll, onCardReady, onClearCard, onClose,
 }, ref) {
   const storageKey = `couples-truth-dare:${sessionId}`
   const saved = useMemo(() => readGame(storageKey), [storageKey])
@@ -153,7 +153,7 @@ const CouplesTruthOrDare = forwardRef(function CouplesTruthOrDare({
     ? (cardSent ? '这张牌已经跟着你的消息发出' : '牌先放在这里，等你开口')
     : waitingForAi
       ? `等 ${aiName || 'CC'} 掷骰…`
-      : rollResult?.ai === rollResult?.user
+      : rollResult?.ai != null && rollResult.ai === rollResult.user
         ? '平局，你再掷一次'
         : rollResult?.loser === 'user'
           ? '你输了，自己摸一张'
@@ -211,6 +211,16 @@ const CouplesTruthOrDare = forwardRef(function CouplesTruthOrDare({
                 <Deck type="dare" dark={dark} active={pickedDeck === 'dare'} disabled={rollResult?.loser !== 'user' || waitingForAi || aiPicking} onClick={() => revealCard('dare', 'user')} />
               </div>
               <div className="mt-3 text-xs font-semibold" style={{ color: dark ? '#eab4c7' : primary }}>{status}</div>
+              {!waitingForAi && !aiPicking && (!rollResult || (rollResult.ai != null && rollResult.ai === rollResult.user)) && (
+                <button
+                  type="button"
+                  onClick={onRequestUserRoll}
+                  className="mt-2.5 inline-flex items-center gap-1.5 rounded-full px-5 py-2.5 text-xs font-semibold text-white active:scale-95"
+                  style={{ border: 0, background: `linear-gradient(135deg,${primary},${primaryDark})`, boxShadow: `0 7px 18px ${primary}45` }}
+                >
+                  <Dices size={16} />{rollResult ? '再掷一次' : '掷骰子'}
+                </button>
+              )}
             </div>
           )}
         </div>

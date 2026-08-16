@@ -736,6 +736,7 @@ export default function ChatWindow({ theme }) {
             sessionId={currentSessionId}
             aiName={effectiveAiName}
             onAppendDice={(value, role) => appendLocalMessage?.(`[DICE:${value}]`, role)}
+            onRequestUserRoll={() => truthDareRef.current?.userRolled(rollD6())}
             onCardReady={setPendingTruthDareCard}
             onClearCard={() => setPendingTruthDareCard(null)}
             onClose={() => setShowTruthDare(false)}
