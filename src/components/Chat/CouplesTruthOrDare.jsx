@@ -41,8 +41,11 @@ const CouplesTruthOrDare = forwardRef(function CouplesTruthOrDare({
   const [rollResult, setRollResult] = useState(saved?.rollResult?.ai != null ? saved.rollResult : null)
   const [current, setCurrent] = useState(saved?.current || null)
   const [lastCardId, setLastCardId] = useState(saved?.lastCardId || '')
-  const [waitingForAi, setWaitingForAi] = useState(false)
-  const [aiPicking, setAiPicking] = useState(false)
+  const [phase, setPhase] = useState(() => {
+    if (saved?.current) return 'card'
+    if (saved?.phase === 'user_draw') return 'user_draw'
+    return 'ready'
+  })
   const [pickedDeck, setPickedDeck] = useState(saved?.pickedDeck || saved?.current?.type || '')
   const [cardSent, setCardSent] = useState(!!saved?.cardSent)
   const timersRef = useRef([])
@@ -57,8 +60,8 @@ const CouplesTruthOrDare = forwardRef(function CouplesTruthOrDare({
   useEffect(() => () => timersRef.current.forEach(clearTimeout), [])
 
   useEffect(() => {
-    try { sessionStorage.setItem(storageKey, JSON.stringify({ round, lastCardId, rollResult, current, pickedDeck, cardSent })) } catch { /* optional */ }
-  }, [storageKey, round, lastCardId, rollResult, current, pickedDeck, cardSent])
+    try { sessionStorage.setItem(storageKey, JSON.stringify({ round, lastCardId, rollResult, current, pickedDeck, cardSent, phase })) } catch { /* optional */ }
+  }, [storageKey, round, lastCardId, rollResult, current, pickedDeck, cardSent, phase])
 
   // Reopening the folded game must restore a user-drawn card as the pending
   // question for the composer. CC cards are marked dispatched before closing
@@ -77,6 +80,7 @@ const CouplesTruthOrDare = forwardRef(function CouplesTruthOrDare({
     const next = { ...card, type, target, round }
     setPickedDeck(type)
     setCurrent(next)
+    setPhase('card')
     setLastCardId(card.id)
     if (target === 'ai') {
       setCardSent(true)
@@ -89,28 +93,32 @@ const CouplesTruthOrDare = forwardRef(function CouplesTruthOrDare({
 
   useImperativeHandle(ref, () => ({
     userRolled(value) {
-      if (waitingForAi || current) return false
+      if (phase !== 'ready' || current) return false
       timersRef.current.forEach(clearTimeout)
       timersRef.current = []
       setPickedDeck('')
       setRollResult({ user: value, ai: null, loser: null })
-      setWaitingForAi(true)
+      setPhase('waiting_ai')
       return true
     },
     aiRolled(user, ai) {
       setRollResult({ user, ai, loser: null })
+      setPhase('settling')
       // Keep the table neutral until CC's chat dice finishes settling.
       later(() => {
-        setWaitingForAi(false)
-        if (ai === user) return
+        if (ai === user) {
+          setPhase('ready')
+          return
+        }
         const loser = user < ai ? 'user' : 'ai'
         setRollResult({ user, ai, loser })
-        if (loser === 'ai') {
-          setAiPicking(true)
+        if (loser === 'user') {
+          setPhase('user_draw')
+        } else {
+          setPhase('ai_draw')
           const type = rollD6() % 2 ? 'truth' : 'dare'
           setPickedDeck(type)
           later(() => {
-            setAiPicking(false)
             revealCard(type, 'ai')
           }, 700)
         }
@@ -124,8 +132,7 @@ const CouplesTruthOrDare = forwardRef(function CouplesTruthOrDare({
     timersRef.current = []
     setRollResult(null)
     setCurrent(null)
-    setWaitingForAi(false)
-    setAiPicking(false)
+    setPhase('ready')
     setPickedDeck('')
     setCardSent(false)
     onClearCard?.()
@@ -136,15 +143,17 @@ const CouplesTruthOrDare = forwardRef(function CouplesTruthOrDare({
   const isTie = rollResult?.ai != null && rollResult.ai === rollResult.user
   const status = current
     ? (current.target === 'ai' ? `${aiName || 'CC'} 的回合` : (cardSent ? '已经跟着你的消息发出' : '等你回答'))
-    : waitingForAi
+    : phase === 'waiting_ai'
       ? `${aiName || 'CC'} 正在掷骰…`
-      : isTie
+      : phase === 'settling'
+        ? '等骰子落稳…'
+      : isTie && phase === 'ready'
         ? '平局，再来'
-        : rollResult?.loser === 'user'
-          ? '你输了，摸一张'
-          : aiPicking
+        : phase === 'user_draw'
+          ? '你输了，点一个牌堆'
+          : phase === 'ai_draw'
             ? `${aiName || 'CC'} 正在摸牌…`
-            : '轮到你'
+            : '轮到你掷骰子'
 
   return (
     <section
@@ -175,13 +184,13 @@ const CouplesTruthOrDare = forwardRef(function CouplesTruthOrDare({
           ) : (
             <div className="w-full">
               <div className="flex justify-center gap-8 pt-2">
-                <Deck type="truth" active={pickedDeck === 'truth'} disabled={rollResult?.loser !== 'user' || waitingForAi || aiPicking} onClick={() => revealCard('truth', 'user')} />
-                <Deck type="dare" active={pickedDeck === 'dare'} disabled={rollResult?.loser !== 'user' || waitingForAi || aiPicking} onClick={() => revealCard('dare', 'user')} />
+                <Deck type="truth" active={phase === 'user_draw' || pickedDeck === 'truth'} disabled={phase !== 'user_draw'} onClick={() => revealCard('truth', 'user')} />
+                <Deck type="dare" active={phase === 'user_draw' || pickedDeck === 'dare'} disabled={phase !== 'user_draw'} onClick={() => revealCard('dare', 'user')} />
               </div>
               <div className="mt-3 text-xs font-semibold" style={{ color: primary }}>
-                {waitingForAi && <Dices size={15} className="inline mr-1 animate-bounce" />}{status}
+                {(phase === 'waiting_ai' || phase === 'settling') && <Dices size={15} className="inline mr-1 animate-bounce" />}{status}
               </div>
-              {!waitingForAi && !aiPicking && (!rollResult || isTie) && (
+              {phase === 'ready' && (
                 <button
                   type="button"
                   onClick={onRequestUserRoll}
