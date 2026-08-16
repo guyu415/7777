@@ -98,7 +98,9 @@ export const COUPLES_TOD_CARDS = {
 }
 
 export function drawCouplesCard({ level, type, previousId, random = Math.random }) {
-  const pool = COUPLES_TOD_CARDS[level]?.[type] || []
+  const pool = level === 'all'
+    ? Object.values(COUPLES_TOD_CARDS).flatMap(deck => deck[type] || [])
+    : (COUPLES_TOD_CARDS[level]?.[type] || [])
   if (!pool.length) return null
   const candidates = pool.length > 1 ? pool.filter(card => card.id !== previousId) : pool
   const raw = Number(random())
