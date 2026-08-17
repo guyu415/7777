@@ -13,7 +13,14 @@ const CC_MODEL_OPTIONS = [
   { id: 'claude-opus-4-7', label: 'Opus 4.7' },
 ]
 const ccModelOption = (id) => CC_MODEL_OPTIONS.find(option => option.id === id)
-const POLL_MS = 10000
+// Only ticks while the usage card is actually open. A permanent 10s poll for
+// a card nobody is looking at was pure background work on the phone — and it
+// bought nothing, because the numbers behind /status only change when a turn
+// ends (or when the backend is asked to go re-measure them, which it now does
+// on demand — see refreshStatusIfStale in channel-server.ts). Closed, the orb
+// still refreshes on the events that can actually change it: a finished turn,
+// coming back to the tab, and opening the card.
+const OPEN_POLL_MS = 10000
 
 // 曾经这里有一段"如果 resets_at 已经过了当前时间，就在前端强行把用量显示成
 // 0%"的逻辑——那是纯猜测：真实用量永远只有后端（statusLine / Codex 自己的
@@ -22,6 +29,13 @@ const POLL_MS = 10000
 // 对话结束后都确定性地刷新一次（见 VPS 上 hook-notify.sh 新增的 statusLine
 // 强制重绘），前端这里只管老老实实展示后端给的真实数字，外加一个"更新于"
 // 时间戳——让用户自己判断这份数据够不够新，而不是替他们瞎猜。
+//
+// 后来发现"每轮对话结束刷新一次"还不够：一整晚没说话，这个时间戳就会变成
+// "93 分钟前更新"，数字本身也停在最后那轮。真正的修法仍然不是在前端猜，而是
+// 让后端在**有人真的来看**的时候现去量一次（见 channel-server.ts 的
+// refreshStatusIfStale：/status 被读到、且盘上的数据确实过期了，才补一次
+// Ctrl-L 重绘）。所以这里打开卡片就会看到"刚刚更新"，而关着的时候一次网络
+// 请求都不发——既不糊弄人，也不让手机白白发热。
 function formatCapturedAt(ms) {
   if (!ms) return ''
   const diffSec = Math.round((Date.now() - ms) / 1000)
@@ -114,10 +128,17 @@ export default function RuntimeStatusBall({ theme, isLoading, runtime }) {
     const saved = ccModelOption(savedCcModelId)
     setStatus(saved ? { model: { id: saved.id, display_name: saved.label } } : null)
     refresh()
-    const t = setInterval(refresh, POLL_MS)
-    return () => clearInterval(t)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [runtime, savedCcModelId])
+
+  useEffect(() => {
+    if (!open) return
+    const t = setInterval(() => {
+      if (document.visibilityState === 'visible') refresh()
+    }, OPEN_POLL_MS)
+    return () => clearInterval(t)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, runtime, savedCcModelId])
 
   // iOS suspends interval timers while Safari/PWA is in the background.
   // Refresh immediately when the page becomes active again instead of
