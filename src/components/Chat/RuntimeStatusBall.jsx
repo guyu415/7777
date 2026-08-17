@@ -30,20 +30,35 @@ const OPEN_POLL_MS = 10000
 // 强制重绘），前端这里只管老老实实展示后端给的真实数字，外加一个"更新于"
 // 时间戳——让用户自己判断这份数据够不够新，而不是替他们瞎猜。
 //
-// 后来发现"每轮对话结束刷新一次"还不够：一整晚没说话，这个时间戳就会变成
-// "93 分钟前更新"，数字本身也停在最后那轮。真正的修法仍然不是在前端猜，而是
-// 让后端在**有人真的来看**的时候现去量一次（见 channel-server.ts 的
-// refreshStatusIfStale：/status 被读到、且盘上的数据确实过期了，才补一次
-// Ctrl-L 重绘）。所以这里打开卡片就会看到"刚刚更新"，而关着的时候一次网络
-// 请求都不发——既不糊弄人，也不让手机白白发热。
-function formatCapturedAt(ms) {
+// 后来发现"每轮对话结束刷新一次"还不够：一整晚没说话，时间戳就会变成"93 分钟
+// 前"。后端因此加了按需重绘（channel-server.ts 的 refreshStatusIfStale）——但
+// 那只解决"状态文件没被重写"，解决不了更硬的一层：
+//
+// rate_limits 里的数字**只来自真实 API 响应头**，CC 自己从不主动去问服务端。
+// 重绘只是把它手里那份缓存重新吐一遍。所以没有对话发生的时候，数字不会动，
+// 连 resets_at 本身都不会滚到下一个窗口（2026-08-17 实测：周窗口 03:00 重置，
+// 03:10 强制重绘后仍是 76% + 一个已经过去的 resets_at）。唯一真正的"重新测
+// 量"就是真的说一句话，为了看用量而去烧用量显然不划算。
+//
+// 于是这里区分两个时间：capturedAt 是状态文件何时被写，measuredAt 是这组数字
+// 何时真的变过（后端 statusline-capture.sh 负责只在数值真的动了时才更新它）。
+// 展示用后者。另外，resets_at 已经过去的那一档是**确定**过期的——这不是猜，是
+// 那份数据自己在描述一个已经关闭的窗口——所以照实说"还没重新测到"，而不是像
+// 早先那版被删掉的逻辑那样猜一个 0%。
+function formatMeasuredAt(ms) {
   if (!ms) return ''
   const diffSec = Math.round((Date.now() - ms) / 1000)
-  if (diffSec < 5) return '刚刚更新'
-  if (diffSec < 60) return `${diffSec} 秒前更新`
-  if (diffSec < 3600) return `${Math.round(diffSec / 60)} 分钟前更新`
+  if (diffSec < 60) return '数字刚测到'
+  if (diffSec < 3600) return `数字测于 ${Math.round(diffSec / 60)} 分钟前`
   const d = new Date(ms)
-  return `${d.toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false, month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })} 更新`
+  return `数字测于 ${d.toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false, month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })}`
+}
+
+// 一档窗口的 resets_at 落在过去 = 这份数字描述的是一个已经结束的窗口，必然
+// 不是当前值。返回 true 时只表示"这个数不能当真了"，不表示新值是多少。
+function windowExpired(window) {
+  const resetsAt = Number(window?.resets_at)
+  return Number.isFinite(resetsAt) && resetsAt > 0 && resetsAt * 1000 <= Date.now()
 }
 
 function formatCredits(value) {
@@ -59,10 +74,18 @@ function formatResetTime(unixSeconds) {
   return d.toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false, month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })
 }
 
+// 过期的那一档不参与配色：拿一个重置前的 76% 继续把球染黄，等于用旧数字冒充
+// 当前状态。两档都过期就退回"还不知道"的灰，这本身就是有信息量的。
+function liveUsedPercentage(window) {
+  if (!window || windowExpired(window)) return null
+  const pct = Number(window.used_percentage)
+  return Number.isFinite(pct) ? pct : null
+}
+
 function ccBallColor(status) {
-  const fh = status?.rate_limits?.five_hour?.used_percentage
-  const wk = status?.rate_limits?.seven_day?.used_percentage
-  if (fh == null && wk == null) return '#a0b8d0' // 等待首次响应
+  const fh = liveUsedPercentage(status?.rate_limits?.five_hour)
+  const wk = liveUsedPercentage(status?.rate_limits?.seven_day)
+  if (fh == null && wk == null) return '#a0b8d0' // 等待首次响应，或两档都已过期
   const remaining = Math.min(100 - (fh ?? 0), 100 - (wk ?? 0))
   if (remaining < 20) return '#e07070'
   if (remaining < 50) return '#d4a017'
@@ -70,7 +93,8 @@ function ccBallColor(status) {
 }
 
 function codexBallColor(status) {
-  const pct = status?.usage?.primary?.usedPercent
+  const primary = status?.usage?.primary
+  const pct = (primary && !windowExpired({ resets_at: primary.resetsAt })) ? primary.usedPercent : null
   if (pct == null) return '#a0b8d0'
   if (pct >= 80) return '#e07070'
   if (pct >= 50) return '#d4a017'
@@ -223,10 +247,13 @@ export default function RuntimeStatusBall({ theme, isLoading, runtime }) {
   const cw = !isCodex ? status?.context_window : null
   const codexPrimary = isCodex ? status?.usage?.primary : null
   const codexCredits = isCodex ? status?.usage?.credits : null
-  // 真实的"这份数据是什么时候测到的"——CC 来自 statusLine 的 capturedAt，
-  // Codex 来自 account/rateLimits/read 的 usageCapturedAt。只用来给用户一个
-  // 判断新鲜度的参考，从不用来推导/伪造任何用量数字本身。
-  const capturedAt = isCodex ? status?.usageCapturedAt : status?.capturedAt
+  // 真实的"这份数据是什么时候测到的"——CC 优先用 measuredAt（数值真的动过的
+  // 那一刻），旧后端没有这个字段时退回 capturedAt；Codex 来自
+  // account/rateLimits/read 的 usageCapturedAt。只用来给用户一个判断新鲜度的
+  // 参考，从不用来推导/伪造任何用量数字本身。
+  const measuredAt = isCodex ? status?.usageCapturedAt : (status?.measuredAt ?? status?.capturedAt)
+  const fhExpired = windowExpired(fh)
+  const wkExpired = windowExpired(wk)
   // Present ONLY when the backend has a real, specific reason usage can't be
   // shown (e.g. Codex not logged in) — see /codex/model-status's own
   // comment. Distinct from "usage is simply null" (still legitimately
@@ -366,20 +393,28 @@ export default function RuntimeStatusBall({ theme, isLoading, runtime }) {
               )}
 
               <div className="text-[11px] mb-1" style={{ color: '#6a90b8' }}>5 小时用量</div>
-              {fh ? (
+              {fh ? (fhExpired ? (
+                <p className="text-[10px] mb-2" style={{ color: '#a0b8d0' }}>
+                  {formatResetTime(fh.resets_at)} 已重置 · 上一轮是 {Math.round(fh.used_percentage)}%，说句话才会测到新的
+                </p>
+              ) : (
                 <p className="text-[10px] mb-2" style={{ color: '#7a9cc0' }}>
                   已用 {Math.round(fh.used_percentage)}% · 重置于 {formatResetTime(fh.resets_at)}
                 </p>
-              ) : (
+              )) : (
                 <p className="text-[10px] mb-2" style={{ color: '#a0b8d0' }}>等待首次响应</p>
               )}
 
               <div className="text-[11px] mb-1" style={{ color: '#6a90b8' }}>每周用量</div>
-              {wk ? (
+              {wk ? (wkExpired ? (
+                <p className="text-[10px] mb-2" style={{ color: '#a0b8d0' }}>
+                  {formatResetTime(wk.resets_at)} 已重置 · 上一轮是 {Math.round(wk.used_percentage)}%，说句话才会测到新的
+                </p>
+              ) : (
                 <p className="text-[10px] mb-2" style={{ color: '#7a9cc0' }}>
                   已用 {Math.round(wk.used_percentage)}% · 重置于 {formatResetTime(wk.resets_at)}
                 </p>
-              ) : (
+              )) : (
                 <p className="text-[10px] mb-2" style={{ color: '#a0b8d0' }}>等待首次响应</p>
               )}
             </>
@@ -395,9 +430,15 @@ export default function RuntimeStatusBall({ theme, isLoading, runtime }) {
             codexPrimary ? (
               <>
                 <div className="text-[11px] mb-1" style={{ color: '#6a90b8' }}>用量窗口</div>
-                <p className="text-[10px] mb-2" style={{ color: '#7a9cc0' }}>
-                  已用 {Math.round(codexPrimary.usedPercent)}%{codexPrimary.resetsAt ? ` · 重置于 ${formatResetTime(codexPrimary.resetsAt)}` : ''}
-                </p>
+                {windowExpired({ resets_at: codexPrimary.resetsAt }) ? (
+                  <p className="text-[10px] mb-2" style={{ color: '#a0b8d0' }}>
+                    {formatResetTime(codexPrimary.resetsAt)} 已重置 · 上一轮是 {Math.round(codexPrimary.usedPercent)}%，说句话才会测到新的
+                  </p>
+                ) : (
+                  <p className="text-[10px] mb-2" style={{ color: '#7a9cc0' }}>
+                    已用 {Math.round(codexPrimary.usedPercent)}%{codexPrimary.resetsAt ? ` · 重置于 ${formatResetTime(codexPrimary.resetsAt)}` : ''}
+                  </p>
+                )}
                 {codexCredits && (
                   <p className="text-[10px] mb-2" style={{ color: '#7a9cc0' }}>
                     {codexCredits.unlimited ? '额度：不限量' : (codexCredits.hasCredits ? `额度余量：${formatCredits(codexCredits.balance)}` : '无额外额度')}
@@ -410,8 +451,8 @@ export default function RuntimeStatusBall({ theme, isLoading, runtime }) {
               <p className="text-[10px] mb-2" style={{ color: '#a0b8d0' }}>{!status ? '等待首次响应' : '暂无用量数据'}</p>
             )
           )}
-          {capturedAt && (
-            <p className="text-[9.5px]" style={{ color: '#a0b8d0' }}>{formatCapturedAt(capturedAt)}</p>
+          {measuredAt && (
+            <p className="text-[9.5px]" style={{ color: '#a0b8d0' }}>{formatMeasuredAt(measuredAt)}</p>
           )}
         </div>
       )}
