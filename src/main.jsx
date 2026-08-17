@@ -1,11 +1,22 @@
-import React, { useCallback, useState } from 'react'
+import React, { useCallback, useEffect, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import App from './App'
 import OpeningSplash from './components/OpeningSplash'
+import { PUSH_NAVIGATION_EVENT, isPushNavigationUrl } from './utils/notificationNavigation'
 import './styles/globals.css'
 
 // 注册 Service Worker（推送通知需要；sw.js 不做请求缓存）
 if ('serviceWorker' in navigator) {
+  // A notification tap on an already-open app is delivered by sw.js as a
+  // message, rather than forcing a full page navigation. Retain the target
+  // until App mounts in case the splash screen is still on top.
+  navigator.serviceWorker.addEventListener('message', (event) => {
+    const { type, url } = event.data || {}
+    if (type !== 'eunoia-notification-open' || typeof url !== 'string') return
+    window.__eunoiaPendingPushNavigation = url
+    window.dispatchEvent(new CustomEvent(PUSH_NAVIGATION_EVENT, { detail: { url } }))
+  })
+
   window.addEventListener('load', () => {
     navigator.serviceWorker.register('/sw.js').catch(e => {
       console.warn('[SW] 注册失败:', e.message)
@@ -20,8 +31,17 @@ for (const evt of ['gesturestart', 'gesturechange', 'gestureend']) {
 }
 
 function AppBoot() {
-  const [splashDone, setSplashDone] = useState(false)
+  // Push links should lead straight to their message. Apart from saving the
+  // 3.2s animation, this starts the companion connection immediately when a
+  // notification opens a fresh PWA window.
+  const [splashDone, setSplashDone] = useState(() => isPushNavigationUrl(window.location.href, window.location.origin))
   const finishSplash = useCallback(() => setSplashDone(true), [])
+
+  useEffect(() => {
+    const skipSplashForPush = () => setSplashDone(true)
+    window.addEventListener(PUSH_NAVIGATION_EVENT, skipSplashForPush)
+    return () => window.removeEventListener(PUSH_NAVIGATION_EVENT, skipSplashForPush)
+  }, [])
 
   // Do not start settings hydration, IndexedDB reads, WebSockets and the
   // full app compositor underneath the animated splash.  Running both at

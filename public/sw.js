@@ -33,13 +33,13 @@ self.addEventListener('notificationclick', (event) => {
   const targetUrl = new URL(url, self.location.origin).href
   event.waitUntil(
     self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((list) => {
-      for (const client of list) {
-        // An existing tab may currently be showing another session.  A bare
-        // focus() loses the notification's target; navigate it first so App
-        // can select the session encoded by the Worker push payload.
-        if ('navigate' in client && 'focus' in client) {
-          return client.navigate(targetUrl).then(next => next?.focus?.() || client.focus())
-        }
+      const client = list.find((item) => item.visibilityState === 'visible') || list[0]
+      if (client) {
+        // Reuse the already-running app whenever possible. Full navigation
+        // reboots React, IndexedDB and the companion socket, then makes the
+        // user wait through the startup splash before the target chat opens.
+        client.postMessage({ type: 'eunoia-notification-open', url: targetUrl })
+        return client.focus()
       }
       return self.clients.openWindow(targetUrl)
     })

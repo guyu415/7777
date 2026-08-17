@@ -401,13 +401,9 @@ export default function ChatWindow({ theme }) {
     }
   }
 
-  // Neither VPS session (Claude Code or Codex) can "un-say" a reply the way
-  // re-issuing a stateless API call can — both are stateful, persistent
-  // sessions. Button stays visible (so it's discoverable, not mysteriously
-  // gone) but explains why instead of acting. useCallback with empty deps:
-  // this gets passed down into memoized MessageList as onRegenerate/
-  // onRegenerateRound, so it must keep the same reference across renders or
-  // it defeats that memoization every time.
+  // Codex is also stateful, so retain its existing explanatory action. CC's
+  // resident window has no valid regenerate operation at all; that control
+  // is omitted below instead of showing an action that can only refuse.
   const regenerateBlocked = useCallback(() => {
     alert('常驻会话暂不支持重新生成，可复制内容后重新发送。')
   }, [])
@@ -598,8 +594,8 @@ export default function ChatWindow({ theme }) {
   for (let i = messages.length - 1; i >= 0; i--) {
     if (messages[i].role === 'assistant') { lastAiId = messages[i].id; break }
   }
-  const effectiveOnRegenerate = isFixedVpsSession ? regenerateBlocked : regenerate
-  const effectiveOnRegenerateRound = isFixedVpsSession ? regenerateBlocked : regenerateRound
+  const effectiveOnRegenerate = isVpsSession ? null : isCodexSession ? regenerateBlocked : regenerate
+  const effectiveOnRegenerateRound = isVpsSession ? null : isCodexSession ? regenerateBlocked : regenerateRound
 
   const primaryColor = theme?.primary || '#4aacf0'
   const primaryDarkColor = theme?.primaryDark || '#2196d3'

@@ -6,11 +6,21 @@ let db
 
 async function getDB() {
   if (!db) {
-    db = await openDB('pink-chat', 2, {
-      upgrade(database, oldVersion) {
+    db = await openDB('pink-chat', 3, {
+      upgrade(database, oldVersion, _newVersion, transaction) {
+        let messagesStore
         if (!database.objectStoreNames.contains('messages')) {
-          const store = database.createObjectStore('messages', { keyPath: 'id' })
-          store.createIndex('conversationId', 'conversationId')
+          messagesStore = database.createObjectStore('messages', { keyPath: 'id' })
+          messagesStore.createIndex('conversationId', 'conversationId')
+        } else {
+          messagesStore = transaction.objectStore('messages')
+        }
+        // A normal CC reply may be displayed under a local id while retaining
+        // the server wire ids in `wireIds`. Index those ids so reconnect
+        // history can be deduplicated with one indexed lookup rather than
+        // reading the entire (often very long) conversation for every item.
+        if (!messagesStore.indexNames.contains('wireIds')) {
+          messagesStore.createIndex('wireIds', 'wireIds', { multiEntry: true })
         }
         if (!database.objectStoreNames.contains('blobs')) {
           database.createObjectStore('blobs', { keyPath: 'id' })
@@ -29,6 +39,16 @@ export async function saveMessage(msg) {
 export async function getMessages(conversationId) {
   const database = await getDB()
   return database.getAllFromIndex('messages', 'conversationId', conversationId)
+}
+
+export async function getMessage(id) {
+  const database = await getDB()
+  return database.get('messages', id)
+}
+
+export async function hasMessageWithWireId(wireId) {
+  const database = await getDB()
+  return Boolean(await database.getKeyFromIndex('messages', 'wireIds', wireId))
 }
 
 export async function saveBlob(id, blob) {

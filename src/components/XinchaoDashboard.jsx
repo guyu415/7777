@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Activity, Clock3, Gem, Grid3X3, HeartHandshake, Home, Link2, LoaderCircle, MessageCircleHeart, RefreshCw, Sparkles, X } from 'lucide-react'
-import { getXinchaoDashboard, sendXinchaoInteraction } from '../services/companion'
+import { getXinchaoDashboard, onXinchaoUpdate, sendXinchaoInteraction } from '../services/companion'
 
 const DRIVE_NAMES = {
   possess: '占有', monitor: '惦记', crave: '渴求', share: '分享', libido: '亲密', curiosity: '好奇',
@@ -222,22 +222,61 @@ export default function XinchaoDashboard({ onClose }) {
   const [responding, setResponding] = useState(false)
   const [sending, setSending] = useState('')
   const [notice, setNotice] = useState('')
+  const latestRequestRef = useRef(0)
+  const visibleLoadingRequestRef = useRef(0)
 
-  const load = useCallback(async () => {
-    setLoading(true)
-    setError('')
+  const load = useCallback(async ({ quiet = false } = {}) => {
+    // A dream can be written while this view remains open. Ignore stale
+    // responses from bursty websocket/visibility/tab refreshes, while still
+    // allowing an explicit refresh after a user response to start right away.
+    const requestId = ++latestRequestRef.current
+    if (!quiet) {
+      visibleLoadingRequestRef.current = requestId
+      setLoading(true)
+      setError('')
+    }
     try {
       const result = await getXinchaoDashboard('claude-code')
       if (result?.available === false) throw new Error('心潮服务暂时没有回应')
+      if (requestId !== latestRequestRef.current) return
       setData(result)
+      setError('')
     } catch (err) {
-      setError(err?.message || '心潮服务暂时没有回应')
+      // A transient refresh failure should not erase a page the user is
+      // already reading; only surface it when there is no usable snapshot.
+      if (!quiet && requestId === latestRequestRef.current) setError(err?.message || '心潮服务暂时没有回应')
     } finally {
-      setLoading(false)
+      if (visibleLoadingRequestRef.current === requestId) {
+        visibleLoadingRequestRef.current = 0
+        setLoading(false)
+      }
     }
   }, [])
 
   useEffect(() => { load() }, [load])
+  useEffect(() => {
+    const refresh = () => { void load({ quiet: true }) }
+    const unsub = onXinchaoUpdate((_state, runtime) => {
+      if (runtime === 'claude-code') refresh()
+    })
+    const refreshWhenVisible = () => {
+      if (document.visibilityState === 'visible') refresh()
+    }
+    document.addEventListener('visibilitychange', refreshWhenVisible)
+    return () => {
+      unsub()
+      document.removeEventListener('visibilitychange', refreshWhenVisible)
+    }
+  }, [load])
+  useEffect(() => {
+    if (tab !== 'time') return
+    const refresh = () => { void load({ quiet: true }) }
+    refresh()
+    const timer = window.setInterval(() => {
+      if (document.visibilityState === 'visible') refresh()
+    }, 60_000)
+    return () => window.clearInterval(timer)
+  }, [tab, load])
   const snapshot = data?.snapshot
   const timeline = useMemo(() => data?.timeline || [], [data])
 

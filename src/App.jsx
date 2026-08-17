@@ -1,5 +1,5 @@
-import { lazy, Suspense, useEffect, useState, useRef } from 'react'
-import { useStore, getCustomFont, getBlob, getMessages, saveMessage, saveBlob, deleteMessageFromDB, deleteMessagesForSession } from './store'
+import { lazy, Suspense, useCallback, useEffect, useState, useRef } from 'react'
+import { useStore, getCustomFont, getBlob, getMessage, getMessages, hasMessageWithWireId, saveMessage, saveBlob, deleteMessageFromDB, deleteMessagesForSession } from './store'
 import { THEMES } from './themes'
 import ChatWindow from './components/Chat/ChatWindow'
 import GroupChatWindow from './components/GroupChat/GroupChatWindow'
@@ -16,9 +16,10 @@ import CodexMemory from './components/CodexMemory'
 import DesktopPet from './components/DesktopPet'
 import { getSettings, saveSettings, extractSettings, saveSessionMsgs, deleteSessionMsgs, putAsset, putAssetDataUrl, loadAsset } from './services/sync'
 import { compressImage, slimSettings } from './utils/image'
-import { ensureConnected as ensureCompanionConnected, getAuthStatus as getCompanionAuthStatus, onProactiveMessage, onProactiveActivity, onProactiveActivityAcknowledged, acknowledgeProactiveActivity, onRemoteUserMessage, onCcMessageDeleted, onCcReset } from './services/companion'
+import { ensureConnected as ensureCompanionConnected, reconnectCompanion, onProactiveMessage, onProactiveActivity, onProactiveActivityAcknowledged, acknowledgeProactiveActivity, onRemoteUserMessage, onCcMessageDeleted, onCcReset } from './services/companion'
 import { fetchTTSAudio } from './services/tts'
 import { themeWithUserBubbleText } from './utils/bubbleColors'
+import { PUSH_NAVIGATION_EVENT, isPushNavigationUrl } from './utils/notificationNavigation'
 
 const XinchaoDashboard = lazy(() => import('./components/XinchaoDashboard'))
 
@@ -76,11 +77,19 @@ export default function App() {
   } = useStore()
 
   // Web Push notifications carry the session that generated the message.
-  // Older notifications only opened `/`, which focused whichever window was
-  // already selected (often Codex) and made a valid ordinary-session
-  // message look missing.  Navigate explicitly before rendering the chat.
-  useEffect(() => {
-    const params = new URLSearchParams(window.location.search)
+  // Existing tabs receive the target from the service worker without a page
+  // reload; a fresh tab still arrives through the URL. Keep both paths in
+  // one handler so they choose the exact same session and view.
+  const openPushTarget = useCallback((rawUrl) => {
+    let targetUrl
+    try {
+      targetUrl = new URL(rawUrl, window.location.origin)
+    } catch {
+      return false
+    }
+    if (targetUrl.origin !== window.location.origin || !isPushNavigationUrl(targetUrl.href, window.location.origin)) return false
+
+    const params = targetUrl.searchParams
     const source = params.get('source')
     let targetId = null
     if (source === 'api-proactive') {
@@ -89,21 +98,47 @@ export default function App() {
       targetId = sessions?.find(s => s.providerName === 'claude-code-vps')?.id || null
     } else if (source === 'care-hub') {
       setCurrentView('careHub')
-      params.delete('source')
-      const next = `${window.location.pathname}${params.toString() ? `?${params}` : ''}${window.location.hash}`
-      window.history.replaceState({}, '', next)
-      return
     } else {
-      return
+      return false
     }
-    if (!targetId || !sessions?.some(s => s.id === targetId)) return
-    setCurrentSessionId(targetId)
-    setCurrentView('chat')
-    params.delete('session')
-    params.delete('source')
-    const next = `${window.location.pathname}${params.toString() ? `?${params}` : ''}${window.location.hash}`
-    window.history.replaceState({}, '', next)
+
+    if (source !== 'care-hub') {
+      if (!targetId || !sessions?.some(s => s.id === targetId)) return false
+      setCurrentSessionId(targetId)
+      setCurrentView('chat')
+    }
+
+    // Only clean parameters from the actual address bar. For an existing
+    // tab the service worker sends a target URL while the address bar already
+    // points elsewhere, and replacing it with the target would be misleading.
+    const currentUrl = new URL(window.location.href)
+    if (currentUrl.searchParams.get('source') === source) {
+      currentUrl.searchParams.delete('session')
+      currentUrl.searchParams.delete('source')
+      window.history.replaceState({}, '', `${currentUrl.pathname}${currentUrl.search}${currentUrl.hash}`)
+    }
+    return true
   }, [sessions, setCurrentSessionId, setCurrentView])
+
+  useEffect(() => {
+    const receivePushTarget = (event) => {
+      const target = event?.detail?.url
+      if (typeof target === 'string' && openPushTarget(target)) {
+        delete window.__eunoiaPendingPushNavigation
+      }
+    }
+    window.addEventListener(PUSH_NAVIGATION_EVENT, receivePushTarget)
+
+    const pendingTarget = window.__eunoiaPendingPushNavigation
+    if (typeof pendingTarget === 'string' && openPushTarget(pendingTarget)) {
+      delete window.__eunoiaPendingPushNavigation
+    }
+    // The first visit after a notification has no service-worker message to
+    // receive, only the deep-link query parameters.
+    openPushTarget(window.location.href)
+
+    return () => window.removeEventListener(PUSH_NAVIGATION_EVENT, receivePushTarget)
+  }, [openPushTarget])
 
   // ── Auth ───────────────────────────────────────────────────────
   const [loggedIn, setLoggedIn] = useState(() => !!localStorage.getItem('auth.password'))
@@ -515,15 +550,47 @@ export default function App() {
 
   // Keep the companion WS alive whenever a VPS-bound session exists, not
   // just while the user is actively sending — proactive messages can arrive
-  // with no user action to lazily trigger a connection otherwise.
+  // with no user action to lazily trigger a connection otherwise. Connecting
+  // directly avoids putting a status HTTP round trip in front of the history
+  // snapshot; if the companion cookie has expired, the socket's own close
+  // path verifies that once and stops retrying safely.
   useEffect(() => {
     const vpsSession = sessions?.find(s => s.providerName === 'claude-code-vps')
     if (!vpsSession) return
-    let cancelled = false
-    getCompanionAuthStatus().then(({ loggedIn: companionLoggedIn }) => {
-      if (!cancelled && companionLoggedIn) ensureCompanionConnected()
-    })
-    return () => { cancelled = true }
+    ensureCompanionConnected()
+  }, [sessions])
+
+  // Returning from the app switcher is the common path for opening the CC
+  // chat after a proactive alert. Mobile browsers can keep an already-dead
+  // socket marked OPEN for a long time, so merely calling ensureConnected()
+  // here leaves the history replay (and therefore the proactive message)
+  // waiting on an eventual timeout. Replace it immediately on a real return
+  // to the foreground; the fresh socket receives the authoritative history
+  // snapshot as soon as it opens.
+  useEffect(() => {
+    if (!sessions?.some(s => s.providerName === 'claude-code-vps')) return
+    let wasHidden = document.visibilityState === 'hidden'
+    const restoreConnection = () => {
+      if (document.visibilityState === 'hidden') {
+        wasHidden = true
+        return
+      }
+      if (!wasHidden) return
+      wasHidden = false
+      reconnectCompanion()
+    }
+    const restoreFromPageCache = (event) => {
+      if (event.persisted) {
+        wasHidden = true
+        restoreConnection()
+      }
+    }
+    document.addEventListener('visibilitychange', restoreConnection)
+    window.addEventListener('pageshow', restoreFromPageCache)
+    return () => {
+      document.removeEventListener('visibilitychange', restoreConnection)
+      window.removeEventListener('pageshow', restoreFromPageCache)
+    }
   }, [sessions])
 
   // Letters can be delivered while the garden is open, from another device,
@@ -569,13 +636,42 @@ export default function App() {
     const unsub = onProactiveMessage(async ({ id, text, ts, kind, voice, thinking }) => {
       const vpsSession = useStore.getState().sessions?.find(s => s.providerName === 'claude-code-vps')
       if (!vpsSession) return
-      const existing = await getMessages(vpsSession.id)
       // A live-delivered turn saves its bubbles under local ids but records
       // the server wire ids it displayed in `wireIds` — check both, otherwise
       // every reconnect's history snapshot re-appends replies this browser
-      // already showed live.
-      if (existing.some(m => m.id === id || (Array.isArray(m.wireIds) && m.wireIds.includes(id)))) return
+      // already showed live. These are indexed point lookups on purpose: a
+      // reconnect may replay a long transcript, and reading every message
+      // for each replayed item used to delay the newest proactive message.
+      const live = useStore.getState().messages
+      if (live.some(m => m.id === id || (Array.isArray(m.wireIds) && m.wireIds.includes(id)))) return
+      const [sameId, matchingWire] = await Promise.all([getMessage(id), hasMessageWithWireId(id)])
+      if (sameId || matchingWire) return
       const reasoningFields = thinking ? { reasoning: thinking, reasoningStreaming: false } : {}
+
+      // Make the message visible before any slow optional work (notably TTS)
+      // begins. The returned promise keeps later writes ordered: a completed
+      // voice result can never be overwritten by the initial placeholder.
+      const showAndPersist = (msg, preview) => {
+        const state = useStore.getState()
+        state.updateSession(vpsSession.id, { lastMsgPreview: preview, lastMsgTime: msg.timestamp })
+        if (state.currentSessionId === vpsSession.id) state.addMessage(msg)
+        return saveMessage(msg).catch(error => {
+          console.error('[PROACTIVE] 消息落库失败:', error?.message)
+        })
+      }
+      const updateVoiceMessage = async (updates, preview) => {
+        const complete = { id, conversationId: vpsSession.id, role: 'assistant', timestamp: ts, streaming: false, source: 'cc-proactive', ...updates }
+        try {
+          await saveMessage(complete)
+        } catch (error) {
+          // The already-visible placeholder must still resolve to readable
+          // text even if a private-mode/full-storage IndexedDB write fails.
+          console.error('[PROACTIVE-VOICE] 消息落库失败:', error?.message)
+        }
+        const state = useStore.getState()
+        state.updateSession(vpsSession.id, { lastMsgPreview: preview, lastMsgTime: ts })
+        if (state.currentSessionId === vpsSession.id) state.updateMessage(id, updates)
+      }
 
       if (kind === 'voice') {
         const s = useStore.getState()
@@ -584,41 +680,37 @@ export default function App() {
         const ttsVoiceId = vpsSession.ttsVoiceId || s.ttsVoiceId
         const ttsModel = vpsSession.ttsModel || s.ttsModel
         const hasTts = ttsApiKey && ttsGroupId
-        if (!hasTts) {
-          const msg = { id, conversationId: vpsSession.id, role: 'assistant', type: 'text', content: text, voiceText: text, voiceFailed: true, timestamp: ts, streaming: false, source: 'cc-proactive', ...reasoningFields }
-          await saveMessage(msg)
-          if (useStore.getState().currentSessionId === vpsSession.id) useStore.getState().addMessage(msg)
-          return
-        }
-        try {
-          const blob = await fetchTTSAudio(text, { apiKey: ttsApiKey, groupId: ttsGroupId, voiceId: voice || ttsVoiceId || 'English_Trustworthy_Man', model: ttsModel })
-          let duration = 0
+        const placeholder = { id, conversationId: vpsSession.id, role: 'assistant', type: 'text', content: text, voiceText: text, voiceLoading: true, timestamp: ts, streaming: false, source: 'cc-proactive', ...reasoningFields }
+        const placeholderSaved = showAndPersist(placeholder, `[语音] ${text}`.slice(0, 40))
+        void (async () => {
+          await placeholderSaved
+          if (!hasTts) {
+            await updateVoiceMessage({ type: 'text', content: text, voiceText: text, voiceFailed: true, voiceLoading: false, ...reasoningFields }, text.slice(0, 40))
+            return
+          }
           try {
-            const ab = await blob.arrayBuffer()
-            const ac = new AudioContext()
-            const decoded = await ac.decodeAudioData(ab)
-            duration = Math.round(decoded.duration)
-            ac.close()
-          } catch {}
-          const voiceBlobId = id + '-blob'
-          await saveBlob(voiceBlobId, blob)
-          const msg = { id, conversationId: vpsSession.id, role: 'assistant', type: 'voice', voiceBlobId, duration, content: '', voiceText: text, timestamp: ts, streaming: false, source: 'cc-proactive', ...reasoningFields }
-          await saveMessage(msg)
-          if (useStore.getState().currentSessionId === vpsSession.id) useStore.getState().addMessage(msg)
-        } catch (e) {
-          console.error('[PROACTIVE-VOICE] 合成失败:', e?.message)
-          const msg = { id, conversationId: vpsSession.id, role: 'assistant', type: 'text', content: text, voiceText: text, voiceFailed: true, timestamp: ts, streaming: false, source: 'cc-proactive', ...reasoningFields }
-          await saveMessage(msg)
-          if (useStore.getState().currentSessionId === vpsSession.id) useStore.getState().addMessage(msg)
-        }
+            const blob = await fetchTTSAudio(text, { apiKey: ttsApiKey, groupId: ttsGroupId, voiceId: voice || ttsVoiceId || 'English_Trustworthy_Man', model: ttsModel })
+            let duration = 0
+            try {
+              const ab = await blob.arrayBuffer()
+              const ac = new AudioContext()
+              const decoded = await ac.decodeAudioData(ab)
+              duration = Math.round(decoded.duration)
+              ac.close()
+            } catch {}
+            const voiceBlobId = id + '-blob'
+            await saveBlob(voiceBlobId, blob)
+            await updateVoiceMessage({ type: 'voice', voiceBlobId, duration, content: '', voiceText: text, voiceLoading: false, ...reasoningFields }, `[语音] ${text}`.slice(0, 40))
+          } catch (e) {
+            console.error('[PROACTIVE-VOICE] 合成失败:', e?.message)
+            await updateVoiceMessage({ type: 'text', content: text, voiceText: text, voiceFailed: true, voiceLoading: false, ...reasoningFields }, text.slice(0, 40))
+          }
+        })()
         return
       }
 
       const msg = { id, conversationId: vpsSession.id, role: 'assistant', type: 'text', content: text, timestamp: ts, streaming: false, source: 'cc-proactive', ...reasoningFields }
-      await saveMessage(msg)
-      if (useStore.getState().currentSessionId === vpsSession.id) {
-        useStore.getState().addMessage(msg)
-      }
+      await showAndPersist(msg, text.slice(0, 40))
     })
     return unsub
   }, [])

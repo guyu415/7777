@@ -251,6 +251,19 @@ export function useChat() {
     // used by scheduleMsgSync for the write direction.
     if ((useStore.getState().currentSessionId || 'main') !== CONVERSATION_ID) return
 
+    // A companion history snapshot and this IndexedDB read can arrive at the
+    // same time when the app returns from the background. Preserve a live
+    // proactive bubble that landed after this read began; otherwise this
+    // stale load can replace the just-arrived message with an older array and
+    // make it look as though it takes another reconnect to show up.
+    const liveMessages = useStore.getState().messages
+    const liveForConversation = liveMessages.filter(message => message.conversationId === CONVERSATION_ID)
+    if (liveForConversation.length) {
+      const loadedIds = new Set(history.map(message => message.id))
+      history = [...history, ...liveForConversation.filter(message => !loadedIds.has(message.id))]
+      history.sort((a, b) => a.timestamp - b.timestamp)
+    }
+
     setMessages(history)
     if (history.length > 0) {
       const last = history[history.length - 1]

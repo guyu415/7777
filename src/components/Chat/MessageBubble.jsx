@@ -462,6 +462,9 @@ function MessageBubble({ message, onLongPress, onRegenerate, onRegenerateRound, 
               </div>
               <span className="text-xs" style={{ color: 'rgba(61,107,82,0.6)' }}>语音生成中…</span>
             </div>
+            {message.voiceText && (
+              <p className="mt-2 leading-relaxed whitespace-pre-wrap" style={{ fontSize: 14, color: '#3d6b52' }}>{message.voiceText}</p>
+            )}
           </div>
         )}
 
