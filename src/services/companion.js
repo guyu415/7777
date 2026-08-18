@@ -1439,7 +1439,7 @@ export async function* streamChatViaCompanion({ text, imagePath, file, signal, m
     const m = evt.wire
     if (m.type === 'turn_busy') {
       finishError = Object.assign(
-        new Error('companion 正在处理上一轮，请稍候再发送'),
+        new Error('他还在忙上一轮，请稍候再发送'),
         { code: 'turn_busy', turnId: m.turnId },
       )
       push({ done: true })

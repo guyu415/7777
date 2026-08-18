@@ -928,7 +928,7 @@ export function useChat() {
       } else {
         const companionHint = {
           auth_required: '（companion 未登录或登录已过期，请在设置中重新登录）',
-          turn_busy: '（companion 上一轮还没结束，请稍候再试）',
+          turn_busy: '（他上一轮还没回完，稍等一下再试）',
           turn_error: '（companion 这一轮失败了）',
           connect_timeout: '（连接 companion 超时，请检查网络）',
           not_connected: '（companion 未连接）',
