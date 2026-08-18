@@ -68,6 +68,7 @@ export default function CareHubWindow({ theme, onClose }) {
   const [input, setInput] = useState('')
   const [sending, setSending] = useState(false)
   const [expense, setExpense] = useState({ amount: '', item: '午餐', custom: '', date: chinaDate(), kind: 'daily' })
+  const [showDailyBreakdown, setShowDailyBreakdown] = useState(false)
   const [goal, setGoal] = useState({ title: '', schedule: 'daily', dateDraft: '', dates: [] })
   const [draftRoles, setDraftRoles] = useState(null)
   const [budget, setBudget] = useState('')
@@ -128,6 +129,12 @@ export default function CareHubWindow({ theme, onClose }) {
   const dailyTarget = Number(state?.ledger.dailyBudget || 0)
   const dailyRemaining = dailyTarget > 0 ? dailyTarget - dailyTotal : null
   const longTermTotal = useMemo(() => monthEntries.filter((entry) => entry.kind === 'longTerm').reduce((sum, entry) => sum + entry.amount, 0), [monthEntries])
+  const dailyBreakdown = useMemo(() => {
+    const byDate = {}
+    for (const entry of monthEntries) byDate[entry.date] = (byDate[entry.date] || 0) + entry.amount
+    return Object.entries(byDate).sort((a, b) => b[0].localeCompare(a[0])).map(([date, amount]) => ({ date, amount }))
+  }, [monthEntries])
+  const maxDailyAmount = Math.max(1, ...dailyBreakdown.map((d) => d.amount))
   const goals = state?.study.goals || []
   const todayGoals = goals.filter((item) => item.schedule !== 'dates' || (item.dates || []).includes(today))
   const goalDoneToday = (item) => item.schedule === 'daily' || item.schedule === 'dates' ? (item.completedDates || []).includes(today) : !!item.done
@@ -239,9 +246,12 @@ export default function CareHubWindow({ theme, onClose }) {
 
         {tab === 'ledger' && <div className="space-y-3">
           <Panel>
-            <div className="flex items-center justify-between"><div><div className="text-xs" style={{ color: '#849aad' }}>{formatDateOnly(period.start)}—{formatDateOnly(period.end)} 本期支出</div><div className="text-3xl font-semibold mt-1" style={{ color: '#385f76' }}>¥{ledgerSummary.total.toFixed(2)}</div></div><CircleDollarSign size={34} style={{ color: '#56a58d', opacity: .65 }} /></div>
-            <div className="mt-4 h-2 rounded-full overflow-hidden" style={{ background: '#e6f0ef' }}><div className="h-full rounded-full" style={{ background: '#56a58d', width: `${state.ledger.monthlyBudget ? Math.min(100, ledgerSummary.total / state.ledger.monthlyBudget * 100) : 0}%` }} /></div>
-            <div className="flex justify-between text-[11px] mt-1.5" style={{ color: '#849aad' }}><span>{monthEntries.length} 笔 · 含长期开销 ¥{longTermTotal.toFixed(2)}</span><span>{state.ledger.monthlyBudget ? `预算 ¥${state.ledger.monthlyBudget} · 剩余 ¥${(state.ledger.monthlyBudget - ledgerSummary.total).toFixed(2)}` : '尚未设置月预算'}</span></div>
+            <div className="cursor-pointer" role="button" tabIndex={0} onClick={() => setShowDailyBreakdown(true)} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') setShowDailyBreakdown(true) }}>
+              <div className="flex items-center justify-between"><div><div className="text-xs" style={{ color: '#849aad' }}>{formatDateOnly(period.start)}—{formatDateOnly(period.end)} 本期支出</div><div className="text-3xl font-semibold mt-1" style={{ color: '#385f76' }}>¥{ledgerSummary.total.toFixed(2)}</div></div><CircleDollarSign size={34} style={{ color: '#56a58d', opacity: .65 }} /></div>
+              <div className="mt-4 h-2 rounded-full overflow-hidden" style={{ background: '#e6f0ef' }}><div className="h-full rounded-full" style={{ background: '#56a58d', width: `${state.ledger.monthlyBudget ? Math.min(100, ledgerSummary.total / state.ledger.monthlyBudget * 100) : 0}%` }} /></div>
+              <div className="flex justify-between text-[11px] mt-1.5" style={{ color: '#849aad' }}><span>{monthEntries.length} 笔 · 含长期开销 ¥{longTermTotal.toFixed(2)}</span><span>{state.ledger.monthlyBudget ? `预算 ¥${state.ledger.monthlyBudget} · 剩余 ¥${(state.ledger.monthlyBudget - ledgerSummary.total).toFixed(2)}` : '尚未设置月预算'}</span></div>
+              <div className="flex items-center gap-1 mt-2 text-[11px]" style={{ color: '#6e9b8a' }}><CalendarDays size={12} />点击查看每日花销</div>
+            </div>
             <div className="mt-4 space-y-2">{Object.entries(ledgerSummary.byCategory).sort((a, b) => b[1] - a[1]).map(([name, amount]) => <div key={name}><div className="flex justify-between text-xs mb-1" style={{ color: '#60788d' }}><span>{name}</span><span>¥{amount.toFixed(2)}</span></div><div className="h-1.5 rounded-full" style={{ background: '#edf2f4' }}><div className="h-full rounded-full" style={{ width: `${ledgerSummary.total ? amount / ledgerSummary.total * 100 : 0}%`, background: '#79b7a5' }} /></div></div>)}</div>
           </Panel>
           <Panel>
@@ -265,6 +275,26 @@ export default function CareHubWindow({ theme, onClose }) {
             </form>
           </Panel>
           <Panel><div className="text-sm font-semibold mb-2" style={{ color: '#46657c' }}>最近记录</div>{[...monthEntries].reverse().map((entry) => <div key={entry.id} className="flex items-center gap-2 py-2 border-b last:border-0" style={{ borderColor: '#edf2f5' }}><div className="flex-1 min-w-0"><div className="text-xs font-medium" style={{ color: '#526b7d' }}><span style={{ color: entry.kind === 'longTerm' ? '#8569a6' : '#526b7d' }}>{entry.kind === 'longTerm' ? '长期' : '日常'}</span> · {entry.category} · {entry.note || '无备注'}</div><div className="text-[10px]" style={{ color: '#9aabba' }}>{entry.date}</div></div><span className="text-sm" style={{ color: entry.kind === 'longTerm' ? '#8569a6' : '#446b64' }}>¥{entry.amount.toFixed(2)}</span><button onClick={() => action(() => deleteCareLedgerEntry(entry.id))} style={{ color: '#b6c1c9' }} aria-label={`删除${entry.note || entry.category}`}><Trash2 size={13} /></button></div>)}</Panel>
+        </div>}
+
+        {showDailyBreakdown && <div className="fixed inset-0 z-50 flex flex-col justify-end" style={{ background: 'rgba(20,30,45,.45)' }} onClick={() => setShowDailyBreakdown(false)}>
+          <div className="rounded-t-3xl flex flex-col" style={{ background: '#fdfbf9', maxHeight: '75vh' }} onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between px-4 pt-4 pb-3 shrink-0" style={{ borderBottom: '1px solid #eef1f4' }}>
+              <div>
+                <div className="text-sm font-semibold" style={{ color: '#385f76' }}>{formatDateOnly(period.start)}—{formatDateOnly(period.end)} 每日花销</div>
+                <div className="text-[11px] mt-0.5" style={{ color: '#9aabba' }}>{dailyBreakdown.length} 天有记录 · 合计 ¥{ledgerSummary.total.toFixed(2)}</div>
+              </div>
+              <button onClick={() => setShowDailyBreakdown(false)} className="w-8 h-8 rounded-full flex items-center justify-center shrink-0" style={{ background: '#f2f5f7', color: '#7890a2' }} aria-label="关闭"><X size={16} /></button>
+            </div>
+            <div className="overflow-y-auto px-4 py-3 space-y-2.5" style={{ paddingBottom: 'calc(var(--safe-bottom, 0px) + 14px)' }}>
+              {dailyBreakdown.length === 0 && <div className="text-center text-xs py-8" style={{ color: '#9aabba' }}>本期还没有记账</div>}
+              {dailyBreakdown.map(({ date, amount }) => <div key={date} className="flex items-center gap-3">
+                <div className="w-16 shrink-0 text-xs" style={{ color: date === today ? '#3d7d6b' : '#60788d', fontWeight: date === today ? 600 : 400 }}>{formatDateOnly(date)}{date === today ? ' · 今' : ''}</div>
+                <div className="flex-1 h-2 rounded-full overflow-hidden" style={{ background: '#edf2f4' }}><div className="h-full rounded-full" style={{ width: `${amount / maxDailyAmount * 100}%`, background: '#79b7a5' }} /></div>
+                <div className="w-16 shrink-0 text-right text-xs font-medium" style={{ color: '#446b64' }}>¥{amount.toFixed(2)}</div>
+              </div>)}
+            </div>
+          </div>
         </div>}
 
         {tab === 'study' && <div className="space-y-3">
