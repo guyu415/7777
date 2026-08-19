@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { ArrowLeft, BookHeart, Feather, Heart, HeartHandshake, Loader2, Sparkles, Trash2 } from 'lucide-react'
+import { ArrowLeft, BookHeart, Feather, Heart, Loader2, Trash2 } from 'lucide-react'
 import { addAnniversaryEvent, deleteAnniversaryEvent, getAnniversaryRange, COMPANION_LOGIN_URL, COMPANION_RETURN_URL } from '../../services/companion'
 import { chinaDate, formatDateOnly } from './careShared'
 import MonthCalendar, { ymd } from './MonthCalendar'
@@ -110,18 +110,8 @@ export default function AnniversaryWindow({ theme, onClose }) {
           <p>记下有纪念意义的事情或约定</p>
         </div>
 
-        <div className="anniversary-window__hero-journal" aria-hidden="true">
-          <BookHeart size={27} strokeWidth={1.7} />
-        </div>
-        <div className="anniversary-window__hero-cloud" aria-hidden="true">
-          <HeartHandshake size={29} strokeWidth={1.8} />
-          <span className="anniversary-window__hero-cloud-dot anniversary-window__hero-cloud-dot--left" />
-          <span className="anniversary-window__hero-cloud-dot anniversary-window__hero-cloud-dot--right" />
-        </div>
-        <Sparkles className="anniversary-window__hero-sparkle anniversary-window__hero-sparkle--top" size={28} aria-hidden="true" />
-        <Sparkles className="anniversary-window__hero-sparkle anniversary-window__hero-sparkle--small" size={15} aria-hidden="true" />
-        <Heart className="anniversary-window__hero-heart" size={21} fill="currentColor" aria-hidden="true" />
-        <div className="anniversary-window__hero-grass" aria-hidden="true" />
+        <img className="anniversary-window__sticker anniversary-window__sticker--notebook" src="/assets/anniversary-sticker-notebook.png" alt="" aria-hidden="true" />
+        <img className="anniversary-window__sticker anniversary-window__sticker--jar-cloud" src="/assets/anniversary-sticker-jar-cloud.png" alt="" aria-hidden="true" />
       </div>
     </header>
   )
@@ -217,9 +207,7 @@ export default function AnniversaryWindow({ theme, onClose }) {
               <h2>{formatDateOnly(selectedDate)}{selectedDate === today ? ' · 今天' : ''}</h2>
             </div>
 
-            <div className="anniversary-window__mail" aria-hidden="true">
-              <span><Heart size={17} fill="currentColor" /></span>
-            </div>
+            <img className="anniversary-window__entry-envelope" src="/assets/anniversary-sticker-envelope.png" alt="" aria-hidden="true" />
 
             {dayEvents.length === 0 ? (
               <div className="anniversary-window__empty">
@@ -255,7 +243,7 @@ export default function AnniversaryWindow({ theme, onClose }) {
                 <span>记下</span>
               </button>
             </form>
-            <img className="anniversary-window__bunny" src="/assets/bunny.png" alt="" aria-hidden="true" />
+            <img className="anniversary-window__entry-bear" src="/assets/anniversary-sticker-bear.png" alt="" aria-hidden="true" />
           </section>
         </div>
       </main>
@@ -282,11 +270,11 @@ export default function AnniversaryWindow({ theme, onClose }) {
         }
         .anniversary-window > :not(.anniversary-window__texture) { position: relative; z-index: 1; }
         .anniversary-window__hero {
-          min-height: 184px;
-          padding: calc(var(--safe-top) + 16px) 20px 36px;
+          min-height: 166px;
+          padding: calc(var(--safe-top) + 12px) 20px 18px;
           background: linear-gradient(180deg, rgba(255, 209, 224, .86), rgba(255, 242, 235, .62));
         }
-        .anniversary-window__hero-inner { position: relative; width: min(100%, 620px); min-height: 132px; margin: 0 auto; }
+        .anniversary-window__hero-inner { position: relative; width: min(100%, 620px); min-height: 136px; margin: 0 auto; }
         .anniversary-window__back {
           position: relative;
           z-index: 3;
@@ -302,7 +290,7 @@ export default function AnniversaryWindow({ theme, onClose }) {
           transition: transform .18s ease, background .18s ease;
         }
         .anniversary-window__back:active { transform: scale(.94); background: #fff; }
-        .anniversary-window__hero-copy { position: absolute; z-index: 3; top: 35px; left: clamp(58px, 16vw, 98px); margin: 0; }
+        .anniversary-window__hero-copy { position: absolute; z-index: 3; top: 28px; left: clamp(58px, 16vw, 98px); margin: 0; }
         .anniversary-window__hero-copy h1 {
           margin: 0;
           color: var(--anniversary-ink);
@@ -316,65 +304,27 @@ export default function AnniversaryWindow({ theme, onClose }) {
           font: 13px/1.5 'ZCOOL XiaoWei', 'Noto Sans SC', sans-serif;
           letter-spacing: .04em;
         }
-        .anniversary-window__hero-journal,
-        .anniversary-window__hero-cloud {
+        .anniversary-window__sticker {
           position: absolute;
           z-index: 2;
-          display: grid;
-          place-items: center;
-          border: 1px solid rgba(255, 255, 255, .78);
-          box-shadow: 0 7px 14px rgba(168, 117, 129, .12), inset 0 0 0 1px rgba(247, 183, 199, .26);
+          display: block;
+          max-width: none;
+          height: auto;
+          object-fit: contain;
           pointer-events: none;
+          user-select: none;
+          filter: drop-shadow(0 5px 7px rgba(177, 118, 135, .13));
         }
-        .anniversary-window__hero-journal {
-          left: 3px;
-          bottom: -10px;
-          width: 51px;
-          height: 43px;
-          border-radius: 17px 10px 18px 13px;
-          color: #ec9ab0;
-          background: rgba(255, 238, 239, .78);
-          transform: rotate(-10deg);
+        .anniversary-window__sticker--notebook {
+          bottom: -1px;
+          left: 0;
+          width: min(28vw, 130px);
+          transform: rotate(-3deg);
         }
-        .anniversary-window__hero-cloud {
-          right: clamp(42px, 13vw, 88px);
-          bottom: 1px;
-          width: 78px;
-          height: 47px;
-          border-radius: 52% 47% 46% 55%;
-          color: #ed9eb0;
-          background: rgba(255, 252, 247, .82);
-          transform: rotate(4deg);
-        }
-        .anniversary-window__hero-cloud::before,
-        .anniversary-window__hero-cloud::after {
-          content: '';
-          position: absolute;
-          bottom: 12px;
-          width: 7px;
-          height: 7px;
-          border-radius: 50%;
-          background: #7f756f;
-        }
-        .anniversary-window__hero-cloud::before { left: 22px; }
-        .anniversary-window__hero-cloud::after { right: 22px; }
-        .anniversary-window__hero-cloud-dot { position: absolute; bottom: 8px; width: 3px; height: 3px; border-radius: 50%; background: #ed9eb0; }
-        .anniversary-window__hero-cloud-dot--left { left: 32px; }
-        .anniversary-window__hero-cloud-dot--right { right: 32px; }
-        .anniversary-window__hero-sparkle { position: absolute; z-index: 2; pointer-events: none; color: #f2c969; filter: drop-shadow(0 2px 2px rgba(191, 142, 70, .13)); }
-        .anniversary-window__hero-sparkle--top { top: 5px; right: clamp(112px, 30vw, 180px); transform: rotate(10deg); }
-        .anniversary-window__hero-sparkle--small { right: 18px; bottom: 54px; color: #f2b8cb; }
-        .anniversary-window__hero-heart { position: absolute; z-index: 2; right: 5px; top: 68px; color: #ee9bb4; transform: rotate(14deg); opacity: .84; }
-        .anniversary-window__hero-grass {
-          position: absolute;
-          z-index: 1;
-          right: -8%;
-          bottom: -44px;
-          left: -8%;
-          height: 62px;
-          border-top: 1px solid rgba(175, 210, 173, .6);
-          border-radius: 50% 50% 0 0 / 48% 48% 0 0;
-          background: radial-gradient(ellipse at 50% 0, rgba(252,255,244,.98), rgba(218,241,218,.88) 65%, rgba(194,229,195,.66));
+        .anniversary-window__sticker--jar-cloud {
+          top: 5px;
+          right: 0;
+          width: min(42vw, 205px);
         }
         .anniversary-window__loading { position: relative; z-index: 1; color: var(--anniversary-primary); }
         .anniversary-window__retry {
@@ -394,7 +344,7 @@ export default function AnniversaryWindow({ theme, onClose }) {
           font-size: 12px;
         }
         .anniversary-window__main { position: relative; z-index: 1; padding: 0 14px calc(18px + var(--safe-bottom)); overscroll-behavior: contain; }
-        .anniversary-window__content { width: min(100%, 620px); margin: -19px auto 0; padding-bottom: 12px; }
+        .anniversary-window__content { width: min(100%, 620px); margin: 0 auto; padding-bottom: 12px; }
         .anniversary-window__calendar-card,
         .anniversary-window__entry-card {
           position: relative;
@@ -511,13 +461,29 @@ export default function AnniversaryWindow({ theme, onClose }) {
         .anniversary-window__submit { display: flex; width: 82px; height: 48px; flex: none; align-items: center; justify-content: center; gap: 6px; border: 0; border-radius: 999px; color: #fff; background: var(--anniversary-primary); box-shadow: 0 7px 16px color-mix(in srgb, var(--anniversary-primary) 27%, transparent); font-size: 13px; transition: transform .18s ease, opacity .18s ease; }
         .anniversary-window__submit:active:not(:disabled) { transform: translateY(2px) scale(.97); }
         .anniversary-window__submit:disabled { cursor: not-allowed; opacity: .48; box-shadow: none; }
-        .anniversary-window__mail { position: absolute !important; top: 78px; right: 15px; z-index: 2 !important; width: 54px; height: 39px; border: 1.5px solid #efa9bc; border-radius: 7px; color: #ed91ab; background: rgba(255,246,246,.75); opacity: .8; transform: rotate(7deg); pointer-events: none; }
-        .anniversary-window__mail::before,
-        .anniversary-window__mail::after { content: ''; position: absolute; top: 5px; width: 33px; height: 1px; background: #efa9bc; }
-        .anniversary-window__mail::before { left: -1px; transform: rotate(33deg); transform-origin: left center; }
-        .anniversary-window__mail::after { right: -1px; transform: rotate(-33deg); transform-origin: right center; }
-        .anniversary-window__mail span { position: absolute; top: 10px; left: 18px; }
-        .anniversary-window__bunny { position: absolute !important; right: auto; bottom: -18px; left: -2px; z-index: 2 !important; width: 66px; height: 66px; object-fit: contain; opacity: .38; filter: saturate(.85) drop-shadow(0 3px 3px rgba(158, 116, 106, .13)); pointer-events: none; }
+        .anniversary-window__entry-envelope {
+          position: absolute !important;
+          top: 63px;
+          right: 5px;
+          z-index: 2 !important;
+          width: 84px;
+          height: auto;
+          object-fit: contain;
+          filter: drop-shadow(0 4px 5px rgba(177, 118, 135, .13));
+          pointer-events: none;
+        }
+        .anniversary-window__entry-bear {
+          position: absolute !important;
+          right: auto;
+          bottom: -24px;
+          left: 0;
+          z-index: 2 !important;
+          width: 112px;
+          height: auto;
+          object-fit: contain;
+          filter: drop-shadow(0 4px 5px rgba(158, 116, 106, .13));
+          pointer-events: none;
+        }
         @media (min-width: 600px) {
           .anniversary-window__hero { padding-right: 24px; padding-left: 24px; }
           .anniversary-window__main { padding-right: 24px; padding-left: 24px; }
@@ -525,16 +491,16 @@ export default function AnniversaryWindow({ theme, onClose }) {
           .anniversary-window__entry-card { padding-right: 25px; padding-left: 25px; }
         }
         @media (max-width: 360px) {
-          .anniversary-window__hero { min-height: 174px; padding-bottom: 32px; }
-          .anniversary-window__hero-inner { min-height: 124px; }
-          .anniversary-window__hero-cloud { right: 22px; transform: scale(.9) rotate(4deg); transform-origin: right bottom; }
-          .anniversary-window__hero-sparkle--top { right: 95px; }
+          .anniversary-window__hero { min-height: 158px; padding-bottom: 14px; }
+          .anniversary-window__hero-inner { min-height: 132px; }
           .anniversary-window__calendar-card { padding: 18px 11px 17px; border-radius: 30px; }
           .anniversary-window .care-month-calendar__grid { column-gap: 3px; row-gap: 7px; }
           .anniversary-window .care-month-calendar__nav { margin-right: 1px; margin-left: 1px; }
           .anniversary-window__entry-card { padding-right: 14px; padding-left: 14px; }
           .anniversary-window__submit { width: 72px; }
           .anniversary-window__entry-heading { padding-right: 90px; }
+          .anniversary-window__sticker--jar-cloud { width: min(42vw, 170px); }
+          .anniversary-window__entry-bear { width: 101px; }
         }
         @media (prefers-reduced-motion: reduce) {
           .anniversary-window__back,
