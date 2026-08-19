@@ -3,7 +3,8 @@ import { useStore, getCustomFont, getBlob, getMessage, getMessages, hasMessageWi
 import { THEMES } from './themes'
 import ChatWindow from './components/Chat/ChatWindow'
 import GroupChatWindow from './components/GroupChat/GroupChatWindow'
-import CareHubWindow from './components/CareHub/CareHubWindow'
+import LedgerWindow from './components/CareHub/LedgerWindow'
+import AnniversaryWindow from './components/CareHub/AnniversaryWindow'
 import GlobalSettings from './components/GlobalSettings'
 import SessionSettings from './components/SessionSettings'
 import UniverseHome from './components/UniverseHome'
@@ -97,7 +98,7 @@ export default function App() {
     } else if (source === 'cc-proactive') {
       targetId = sessions?.find(s => s.providerName === 'claude-code-vps')?.id || null
     } else if (source === 'care-hub') {
-      setCurrentView('careHub')
+      setCurrentView('ledger')
     } else {
       return false
     }
@@ -154,7 +155,7 @@ export default function App() {
   useEffect(() => {
     if (!loggedIn || sessionStorage.getItem('resumeCareHubAfterLogin') !== '1') return
     sessionStorage.removeItem('resumeCareHubAfterLogin')
-    setCurrentView('careHub')
+    setCurrentView('ledger')
   }, [loggedIn, setCurrentView])
 
   // One-time migration: upload all local IDB messages to cloud
@@ -932,7 +933,8 @@ export default function App() {
           {currentView === 'groupChat' && currentGroupChatId && (
             <GroupChatWindow theme={theme} chatId={currentGroupChatId} onClose={() => setCurrentView('sessions')} />
           )}
-          {currentView === 'careHub' && <CareHubWindow theme={theme} onClose={() => setCurrentView('sessions')} />}
+          {currentView === 'ledger' && <LedgerWindow theme={theme} onClose={() => setCurrentView('sessions')} />}
+          {currentView === 'anniversary' && <AnniversaryWindow theme={theme} onClose={() => setCurrentView('sessions')} />}
           {currentView === 'xinchao' && (
             <Suspense fallback={<div className="h-full grid place-items-center text-sm text-gray-500">正在打开心潮…</div>}>
               <XinchaoDashboard onClose={() => setCurrentView('sessions')} />
@@ -942,7 +944,8 @@ export default function App() {
             <UniverseHome
               theme={theme}
               onOpenChat={() => setCurrentView('chat')}
-              onOpenCareHub={() => setCurrentView('careHub')}
+              onOpenLedger={() => setCurrentView('ledger')}
+              onOpenAnniversary={() => setCurrentView('anniversary')}
               onOpenXinchao={() => setCurrentView('xinchao')}
             />
           )}

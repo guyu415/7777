@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { Plus, Trash2, Edit3, Check, ChevronDown, ChevronLeft, Users, HeartHandshake } from 'lucide-react'
+import { Plus, Trash2, Edit3, Check, ChevronDown, ChevronLeft, Users, CircleDollarSign, Heart } from 'lucide-react'
 import { useStore, deleteMessagesForSession } from '../store'
 import { deleteSessionMsgs } from '../services/sync'
 import DiarySection from './DiarySection'
@@ -22,7 +22,7 @@ function genId() {
   return Date.now().toString(36) + Math.random().toString(36).slice(2)
 }
 
-export default function SessionList({ theme, onSelectSession, onOpenGroupChat, onOpenCareHub, onBackHome }) {
+export default function SessionList({ theme, onSelectSession, onOpenGroupChat, onOpenLedger, onOpenAnniversary, onBackHome }) {
   const {
     sessions, currentSessionId, setCurrentSessionId,
     addSession, updateSession, deleteSession,
@@ -279,17 +279,24 @@ export default function SessionList({ theme, onSelectSession, onOpenGroupChat, o
             <Plus size={11} /> 创建群聊
           </button>
         </div>
-        <button
-          onClick={() => onOpenCareHub?.()}
-          className="w-full flex items-center gap-3 px-4 py-3 mb-2 text-left"
-          style={{ border: 0, borderRadius: '30px 19px 27px 22px', background: 'linear-gradient(135deg, rgba(230,244,239,.76), rgba(250,232,241,.67))', boxShadow: `0 6px 20px ${primary}0d`, transform: 'rotate(.3deg)' }}
-        >
-          <div className="w-9 h-9 rounded-full flex items-center justify-center text-white shrink-0" style={{ background: `linear-gradient(135deg, ${primary}, #a27fc0)` }}><HeartHandshake size={17} /></div>
-          <div className="flex-1 min-w-0">
-            <div className="flex items-center gap-2"><span className="text-sm font-semibold" style={{ color: '#385d82' }}>生活关怀群</span><span className="text-[9px] px-1.5 py-0.5 rounded-full" style={{ color: primary, background: `${primary}15` }}>固定</span></div>
-            <div className="text-xs truncate mt-0.5" style={{ color: '#7a9cc0' }}>📰 新闻 · 🧾 记账 · 🧭 黄历 · 📚 学习</div>
-          </div>
-        </button>
+        <div className="grid grid-cols-2 gap-2 mb-2">
+          <button
+            onClick={() => onOpenLedger?.()}
+            className="flex items-center gap-2.5 px-3.5 py-3 text-left"
+            style={{ border: 0, borderRadius: '30px 19px 27px 22px', background: 'linear-gradient(135deg, rgba(230,244,239,.76), rgba(250,232,241,.67))', boxShadow: `0 6px 20px ${primary}0d`, transform: 'rotate(.3deg)' }}
+          >
+            <div className="w-8 h-8 rounded-full flex items-center justify-center text-white shrink-0" style={{ background: 'linear-gradient(135deg, #56a58d, #79b7a5)' }}><CircleDollarSign size={15} /></div>
+            <div className="min-w-0"><div className="text-sm font-semibold" style={{ color: '#385d82' }}>账本</div><div className="text-[11px] truncate mt-0.5" style={{ color: '#7a9cc0' }}>日历记账</div></div>
+          </button>
+          <button
+            onClick={() => onOpenAnniversary?.()}
+            className="flex items-center gap-2.5 px-3.5 py-3 text-left"
+            style={{ border: 0, borderRadius: '19px 30px 22px 27px', background: 'linear-gradient(135deg, rgba(250,232,241,.76), rgba(240,232,250,.67))', boxShadow: `0 6px 20px ${primary}0d`, transform: 'rotate(-.3deg)' }}
+          >
+            <div className="w-8 h-8 rounded-full flex items-center justify-center text-white shrink-0" style={{ background: `linear-gradient(135deg, ${primary}, #a27fc0)` }}><Heart size={15} /></div>
+            <div className="min-w-0"><div className="text-sm font-semibold" style={{ color: '#385d82' }}>纪念日</div><div className="text-[11px] truncate mt-0.5" style={{ color: '#7a9cc0' }}>记事约定</div></div>
+          </button>
+        </div>
         {groupChats.length === 0 ? (
           <div className="text-xs px-1 pb-2" style={{ color: '#a0b8d0' }}>还没有群聊，创建一个试试～</div>
         ) : (

@@ -1137,9 +1137,13 @@ export default function ChatWindow({ theme }) {
                 useStore.getState().setCurrentGroupChatId(id)
                 setCurrentView('groupChat')
               }}
-              onOpenCareHub={() => {
+              onOpenLedger={() => {
                 setShowSessionDrawer(false)
-                setCurrentView('careHub')
+                setCurrentView('ledger')
+              }}
+              onOpenAnniversary={() => {
+                setShowSessionDrawer(false)
+                setCurrentView('anniversary')
               }}
             />
           </div>

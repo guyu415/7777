@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { BookHeart, CalendarDays, Heart, HeartHandshake, MessageCircleHeart, Sparkles, X } from 'lucide-react'
+import { BookHeart, CalendarDays, CircleDollarSign, Heart, HeartHandshake, MessageCircleHeart, Sparkles, X } from 'lucide-react'
 import { useStore } from '../store'
 import DiarySection from './DiarySection'
 import StudySchedulePanel from './StudySchedule/StudySchedulePanel'
@@ -18,7 +18,7 @@ function formatDate(timestamp) {
   return `${date.getFullYear()}.${String(date.getMonth() + 1).padStart(2, '0')}.${String(date.getDate()).padStart(2, '0')}`
 }
 
-export default function UniverseHome({ theme, onOpenChat, onOpenCareHub, onOpenXinchao }) {
+export default function UniverseHome({ theme, onOpenChat, onOpenLedger, onOpenAnniversary, onOpenXinchao }) {
   const {
     sessions, currentSessionId, setCurrentSessionId, setMessages,
     userAvatar: globalUserAvatar, aiAvatar: globalAiAvatar, aiName: globalAiName,
@@ -133,10 +133,13 @@ export default function UniverseHome({ theme, onOpenChat, onOpenCareHub, onOpenX
             <span className="universe-home__shortcut-icon universe-home__shortcut-icon--violet"><CalendarDays size={22} /></span>
             <span><strong>课表</strong><small>近半个月</small></span>
           </button>
-          <button type="button" onClick={() => onOpenCareHub?.()} className="universe-home__shortcut-wide">
-            <span className="universe-home__shortcut-icon universe-home__shortcut-icon--blue"><HeartHandshake size={22} /></span>
-            <span><strong>生活关怀群</strong><small>新闻 · 记账 · 黄历 · 学习监督</small></span>
-            <i>›</i>
+          <button onClick={() => onOpenLedger?.()}>
+            <span className="universe-home__shortcut-icon universe-home__shortcut-icon--blue"><CircleDollarSign size={22} /></span>
+            <span><strong>账本</strong><small>日历记账</small></span>
+          </button>
+          <button onClick={() => onOpenAnniversary?.()}>
+            <span className="universe-home__shortcut-icon" style={{ background: `${primary}17`, color: primary }}><HeartHandshake size={22} /></span>
+            <span><strong>纪念日</strong><small>记事约定</small></span>
           </button>
         </section>
       </div>
@@ -207,14 +210,14 @@ export default function UniverseHome({ theme, onOpenChat, onOpenCareHub, onOpenX
         .universe-home__shortcuts button { min-width:0; min-height:82px; display:flex; align-items:center; gap:11px; padding:13px 15px; text-align:left; border:0; box-shadow:0 7px 19px rgba(93,95,126,.08); color:#616c73; backdrop-filter:blur(4px); -webkit-backdrop-filter:blur(4px); }
         .universe-home__shortcuts button:nth-child(1){width:57%;background:rgba(255,224,237,.66);border-radius:47% 53% 42% 58% / 38% 45% 55% 62%;transform:rotate(-1.4deg)}
         .universe-home__shortcuts button:nth-child(2){width:calc(43% - 10px);background:rgba(233,232,249,.68);border-radius:57% 43% 55% 45% / 45% 39% 61% 55%;transform:translateY(8px) rotate(1.8deg)}
+        .universe-home__shortcuts button:nth-child(3){width:calc(50% - 5px);background:rgba(226,242,239,.68);border-radius:54% 46% 41% 59% / 45% 39% 61% 55%;transform:rotate(-.8deg)}
+        .universe-home__shortcuts button:nth-child(4){width:calc(50% - 5px);background:rgba(250,232,241,.68);border-radius:46% 54% 59% 41% / 55% 61% 39% 45%;transform:rotate(.8deg)}
         .universe-home__shortcuts strong,.universe-home__shortcuts small { display:block; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
         .universe-home__shortcuts strong { font:500 14px/1.3 'ZCOOL XiaoWei',serif; }
         .universe-home__shortcuts small { margin-top:5px; color:#a3a8b8; font-size:9px; }
         .universe-home__shortcut-icon { flex:none; width:39px; height:39px; display:grid; place-items:center; color:#66849b; background:rgba(231,244,250,.75); border-radius:57% 43% 51% 49% / 47% 58% 42% 53%; }
         .universe-home__shortcut-icon--violet { color:#806eb1; background:rgba(237,230,250,.78); }
         .universe-home__shortcut-icon--blue { color:#638997; background:rgba(224,243,239,.78); }
-        .universe-home__shortcuts .universe-home__shortcut-wide { width:88%; min-height:72px; margin:5px 0 0 8%; background:rgba(226,242,239,.68); border-radius:41% 59% 54% 46% / 45% 39% 61% 55%; transform:rotate(-.5deg); }
-        .universe-home__shortcut-wide i { margin-left:auto; color:#a0a5b6; font:24px/1 sans-serif; }
         .universe-home__diary { position:fixed; inset:0; z-index:1100; display:flex; align-items:flex-end; justify-content:center; }
         .universe-home__diary-backdrop { position:absolute; inset:0; border:0; background:rgba(45,39,60,.22); backdrop-filter:blur(3px); }
         .universe-home__diary-sheet { position:relative; width:min(100%,480px); height:min(88dvh,780px); max-height:calc(100dvh - env(safe-area-inset-top,0px)); display:flex; flex-direction:column; overflow:hidden; border-radius:30px 30px 0 0; background:rgba(253,250,255,.98); box-shadow:0 -18px 55px rgba(57,44,72,.22); }

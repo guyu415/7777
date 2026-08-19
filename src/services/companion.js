@@ -759,6 +759,21 @@ export async function setStudyScheduleCourse(date, slot, course) {
   })
 }
 
+// ---------- 纪念日日历 ----------
+// A simple date -> events[] calendar, independent of the ledger. cc reads/
+// writes the same store through get_anniversary/write_anniversary MCP tools
+// (see channel-server.ts), so entries added here are visible to cc and vice
+// versa.
+export async function getAnniversaryRange(startDate, endDate = startDate) {
+  return companionJson(`/anniversary?start=${encodeURIComponent(startDate)}&end=${encodeURIComponent(endDate)}`)
+}
+export async function addAnniversaryEvent(date, text) {
+  return companionJson('/anniversary/add', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ date, text }) })
+}
+export async function deleteAnniversaryEvent(date, id) {
+  return companionJson('/anniversary/delete', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ date, id }) })
+}
+
 // Every call takes an explicit `runtime` ('claude-code' | 'codex') so the
 // two boards/threads/turn-tracking never share state — see channel-server.ts's
 // runtime-branched gomoku endpoints. Defaults to 'claude-code' so any
