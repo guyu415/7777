@@ -240,7 +240,7 @@ function MessageBubble({ message, onLongPress, onRegenerate, onRegenerateRound, 
   }
 
   return (
-    <div className={clsx('flex w-full min-w-0 items-end gap-2 animate-fade-up', sameSenderAsPrev ? 'mb-1' : 'mb-4', isUser ? 'flex-row-reverse' : 'flex-row')}>
+    <div className={clsx('flex w-full min-w-0 items-end gap-2 animate-fade-up', sameSenderAsNext ? 'mb-1' : 'mb-4', isUser ? 'flex-row-reverse' : 'flex-row')}>
       {avatarEl}
 
       <div
@@ -364,8 +364,12 @@ function MessageBubble({ message, onLongPress, onRegenerate, onRegenerateRound, 
             {...pressProps}
           >
             <span className={isUser ? '' : 'bubble-ai'} style={{ position:'absolute', inset:0, borderRadius:'inherit', pointerEvents:'none' }} />
-            {/* AI bubble dog head — chin at bubble border, paws ~25px inside */}
-            {!isUser && (
+            {/* AI bubble dog head — chin at bubble border, paws ~25px inside.
+                Pokes 25px above this bubble's own top edge, which collides
+                with a same-sender bubble packed tightly above it (mb-1) —
+                only the first bubble of a run has a full-width (mb-4) gap
+                above it to pop out into, so only that one gets the head. */}
+            {!isUser && !sameSenderAsPrev && (
               <img
                 src="/assets/dog-head.png"
                 alt=""
@@ -381,8 +385,11 @@ function MessageBubble({ message, onLongPress, onRegenerate, onRegenerateRound, 
                 }}
               />
             )}
-            {/* User bubble dog tail — rotated 30° toward lower-right, clear of avatar */}
-            {isUser && (
+            {/* User bubble dog tail — rotated 30° toward lower-right, clear
+                of avatar. Pokes below this bubble's own bottom edge, so only
+                the last bubble of a run (full mb-4 gap below it) gets one,
+                for the same reason as the head above. */}
+            {isUser && !sameSenderAsNext && (
               <img
                 src="/assets/dog-tail.png"
                 alt=""
