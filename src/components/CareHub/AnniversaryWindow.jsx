@@ -272,7 +272,7 @@ export default function AnniversaryWindow({ theme, onClose }) {
           padding: calc(var(--safe-top) + 4px) 20px 0;
           background: linear-gradient(180deg, rgba(255, 209, 224, .62), rgba(255, 242, 235, .26));
         }
-        .anniversary-window__hero-inner { position: relative; width: min(100%, 620px); min-height: clamp(112px, 27.5vw, 123px); margin: 0 auto; }
+        .anniversary-window__hero-inner { position: relative; width: min(100%, 620px); min-height: clamp(112px, 29vw, 130px); margin: 0 auto; }
         .anniversary-window__back {
           position: relative;
           z-index: 3;
@@ -288,13 +288,13 @@ export default function AnniversaryWindow({ theme, onClose }) {
           transition: transform .18s ease, background .18s ease;
         }
         .anniversary-window__back:active { transform: scale(.94); background: #fff; }
-        .anniversary-window__hero-copy { position: absolute; z-index: 3; top: clamp(32px, 9vw, 40px); left: clamp(58px, 16vw, 98px); margin: 0; }
+        .anniversary-window__hero-copy { position: absolute; z-index: 3; top: clamp(74px, 21vw, 94px); left: clamp(76px, 20vw, 122px); margin: 0; }
         .anniversary-window__hero-copy h1 {
           margin: 0;
-          color: var(--anniversary-ink);
-          font: 600 clamp(27px, 6.8vw, 32px)/1.08 ui-rounded, 'STYuanti-SC-Regular', 'Hiragino Maru Gothic ProN', 'Yuanti SC', 'YouYuan', 'Noto Sans SC', sans-serif;
+          color: #3e6a50;
+          font: 400 clamp(27px, 6.8vw, 32px)/1.08 ui-rounded, 'STYuanti-SC-Regular', 'Hiragino Maru Gothic ProN', 'Yuanti SC', 'YouYuan', 'Noto Sans SC', sans-serif;
           letter-spacing: .08em;
-          text-shadow: 0 2px 0 rgba(255,255,255,.42);
+          text-shadow: 0 1px 0 rgba(255,255,255,.55);
         }
         .anniversary-window__sticker {
           position: absolute;
@@ -347,7 +347,9 @@ export default function AnniversaryWindow({ theme, onClose }) {
           overflow: hidden;
           padding: 21px 16px 20px;
           border-radius: 35px;
-          background: rgba(255, 253, 247, .95);
+          background: rgba(255, 253, 247, .78);
+          backdrop-filter: blur(5px);
+          -webkit-backdrop-filter: blur(5px);
         }
         .anniversary-window__calendar-card::before,
         .anniversary-window__entry-card::before {
@@ -380,9 +382,7 @@ export default function AnniversaryWindow({ theme, onClose }) {
           text-shadow: 0 1px 0 rgba(255,255,255,.8);
         }
         .anniversary-window .care-month-calendar__month::before,
-        .anniversary-window .care-month-calendar__month::after { color: #efadbf; font-size: 12px; vertical-align: 5px; }
-        .anniversary-window .care-month-calendar__month::before { content: '♥'; margin-right: 11px; }
-        .anniversary-window .care-month-calendar__month::after { content: '♥'; margin-left: 11px; }
+        .anniversary-window .care-month-calendar__month::after { content: none; }
         .anniversary-window .care-month-calendar__weekdays { margin-bottom: 13px; color: #3a654a !important; }
         .anniversary-window .care-month-calendar__weekday { display: flex; min-width: 0; flex-direction: column; align-items: center; gap: 5px; font: 500 14px/1 'ZCOOL XiaoWei', serif; }
         .anniversary-window__weekday-mark { height: 10px; font: 10px/1 'Noto Sans SC', sans-serif; opacity: .9; }
