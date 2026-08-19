@@ -166,14 +166,18 @@ function MessageBubble({ message, onLongPress, onRegenerate, onRegenerateRound, 
     onContextMenu: (e) => { e.preventDefault(); onLongPress(message) },
   } : {}
 
+  // Container/inner-circle scaled to ~83% of the original 80/40 (avatar +
+  // frame shrunk ~17%, same ratio preserved so the frame keeps sitting
+  // exactly on the circle's edge); the message-bubble width calc below is
+  // adjusted to match (see `calc(100% - 74px)`).
   const avatarEl = (
-    <div className="flex-shrink-0 mb-1" style={{ position: 'relative', width: 80, height: 80 }}>
-      {/* Avatar — explicit 40px, centered; frame is sibling at 100% of 80px so nothing overflows */}
+    <div className="flex-shrink-0 mb-1" style={{ position: 'relative', width: 66, height: 66 }}>
+      {/* Avatar — explicit 33px, centered; frame is sibling at 100% of 66px so nothing overflows */}
       <div style={{
         position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%, -50%)',
-        width: 40, height: 40,
+        width: 33, height: 33,
         borderRadius: '50%', overflow: 'hidden',
-        display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '1.125rem',
+        display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.95rem',
         background: isUser ? `${theme?.primary}4d` : 'rgba(255,255,255,0.55)',
         boxShadow: isUser
           ? `0 2px 8px ${theme?.userBubbleShadow || 'rgba(255,133,179,0.2)'}, 0 0 12px ${theme?.primary || '#ff85b3'}40`
@@ -183,7 +187,7 @@ function MessageBubble({ message, onLongPress, onRegenerate, onRegenerateRound, 
           ? (userAvatar ? <img src={userAvatar} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : '🐣')
           : (aiAvatar  ? <img src={aiAvatar}  alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : '🌸')}
       </div>
-      {/* Frame — 100% of 80px container, no overflow, no clipping */}
+      {/* Frame — 100% of 66px container, no overflow, no clipping */}
       <img
         src="/assets/avatar-frame.png"
         alt=""
@@ -198,7 +202,7 @@ function MessageBubble({ message, onLongPress, onRegenerate, onRegenerateRound, 
   )
 
   const userBubbleStyle = {
-    padding: '10px 16px',
+    padding: '7px 16px',
     minWidth: 0,
     maxWidth: '100%',
     boxSizing: 'border-box',
@@ -213,7 +217,7 @@ function MessageBubble({ message, onLongPress, onRegenerate, onRegenerateRound, 
   }
 
   const aiBubbleStyle = {
-    padding: '10px 16px',
+    padding: '7px 16px',
     minWidth: 0,
     maxWidth: '100%',
     boxSizing: 'border-box',
@@ -228,12 +232,12 @@ function MessageBubble({ message, onLongPress, onRegenerate, onRegenerateRound, 
   }
 
   return (
-    <div className={clsx('flex w-full min-w-0 items-end gap-2 mb-4 animate-fade-up', isUser ? 'flex-row-reverse' : 'flex-row')}>
+    <div className={clsx('flex w-full min-w-0 items-end gap-2 mb-3 animate-fade-up', isUser ? 'flex-row-reverse' : 'flex-row')}>
       {avatarEl}
 
       <div
         className={clsx('relative min-w-0 flex flex-col', isUser ? 'items-end' : 'items-start')}
-        style={{ width: 'calc(100% - 88px)', maxWidth: '72vw' }}
+        style={{ width: 'calc(100% - 74px)', maxWidth: '72vw' }}
       >
         {/* What CC actually did this turn — VPS only, sits above the thinking
             fold because it happened before the reply it belongs to. Deliberately
@@ -260,20 +264,23 @@ function MessageBubble({ message, onLongPress, onRegenerate, onRegenerateRound, 
             ))}
           </div>
         )}
-        {/* Collapsible reasoning / thinking chain (AI only) */}
+        {/* Collapsible reasoning / thinking chain (AI only) — a small pill
+            tag sitting right on top of the bubble, not a block that claims
+            its own row height; collapsed it's just the button's own size. */}
         {!isUser && (message.reasoning || message.reasoningStreaming) && (
-          <div className="mb-1.5 w-full">
+          <div className="mb-1 w-full">
             <button
               onClick={() => setShowReasoning(v => !v)}
               disabled={!message.reasoning}
               className="flex items-center gap-1"
               style={{
-                fontSize: 11,
+                fontSize: 10.5,
+                lineHeight: 1.4,
                 color: 'rgba(120,140,160,0.85)',
                 background: 'rgba(255,255,255,0.35)',
                 border: '1px solid rgba(160,180,200,0.3)',
-                borderRadius: 10,
-                padding: '3px 9px',
+                borderRadius: 999,
+                padding: '2px 8px',
                 cursor: message.reasoning ? 'pointer' : 'default',
                 fontFamily: 'inherit',
               }}
@@ -450,7 +457,7 @@ function MessageBubble({ message, onLongPress, onRegenerate, onRegenerateRound, 
 
         {/* Voice loading indicator — shows while TTS is being fetched */}
         {message.voiceLoading && !isUser && (
-          <div className="relative rounded-[20px]" style={{ ...aiBubbleStyle, padding: '10px 16px' }}>
+          <div className="relative rounded-[20px]" style={{ ...aiBubbleStyle, padding: '7px 16px' }}>
             <span className="bubble-ai" style={{ position: 'absolute', inset: 0, borderRadius: 'inherit', pointerEvents: 'none' }} />
             <span style={{ position: 'absolute', top: -4, left: -4, fontSize: 10, pointerEvents: 'none', zIndex: 1 }}>🌿</span>
             <div className="flex items-center gap-2">
@@ -471,7 +478,7 @@ function MessageBubble({ message, onLongPress, onRegenerate, onRegenerateRound, 
         {message.type === 'voice' && !isUser && (
           <div
             className={clsx('relative rounded-[20px] select-none cursor-default', pressed ? 'bubble-press' : '')}
-            style={{ ...aiBubbleStyle, padding: '10px 14px' }}
+            style={{ ...aiBubbleStyle, padding: '7px 14px' }}
             {...pressProps}
           >
             <span className="bubble-ai" style={{ position: 'absolute', inset: 0, borderRadius: 'inherit', pointerEvents: 'none' }} />
@@ -578,7 +585,7 @@ function MessageBubble({ message, onLongPress, onRegenerate, onRegenerateRound, 
         )}
 
         {/* Timestamp */}
-        <div className={clsx('flex items-center gap-1 mt-1 px-1', isUser ? 'flex-row-reverse' : 'flex-row')}>
+        <div className={clsx('flex items-center gap-1 mt-0.5 px-1', isUser ? 'flex-row-reverse' : 'flex-row')}>
           <span className="text-[10px]" style={{ color: '#d4a0b0' }}>{formatTime(message.timestamp)}</span>
           {isUser && !message.streaming && <CheckCheck size={12} style={{ color: '#ffb7d1' }} />}
         </div>

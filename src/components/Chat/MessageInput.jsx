@@ -563,7 +563,7 @@ const MessageInput = forwardRef(function MessageInput({ onSend, onSendBatch, onS
 
       <div style={{
         display: 'flex', alignItems: 'flex-end', gap: 8,
-        padding: '6px 12px 10px',
+        padding: '5px 12px 8px',
       }}>
         <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={handleImage} />
         <input ref={attachmentFileRef} type="file" className="hidden" onChange={handleFile} />

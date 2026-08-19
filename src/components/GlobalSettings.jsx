@@ -281,6 +281,7 @@ export default function GlobalSettings({ theme, onLogout, onForceSync }) {
     userBubbleTextColor, setUserBubbleTextColor,
     fontFamily, setFontFamily,
     defaultFontSize, setDefaultFontSize,
+    showFallingParticles, setShowFallingParticles,
     customFonts, addCustomFont, removeCustomFont,
     memoryEnabled, setMemoryEnabled,
     workerUrl, setWorkerUrl,
@@ -545,6 +546,35 @@ export default function GlobalSettings({ theme, onLogout, onForceSync }) {
             <div className="flex justify-between text-[10px] mt-0.5" style={{ color: '#a0b8d0' }}>
               <span>12px</span><span>16px</span><span>20px</span>
             </div>
+          </div>
+        </GlassCard>
+
+        {/* Chat display */}
+        <GlassCard icon="🍃" title="聊天显示">
+          <div className="flex items-center justify-between">
+            <div>
+              <span className="text-sm" style={{ color: '#2c5282' }}>显示掉落物</span>
+              <p className="text-[10px] mt-0.5" style={{ color: '#a0b8d0' }}>
+                关闭后聊天里飘落堆积的小挂件会隐藏，不影响其正常产生
+              </p>
+            </div>
+            <button
+              onClick={() => setShowFallingParticles(!showFallingParticles)}
+              aria-label="显示掉落物"
+              aria-pressed={showFallingParticles}
+              style={{
+                flexShrink: 0,
+                width: 44, height: 24, borderRadius: 12, border: 'none', cursor: 'pointer',
+                background: showFallingParticles ? primary : 'rgba(160,180,200,0.4)',
+                position: 'relative', transition: 'background 0.2s',
+              }}
+            >
+              <span style={{
+                position: 'absolute', top: 2, left: showFallingParticles ? 22 : 2,
+                width: 20, height: 20, borderRadius: '50%', background: '#fff',
+                transition: 'left 0.2s', boxShadow: '0 1px 3px rgba(0,0,0,0.2)',
+              }} />
+            </button>
           </div>
         </GlassCard>
 

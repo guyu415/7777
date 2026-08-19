@@ -105,13 +105,14 @@ export default function ChatWindow({ theme }) {
     currentView, setCurrentView, apiKey, aiAvatar: globalAiAvatar, aiName: globalAiName,
     userAvatar: globalUserAvatar,
     deleteMessagesFrom, workerUrl, currentSessionId, sessions, providers, selectedProviderId,
-    summaryToast, setSummaryToast,
+    summaryToast, setSummaryToast, showFallingParticles,
   } = useStore(useShallow(s => ({
     currentView: s.currentView, setCurrentView: s.setCurrentView, apiKey: s.apiKey,
     aiAvatar: s.aiAvatar, aiName: s.aiName, userAvatar: s.userAvatar,
     deleteMessagesFrom: s.deleteMessagesFrom, workerUrl: s.workerUrl, currentSessionId: s.currentSessionId,
     sessions: s.sessions, providers: s.providers, selectedProviderId: s.selectedProviderId,
     summaryToast: s.summaryToast, setSummaryToast: s.setSummaryToast,
+    showFallingParticles: s.showFallingParticles,
   })))
 
   const currentSession = sessions?.find(s => s.id === currentSessionId)
@@ -605,8 +606,8 @@ export default function ChatWindow({ theme }) {
       {/* Header */}
       <div className="safe-top"
         style={{
-          paddingTop: 'calc(var(--safe-top) + 14px)',
-          paddingBottom: 12,
+          paddingTop: 'calc(var(--safe-top) + 8px)',
+          paddingBottom: 6,
           paddingLeft: 13,
           paddingRight: 13,
           background: `linear-gradient(180deg, rgba(255,252,253,.7), ${primaryColor}0d)`,
@@ -635,7 +636,7 @@ export default function ChatWindow({ theme }) {
           >
             <Menu size={17} />
           </button>
-          <div className="w-11 h-11 rounded-full overflow-hidden flex items-center justify-center text-xl flex-shrink-0"
+          <div className="w-10 h-10 rounded-full overflow-hidden flex items-center justify-center text-xl flex-shrink-0"
             style={{
               background: `${primaryColor}33`,
               border: `2px solid ${primaryColor}9c`,
@@ -646,7 +647,7 @@ export default function ChatWindow({ theme }) {
               : <span style={{ fontSize: 12, fontWeight: 700, color: primaryDarkColor }}>CC</span>}
           </div>
           <div className="min-w-0" style={{ flex: 1, alignSelf: 'stretch', display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
-            <div className="flex items-center min-w-0" style={{ height: 22 }}>
+            <div className="flex items-center min-w-0" style={{ height: 20 }}>
               <div className="font-semibold text-sm" style={{
                 flex: 1, minWidth: 0,
                 overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
@@ -656,7 +657,7 @@ export default function ChatWindow({ theme }) {
                 {effectiveAiName || currentSession?.name || '新对话'}
               </div>
             </div>
-            <div className="flex items-center min-w-0" style={{ height: 23, gap: 4 }}>
+            <div className="flex items-center min-w-0" style={{ height: 20, gap: 4 }}>
               <div className="min-w-0" style={{ flex: 1, overflow: 'hidden' }}>
                 <Signature text={effectiveSignature || '在线'} color={primaryColor} shadow={`0 0 6px ${primaryColor}aa, 0 0 14px ${primaryColor}60`} />
               </div>
@@ -783,8 +784,11 @@ export default function ChatWindow({ theme }) {
         )}
 
         <div className="flex-1 min-h-0 relative overflow-hidden">
-          {/* Falling + stacking accessory particles — clipped to chat only. */}
-          <FallingParticles />
+          {/* Falling + stacking accessory particles — clipped to chat only.
+              Always mounted regardless of the "显示掉落物" setting so its
+              falling/landing state keeps accumulating in the background;
+              the setting only hides the visual layer (see `visible` prop). */}
+          <FallingParticles visible={showFallingParticles !== false} />
           <MessageList
             ref={messageListRef}
             messages={messages}

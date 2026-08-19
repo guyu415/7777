@@ -192,7 +192,7 @@ const MessageList = forwardRef(function MessageList({
       <div
         ref={scrollRef}
         onScroll={handleScroll}
-        className="absolute inset-0 overflow-y-auto px-3 py-4"
+        className="absolute inset-0 overflow-y-auto px-3 py-3"
         style={{ zIndex: 1 }}
       >
         <div style={{ position: 'relative', height: virtualizer.getTotalSize(), width: '100%' }}>
