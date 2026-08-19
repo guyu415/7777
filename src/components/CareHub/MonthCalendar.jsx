@@ -11,7 +11,7 @@ export function monthLabel(year, monthIndex) { return `${year} 年 ${monthIndex 
  * each owns its own per-day marker via renderDay(date), this only handles
  * the grid/navigation shell.
  */
-export default function MonthCalendar({ year, monthIndex, today, selectedDate, onSelectDate, onPrevMonth, onNextMonth, renderDay, primary }) {
+export default function MonthCalendar({ year, monthIndex, today, selectedDate, onSelectDate, onPrevMonth, onNextMonth, renderDay, cellStyle, primary }) {
   const firstWeekday = (new Date(Date.UTC(year, monthIndex, 1)).getUTCDay() + 6) % 7
   const daysInMonth = new Date(Date.UTC(year, monthIndex + 1, 0)).getUTCDate()
   const cells = [...Array(firstWeekday).fill(null), ...Array.from({ length: daysInMonth }, (_, i) => i + 1)]
@@ -37,13 +37,15 @@ export default function MonthCalendar({ year, monthIndex, today, selectedDate, o
               key={date}
               type="button"
               onClick={() => onSelectDate(date)}
-              className="rounded-xl flex flex-col items-center justify-center gap-0.5"
+              className="relative flex flex-col items-center justify-center gap-0.5"
               style={{
                 border: isToday && !isSelected ? `1px solid ${primary}55` : '1px solid transparent',
                 background: isSelected ? primary : isToday ? `${primary}14` : 'rgba(255,255,255,.55)',
                 color: isSelected ? '#fff' : '#526b7d',
+                borderRadius: '14px',
                 minHeight: 44,
                 padding: '4px 0',
+                ...(cellStyle?.(date, isSelected, isToday) || {}),
               }}
             >
               <span className="text-xs font-medium leading-none">{d}</span>
