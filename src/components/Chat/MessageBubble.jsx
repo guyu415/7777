@@ -87,7 +87,7 @@ function formatFileBytes(bytes) {
   return `${Math.max(1, Math.round(bytes / 1024))}KB`
 }
 
-function MessageBubble({ message, onLongPress, onRegenerate, onRegenerateRound, onRetry, isLoading, userAvatar, aiAvatar, theme, sameSenderAsPrev }) {
+function MessageBubble({ message, onLongPress, onRegenerate, onRegenerateRound, onRetry, isLoading, userAvatar, aiAvatar, theme, sameSenderAsPrev, sameSenderAsNext }) {
   const [viewerSrc, setViewerSrc] = useState(null)
   const [pressed, setPressed] = useState(false)
   const [showVoiceText, setShowVoiceText] = useState(false)
@@ -171,8 +171,15 @@ function MessageBubble({ message, onLongPress, onRegenerate, onRegenerateRound, 
   // same ratio preserved so the frame keeps sitting exactly on the circle's
   // edge; the message-bubble width calc below is adjusted to match (see
   // `calc(100% - 83px)`).
+  // Only the last bubble of a consecutive same-sender run shows the actual
+  // avatar (bubbles are bottom-aligned via items-end, so that's the one
+  // sitting next to it) — earlier bubbles in the run keep an invisible
+  // same-size placeholder so the message column doesn't shift sideways.
+  // Without this, the 75px avatar block repeated on every single bubble
+  // dwarfed the mb-1 tight-spacing margin between same-sender bubbles,
+  // so grouping was invisible even though the margin really was smaller.
   const avatarEl = (
-    <div className="flex-shrink-0 mb-1" style={{ position: 'relative', width: 75, height: 75 }}>
+    <div className="flex-shrink-0 mb-1" style={{ position: 'relative', width: 75, height: 75, visibility: sameSenderAsNext ? 'hidden' : 'visible' }}>
       {/* Avatar — explicit 37px, centered; frame is sibling at 100% of 75px so nothing overflows */}
       <div style={{
         position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%, -50%)',
