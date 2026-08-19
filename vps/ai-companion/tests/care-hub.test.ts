@@ -13,6 +13,7 @@ describe('care hub', () => {
   it('defaults every scheduled care role to ChatGPT-authenticated Luna', () => {
     const roles = defaultCareHubState().config.roles
     for (const role of Object.values(roles)) {
+      expect(role.enabled).toBe(false)
       expect(role.runtime).toBe('codex')
       expect(role.model).toBe('gpt-5.6-luna')
     }
@@ -20,7 +21,7 @@ describe('care hub', () => {
 
   it('uses Shanghai wall time and only runs once per day', () => {
     expect(zonedDateTime(new Date('2026-08-09T00:05:00Z'), 'Asia/Shanghai')).toEqual({ date: '2026-08-09', time: '08:05' })
-    const role = defaultCareHubState().config.roles.news
+    const role = { ...defaultCareHubState().config.roles.news, enabled: true }
     expect(careRoleIsDue(role, '2026-08-09', '08:05')).toBe(true)
     expect(careRoleIsDue({ ...role, lastAttemptDate: '2026-08-09' }, '2026-08-09', '08:05')).toBe(false)
   })
