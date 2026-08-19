@@ -302,7 +302,7 @@ export default function AnniversaryWindow({ theme, onClose }) {
           transition: transform .18s ease, background .18s ease;
         }
         .anniversary-window__back:active { transform: scale(.94); background: #fff; }
-        .anniversary-window__hero-copy { position: relative; z-index: 2; margin: 13px 0 0 clamp(58px, 16vw, 98px); }
+        .anniversary-window__hero-copy { position: absolute; z-index: 3; top: 35px; left: clamp(58px, 16vw, 98px); margin: 0; }
         .anniversary-window__hero-copy h1 {
           margin: 0;
           color: var(--anniversary-ink);
