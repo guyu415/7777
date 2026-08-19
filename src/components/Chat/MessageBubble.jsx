@@ -166,18 +166,19 @@ function MessageBubble({ message, onLongPress, onRegenerate, onRegenerateRound, 
     onContextMenu: (e) => { e.preventDefault(); onLongPress(message) },
   } : {}
 
-  // Container/inner-circle scaled to ~83% of the original 80/40 (avatar +
-  // frame shrunk ~17%, same ratio preserved so the frame keeps sitting
-  // exactly on the circle's edge); the message-bubble width calc below is
-  // adjusted to match (see `calc(100% - 74px)`).
+  // Container/inner-circle bumped ~13% back up from the previous density
+  // pass (66/33 -> 75/37) per feedback that avatars had gotten too small —
+  // same ratio preserved so the frame keeps sitting exactly on the circle's
+  // edge; the message-bubble width calc below is adjusted to match (see
+  // `calc(100% - 83px)`).
   const avatarEl = (
-    <div className="flex-shrink-0 mb-1" style={{ position: 'relative', width: 66, height: 66 }}>
-      {/* Avatar — explicit 33px, centered; frame is sibling at 100% of 66px so nothing overflows */}
+    <div className="flex-shrink-0 mb-1" style={{ position: 'relative', width: 75, height: 75 }}>
+      {/* Avatar — explicit 37px, centered; frame is sibling at 100% of 75px so nothing overflows */}
       <div style={{
         position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%, -50%)',
-        width: 33, height: 33,
+        width: 37, height: 37,
         borderRadius: '50%', overflow: 'hidden',
-        display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.95rem',
+        display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '1.05rem',
         background: isUser ? `${theme?.primary}4d` : 'rgba(255,255,255,0.55)',
         boxShadow: isUser
           ? `0 2px 8px ${theme?.userBubbleShadow || 'rgba(255,133,179,0.2)'}, 0 0 12px ${theme?.primary || '#ff85b3'}40`
@@ -187,7 +188,7 @@ function MessageBubble({ message, onLongPress, onRegenerate, onRegenerateRound, 
           ? (userAvatar ? <img src={userAvatar} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : '🐣')
           : (aiAvatar  ? <img src={aiAvatar}  alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : '🌸')}
       </div>
-      {/* Frame — 100% of 66px container, no overflow, no clipping */}
+      {/* Frame — 100% of 75px container, no overflow, no clipping */}
       <img
         src="/assets/avatar-frame.png"
         alt=""
@@ -202,7 +203,7 @@ function MessageBubble({ message, onLongPress, onRegenerate, onRegenerateRound, 
   )
 
   const userBubbleStyle = {
-    padding: '7px 16px',
+    padding: '7px 18px',
     minWidth: 0,
     maxWidth: '100%',
     boxSizing: 'border-box',
@@ -217,7 +218,7 @@ function MessageBubble({ message, onLongPress, onRegenerate, onRegenerateRound, 
   }
 
   const aiBubbleStyle = {
-    padding: '7px 16px',
+    padding: '7px 18px',
     minWidth: 0,
     maxWidth: '100%',
     boxSizing: 'border-box',
@@ -232,12 +233,12 @@ function MessageBubble({ message, onLongPress, onRegenerate, onRegenerateRound, 
   }
 
   return (
-    <div className={clsx('flex w-full min-w-0 items-end gap-2 mb-3 animate-fade-up', isUser ? 'flex-row-reverse' : 'flex-row')}>
+    <div className={clsx('flex w-full min-w-0 items-end gap-2 mb-2 animate-fade-up', isUser ? 'flex-row-reverse' : 'flex-row')}>
       {avatarEl}
 
       <div
         className={clsx('relative min-w-0 flex flex-col', isUser ? 'items-end' : 'items-start')}
-        style={{ width: 'calc(100% - 74px)', maxWidth: '72vw' }}
+        style={{ width: 'calc(100% - 83px)', maxWidth: '72vw' }}
       >
         {/* What CC actually did this turn — VPS only, sits above the thinking
             fold because it happened before the reply it belongs to. Deliberately
@@ -268,7 +269,10 @@ function MessageBubble({ message, onLongPress, onRegenerate, onRegenerateRound, 
             tag sitting right on top of the bubble, not a block that claims
             its own row height; collapsed it's just the button's own size. */}
         {!isUser && (message.reasoning || message.reasoningStreaming) && (
-          <div className="mb-1 w-full">
+          // Sits above the bubble's dog-head decoration (zIndex 5, which
+          // pokes up ~25px above the bubble's own top edge) so the tag
+          // never gets visually swallowed by it now that the gap is tight.
+          <div className="mb-1 w-full" style={{ position: 'relative', zIndex: 6 }}>
             <button
               onClick={() => setShowReasoning(v => !v)}
               disabled={!message.reasoning}
@@ -342,7 +346,14 @@ function MessageBubble({ message, onLongPress, onRegenerate, onRegenerateRound, 
         {message.type === 'text' && !diceValue && !message.voiceLoading && (
           <div
             className={clsx('relative rounded-[20px] leading-relaxed select-none cursor-default', pressed ? 'bubble-press' : '')}
-            style={isUser ? userBubbleStyle : aiBubbleStyle}
+            style={{
+              ...(isUser ? userBubbleStyle : aiBubbleStyle),
+              // A one-word bubble still reads as part of a full conversation
+              // flow rather than a stray dot near the avatar; long messages
+              // are unaffected since their intrinsic content width already
+              // exceeds this floor.
+              minWidth: '40%',
+            }}
             {...pressProps}
           >
             <span className={isUser ? '' : 'bubble-ai'} style={{ position:'absolute', inset:0, borderRadius:'inherit', pointerEvents:'none' }} />

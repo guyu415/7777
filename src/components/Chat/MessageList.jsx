@@ -154,7 +154,7 @@ const MessageList = forwardRef(function MessageList({
 
   if (messages.length === 0) {
     return (
-      <div className="absolute inset-0 overflow-y-auto px-3 py-4" style={{ zIndex: 1 }}>
+      <div className="absolute inset-0 overflow-y-auto px-2 py-4" style={{ zIndex: 1 }}>
         <div className="flex flex-col items-center justify-center h-full text-center gap-3">
           <div className="text-5xl">🌸</div>
           <div className="font-medium" style={{ color: '#c47a8a' }}>{emptyAiName ? `你好，我是${emptyAiName}！` : '你好！'}</div>
@@ -192,7 +192,7 @@ const MessageList = forwardRef(function MessageList({
       <div
         ref={scrollRef}
         onScroll={handleScroll}
-        className="absolute inset-0 overflow-y-auto px-3 py-3"
+        className="absolute inset-0 overflow-y-auto px-2 py-3"
         style={{ zIndex: 1 }}
       >
         <div style={{ position: 'relative', height: virtualizer.getTotalSize(), width: '100%' }}>
