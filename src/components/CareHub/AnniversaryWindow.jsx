@@ -107,7 +107,6 @@ export default function AnniversaryWindow({ theme, onClose }) {
 
         <div className="anniversary-window__hero-copy">
           <h1>纪念日</h1>
-          <p>记下有纪念意义的事情或约定</p>
         </div>
 
         <img className="anniversary-window__sticker anniversary-window__sticker--notebook" src="/assets/anniversary-sticker-notebook.png" alt="" aria-hidden="true" />
@@ -270,11 +269,11 @@ export default function AnniversaryWindow({ theme, onClose }) {
         }
         .anniversary-window > :not(.anniversary-window__texture) { position: relative; z-index: 1; }
         .anniversary-window__hero {
-          min-height: 166px;
-          padding: calc(var(--safe-top) + 12px) 20px 18px;
+          min-height: 0;
+          padding: calc(var(--safe-top) + 4px) 20px 0;
           background: linear-gradient(180deg, rgba(255, 209, 224, .86), rgba(255, 242, 235, .62));
         }
-        .anniversary-window__hero-inner { position: relative; width: min(100%, 620px); min-height: 136px; margin: 0 auto; }
+        .anniversary-window__hero-inner { position: relative; width: min(100%, 620px); min-height: clamp(112px, 27.5vw, 123px); margin: 0 auto; }
         .anniversary-window__back {
           position: relative;
           z-index: 3;
@@ -290,19 +289,13 @@ export default function AnniversaryWindow({ theme, onClose }) {
           transition: transform .18s ease, background .18s ease;
         }
         .anniversary-window__back:active { transform: scale(.94); background: #fff; }
-        .anniversary-window__hero-copy { position: absolute; z-index: 3; top: 28px; left: clamp(58px, 16vw, 98px); margin: 0; }
+        .anniversary-window__hero-copy { position: absolute; z-index: 3; top: 15px; left: clamp(58px, 16vw, 98px); margin: 0; }
         .anniversary-window__hero-copy h1 {
           margin: 0;
           color: var(--anniversary-ink);
-          font: 500 clamp(28px, 7.4vw, 34px)/1.12 'ZCOOL XiaoWei', serif;
-          letter-spacing: .12em;
+          font: 500 clamp(27px, 6.8vw, 32px)/1.08 'ZCOOL XiaoWei', serif;
+          letter-spacing: .08em;
           text-shadow: 0 2px 0 rgba(255,255,255,.42);
-        }
-        .anniversary-window__hero-copy p {
-          margin: 7px 0 0;
-          color: #5c7a63;
-          font: 13px/1.5 'ZCOOL XiaoWei', 'Noto Sans SC', sans-serif;
-          letter-spacing: .04em;
         }
         .anniversary-window__sticker {
           position: absolute;
@@ -322,9 +315,9 @@ export default function AnniversaryWindow({ theme, onClose }) {
           transform: rotate(-3deg);
         }
         .anniversary-window__sticker--jar-cloud {
-          top: 5px;
+          top: 0;
           right: 0;
-          width: min(42vw, 205px);
+          width: min(42vw, 180px);
         }
         .anniversary-window__loading { position: relative; z-index: 1; color: var(--anniversary-primary); }
         .anniversary-window__retry {
@@ -475,7 +468,7 @@ export default function AnniversaryWindow({ theme, onClose }) {
         .anniversary-window__entry-bear {
           position: absolute !important;
           right: auto;
-          bottom: -24px;
+          bottom: -6px;
           left: 0;
           z-index: 2 !important;
           width: 112px;
@@ -491,15 +484,14 @@ export default function AnniversaryWindow({ theme, onClose }) {
           .anniversary-window__entry-card { padding-right: 25px; padding-left: 25px; }
         }
         @media (max-width: 360px) {
-          .anniversary-window__hero { min-height: 158px; padding-bottom: 14px; }
-          .anniversary-window__hero-inner { min-height: 132px; }
+          .anniversary-window__hero-inner { min-height: 112px; }
           .anniversary-window__calendar-card { padding: 18px 11px 17px; border-radius: 30px; }
           .anniversary-window .care-month-calendar__grid { column-gap: 3px; row-gap: 7px; }
           .anniversary-window .care-month-calendar__nav { margin-right: 1px; margin-left: 1px; }
           .anniversary-window__entry-card { padding-right: 14px; padding-left: 14px; }
           .anniversary-window__submit { width: 72px; }
           .anniversary-window__entry-heading { padding-right: 90px; }
-          .anniversary-window__sticker--jar-cloud { width: min(42vw, 170px); }
+          .anniversary-window__sticker--jar-cloud { width: min(42vw, 160px); }
           .anniversary-window__entry-bear { width: 101px; }
         }
         @media (prefers-reduced-motion: reduce) {
