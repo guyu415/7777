@@ -605,17 +605,24 @@ export function useChat() {
             dirty = true
           }
           if (isVpsProvider && chunk.wireId) vpsWireIds.push(chunk.wireId)
-          if (isVpsProvider && chunk.voice?.id) vpsWireIds.push(chunk.voice.id)
           if (isVpsProvider && chunk.voice) {
             vpsUsedVoiceThisTurn = true
             // Finalize whatever text bubble was accumulating (if any) before
             // handling the voice chunk, so bubbles land in the same order CC
-            // actually called reply()/send_voice() in.
+            // actually called reply()/send_voice() in. Uses only the wire
+            // ids collected since the last rotation (see reset below) — a
+            // shared, never-reset accumulator here used to stamp every
+            // bubble in a multi-bubble turn with ALL of that turn's wire
+            // ids, so deleting one bubble sent every sibling bubble's wire
+            // id to the server too and the whole round vanished together.
             await finalizeCurrentTextBubble()
             await deliverVpsVoice(chunk.voice, fullReasoning || undefined)
             // Fresh bubble for any text (and any reasoning preceding it)
             // that arrives after this voice chunk — a later bubble must
-            // never inherit thinking that already belongs to this one.
+            // never inherit thinking (or wire ids) that already belong to
+            // this one. The voice bubble itself doesn't need an entry here:
+            // deliverVpsVoice already uses the wire id as the bubble's own
+            // local id.
             currentTextId = genId()
             currentTextAdded = false
             fullContent = ''
@@ -625,6 +632,7 @@ export function useChat() {
             storedReasoning = ''
             toolUses = []
             storedToolCount = 0
+            vpsWireIds.length = 0
             dirty = false
             continue
           }
