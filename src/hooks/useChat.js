@@ -1105,21 +1105,17 @@ export function useChat() {
       lastMsgPreview: type === 'text' ? (content || '').slice(0, 40) : type === 'file' ? `[文件] ${extra.fileName || ''}`.trim() : '[图片]',
       lastMsgTime: Date.now(),
     })
-    // addMessage() above already put the bubble on screen synchronously —
-    // the Stop button/generating state below doesn't depend on this
-    // finishing. But it IS awaited before streamResponse starts: a refresh
-    // that lands between the fire-and-forget write starting and it actually
-    // landing lost the message entirely (worse on a busy mobile Safari IDB,
-    // which this used to route around by not waiting at all — but the
-    // occasional slow write is a much smaller cost than silently losing or
-    // scrambling what the user just sent).
-    console.log('[SEND] saving to IDB...')
-    try {
-      await saveMessage(userMsg)
-      console.log('[SEND] IDB save OK')
-    } catch (e) {
-      console.error('[DB] saveMessage failed:', e)
-    }
+    // Fire-and-forget on purpose: mobile Safari's IndexedDB can take
+    // seconds under load, and awaiting it here delayed the Stop button /
+    // generating state by that same amount on every single send — a much
+    // more noticeable regression than the rarer "refresh lands mid-write"
+    // race it was meant to close. Reverted; that race is handled by
+    // loadHistory's live-message merge for same-session reconnects, and is
+    // a smaller cost than a multi-second freeze on every send.
+    console.log('[SEND] saving to IDB in background...')
+    saveMessage(userMsg)
+      .then(() => console.log('[SEND] IDB save OK'))
+      .catch(e => console.error('[DB] saveMessage failed:', e))
     if (isLoading) {
       console.log('[SEND] 插话：AI生成中，消息入队，等当前轮自然结束后一并回应')
       pendingMessagesRef.current.push(userMsg)
@@ -1159,12 +1155,8 @@ export function useChat() {
 
     for (const userMsg of userMsgs) {
       addMessage(userMsg)
-    }
-    // Awaited (see sendMessage above for why) before streamResponse starts —
-    // a refresh right after sending a batch must not lose any of them.
-    await Promise.all(userMsgs.map(userMsg =>
       saveMessage(userMsg).catch(e => console.error('[DB] saveMessage failed:', e))
-    ))
+    }
     updateSession(CONVERSATION_ID, {
       lastMsgPreview: trimmed[trimmed.length - 1].slice(0, 40),
       lastMsgTime: Date.now(),
@@ -1207,12 +1199,8 @@ export function useChat() {
     if (messages.length === 0) updateSession(CONVERSATION_ID, { name: '[图片]' })
     for (const userMsg of userMsgs) {
       addMessage(userMsg)
-    }
-    // Awaited (see sendMessage above for why) before streamResponse starts —
-    // a refresh right after sending a batch must not lose any of them.
-    await Promise.all(userMsgs.map(userMsg =>
       saveMessage(userMsg).catch(e => console.error('[DB] saveMessage failed:', e))
-    ))
+    }
     updateSession(CONVERSATION_ID, {
       lastMsgPreview: textParts.length ? textParts[textParts.length - 1].slice(0, 40) : '[图片]',
       lastMsgTime: Date.now(),
