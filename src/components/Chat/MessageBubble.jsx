@@ -272,15 +272,17 @@ function MessageBubble({ message, onLongPress, onRegenerate, onRegenerateRound, 
             tag sitting right on top of the bubble, not a block that claims
             its own row height; collapsed it's just the button's own size. */}
         {!isUser && (message.reasoning || message.reasoningStreaming) && (
-          // Sits above the bubble's dog-head decoration (zIndex 5, which
-          // pokes up ~25px above the bubble's own top edge) so the tag
-          // never gets visually swallowed by it now that the gap is tight.
+          // The dog-head decoration (zIndex 5) pokes ~25px above the
+          // bubble's own top edge, right where this row sits — shift the
+          // button clear of the head's ~46px footprint instead of stacking
+          // on top of it and covering it.
           <div className="mb-1 w-full" style={{ position: 'relative', zIndex: 6 }}>
             <button
               onClick={() => setShowReasoning(v => !v)}
               disabled={!message.reasoning}
               className="flex items-center gap-1"
               style={{
+                marginLeft: 46,
                 fontSize: 10.5,
                 lineHeight: 1.4,
                 color: 'rgba(120,140,160,0.85)',
