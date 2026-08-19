@@ -106,7 +106,7 @@ export default function AnniversaryWindow({ theme, onClose }) {
         </button>
 
         <div className="anniversary-window__hero-copy">
-          <h1>纪念日</h1>
+          <h1><img className="anniversary-window__title-image" src="/assets/anniversary-title-handdrawn.png" alt="纪念日" /></h1>
         </div>
 
         <img className="anniversary-window__sticker anniversary-window__sticker--notebook" src="/assets/anniversary-sticker-notebook.png" alt="" aria-hidden="true" />
@@ -288,13 +288,13 @@ export default function AnniversaryWindow({ theme, onClose }) {
           transition: transform .18s ease, background .18s ease;
         }
         .anniversary-window__back:active { transform: scale(.94); background: #fff; }
-        .anniversary-window__hero-copy { position: absolute; z-index: 3; top: clamp(44px, 13vw, 56px); left: clamp(90px, 23vw, 136px); margin: 0; }
-        .anniversary-window__hero-copy h1 {
-          margin: 0;
-          color: #3e6a50;
-          font: 600 clamp(22px, 5.9vw, 27px)/1.12 ui-rounded, 'Hiragino Maru Gothic ProN', 'PingFang SC', 'Microsoft YaHei', sans-serif;
-          letter-spacing: .1em;
-          text-shadow: 0 1px 0 rgba(255,255,255,.55);
+        .anniversary-window__hero-copy { position: absolute; z-index: 3; top: clamp(46px, 13.5vw, 58px); left: clamp(100px, 26vw, 148px); margin: 0; }
+        .anniversary-window__hero-copy h1 { margin: 0; }
+        .anniversary-window__title-image {
+          display: block;
+          width: clamp(116px, 31vw, 142px);
+          height: auto;
+          filter: drop-shadow(0 2px 2px rgba(91, 127, 94, .1));
         }
         .anniversary-window__sticker {
           position: absolute;
