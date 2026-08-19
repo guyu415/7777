@@ -255,7 +255,7 @@ export default function AnniversaryWindow({ theme, onClose }) {
           isolation: isolate;
           overflow: hidden;
           color: var(--anniversary-ink);
-          background: linear-gradient(180deg, #ffd8e5 0%, #fff4ed 31%, #eff8e9 100%);
+          background: #fff4eb;
           font-family: var(--app-font, 'Noto Sans SC', 'PingFang SC', sans-serif);
         }
         .anniversary-window__texture {
@@ -263,15 +263,14 @@ export default function AnniversaryWindow({ theme, onClose }) {
           z-index: 0;
           inset: 0;
           pointer-events: none;
-          background: url('/backgrounds/care-hub-pink.webp') center top / cover no-repeat;
-          opacity: .15;
-          mix-blend-mode: multiply;
+          background: url('/backgrounds/anniversary-journal-pastel.webp') center top / cover no-repeat;
+          opacity: .92;
         }
         .anniversary-window > :not(.anniversary-window__texture) { position: relative; z-index: 1; }
         .anniversary-window__hero {
           min-height: 0;
           padding: calc(var(--safe-top) + 4px) 20px 0;
-          background: linear-gradient(180deg, rgba(255, 209, 224, .86), rgba(255, 242, 235, .62));
+          background: linear-gradient(180deg, rgba(255, 209, 224, .62), rgba(255, 242, 235, .26));
         }
         .anniversary-window__hero-inner { position: relative; width: min(100%, 620px); min-height: clamp(112px, 27.5vw, 123px); margin: 0 auto; }
         .anniversary-window__back {
@@ -289,11 +288,11 @@ export default function AnniversaryWindow({ theme, onClose }) {
           transition: transform .18s ease, background .18s ease;
         }
         .anniversary-window__back:active { transform: scale(.94); background: #fff; }
-        .anniversary-window__hero-copy { position: absolute; z-index: 3; top: 15px; left: clamp(58px, 16vw, 98px); margin: 0; }
+        .anniversary-window__hero-copy { position: absolute; z-index: 3; top: clamp(32px, 9vw, 40px); left: clamp(58px, 16vw, 98px); margin: 0; }
         .anniversary-window__hero-copy h1 {
           margin: 0;
           color: var(--anniversary-ink);
-          font: 500 clamp(27px, 6.8vw, 32px)/1.08 'ZCOOL XiaoWei', serif;
+          font: 600 clamp(27px, 6.8vw, 32px)/1.08 ui-rounded, 'STYuanti-SC-Regular', 'Hiragino Maru Gothic ProN', 'Yuanti SC', 'YouYuan', 'Noto Sans SC', sans-serif;
           letter-spacing: .08em;
           text-shadow: 0 2px 0 rgba(255,255,255,.42);
         }
