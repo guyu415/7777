@@ -288,13 +288,13 @@ export default function AnniversaryWindow({ theme, onClose }) {
           transition: transform .18s ease, background .18s ease;
         }
         .anniversary-window__back:active { transform: scale(.94); background: #fff; }
-        .anniversary-window__hero-copy { position: absolute; z-index: 3; top: clamp(46px, 13.5vw, 58px); left: clamp(100px, 26vw, 148px); margin: 0; }
+        .anniversary-window__hero-copy { position: absolute; z-index: 3; top: clamp(50px, 14vw, 62px); left: clamp(78px, 20vw, 112px); margin: 0; }
         .anniversary-window__hero-copy h1 { margin: 0; }
         .anniversary-window__title-image {
           display: block;
-          width: clamp(116px, 31vw, 142px);
+          width: clamp(76px, 20vw, 96px);
           height: auto;
-          filter: drop-shadow(0 2px 2px rgba(91, 127, 94, .1));
+          filter: drop-shadow(0 1px 1px rgba(91, 127, 94, .08));
         }
         .anniversary-window__sticker {
           position: absolute;
