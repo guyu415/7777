@@ -171,15 +171,11 @@ function MessageBubble({ message, onLongPress, onRegenerate, onRegenerateRound, 
   // same ratio preserved so the frame keeps sitting exactly on the circle's
   // edge; the message-bubble width calc below is adjusted to match (see
   // `calc(100% - 83px)`).
-  // Only the last bubble of a consecutive same-sender run shows the actual
-  // avatar (bubbles are bottom-aligned via items-end, so that's the one
-  // sitting next to it) — earlier bubbles in the run keep an invisible
-  // same-size placeholder so the message column doesn't shift sideways.
-  // Without this, the 75px avatar block repeated on every single bubble
-  // dwarfed the mb-1 tight-spacing margin between same-sender bubbles,
-  // so grouping was invisible even though the margin really was smaller.
+  // Only the first bubble of a consecutive same-sender run shows the actual
+  // avatar — later bubbles in the run keep an invisible same-size
+  // placeholder so the message column doesn't shift sideways.
   const avatarEl = (
-    <div className="flex-shrink-0 mb-1" style={{ position: 'relative', width: 75, height: 75, visibility: sameSenderAsNext ? 'hidden' : 'visible' }}>
+    <div className="flex-shrink-0 mb-1" style={{ position: 'relative', width: 75, height: 75, visibility: sameSenderAsPrev ? 'hidden' : 'visible' }}>
       {/* Avatar — explicit 37px, centered; frame is sibling at 100% of 75px so nothing overflows */}
       <div style={{
         position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%, -50%)',
@@ -364,12 +360,8 @@ function MessageBubble({ message, onLongPress, onRegenerate, onRegenerateRound, 
             {...pressProps}
           >
             <span className={isUser ? '' : 'bubble-ai'} style={{ position:'absolute', inset:0, borderRadius:'inherit', pointerEvents:'none' }} />
-            {/* AI bubble dog head — chin at bubble border, paws ~25px inside.
-                Pokes 25px above this bubble's own top edge, which collides
-                with a same-sender bubble packed tightly above it (mb-1) —
-                only the first bubble of a run has a full-width (mb-4) gap
-                above it to pop out into, so only that one gets the head. */}
-            {!isUser && !sameSenderAsPrev && (
+            {/* AI bubble dog head — chin at bubble border, paws ~25px inside */}
+            {!isUser && (
               <img
                 src="/assets/dog-head.png"
                 alt=""
@@ -385,11 +377,8 @@ function MessageBubble({ message, onLongPress, onRegenerate, onRegenerateRound, 
                 }}
               />
             )}
-            {/* User bubble dog tail — rotated 30° toward lower-right, clear
-                of avatar. Pokes below this bubble's own bottom edge, so only
-                the last bubble of a run (full mb-4 gap below it) gets one,
-                for the same reason as the head above. */}
-            {isUser && !sameSenderAsNext && (
+            {/* User bubble dog tail — rotated 30° toward lower-right, clear of avatar */}
+            {isUser && (
               <img
                 src="/assets/dog-tail.png"
                 alt=""
