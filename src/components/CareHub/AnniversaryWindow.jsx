@@ -288,11 +288,11 @@ export default function AnniversaryWindow({ theme, onClose }) {
           transition: transform .18s ease, background .18s ease;
         }
         .anniversary-window__back:active { transform: scale(.94); background: #fff; }
-        .anniversary-window__hero-copy { position: absolute; z-index: 3; top: clamp(74px, 21vw, 94px); left: clamp(76px, 20vw, 122px); margin: 0; }
+        .anniversary-window__hero-copy { position: absolute; z-index: 3; top: clamp(36px, 11vw, 48px); left: clamp(76px, 20vw, 122px); margin: 0; }
         .anniversary-window__hero-copy h1 {
           margin: 0;
           color: #3e6a50;
-          font: 400 clamp(27px, 6.8vw, 32px)/1.08 ui-rounded, 'STYuanti-SC-Regular', 'Hiragino Maru Gothic ProN', 'Yuanti SC', 'YouYuan', 'Noto Sans SC', sans-serif;
+          font: 400 clamp(21px, 5.8vw, 26px)/1.12 'STYuanti-SC-Regular', 'Hiragino Maru Gothic ProN', ui-rounded, 'Yuanti SC', 'YouYuan', 'Noto Sans SC', sans-serif;
           letter-spacing: .08em;
           text-shadow: 0 1px 0 rgba(255,255,255,.55);
         }
@@ -347,9 +347,9 @@ export default function AnniversaryWindow({ theme, onClose }) {
           overflow: hidden;
           padding: 21px 16px 20px;
           border-radius: 35px;
-          background: rgba(255, 253, 247, .78);
-          backdrop-filter: blur(5px);
-          -webkit-backdrop-filter: blur(5px);
+          background: rgba(255, 253, 247, .48);
+          backdrop-filter: blur(3px) saturate(1.06);
+          -webkit-backdrop-filter: blur(3px) saturate(1.06);
         }
         .anniversary-window__calendar-card::before,
         .anniversary-window__entry-card::before {
