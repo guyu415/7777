@@ -1,5 +1,5 @@
 import { lazy, Suspense, useCallback, useEffect, useState, useRef } from 'react'
-import { useStore, getCustomFont, getBlob, getMessage, getMessages, hasMessageWithWireId, saveMessage, saveBlob, deleteMessageFromDB, deleteMessagesForSession } from './store'
+import { useStore, getCustomFont, getBlob, getMessages, saveMessage, saveBlob, deleteMessageFromDB, deleteMessagesForSession } from './store'
 import { THEMES } from './themes'
 import ChatWindow from './components/Chat/ChatWindow'
 import GroupChatWindow from './components/GroupChat/GroupChatWindow'
@@ -634,29 +634,87 @@ export default function App() {
   // GomokuBoard.jsx's onGomokuUpdate subscription), not broadcast as a main
   // chat wire `msg` in the first place, so there's nothing to skip here.
   useEffect(() => {
+    // A reconnect replays the complete server transcript. The resident chat
+    // is already a few thousand wires long, so doing two IndexedDB lookups
+    // for every replayed CC item makes opening a push notification appear to
+    // hang. Build one snapshot per local conversation and update it as new
+    // wires arrive instead.
+    const knownMessagesBySession = new Map()
+    const knownMessagesFor = (sessionId) => {
+      if (!knownMessagesBySession.has(sessionId)) {
+        knownMessagesBySession.set(sessionId, getMessages(sessionId).then((messages) => {
+          const ids = new Set()
+          for (const message of messages) {
+            if (message?.id) ids.add(message.id)
+            if (Array.isArray(message?.wireIds)) {
+              for (const wireId of message.wireIds) if (wireId) ids.add(wireId)
+            }
+          }
+          return ids
+        }))
+      }
+      return knownMessagesBySession.get(sessionId)
+    }
+    const pendingVisibleBySession = new Map()
+    let visibleFlushTimer = null
+    const queueVisibleMessage = (sessionId, msg, preview) => {
+      if (!pendingVisibleBySession.has(sessionId)) pendingVisibleBySession.set(sessionId, new Map())
+      pendingVisibleBySession.get(sessionId).set(msg.id, { msg, preview })
+      if (visibleFlushTimer !== null) return
+      // All history callbacks resume together after the shared IndexedDB read.
+      // Flush them as one ordered state update instead of rendering once per
+      // historical bubble in whichever order those callbacks happened to win.
+      visibleFlushTimer = setTimeout(() => {
+        visibleFlushTimer = null
+        const state = useStore.getState()
+        for (const [targetSessionId, pending] of pendingVisibleBySession) {
+          const items = [...pending.values()]
+          if (!items.length) continue
+          if (state.currentSessionId === targetSessionId) {
+            const byId = new Map(state.messages.map(message => [message.id, message]))
+            for (const { msg: pendingMessage } of items) byId.set(pendingMessage.id, pendingMessage)
+            const ordered = [...byId.values()]
+            ordered.sort((a, b) => Number(a.timestamp || 0) - Number(b.timestamp || 0) || String(a.id).localeCompare(String(b.id)))
+            state.setMessages(ordered)
+          }
+          const latest = items.reduce((best, item) => Number(item.msg.timestamp || 0) > Number(best.msg.timestamp || 0) ? item : best)
+          const session = state.sessions?.find(candidate => candidate.id === targetSessionId)
+          if (Number(latest.msg.timestamp || 0) >= Number(session?.lastMsgTime || 0)) {
+            state.updateSession(targetSessionId, { lastMsgPreview: latest.preview, lastMsgTime: latest.msg.timestamp })
+          }
+        }
+        pendingVisibleBySession.clear()
+      }, 0)
+    }
+
     const unsub = onProactiveMessage(async ({ id, text, ts, kind, voice, thinking }) => {
       const vpsSession = useStore.getState().sessions?.find(s => s.providerName === 'claude-code-vps')
       if (!vpsSession) return
       // A live-delivered turn saves its bubbles under local ids but records
       // the server wire ids it displayed in `wireIds` — check both, otherwise
       // every reconnect's history snapshot re-appends replies this browser
-      // already showed live. These are indexed point lookups on purpose: a
-      // reconnect may replay a long transcript, and reading every message
-      // for each replayed item used to delay the newest proactive message.
+      // already showed live. A reconnect may replay a long transcript, so
+      // all replayed items share
+      // the single IndexedDB snapshot above.
       const live = useStore.getState().messages
       if (live.some(m => m.id === id || (Array.isArray(m.wireIds) && m.wireIds.includes(id)))) return
-      const [sameId, matchingWire] = await Promise.all([getMessage(id), hasMessageWithWireId(id)])
-      if (sameId || matchingWire) return
+      const knownIds = await knownMessagesFor(vpsSession.id)
+      if (knownIds.has(id)) return
+      const refreshedLive = useStore.getState().messages
+      if (refreshedLive.some(m => m.id === id || (Array.isArray(m.wireIds) && m.wireIds.includes(id)))) return
+      // Claim before writing so a duplicate live wire and history replay
+      // cannot both append it. Failed persistence releases the claim below,
+      // allowing a later reconnect to repair it.
+      knownIds.add(id)
       const reasoningFields = thinking ? { reasoning: thinking, reasoningStreaming: false } : {}
 
       // Make the message visible before any slow optional work (notably TTS)
       // begins. The returned promise keeps later writes ordered: a completed
       // voice result can never be overwritten by the initial placeholder.
       const showAndPersist = (msg, preview) => {
-        const state = useStore.getState()
-        state.updateSession(vpsSession.id, { lastMsgPreview: preview, lastMsgTime: msg.timestamp })
-        if (state.currentSessionId === vpsSession.id) state.addMessage(msg)
+        queueVisibleMessage(vpsSession.id, msg, preview)
         return saveMessage(msg).catch(error => {
+          knownIds.delete(id)
           console.error('[PROACTIVE] 消息落库失败:', error?.message)
         })
       }
@@ -713,7 +771,10 @@ export default function App() {
       const msg = { id, conversationId: vpsSession.id, role: 'assistant', type: 'text', content: text, timestamp: ts, streaming: false, source: 'cc-proactive', ...reasoningFields }
       await showAndPersist(msg, text.slice(0, 40))
     })
-    return unsub
+    return () => {
+      unsub()
+      if (visibleFlushTimer !== null) clearTimeout(visibleFlushTimer)
+    }
   }, [])
 
   // A CC bubble may combine several reply() calls and therefore have a local

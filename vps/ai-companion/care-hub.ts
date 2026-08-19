@@ -59,10 +59,13 @@ export function defaultCareHubState(now = Date.now()): CareHubState {
     config: {
       timezone: 'Asia/Shanghai',
       roles: {
-        news: { enabled: true, time: '08:00', runtime: 'codex', model: 'gpt-5.6-luna' },
-        almanac: { enabled: true, time: '08:05', runtime: 'codex', model: 'gpt-5.6-luna' },
-        ledger: { enabled: true, time: '21:00', runtime: 'codex', model: 'gpt-5.6-luna' },
-        study: { enabled: true, time: '21:30', runtime: 'codex', model: 'gpt-5.6-luna' },
+        // The life-care group UI and its scheduled reports were retired. Keep
+        // ledger data/API access, but never resurrect notifications merely
+        // because the state file is new, missing, or being recovered.
+        news: { enabled: false, time: '08:00', runtime: 'codex', model: 'gpt-5.6-luna' },
+        almanac: { enabled: false, time: '08:05', runtime: 'codex', model: 'gpt-5.6-luna' },
+        ledger: { enabled: false, time: '21:00', runtime: 'codex', model: 'gpt-5.6-luna' },
+        study: { enabled: false, time: '21:30', runtime: 'codex', model: 'gpt-5.6-luna' },
       },
     },
     messages: [],
