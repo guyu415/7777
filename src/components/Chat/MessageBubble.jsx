@@ -87,7 +87,7 @@ function formatFileBytes(bytes) {
   return `${Math.max(1, Math.round(bytes / 1024))}KB`
 }
 
-function MessageBubble({ message, onLongPress, onRegenerate, onRegenerateRound, onRetry, isLoading, userAvatar, aiAvatar, theme }) {
+function MessageBubble({ message, onLongPress, onRegenerate, onRegenerateRound, onRetry, isLoading, userAvatar, aiAvatar, theme, sameSenderAsPrev }) {
   const [viewerSrc, setViewerSrc] = useState(null)
   const [pressed, setPressed] = useState(false)
   const [showVoiceText, setShowVoiceText] = useState(false)
@@ -233,7 +233,7 @@ function MessageBubble({ message, onLongPress, onRegenerate, onRegenerateRound, 
   }
 
   return (
-    <div className={clsx('flex w-full min-w-0 items-end gap-2 mb-2 animate-fade-up', isUser ? 'flex-row-reverse' : 'flex-row')}>
+    <div className={clsx('flex w-full min-w-0 items-end gap-2 animate-fade-up', sameSenderAsPrev ? 'mb-1' : 'mb-4', isUser ? 'flex-row-reverse' : 'flex-row')}>
       {avatarEl}
 
       <div

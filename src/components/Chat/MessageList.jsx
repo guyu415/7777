@@ -200,6 +200,7 @@ const MessageList = forwardRef(function MessageList({
             const msg = messages[vi.index]
             if (!msg) return null
             const isLastAi = msg.id === lastAiId
+            const sameSenderAsPrev = messages[vi.index - 1]?.role === msg.role
             return (
               <div
                 key={vi.key}
@@ -228,6 +229,7 @@ const MessageList = forwardRef(function MessageList({
                   userAvatar={userAvatar}
                   aiAvatar={aiAvatar}
                   theme={theme}
+                  sameSenderAsPrev={sameSenderAsPrev}
                 />
                 </div>
               </div>
