@@ -10,7 +10,6 @@ import RuntimeStatusBall from './RuntimeStatusBall'
 import CarryOutPetModal from './CarryOutPetModal'
 import VoiceCall from '../Voice/VoiceCall'
 import GomokuBoard from './GomokuBoard'
-import DiceDuel from './DiceDuel'
 import SpicyMonopolyBoard from './SpicyMonopolyBoard'
 import CouplesTruthOrDare from './CouplesTruthOrDare'
 import { composeCouplesCardMessage } from './couplesTruthOrDare'
@@ -147,7 +146,6 @@ export default function ChatWindow({ theme }) {
   const [toast, setToast] = useState(null)
   const [showCall, setShowCall] = useState(false)
   const [showGomoku, setShowGomoku] = useState(false)
-  const [showDice, setShowDice] = useState(false)
   const [showSpicy, setShowSpicy] = useState(false)
   const [showTruthDare, setShowTruthDare] = useState(false)
   const [showSessionDrawer, setShowSessionDrawer] = useState(false)
@@ -1029,7 +1027,11 @@ export default function ChatWindow({ theme }) {
           replyDrafts={replyTargets}
           onCancelReply={(id) => setReplyTargets((current) => id ? current.filter((target) => target.id !== id) : [])}
           onOpenGomoku={() => setShowGomoku(true)}
-          onOpenDice={() => setShowDice(true)}
+          onRollDice={() => {
+            const value = rollD6()
+            updateActiveTime()
+            sendMessage(`[DICE:${value}]`, 'text').catch(e => console.error('[DICE] send failed:', e.message))
+          }}
           onOpenSpicy={() => { setShowTruthDare(false); setShowSpicy(true) }}
           onOpenTruthDare={() => { setShowSpicy(false); setShowTruthDare(true) }}
           truthDareEnabled={isVpsSession}
@@ -1101,17 +1103,6 @@ export default function ChatWindow({ theme }) {
           aiAvatar={effectiveAiAvatar}
           userAvatar={effectiveUserAvatar}
           onClose={() => setShowGomoku(false)}
-        />
-      )}
-
-      {showDice && (
-        <DiceDuel
-          theme={theme}
-          runtime={isCodexSession ? 'codex' : 'claude-code'}
-          aiName={effectiveAiName}
-          aiAvatar={effectiveAiAvatar}
-          userAvatar={effectiveUserAvatar}
-          onClose={() => setShowDice(false)}
         />
       )}
 
