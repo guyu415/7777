@@ -1,4 +1,4 @@
-import { captureUtterance } from './voiceCapture'
+import { captureUtterance, encodePcmWav, voiceCaptureConfig } from './voiceCapture'
 import { canUseCloudSpeech, recognizeCloudSpeech } from './cloudSpeech'
 import { normalizeVoiceAcoustics, normalizeVoiceEmotion } from './localSenseVoice'
 
@@ -16,7 +16,7 @@ export async function captureAndRecognizePushToTalk({ workerUrl, signal, stopSig
     onSpeechStart,
     onLevel,
   })
-  if (!samples.length) return { text: '', emotion: undefined, acoustics: null, engine: 'cloud' }
+  if (!samples.length) return { text: '', emotion: undefined, acoustics: null, engine: 'cloud', audioBlob: null, duration: 0 }
 
   const result = await recognizeCloudSpeech(samples, { workerUrl, signal })
   const emotion = normalizeVoiceEmotion(result.emotion)
@@ -25,5 +25,7 @@ export async function captureAndRecognizePushToTalk({ workerUrl, signal, stopSig
     emotion: emotion === 'unknown' ? undefined : emotion,
     acoustics: normalizeVoiceAcoustics(result.acoustics),
     engine: result.engine || 'cloud',
+    audioBlob: encodePcmWav(samples, voiceCaptureConfig.sampleRate),
+    duration: Math.max(1, Math.ceil(samples.length / voiceCaptureConfig.sampleRate)),
   }
 }

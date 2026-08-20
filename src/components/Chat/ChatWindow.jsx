@@ -1022,10 +1022,14 @@ export default function ChatWindow({ theme }) {
             sendMessageBatch(next).catch(e => console.error('[PAW] sendMessageBatch error:', e.message))
           }}
           onStartCall={handleStartCall}
-          onSendVoice={async ({ text, emotion, acoustics, engine }) => {
+          onSendVoice={async ({ text, emotion, acoustics, engine, audioBlob, duration }) => {
             updateActiveTime()
-            await sendMessage(text, 'text', {
+            await sendMessage(text, 'voice', {
               voiceInput: true,
+              voiceBlob: audioBlob,
+              voiceText: text,
+              transcript: text,
+              duration,
               voiceEmotion: emotion,
               voiceAcoustics: acoustics,
               voiceEngine: engine,

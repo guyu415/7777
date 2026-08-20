@@ -1074,7 +1074,7 @@ export function useChat() {
   const sendMessage = useCallback(async (content, type = 'text', extra = {}) => {
     console.log('[SEND] sendMessage called | keyLen=', effectiveApiKey?.length ?? 0, '| baseUrl=', effectiveBaseUrl, '| isLoading=', isLoading)
     const isVpsProvider = effectiveProviderName === 'claude-code-vps'
-    if (isVpsProvider && type !== 'text' && type !== 'image' && type !== 'file') {
+    if (isVpsProvider && type !== 'text' && type !== 'image' && type !== 'file' && type !== 'voice') {
       throw new Error('VPS Companion 暂不支持此消息类型')
     }
     if (!isVpsProvider && !effectiveApiKey) {
@@ -1082,14 +1082,22 @@ export function useChat() {
       throw new Error('请先在设置中配置 API Key')
     }
 
+    const userMessageId = genId()
+    const { voiceBlob, ...persistedExtra } = extra || {}
+    let voiceBlobId = persistedExtra.voiceBlobId
+    if (type === 'voice' && voiceBlob) {
+      voiceBlobId = voiceBlobId || `user-voice-${userMessageId}`
+      await saveBlob(voiceBlobId, voiceBlob)
+    }
     const userMsg = {
-      id: genId(),
+      id: userMessageId,
       conversationId: CONVERSATION_ID,
       role: 'user',
       type,
       content,
       timestamp: Date.now(),
-      ...extra,
+      ...persistedExtra,
+      ...(voiceBlobId ? { voiceBlobId } : {}),
     }
 
     // 图片走独立 asset key 存云端，消息数组只留引用（base64 仅保留在本地 IDB）
@@ -1104,13 +1112,13 @@ export function useChat() {
 
     // Auto-name session from first message
     if (messages.length === 0) {
-      const autoName = type === 'text' ? content.slice(0, 20).trim() : type === 'file' ? (extra.fileName || '[文件]') : '[图片]'
+      const autoName = type === 'text' ? content.slice(0, 20).trim() : type === 'voice' ? content.slice(0, 20).trim() || '[语音]' : type === 'file' ? (extra.fileName || '[文件]') : '[图片]'
       if (autoName) updateSession(CONVERSATION_ID, { name: autoName })
     }
 
     addMessage(userMsg)
     updateSession(CONVERSATION_ID, {
-      lastMsgPreview: type === 'text' ? (content || '').slice(0, 40) : type === 'file' ? `[文件] ${extra.fileName || ''}`.trim() : '[图片]',
+      lastMsgPreview: type === 'text' ? (content || '').slice(0, 40) : type === 'voice' ? `[语音] ${(content || '').slice(0, 35)}`.trim() : type === 'file' ? `[文件] ${extra.fileName || ''}`.trim() : '[图片]',
       lastMsgTime: Date.now(),
     })
     // Fire-and-forget on purpose: mobile Safari's IndexedDB can take

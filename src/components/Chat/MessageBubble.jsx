@@ -550,6 +550,22 @@ function MessageBubble({ message, onLongPress, onRegenerate, onRegenerateRound, 
         {message.type === 'voice' && isUser && (
           <div {...pressProps}>
             <VoicePlayer blobId={message.voiceBlobId} url={message.voiceUrl} duration={message.duration} isUser={true} />
+            {message.voiceText && (
+              <div className="mt-1.5 flex flex-col items-end">
+                <button
+                  onClick={e => { e.stopPropagation(); setShowVoiceText(v => !v) }}
+                  className="px-2.5 py-1 rounded-full"
+                  style={{ fontSize: 12, color: '#b65e7d', border: '1px solid rgba(220,120,155,0.28)', background: 'rgba(255,255,255,0.52)' }}
+                >
+                  {showVoiceText ? '收起文字' : '转文字'}
+                </button>
+                {showVoiceText && (
+                  <div className="mt-1.5 px-3 py-2 rounded-2xl leading-relaxed whitespace-pre-wrap" style={{ maxWidth: 260, fontSize: 15, color: '#8b5060', background: 'rgba(255,255,255,0.55)', border: '1px solid rgba(220,120,155,0.18)' }}>
+                    {message.voiceText}
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         )}
 

@@ -5,7 +5,11 @@ const { captureMock, recognizeMock } = vi.hoisted(() => ({
   recognizeMock: vi.fn(),
 }))
 
-vi.mock('../voiceCapture', () => ({ captureUtterance: captureMock }))
+vi.mock('../voiceCapture', () => ({
+  captureUtterance: captureMock,
+  encodePcmWav: () => new Blob(['wav'], { type: 'audio/wav' }),
+  voiceCaptureConfig: { sampleRate: 16000 },
+}))
 vi.mock('../cloudSpeech', () => ({
   canUseCloudSpeech: () => true,
   recognizeCloudSpeech: recognizeMock,
@@ -37,6 +41,8 @@ describe('paw push-to-talk', () => {
       emotion: 'happy',
       acoustics: { pitchHz: 188, pitchRangeSemitones: 7.4 },
       engine: 'sensevoice+opensmile',
+      audioBlob: expect.any(Blob),
+      duration: 1,
     })
     expect(captureMock).toHaveBeenCalledWith(expect.objectContaining({ manualStop: true }))
     expect(recognizeMock).toHaveBeenCalledWith(samples, expect.objectContaining({ workerUrl: 'https://chat.example.com' }))

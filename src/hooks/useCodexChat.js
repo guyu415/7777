@@ -29,7 +29,35 @@ import { DEFAULT_CODEX_SESSION_ID } from '../utils/codexProtocol'
 // start as a loading placeholder here — resolveCodexVoiceBubble (below)
 // is what turns them into a real playable bubble (or a text/voiceFailed
 // degrade), exactly mirroring useChat.js's deliverVpsVoice/finalize flow.
-function toBubble(codexMsg) {
+const CODEX_USER_VOICE_MAP_PREFIX = 'codex.userVoiceMap.'
+
+function readCodexUserVoiceMap(sessionId) {
+  try { return JSON.parse(localStorage.getItem(`${CODEX_USER_VOICE_MAP_PREFIX}${sessionId}`) || '{}') || {} } catch { return {} }
+}
+
+function writeCodexUserVoiceMeta(sessionId, messageId, meta) {
+  try {
+    const map = readCodexUserVoiceMap(sessionId)
+    map[messageId] = meta
+    localStorage.setItem(`${CODEX_USER_VOICE_MAP_PREFIX}${sessionId}`, JSON.stringify(map))
+  } catch { /* private/full storage: the live bubble still works this session */ }
+}
+
+function toBubble(codexMsg, userVoiceMap = {}) {
+  const userVoice = codexMsg.from === 'user' ? userVoiceMap[codexMsg.id] : null
+  if (userVoice) {
+    return {
+      id: codexMsg.id,
+      role: 'user',
+      type: 'voice',
+      content: codexMsg.text || '',
+      voiceText: codexMsg.text || '',
+      voiceBlobId: userVoice.voiceBlobId,
+      duration: Number(userVoice.duration) || 0,
+      timestamp: codexMsg.ts,
+      streaming: false,
+    }
+  }
   if (codexMsg.kind === 'voice') {
     return {
       id: codexMsg.id,
@@ -68,6 +96,10 @@ function codexVoiceBlobId(msgId) {
   return `codex-voice-${msgId}`
 }
 
+function codexUserVoiceBlobId(localId) {
+  return `codex-user-voice-${localId}`
+}
+
 export function useCodexChat() {
   const [messages, setMessages] = useState([])
   const [status, setStatus] = useState('idle')
@@ -89,6 +121,7 @@ export function useCodexChat() {
   const stopRequestedRef = useRef(false)
   const activeTurnIdRef = useRef(null)
   const stoppedTurnIdRef = useRef(null)
+  const pendingUserVoicesRef = useRef([])
 
   // Same session-then-global TTS config fallback useChat.js uses — Codex's
   // voice reuses the CURRENT session's own configured voice, never a
@@ -200,7 +233,8 @@ export function useCodexChat() {
     try {
       const s = await getCodexState(sessionId)
       const history = s.history || []
-      setMessages(history.map(toBubble))
+      const userVoiceMap = readCodexUserVoiceMap(sessionId)
+      setMessages(history.map(message => toBubble(message, userVoiceMap)))
       setStatus(s.status || 'idle')
       setOpenTurnId(s.openTurnId ?? null)
       activeTurnIdRef.current = s.openTurnId ?? null
@@ -229,8 +263,9 @@ export function useCodexChat() {
         // refresh AND resumes seeing an in-progress task's status/turnId
         // after a disconnect/reconnect, since it's the server's own current
         // state, not something replayed from local storage.
-        case 'codex_history_snapshot':
-          setMessages(evt.codexHistory.map(toBubble))
+        case 'codex_history_snapshot': {
+          const snapshotUserVoiceMap = readCodexUserVoiceMap(eventSessionId)
+          setMessages(evt.codexHistory.map(message => toBubble(message, snapshotUserVoiceMap)))
           setStatus(stopRequestedRef.current ? 'idle' : evt.codexStatus)
           setOpenTurnId(stopRequestedRef.current ? null : evt.codexOpenTurnId)
           activeTurnIdRef.current = evt.codexOpenTurnId ?? null
@@ -239,6 +274,7 @@ export function useCodexChat() {
             if (m.kind === 'voice') resolveCodexVoiceMsg(m, false)
           }
           break
+        }
         case 'codex_msg': {
           const msgTurnId = evt.msg.turnId || null
           const isAssistantStream = evt.msg.from === 'codex'
@@ -256,12 +292,31 @@ export function useCodexChat() {
             // revive it after the user pressed stop.
             break
           }
+          let matchedUserVoice = null
+          if (evt.msg.from === 'user') {
+            const now = Date.now()
+            pendingUserVoicesRef.current = pendingUserVoicesRef.current.filter(item => now - item.createdAt < 60_000)
+            const pendingIndex = pendingUserVoicesRef.current.findIndex(item => (
+              item.sessionId === eventSessionId && item.text === (evt.msg.text || '')
+            ))
+            if (pendingIndex !== -1) {
+              matchedUserVoice = pendingUserVoicesRef.current.splice(pendingIndex, 1)[0]
+              writeCodexUserVoiceMeta(eventSessionId, evt.msg.id, {
+                voiceBlobId: matchedUserVoice.voiceBlobId,
+                duration: matchedUserVoice.duration,
+              })
+            }
+          }
+          const userVoiceMap = readCodexUserVoiceMap(eventSessionId)
           setMessages((prev) => {
-            const idx = prev.findIndex((m) => m.id === evt.msg.id)
-            const bubble = toBubble(evt.msg)
-            if (idx === -1) return [...prev, bubble]
-            const next = [...prev]
-            next[idx] = bubble
+            const bubble = toBubble(evt.msg, userVoiceMap)
+            const withoutOptimistic = matchedUserVoice
+              ? prev.filter(message => message.id !== matchedUserVoice.localId)
+              : prev
+            const nextIdx = withoutOptimistic.findIndex((m) => m.id === evt.msg.id)
+            if (nextIdx === -1) return [...withoutOptimistic, bubble]
+            const next = [...withoutOptimistic]
+            next[nextIdx] = bubble
             return next
           })
           // A voice message always arrives complete (never streamed) — a
@@ -331,6 +386,36 @@ export function useCodexChat() {
     stopRequestedRef.current = false
     stoppedTurnIdRef.current = null
     setSendError(null)
+    const isUserVoice = _type === 'voice' && !!extra?.voiceInput
+    const clientMessageId = isUserVoice
+      ? (extra?.clientMessageId || `codex-user-${Date.now()}-${globalThis.crypto?.randomUUID?.() || Math.random().toString(36).slice(2)}`)
+      : undefined
+    if (isUserVoice && extra?.voiceBlob) {
+      const voiceBlobId = codexUserVoiceBlobId(clientMessageId)
+      await saveBlob(voiceBlobId, extra.voiceBlob)
+      const localVoiceBubble = {
+        id: clientMessageId,
+        role: 'user',
+        type: 'voice',
+        content: text,
+        voiceText: extra.voiceText || text,
+        voiceBlobId,
+        duration: Number(extra.duration) || 0,
+        timestamp: Date.now(),
+        streaming: false,
+      }
+      setMessages(prev => prev.some(message => message.id === clientMessageId) ? prev : [...prev, localVoiceBubble])
+      if (!pendingUserVoicesRef.current.some(item => item.localId === clientMessageId)) {
+        pendingUserVoicesRef.current.push({
+          localId: clientMessageId,
+          sessionId: codexSessionId,
+          text,
+          voiceBlobId,
+          duration: Number(extra.duration) || 0,
+          createdAt: Date.now(),
+        })
+      }
+    }
     const ok = sendCodexMessage(text, imageUrl, {
       sessionId: codexSessionId,
       prompt: codexPrompt,
@@ -339,7 +424,7 @@ export function useCodexChat() {
       voiceAcoustics: extra?.voiceAcoustics,
     })
     if (!ok) {
-      lastFailedSendRef.current = { kind: 'single', content, type: _type, extra }
+      lastFailedSendRef.current = { kind: 'single', content, type: _type, extra: isUserVoice ? { ...extra, clientMessageId } : extra }
       setSendError('未连接，请稍后重试')
     } else {
       lastFailedSendRef.current = null
