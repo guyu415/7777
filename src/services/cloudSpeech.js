@@ -3,6 +3,16 @@ import { encodePcmWav } from './voiceCapture'
 const REQUEST_TIMEOUT_MS = 20_000
 const NETWORK_RETRY_DELAY_MS = 300
 
+export function cloudSpeechEndpoint(workerUrl, locationLike = globalThis.location) {
+  const hostname = String(locationLike?.hostname || '').toLowerCase()
+  // iOS home-screen apps have proven unreliable when uploading the WAV to a
+  // sibling subdomain. Keep the browser request same-origin and let the Pages
+  // Function make the Cloudflare-to-Cloudflare hop instead.
+  if (hostname === 'eunoia.xiaoman.xyz' || hostname === 'pink-chat-blt.pages.dev') return '/api/stt'
+  const base = String(workerUrl || '').replace(/\/$/, '')
+  return base ? `${base}/stt` : ''
+}
+
 export function canUseCloudSpeech(workerUrl) {
   return !!workerUrl && !!localStorage.getItem('auth.password') && !!navigator.mediaDevices?.getUserMedia
 }
@@ -48,11 +58,12 @@ export async function recognizeCloudSpeech(samples, { workerUrl, signal } = {}) 
   const base = String(workerUrl || '').replace(/\/$/, '')
   const password = localStorage.getItem('auth.password') || ''
   if (!base || !password) throw new Error('Cloudflare STT 尚未配置')
+  const endpoint = cloudSpeechEndpoint(base)
   const wav = encodePcmWav(samples)
   let lastError
   for (let attempt = 0; attempt < 2; attempt += 1) {
     try {
-      const response = await postAudio(`${base}/stt`, password, wav, signal)
+      const response = await postAudio(endpoint, password, wav, signal)
       const payload = await response.json().catch(() => ({}))
       if (!response.ok) {
         const error = new Error(payload.error || `Cloudflare STT 请求失败 (${response.status})`)
