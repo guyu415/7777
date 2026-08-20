@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useCallback, forwardRef, useImperativeHandle } from 'react'
-import { X as CloseIcon } from 'lucide-react'
+import { Maximize2, Minimize2, X as CloseIcon } from 'lucide-react'
 import { compressChatImage } from '../../utils/image'
 import { buildReplyMessage, buildReplyMessageBatch, buildReplyQuotePrefix, parseReplyQuotes } from '../../utils/replyQuotes'
 
@@ -231,6 +231,7 @@ const MessageInput = forwardRef(function MessageInput({ onSend, onSendBatch, onS
     writeDraft(textRef.current, next)
   }, [writeDraft])
   const [menuOpen, setMenuOpen] = useState(false)
+  const [inputExpanded, setInputExpanded] = useState(false)
   // A picked image sits here as a draft — thumbnail + cancel, still editable
   // alongside the text field — until Send is actually pressed. Shared by
   // every provider that reaches this component (Claude Code VPS, Codex VPS,
@@ -249,6 +250,17 @@ const MessageInput = forwardRef(function MessageInput({ onSend, onSendBatch, onS
   const hasSendableContent = text.trim().length > 0 || segments.length > 0 || !!imageDraft || !!fileDraft
   const canSend = hasSendableContent && !isSendingAttachment
 
+  const resizeTextarea = useCallback((forceExpanded = inputExpanded) => {
+    const el = textareaRef.current
+    if (!el) return
+    const viewportHeight = window.visualViewport?.height || window.innerHeight || 800
+    const maxHeight = forceExpanded
+      ? Math.min(Math.max(viewportHeight * 0.38, 180), 360)
+      : 96
+    el.style.height = 'auto'
+    el.style.height = `${Math.min(el.scrollHeight, maxHeight)}px`
+  }, [inputExpanded])
+
   useImperativeHandle(ref, () => ({
     focus() {
       textareaRef.current?.focus()
@@ -259,11 +271,10 @@ const MessageInput = forwardRef(function MessageInput({ onSend, onSendBatch, onS
         const el = textareaRef.current
         if (!el) return
         el.focus()
-        el.style.height = 'auto'
-        el.style.height = Math.min(el.scrollHeight, 96) + 'px'
+        resizeTextarea()
       }, 0)
     },
-  }), [setText])
+  }), [resizeTextarea, setText])
 
   // 会话切换（组件不卸载、只换 draftKey）时装入对应会话自己的草稿；恢复的
   // 草稿可能是多行的，下一拍把 textarea 高度撑到和内容一致。首次挂载时
@@ -277,6 +288,7 @@ const MessageInput = forwardRef(function MessageInput({ onSend, onSendBatch, onS
     setImageDraft(null)
     setFileDraft(null)
     setMenuOpen(false)
+    setInputExpanded(false)
     const timer = setTimeout(() => {
       const el = textareaRef.current
       if (!el) return
@@ -285,6 +297,10 @@ const MessageInput = forwardRef(function MessageInput({ onSend, onSendBatch, onS
     }, 0)
     return () => clearTimeout(timer)
   }, [draftStorageKey])
+
+  useEffect(() => {
+    resizeTextarea()
+  }, [inputExpanded, resizeTextarea])
 
   // 点击菜单外部收起
   useEffect(() => {
@@ -536,7 +552,11 @@ const MessageInput = forwardRef(function MessageInput({ onSend, onSendBatch, onS
       {/* 回车分条排队——每条都是点发送后会各自独立成一条消息的预览，点 ×
           可以单独撤回某一条，真正发出前还能反悔。 */}
       {segments.length > 0 && (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 6, padding: '6px 12px 0' }}>
+        <div style={{
+          display: 'flex', flexDirection: 'column', gap: 6, padding: '6px 12px 0',
+          maxHeight: inputExpanded ? 96 : 'min(30dvh, 240px)', overflowY: 'auto', overscrollBehavior: 'contain',
+          WebkitOverflowScrolling: 'touch', flexShrink: 1,
+        }}>
           {segments.map((seg, i) => {
             const queuedReply = parseReplyQuotes(seg)
             return (
@@ -583,17 +603,33 @@ const MessageInput = forwardRef(function MessageInput({ onSend, onSendBatch, onS
         </button>
 
         <div style={{
-          flex: 1, minWidth: 0, display: 'flex', alignItems: 'flex-end',
+          flex: 1, minWidth: 0, display: 'flex', alignItems: 'flex-end', position: 'relative',
           background: 'rgba(255,255,255,0.5)',
           backdropFilter: 'blur(8px)',
           WebkitBackdropFilter: 'blur(8px)',
           borderRadius: 20,
           padding: '8px 14px',
           minHeight: 40,
-          maxHeight: 120,
+          maxHeight: inputExpanded ? 'min(42dvh, 384px)' : 120,
           border: '1px solid rgba(255,182,209,0.3)',
           boxShadow: 'inset 0 1px 4px rgba(255,133,179,0.08)',
         }}>
+          <button
+            type="button"
+            onClick={() => setInputExpanded(value => !value)}
+            title={inputExpanded ? '收起输入框' : '展开输入框'}
+            aria-label={inputExpanded ? '收起输入框' : '展开输入框'}
+            aria-pressed={inputExpanded}
+            style={{
+              position: 'absolute', top: 5, right: 6, zIndex: 1,
+              width: 28, height: 28, padding: 0, border: 'none', borderRadius: 9,
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              color: primaryColor, background: 'rgba(255,255,255,0.72)',
+              boxShadow: `0 1px 5px ${primaryColor}22`, cursor: 'pointer',
+            }}
+          >
+            {inputExpanded ? <Minimize2 size={15} /> : <Maximize2 size={15} />}
+          </button>
           <textarea
             ref={textareaRef}
             value={text}
@@ -605,12 +641,12 @@ const MessageInput = forwardRef(function MessageInput({ onSend, onSendBatch, onS
               flex: 1, background: 'transparent', border: 'none', outline: 'none',
               fontSize: 18, lineHeight: '1.5',
               color: '#8b5060', resize: 'none', overflow: 'auto',
-              maxHeight: 96, fontFamily: 'inherit',
+              maxHeight: inputExpanded ? 'min(38dvh, 360px)' : 96,
+              paddingRight: 30, fontFamily: 'inherit',
             }}
             className="placeholder-[#e8b4c4]"
             onInput={e => {
-              e.target.style.height = 'auto'
-              e.target.style.height = Math.min(e.target.scrollHeight, 96) + 'px'
+              resizeTextarea()
             }}
           />
         </div>
