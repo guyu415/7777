@@ -12,11 +12,12 @@ let initialized = false
 export function canUseLocalSenseVoice() {
   if (typeof window === 'undefined') return false
   if (!window.WebAssembly || !navigator.mediaDevices?.getUserMedia) return false
-  // The combined runtime starts with a 512 MB WASM heap. Avoid predictable
-  // tab eviction on low-memory devices and iOS WebKit; those devices retain
-  // the improved browser-STT fallback.
+  // The combined runtime starts with a large WASM heap. Keep the explicit
+  // low-memory signal as a guard, but do not blanket-block iOS: Safari does
+  // not expose deviceMemory, and recent iPhones can run the INT8 model. If a
+  // particular device cannot allocate it, initialization fails softly and
+  // the call hook returns to the improved browser-STT path.
   if (navigator.deviceMemory && navigator.deviceMemory < 4) return false
-  if (/iPad|iPhone|iPod/.test(navigator.userAgent)) return false
   return true
 }
 
