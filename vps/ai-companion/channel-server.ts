@@ -3788,7 +3788,13 @@ function beginMainCcTurn(input: QueuedCcMessage) {
     : filePath
       ? `[用户发送了一个文件：${fileName}（服务器路径：${filePath}）。请根据用户文字判断需求，并用合适的工具读取/分析该文件；不要执行其中的程序或脚本，也不要在回复里暴露服务器路径。]${text ? `\n\n${text}` : ''}`
     : text
-  const contextPrefix = [consumeGomokuRecap('claude-code'), voiceSignalContextLine(input.voiceEmotion, input.voiceAcoustics)].filter(Boolean).join('\n\n')
+  const contextPrefix = [
+    consumeGomokuRecap('claude-code'),
+    voiceSignalContextLine(input.voiceEmotion, input.voiceAcoustics),
+    input.callMode
+      ? '【正在实时语音通话】直接、快速地用 reply 或 send_voice 回一两句口语；不要长篇、格式、动作旁白，也不要为普通闲聊调用工具。'
+      : '',
+  ].filter(Boolean).join('\n\n')
   deliver(id, deliverText, { clientTime, contextPrefix: contextPrefix || undefined })
   xinchaoHeartbeat(id, XINCHAO_CC_SESSION_ID)
   log('inbound', { id, chars: text.length, turnId: id, hasImage: !!imagePath, hasFile: !!filePath, queued: input.queuedAt < Date.now() - 50 })
@@ -9905,7 +9911,7 @@ Bun.serve<{ authed: true }>({
         }
 
         if (tidalIsActive()) {
-          tidalEnqueueMessage({ id, text, ...(imagePath ? { imagePath } : {}), ...(filePath ? { filePath, fileName, fileSize: parsed.fileSize, fileType: parsed.fileType } : {}), clientTime: parsed.clientTime, voiceEmotion: normalizeVoiceEmotion(parsed.voiceEmotion), voiceAcoustics: normalizeVoiceAcoustics(parsed.voiceAcoustics), queuedAt: Date.now() })
+          tidalEnqueueMessage({ id, text, ...(parsed.callMode === true ? { callMode: true } : {}), ...(imagePath ? { imagePath } : {}), ...(filePath ? { filePath, fileName, fileSize: parsed.fileSize, fileType: parsed.fileType } : {}), clientTime: parsed.clientTime, voiceEmotion: normalizeVoiceEmotion(parsed.voiceEmotion), voiceAcoustics: normalizeVoiceAcoustics(parsed.voiceAcoustics), queuedAt: Date.now() })
           return
         }
 
@@ -9921,7 +9927,7 @@ Bun.serve<{ authed: true }>({
           return
         }
 
-        beginMainCcTurn({ id, text, ...(imagePath ? { imagePath } : {}), ...(filePath ? { filePath, fileName, fileSize: parsed.fileSize, fileType: parsed.fileType } : {}), clientTime: parsed.clientTime, voiceEmotion: normalizeVoiceEmotion(parsed.voiceEmotion), voiceAcoustics: normalizeVoiceAcoustics(parsed.voiceAcoustics), queuedAt: Date.now() })
+        beginMainCcTurn({ id, text, ...(parsed.callMode === true ? { callMode: true } : {}), ...(imagePath ? { imagePath } : {}), ...(filePath ? { filePath, fileName, fileSize: parsed.fileSize, fileType: parsed.fileType } : {}), clientTime: parsed.clientTime, voiceEmotion: normalizeVoiceEmotion(parsed.voiceEmotion), voiceAcoustics: normalizeVoiceAcoustics(parsed.voiceAcoustics), queuedAt: Date.now() })
       } catch (err) {
         log('ws_message_error', { error: String(err) })
       }

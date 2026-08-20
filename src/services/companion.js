@@ -1333,7 +1333,7 @@ export function sendDeleteNotice(text, messageIds = []) {
  * the module-level `deliveredIds` set, so a reconnect-triggered history
  * replay can never re-yield something already seen live, or vice versa.
  */
-export async function* streamChatViaCompanion({ text, imagePath, file, signal, messageId, voiceEmotion, voiceAcoustics }) {
+export async function* streamChatViaCompanion({ text, imagePath, file, signal, messageId, voiceEmotion, voiceAcoustics, callMode = false }) {
   if (signal?.aborted) return
 
   await ensureFreshConnectionBeforeSend()
@@ -1516,7 +1516,7 @@ export async function* streamChatViaCompanion({ text, imagePath, file, signal, m
 
   try {
     const sent = sendRaw({
-      id, text, ...(imagePath ? { imagePath } : {}),
+      id, text, ...(callMode ? { callMode: true } : {}), ...(imagePath ? { imagePath } : {}),
       ...(file?.path ? { filePath: file.path, fileName: file.name, fileSize: file.size, fileType: file.mimeType } : {}),
       ...(voiceEmotion ? { voiceEmotion } : {}),
       ...(voiceAcoustics ? { voiceAcoustics } : {}),
