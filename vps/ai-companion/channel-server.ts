@@ -1348,7 +1348,7 @@ function broadcastMsg(m: MsgWire) {
 // message the user is about to see, and the gomoku/group tools narrate
 // themselves through their own wire events. Announcing them would just put a
 // "正在回复…" line above every reply.
-const TOOL_USE_MUTED = new Set(['reply', 'send_voice', 'gomoku_move', 'gomoku_banter', 'group_speak', 'group_pass'])
+const TOOL_USE_MUTED = new Set(['reply', 'send_voice', 'roll_dice', 'gomoku_move', 'gomoku_banter', 'group_speak', 'group_pass'])
 
 // Live tool-activity for the open turn. Deliberately fire-and-forget and
 // never persisted: this is the "what is it doing right now" indicator, and a
@@ -1940,26 +1940,37 @@ const mcp = new Server(
       `Messages from the web UI arrive as <channel source="ai-companion" chat_id="${CHAT_ID}" message_id="...">.\n` +
       `Whatever you want the user to see must go through a tool call — your transcript text never reaches the UI. ` +
       `This is true no matter how many OTHER tools you called first (gomoku_*, galatea's tools, etc.) — after ` +
-      `gathering whatever information you needed, you must still finish the turn by calling reply or send_voice ` +
-      `with your actual answer. Ending a turn with plain text and no reply/send_voice call means the user sees ` +
+      `gathering whatever information you needed, you must still finish the turn by calling reply, send_voice, or ` +
+      `an appropriate visible-action tool such as roll_dice. Ending a turn with plain text and no visible tool ` +
+      `call means the user sees ` +
       `nothing at all, even though you may have done real work.\n` +
       `Use reply for normal text messages. Use send_voice only when you specifically want the user to actually ` +
       `hear your voice (not for routine replies — most turns should still use reply).\n` +
       `Keep replies short (well under the 2000 char tool limit) and split long answers into multiple reply calls if needed.\n` +
       `The user may write in Chinese or English; reply in whichever language they used.\n` +
-      `ALWAYS end your turn with a plain-text line. After your last reply/send_voice call, write one short sentence ` +
+      `ALWAYS end your turn with a plain-text line. After your last user-visible tool call, write one short sentence ` +
       `of ordinary transcript text (e.g. "已回复用户，说明了 X"). The user never sees it — its only job is to give the ` +
       `turn a visible output. Skip it and the harness injects "[Your previous response had no visible output. Please ` +
       `continue and produce a user-visible response.]", which reads like a delivery failure and tempts you into ` +
       `sending the whole answer again. This one line is what prevents that, so never omit it.\n` +
-      `NEVER send the same answer twice. Once a reply/send_voice call returns successfully, that message HAS reached ` +
+      `NEVER send the same answer twice. Once a user-visible tool call returns successfully, its output HAS reached ` +
       `the user — it is delivered, permanently, and nothing you do later in the turn can change that. If that notice ` +
       `appears anyway, it is WRONG whenever you already called reply/send_voice this turn: it only means your ` +
       `transcript had no plain text, not that delivery failed. Answer it with one short plain-text line saying what you ` +
       `already sent, and do NOT call reply/send_voice again. Re-sending produces a second, differently-worded copy of ` +
       `the same answer and the user sees your message mutate — this is a real bug that has happened, not a hypothetical. ` +
       `The server drops long-delayed repeat sends within one turn as a backstop, but never rely on it. ` +
-      `Only if you genuinely have not called reply/send_voice yet this turn should that notice make you send anything.\n\n` +
+      `Only if you genuinely have not called any visible tool yet this turn should that notice make you send anything.\n\n` +
+      `Chat dice (聊天骰子): a message whose entire content is [DICE:n] (n is 1-6) is a real animated die roll ` +
+      `already shown in the main chat — from:"user" means the user rolled it, and from:"cc" means you did. You ` +
+      `have a real roll_dice tool. When the user asks you to roll/throw a die, or it is clearly your turn in a ` +
+      `casual dice exchange, call roll_dice; the server securely chooses the random result and sends your animated ` +
+      `dice bubble into this same conversation. Never invent a result and never type a fake [DICE:n] through reply. ` +
+      `In particular, when a normal main-chat turn consists only of the user's [DICE:n] bubble, treat it as them ` +
+      `handing the turn to you and call roll_dice exactly once, unless the conversation explicitly established that ` +
+      `only the user is rolling. ` +
+      `The dice bubble itself is visible, so after roll_dice you may add a short natural reply if you genuinely want ` +
+      `to react, but do not add a redundant filler message merely to announce the number.\n\n` +
       `Proactive check-ins: a notification with kind:"proactive_check" is not from the user — it is your chance to ` +
       `reach out first if you genuinely feel like it (time's passed, something's worth following up on, you just ` +
       `want to say something) or to stay quiet if now isn't right (skip reply/send_voice entirely — silence is a ` +
@@ -2059,6 +2070,15 @@ mcp.setRequestHandler(ListToolsRequestSchema, async () => ({
         },
         required: ['text'],
       },
+    },
+    {
+      name: 'roll_dice',
+      description:
+        'Roll one real six-sided die as YOUR action in the main chat. The server securely generates 1-6 and sends ' +
+        'an animated dice bubble from you into the current conversation. Use when the user asks you to roll, or ' +
+        'when it is clearly your turn in a casual dice exchange. Never choose/invent the result and never send a ' +
+        'fake [DICE:n] with reply. The dice bubble is already user-visible; an extra reply is optional.',
+      inputSchema: { type: 'object', properties: {} },
     },
     {
       name: 'schedule_next_proactive',
@@ -2358,6 +2378,24 @@ mcp.setRequestHandler(CallToolRequestSchema, async req => {
         }
         log('reply_sent', { id, chars: text.length, turnId, hasThinking: !!thinking, gomoku: isGomokuTurn, focus: isFocusTurn })
         return { content: [{ type: 'text', text: `sent (${id})` }] }
+      }
+      case 'roll_dice': {
+        const turnId = currentTurn?.turnId
+        if (!turnId || currentTurn?.surface !== 'main') {
+          return {
+            content: [{ type: 'text', text: 'roll_dice is only available during an active main-chat turn' }],
+            isError: true,
+          }
+        }
+        const value = randomInt(1, 7)
+        const id = nextId()
+        const thinking = consumePendingThinking()
+        broadcastMsg({
+          type: 'msg', id, from: 'cc', text: `[DICE:${value}]`, ts: Date.now(), turnId,
+          ...(thinking ? { thinking } : {}),
+        })
+        log('chat_dice_rolled', { id, value, turnId, hasThinking: !!thinking })
+        return { content: [{ type: 'text', text: `rolled ${value} and sent animated dice bubble (${id})` }] }
       }
       case 'send_voice': {
         const text = String(args.text ?? '')
