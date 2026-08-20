@@ -5,6 +5,7 @@ import { streamChat, generateSummary } from '../services/claude'
 import { streamChatViaCompanion, sendDeleteNotice, uploadImageToCompanion, deleteUploadedImage, deleteUploadedFile } from '../services/companion'
 import { listMemories, formatMemories } from '../services/memory'
 import { executeAcCommand } from '../services/ac'
+import { voiceEmotionContext } from '../services/localSenseVoice'
 import { formatReplyMessageBatchForModel } from '../utils/replyQuotes'
 
 const BEHAVIOR_RULES = `【关于你的存在】
@@ -482,6 +483,11 @@ export function useChat() {
       while (trimmedMsgs.length > 0 && trimmedMsgs[0].role === 'assistant') {
         trimmedMsgs = trimmedMsgs.slice(1)
       }
+      const newestUserMessage = [...trimmedMsgs].reverse().find(message => message.role === 'user')
+      if (newestUserMessage?.voiceInput) {
+        const voiceContext = voiceEmotionContext(newestUserMessage.voiceEmotion, newestUserMessage.voiceAcoustics)
+        if (voiceContext) builtSystemPrompt += `\n\n${voiceContext}`
+      }
 
       console.log('[STREAM] context: total=', contextMessages.length, '→ trimmed=', trimmedMsgs.length, '| summary=', !!currentSession?.summary)
       console.log('[SYSTEM PROMPT 实际发送]\n', builtSystemPrompt)
@@ -583,6 +589,8 @@ export function useChat() {
             file: vpsFile,
             signal: controller.signal,
             messageId: lastUserMsg?.id,
+            voiceEmotion: lastUserMsg?.voiceEmotion,
+            voiceAcoustics: lastUserMsg?.voiceAcoustics,
           })
         : streamChat({ apiKey: effectiveApiKey, apiBaseUrl: effectiveBaseUrl, model: effectiveModel, systemPrompt: builtSystemPrompt, messages: trimmedMsgs, workerUrl, useWorkerProxy, signal: controller.signal, disableThinking: effectiveDisableThinking, webSearch: effectiveWebSearch, providerName: effectiveProviderName })
 

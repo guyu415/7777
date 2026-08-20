@@ -331,7 +331,13 @@ export function useCodexChat() {
     stopRequestedRef.current = false
     stoppedTurnIdRef.current = null
     setSendError(null)
-    const ok = sendCodexMessage(text, imageUrl, { sessionId: codexSessionId, prompt: codexPrompt, file })
+    const ok = sendCodexMessage(text, imageUrl, {
+      sessionId: codexSessionId,
+      prompt: codexPrompt,
+      file,
+      voiceEmotion: extra?.voiceEmotion,
+      voiceAcoustics: extra?.voiceAcoustics,
+    })
     if (!ok) {
       lastFailedSendRef.current = { kind: 'single', content, type: _type, extra }
       setSendError('未连接，请稍后重试')

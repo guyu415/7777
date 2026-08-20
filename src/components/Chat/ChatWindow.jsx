@@ -1022,6 +1022,17 @@ export default function ChatWindow({ theme }) {
             sendMessageBatch(next).catch(e => console.error('[PAW] sendMessageBatch error:', e.message))
           }}
           onStartCall={handleStartCall}
+          onSendVoice={async ({ text, emotion, acoustics, engine }) => {
+            updateActiveTime()
+            await sendMessage(text, 'text', {
+              voiceInput: true,
+              voiceEmotion: emotion,
+              voiceAcoustics: acoustics,
+              voiceEngine: engine,
+            })
+          }}
+          onVoiceError={(message) => showToast(message)}
+          voiceWorkerUrl={workerUrl}
           onSendImage={handleSendImage}
           onSendFile={isFixedVpsSession ? handleSendFile : undefined}
           replyDrafts={replyTargets}

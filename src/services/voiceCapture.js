@@ -82,7 +82,7 @@ function abortError() {
  * short pre-roll and ends the sentence after ~720 ms of silence. SenseVoice
  * performs the actual recognition; this gate only chooses the audio boundary.
  */
-export async function captureUtterance({ signal, onSpeechStart, onLevel } = {}) {
+export async function captureUtterance({ signal, stopSignal, manualStop = false, onSpeechStart, onLevel } = {}) {
   if (!navigator.mediaDevices?.getUserMedia) throw new Error('浏览器不支持本地麦克风采集')
   if (signal?.aborted) throw abortError()
 
@@ -126,6 +126,7 @@ export async function captureUtterance({ signal, onSpeechStart, onLevel } = {}) 
 
     const cleanup = () => {
       signal?.removeEventListener('abort', onAbort)
+      stopSignal?.removeEventListener('abort', onStop)
       processor.onaudioprocess = null
       try { source.disconnect() } catch {}
       try { processor.disconnect() } catch {}
@@ -151,7 +152,12 @@ export async function captureUtterance({ signal, onSpeechStart, onLevel } = {}) 
       reject(error)
     }
     const onAbort = () => fail(abortError())
+    // Push-to-talk uses a separate stop signal: releasing the button finishes
+    // and keeps the captured samples, while a real abort still discards them.
+    const onStop = () => finish()
     signal?.addEventListener('abort', onAbort, { once: true })
+    stopSignal?.addEventListener('abort', onStop, { once: true })
+    if (stopSignal?.aborted) queueMicrotask(onStop)
 
     processor.onaudioprocess = (event) => {
       const raw = event.inputBuffer.getChannelData(0)
@@ -181,7 +187,7 @@ export async function captureUtterance({ signal, onSpeechStart, onLevel } = {}) 
       chunks.push(samples)
       speechSamples += samples.length
       silenceSamples = voiced ? 0 : silenceSamples + samples.length
-      if (silenceSamples >= TARGET_SAMPLE_RATE * END_SILENCE_MS / 1000
+      if ((!manualStop && silenceSamples >= TARGET_SAMPLE_RATE * END_SILENCE_MS / 1000)
         || speechSamples >= TARGET_SAMPLE_RATE * MAX_UTTERANCE_MS / 1000) finish()
     }
 

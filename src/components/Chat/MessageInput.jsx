@@ -1,7 +1,10 @@
 import { useState, useRef, useEffect, useCallback, forwardRef, useImperativeHandle } from 'react'
 import { Maximize2, Minimize2, X as CloseIcon } from 'lucide-react'
 import { compressChatImage } from '../../utils/image'
+import { captureAndRecognizePushToTalk } from '../../services/pushToTalk'
 import { buildReplyMessage, buildReplyMessageBatch, buildReplyQuotePrefix, parseReplyQuotes } from '../../utils/replyQuotes'
+
+const PAW_LONG_PRESS_MS = 420
 
 function formatImageBytes(bytes) {
   if (bytes >= 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)}MB`
@@ -196,7 +199,7 @@ function readDraft(storageKey) {
   } catch { return { text: '', segments: [] } }
 }
 
-const MessageInput = forwardRef(function MessageInput({ onSend, onSendBatch, onStartCall, onSendImage, onSendFile, replyDrafts = [], onCancelReply, onOpenGomoku, onRollDice, onOpenSpicy, onOpenTruthDare, truthDareEnabled, spicyEnabled, gomokuEnabled, onOpenFocus, onOpenDivination, disabled, theme, isLoading, onStop, draftKey }, ref) {
+const MessageInput = forwardRef(function MessageInput({ onSend, onSendBatch, onStartCall, onSendVoice, onVoiceError, voiceWorkerUrl, onSendImage, onSendFile, replyDrafts = [], onCancelReply, onOpenGomoku, onRollDice, onOpenSpicy, onOpenTruthDare, truthDareEnabled, spicyEnabled, gomokuEnabled, onOpenFocus, onOpenDivination, disabled, theme, isLoading, onStop, draftKey }, ref) {
   const draftStorageKey = draftKey ? `chat.draft.${draftKey}` : null
   const initialDraft = readDraft(draftStorageKey)
   const [text, setTextRaw] = useState(initialDraft.text)
@@ -232,6 +235,9 @@ const MessageInput = forwardRef(function MessageInput({ onSend, onSendBatch, onS
   }, [writeDraft])
   const [menuOpen, setMenuOpen] = useState(false)
   const [inputExpanded, setInputExpanded] = useState(false)
+  const [inputCanExpand, setInputCanExpand] = useState(false)
+  const [voiceState, setVoiceState] = useState('idle') // idle | recording | recognizing
+  const [voiceLevel, setVoiceLevel] = useState(0)
   // A picked image sits here as a draft — thumbnail + cancel, still editable
   // alongside the text field — until Send is actually pressed. Shared by
   // every provider that reaches this component (Claude Code VPS, Codex VPS,
@@ -247,6 +253,10 @@ const MessageInput = forwardRef(function MessageInput({ onSend, onSendBatch, onS
   const textareaRef = useRef(null)
   const menuRef = useRef(null)
   const plusBtnRef = useRef(null)
+  const pawLongPressTimerRef = useRef(null)
+  const voiceAbortRef = useRef(null)
+  const voiceStopRef = useRef(null)
+  const suppressPawClickRef = useRef(false)
   const hasSendableContent = text.trim().length > 0 || segments.length > 0 || !!imageDraft || !!fileDraft
   const canSend = hasSendableContent && !isSendingAttachment
 
@@ -258,7 +268,10 @@ const MessageInput = forwardRef(function MessageInput({ onSend, onSendBatch, onS
       ? Math.min(Math.max(viewportHeight * 0.38, 180), 360)
       : 96
     el.style.height = 'auto'
-    el.style.height = `${Math.min(el.scrollHeight, maxHeight)}px`
+    const needsExpand = el.scrollHeight > 97
+    setInputCanExpand(needsExpand)
+    if (!needsExpand && forceExpanded) setInputExpanded(false)
+    el.style.height = `${Math.min(el.scrollHeight, needsExpand ? maxHeight : 96)}px`
   }, [inputExpanded])
 
   useImperativeHandle(ref, () => ({
@@ -280,6 +293,13 @@ const MessageInput = forwardRef(function MessageInput({ onSend, onSendBatch, onS
   // 草稿可能是多行的，下一拍把 textarea 高度撑到和内容一致。首次挂载时
   // useState 的初始化已经读过一遍，这里重复读到同样的值，无副作用。
   useEffect(() => {
+    clearTimeout(pawLongPressTimerRef.current)
+    voiceAbortRef.current?.abort()
+    voiceStopRef.current?.abort()
+    voiceAbortRef.current = null
+    voiceStopRef.current = null
+    setVoiceState('idle')
+    setVoiceLevel(0)
     const restored = readDraft(draftStorageKey)
     textRef.current = restored.text
     segmentsRef.current = restored.segments
@@ -289,6 +309,7 @@ const MessageInput = forwardRef(function MessageInput({ onSend, onSendBatch, onS
     setFileDraft(null)
     setMenuOpen(false)
     setInputExpanded(false)
+    setInputCanExpand(false)
     const timer = setTimeout(() => {
       const el = textareaRef.current
       if (!el) return
@@ -300,7 +321,13 @@ const MessageInput = forwardRef(function MessageInput({ onSend, onSendBatch, onS
 
   useEffect(() => {
     resizeTextarea()
-  }, [inputExpanded, resizeTextarea])
+  }, [text, inputExpanded, resizeTextarea])
+
+  useEffect(() => () => {
+    clearTimeout(pawLongPressTimerRef.current)
+    voiceAbortRef.current?.abort()
+    voiceStopRef.current?.abort()
+  }, [])
 
   // 点击菜单外部收起
   useEffect(() => {
@@ -459,6 +486,53 @@ const MessageInput = forwardRef(function MessageInput({ onSend, onSendBatch, onS
     onOpenDivination?.()
   }
 
+  const beginPawVoice = async () => {
+    if (!onSendVoice || voiceState !== 'idle') return
+    suppressPawClickRef.current = true
+    const abortController = new AbortController()
+    const stopController = new AbortController()
+    voiceAbortRef.current = abortController
+    voiceStopRef.current = stopController
+    setVoiceState('recording')
+    setVoiceLevel(0)
+    try {
+      const result = await captureAndRecognizePushToTalk({
+        workerUrl: voiceWorkerUrl,
+        signal: abortController.signal,
+        stopSignal: stopController.signal,
+        onLevel: setVoiceLevel,
+      })
+      if (abortController.signal.aborted) return
+      if (!result.text) throw new Error('没有听清，再按住说一次吧')
+      setVoiceState('recognizing')
+      await onSendVoice(result)
+    } catch (error) {
+      if (error?.name !== 'AbortError') onVoiceError?.(error.message || '语音发送失败')
+    } finally {
+      if (voiceAbortRef.current === abortController) voiceAbortRef.current = null
+      if (voiceStopRef.current === stopController) voiceStopRef.current = null
+      setVoiceState('idle')
+      setVoiceLevel(0)
+    }
+  }
+
+  const handlePawPointerDown = (event) => {
+    if (!onSendVoice || voiceState !== 'idle') return
+    event.currentTarget.setPointerCapture?.(event.pointerId)
+    suppressPawClickRef.current = false
+    clearTimeout(pawLongPressTimerRef.current)
+    pawLongPressTimerRef.current = setTimeout(beginPawVoice, PAW_LONG_PRESS_MS)
+  }
+
+  const finishPawPress = () => {
+    clearTimeout(pawLongPressTimerRef.current)
+    pawLongPressTimerRef.current = null
+    if (voiceStopRef.current && !voiceStopRef.current.signal.aborted) {
+      setVoiceState('recognizing')
+      voiceStopRef.current?.abort()
+    }
+  }
+
   // 云社媒浏览器入口——第一版只是人工进入 https://browser.xiaoman.xyz 的
   // 通道（VPS 上常驻的真实 headed Chrome，见 ai-social-browser 部署），不
   // 重做一套浏览器画面，也不在这里绑定任何 AI/自动化操作。新标签页打开，
@@ -614,7 +688,7 @@ const MessageInput = forwardRef(function MessageInput({ onSend, onSendBatch, onS
           border: '1px solid rgba(255,182,209,0.3)',
           boxShadow: 'inset 0 1px 4px rgba(255,133,179,0.08)',
         }}>
-          <button
+          {inputCanExpand && <button
             type="button"
             onClick={() => setInputExpanded(value => !value)}
             title={inputExpanded ? '收起输入框' : '展开输入框'}
@@ -629,7 +703,7 @@ const MessageInput = forwardRef(function MessageInput({ onSend, onSendBatch, onS
             }}
           >
             {inputExpanded ? <Minimize2 size={15} /> : <Maximize2 size={15} />}
-          </button>
+          </button>}
           <textarea
             ref={textareaRef}
             value={text}
@@ -642,7 +716,7 @@ const MessageInput = forwardRef(function MessageInput({ onSend, onSendBatch, onS
               fontSize: 18, lineHeight: '1.5',
               color: '#8b5060', resize: 'none', overflow: 'auto',
               maxHeight: inputExpanded ? 'min(38dvh, 360px)' : 96,
-              paddingRight: 30, fontFamily: 'inherit',
+              paddingRight: inputCanExpand ? 30 : 0, fontFamily: 'inherit',
             }}
             className="placeholder-[#e8b4c4]"
             onInput={e => {
@@ -667,25 +741,52 @@ const MessageInput = forwardRef(function MessageInput({ onSend, onSendBatch, onS
           </button>
         ) : (
           <button
-            onClick={() => { console.log('[PAW] paw clicked'); handleSend() }}
-            disabled={!canSend}
+            onPointerDown={handlePawPointerDown}
+            onPointerUp={finishPawPress}
+            onPointerCancel={finishPawPress}
+            onLostPointerCapture={finishPawPress}
+            onContextMenu={event => event.preventDefault()}
+            onClick={() => {
+              if (suppressPawClickRef.current) { suppressPawClickRef.current = false; return }
+              console.log('[PAW] paw clicked')
+              handleSend()
+            }}
+            disabled={isSendingAttachment || voiceState === 'recognizing'}
+            aria-label={voiceState === 'recording' ? '松开发送语音' : '发送；长按说话'}
+            title={voiceState === 'recording' ? '松开发送' : '轻点发送，长按说话'}
             style={{
               width: 56, height: 56,
               borderRadius: '50%',
-              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              display: 'flex', alignItems: 'center', justifyContent: 'center', position: 'relative',
               flexShrink: 0,
               background: 'transparent',
               border: 'none',
               boxShadow: 'none',
               padding: 0,
-              cursor: canSend ? 'pointer' : 'default',
-              opacity: canSend ? 1 : 0.35,
-              transform: canSend ? 'scale(1)' : 'scale(0.88)',
-              filter: canSend ? `drop-shadow(0 2px 8px ${primaryColor}99)` : 'none',
+              cursor: 'pointer', touchAction: 'none', userSelect: 'none', WebkitUserSelect: 'none', WebkitTouchCallout: 'none',
+              opacity: voiceState === 'recognizing' ? 0.55 : (canSend || onSendVoice ? 1 : 0.35),
+              transform: voiceState === 'recording' ? `scale(${1.04 + voiceLevel * 0.08})` : canSend ? 'scale(1)' : 'scale(0.9)',
+              filter: voiceState === 'recording' ? 'drop-shadow(0 2px 12px rgba(238,91,122,.85))' : canSend ? `drop-shadow(0 2px 8px ${primaryColor}99)` : 'none',
               transition: 'all 0.25s ease-in-out',
             }}
           >
-            <img src="/assets/paw.png" alt="发送" style={{ width: 48, height: 48, objectFit: 'contain' }} />
+            <img
+              src="/assets/paw.png"
+              alt=""
+              draggable={false}
+              onDragStart={event => event.preventDefault()}
+              style={{ width: 48, height: 48, objectFit: 'contain', pointerEvents: 'none', WebkitTouchCallout: 'none' }}
+            />
+            {voiceState !== 'idle' && (
+              <span style={{
+                position: 'absolute', right: -2, bottom: 50, padding: '3px 7px', borderRadius: 10,
+                color: '#fff', background: voiceState === 'recording' ? '#ee6d89' : '#aa8793',
+                fontSize: 10, lineHeight: 1.2, whiteSpace: 'nowrap', boxShadow: '0 2px 8px rgba(80,40,55,.18)',
+                pointerEvents: 'none',
+              }}>
+                {voiceState === 'recording' ? '松开发送' : '识别中…'}
+              </span>
+            )}
           </button>
         )}
       </div>
