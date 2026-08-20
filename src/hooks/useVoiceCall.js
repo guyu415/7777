@@ -7,6 +7,7 @@ import { saveSessionMsgs } from '../services/sync'
 import { captureUtterance } from '../services/voiceCapture'
 import {
   canUseLocalSenseVoice,
+  localSenseVoiceUnavailableReason,
   initializeLocalSenseVoice,
   recognizeLocalSpeech,
   releaseLocalSenseVoice,
@@ -54,6 +55,7 @@ export function useVoiceCall() {
   const [speechEngine, setSpeechEngine] = useState('browser') // browser | local
   const [modelStatus, setModelStatus] = useState('idle') // idle | loading | ready | fallback
   const [modelProgress, setModelProgress] = useState(0)
+  const [modelFallbackReason, setModelFallbackReason] = useState('')
 
   const activeRef = useRef(false)
   const mutedRef = useRef(false)
@@ -111,9 +113,11 @@ export function useVoiceCall() {
   }
 
   const preloadLocalModel = () => {
-    if (!canUseLocalSenseVoice()) {
+    const unavailableReason = localSenseVoiceUnavailableReason()
+    if (unavailableReason) {
       setSpeechEngine('browser')
       setModelStatus('fallback')
+      setModelFallbackReason(unavailableReason)
       return
     }
     setModelStatus('loading')
@@ -125,6 +129,7 @@ export function useVoiceCall() {
       if (!activeRef.current || !ready) return
       localReadyRef.current = true
       setModelStatus('ready')
+      setModelFallbackReason('')
       setModelProgress(100)
       setError('')
       // Firefox has microphone capture but no Web Speech API. Its first turn
@@ -136,6 +141,7 @@ export function useVoiceCall() {
       localReadyRef.current = false
       setSpeechEngine('browser')
       setModelStatus('fallback')
+      setModelFallbackReason('load-error')
       setError('本地语音模型暂不可用，已切换系统识别')
       setTimeout(() => setError(''), 4000)
     })
@@ -248,6 +254,7 @@ export function useVoiceCall() {
       localReadyRef.current = false
       setSpeechEngine('browser')
       setModelStatus('fallback')
+      setModelFallbackReason('runtime-error')
       setError('本地识别失败，已切换系统识别')
       setTimeout(() => setError(''), 3500)
       setTimeout(() => listen(), 200)
@@ -402,7 +409,9 @@ export function useVoiceCall() {
     setVoiceEmotion('')
     localReadyRef.current = false
     setSpeechEngine('browser')
-    setModelStatus(canUseLocalSenseVoice() ? 'loading' : 'fallback')
+    const unavailableReason = localSenseVoiceUnavailableReason()
+    setModelStatus(unavailableReason ? 'fallback' : 'loading')
+    setModelFallbackReason(unavailableReason)
     setModelProgress(0)
     clearInterval(timerRef.current)
     timerRef.current = setInterval(() => setSeconds(s => s + 1), 1000)
@@ -481,7 +490,7 @@ export function useVoiceCall() {
   return {
     status, userCaption, aiCaption, error, seconds, muted,
     voiceEmotion, voiceEmotionLabel: VOICE_EMOTION_LABELS[voiceEmotion] || '',
-    speechEngine, modelStatus, modelProgress,
+    speechEngine, modelStatus, modelProgress, modelFallbackReason,
     startCall, endCall, toggleMute,
   }
 }

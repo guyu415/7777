@@ -9,16 +9,23 @@ let initializePromise = null
 let releasePromise = null
 let initialized = false
 
+export function isIOSUserAgent(userAgent = '') {
+  return /iPad|iPhone|iPod/.test(userAgent)
+}
+
+export function localSenseVoiceUnavailableReason() {
+  if (typeof window === 'undefined') return 'unsupported'
+  if (!window.WebAssembly || !navigator.mediaDevices?.getUserMedia) return 'unsupported'
+  // The combined runtime allocates a large WASM heap. iOS WebKit killed the
+  // installed PWA during real-device initialization, so keep it on the
+  // optimized system-STT path instead of retrying the same crash on launch.
+  if (isIOSUserAgent(navigator.userAgent)) return 'ios-memory'
+  if (navigator.deviceMemory && navigator.deviceMemory < 4) return 'low-memory'
+  return ''
+}
+
 export function canUseLocalSenseVoice() {
-  if (typeof window === 'undefined') return false
-  if (!window.WebAssembly || !navigator.mediaDevices?.getUserMedia) return false
-  // The combined runtime starts with a large WASM heap. Keep the explicit
-  // low-memory signal as a guard, but do not blanket-block iOS: Safari does
-  // not expose deviceMemory, and recent iPhones can run the INT8 model. If a
-  // particular device cannot allocate it, initialization fails softly and
-  // the call hook returns to the improved browser-STT path.
-  if (navigator.deviceMemory && navigator.deviceMemory < 4) return false
-  return true
+  return !localSenseVoiceUnavailableReason()
 }
 
 async function loadSherpa(onProgress) {

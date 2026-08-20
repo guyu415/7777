@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { downsampleAudio, mergeAudioChunks, rootMeanSquare } from '../voiceCapture'
-import { normalizeVoiceEmotion, voiceEmotionContext } from '../localSenseVoice'
+import { isIOSUserAgent, normalizeVoiceEmotion, voiceEmotionContext } from '../localSenseVoice'
 
 describe('local voice helpers', () => {
   it('downsamples microphone audio without changing its duration', () => {
@@ -25,5 +25,11 @@ describe('local voice helpers', () => {
     expect(normalizeVoiceEmotion('<|NEUTRAL|>')).toBe('neutral')
     expect(voiceEmotionContext('sad')).toContain('可能出错')
     expect(voiceEmotionContext('neutral')).toBe('')
+  })
+
+  it('recognizes iPhone and iPad user agents for the memory safety fallback', () => {
+    expect(isIOSUserAgent('Mozilla/5.0 (iPhone; CPU iPhone OS 18_6 like Mac OS X)')).toBe(true)
+    expect(isIOSUserAgent('Mozilla/5.0 (iPad; CPU OS 18_6 like Mac OS X)')).toBe(true)
+    expect(isIOSUserAgent('Mozilla/5.0 (Linux; Android 15)')).toBe(false)
   })
 })

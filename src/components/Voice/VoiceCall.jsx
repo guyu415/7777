@@ -23,7 +23,7 @@ export default function VoiceCall({ theme, onClose, audioKit }) {
   } = useStore()
   const {
     status, userCaption, aiCaption, error, seconds, muted,
-    voiceEmotionLabel, speechEngine, modelStatus, modelProgress,
+    voiceEmotionLabel, speechEngine, modelStatus, modelProgress, modelFallbackReason,
     startCall, endCall, toggleMute,
   } = useVoiceCall()
   const startedRef = useRef(false)
@@ -118,7 +118,9 @@ export default function VoiceCall({ theme, onClose, audioKit }) {
               ? 'SenseVoice 本地识别 · 音频不上传'
               : modelStatus === 'ready'
                 ? 'SenseVoice 已就绪 · 下轮切换本地识别'
-              : '系统语音识别'}
+                : modelFallbackReason === 'ios-memory'
+                  ? 'iPhone 内存限制 · 使用系统识别'
+                  : '系统语音识别'}
         </span>
 
         {/* 字幕区 */}
