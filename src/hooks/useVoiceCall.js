@@ -308,14 +308,19 @@ export function useVoiceCall() {
         endCall()
         return
       }
-      console.warn('[CALL] Cloudflare STT 失败，回退系统识别:', e.message)
-      cloudReadyRef.current = false
-      setSpeechEngine('browser')
-      setModelStatus('fallback')
-      setModelFallbackReason('cloud-error')
-      setError(`云端识别不可用：${e.message || '未知错误'}；已切换系统识别`)
-      setTimeout(() => setError(''), 3500)
-      setTimeout(() => listen(), 200)
+      console.warn('[CALL] Cloudflare STT 失败，保持云端并恢复监听:', e.message)
+      // Do not silently fall back to webkitSpeechRecognition here. In an iOS
+      // home-screen app it can never deliver onresult/onend after cloud capture,
+      // leaving the next turn stuck forever. The request already retries the
+      // same WAV once; resume cloud listening so a transient edge failure cannot
+      // permanently disable the call.
+      cloudReadyRef.current = true
+      setSpeechEngine('cloud')
+      setModelStatus('cloud')
+      setModelFallbackReason('cloud-retry')
+      setError(`云端识别暂时失败：${e.message || '未知错误'}；请再说一次`)
+      setTimeout(() => setError(''), 4500)
+      setTimeout(() => { if (activeRef.current && !mutedRef.current) listen() }, 700)
     }
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
