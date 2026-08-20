@@ -299,7 +299,9 @@ export function useVoiceCall() {
         setTimeout(() => listen(), 180)
         return
       }
-      handleTurn(result.text, { engine: 'cloud', emotion: 'contextual' })
+      // Whisper returns text only. Do not attach a made-up emotion hint: it
+      // adds tokens without providing any acoustic evidence.
+      handleTurn(result.text, { engine: 'cloud' })
     } catch (e) {
       captureAbortRef.current = null
       if (e.name === 'AbortError' || !activeRef.current) return

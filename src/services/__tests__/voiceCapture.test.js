@@ -36,7 +36,7 @@ describe('local voice helpers', () => {
     expect(normalizeVoiceEmotion('<|NEUTRAL|>')).toBe('neutral')
     expect(voiceEmotionContext('sad')).toContain('可能出错')
     expect(voiceEmotionContext('neutral')).toBe('')
-    expect(voiceEmotionContext('contextual')).toContain('措辞、语义和近期上下文')
+    expect(voiceEmotionContext('contextual')).toBe('')
   })
 
   it('recognizes iPhone and iPad user agents for the memory safety fallback', () => {
