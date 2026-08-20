@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { downsampleAudio, mergeAudioChunks, rootMeanSquare } from '../voiceCapture'
+import { downsampleAudio, encodePcmWav, mergeAudioChunks, rootMeanSquare } from '../voiceCapture'
 import { isIOSUserAgent, normalizeVoiceEmotion, voiceEmotionContext } from '../localSenseVoice'
 
 describe('local voice helpers', () => {
@@ -20,11 +20,23 @@ describe('local voice helpers', () => {
     expect(rootMeanSquare(new Float32Array(10))).toBe(0)
   })
 
+  it('encodes mono 16 kHz PCM as a valid WAV payload', async () => {
+    const wav = encodePcmWav(new Float32Array([0, 1, -1]))
+    const view = new DataView(await wav.arrayBuffer())
+    expect(wav.type).toBe('audio/wav')
+    expect(String.fromCharCode(...new Uint8Array(view.buffer, 0, 4))).toBe('RIFF')
+    expect(view.getUint32(24, true)).toBe(16000)
+    expect(view.getUint32(40, true)).toBe(6)
+    expect(view.getInt16(46, true)).toBe(32767)
+    expect(view.getInt16(48, true)).toBe(-32768)
+  })
+
   it('normalizes SenseVoice tags and keeps uncertainty in the AI hint', () => {
     expect(normalizeVoiceEmotion('<|SAD|>')).toBe('sad')
     expect(normalizeVoiceEmotion('<|NEUTRAL|>')).toBe('neutral')
     expect(voiceEmotionContext('sad')).toContain('可能出错')
     expect(voiceEmotionContext('neutral')).toBe('')
+    expect(voiceEmotionContext('contextual')).toContain('措辞、语义和近期上下文')
   })
 
   it('recognizes iPhone and iPad user agents for the memory safety fallback', () => {

@@ -114,6 +114,8 @@ export default function VoiceCall({ theme, onClose, audioKit }) {
         <span className="mt-1 text-xs" style={{ color: '#bd8796' }}>
           {modelStatus === 'loading'
             ? `本地语音模型准备中${modelProgress ? ` ${modelProgress}%` : ''} · 暂用系统识别`
+            : speechEngine === 'cloud'
+              ? 'Cloudflare Whisper · 音频发送至云端'
             : speechEngine === 'local'
               ? 'SenseVoice 本地识别 · 音频不上传'
               : modelStatus === 'ready'

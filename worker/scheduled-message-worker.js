@@ -1,7 +1,7 @@
 const CORS = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Methods': 'GET, POST, DELETE, OPTIONS',
-  'Access-Control-Allow-Headers': 'Content-Type, X-Api-Key, X-Target-Url, X-VPS-Key',
+  'Access-Control-Allow-Headers': 'Content-Type, X-Api-Key, X-Target-Url, X-VPS-Key, X-Eunoia-Password',
 }
 
 export default {
@@ -98,6 +98,10 @@ export default {
 
     if (pathname === '/chat' && request.method === 'POST') {
       return handleChatProxy(request)
+    }
+
+    if (pathname === '/stt' && request.method === 'POST') {
+      return handleSpeechTranscription(request, env)
     }
 
     // ── Auth / Cloud Sync ─────────────────────────────────────────
@@ -327,6 +331,53 @@ export default {
   async scheduled(event, env, ctx) {
     ctx.waitUntil(generateProactive(env, { force: false }))
   },
+}
+
+const STT_MAX_AUDIO_BYTES = 1_100_000
+
+export async function handleSpeechTranscription(request, env) {
+  const password = request.headers.get('X-Eunoia-Password') || ''
+  if (!env.USER_PASSWORD || password !== env.USER_PASSWORD) {
+    return Response.json({ error: 'unauthorized' }, { status: 401, headers: CORS })
+  }
+  if (!env.AI?.run) {
+    return Response.json({ error: 'Workers AI binding is unavailable' }, { status: 503, headers: CORS })
+  }
+  const contentType = request.headers.get('Content-Type') || ''
+  if (!contentType.toLowerCase().startsWith('audio/wav')) {
+    return Response.json({ error: 'audio/wav required' }, { status: 415, headers: CORS })
+  }
+  const declaredSize = Number(request.headers.get('Content-Length') || 0)
+  if (declaredSize > STT_MAX_AUDIO_BYTES) {
+    return Response.json({ error: 'audio too large' }, { status: 413, headers: CORS })
+  }
+  const bytes = new Uint8Array(await request.arrayBuffer())
+  if (bytes.length < 44 || bytes.length > STT_MAX_AUDIO_BYTES) {
+    return Response.json({ error: bytes.length > STT_MAX_AUDIO_BYTES ? 'audio too large' : 'audio too short' }, {
+      status: bytes.length > STT_MAX_AUDIO_BYTES ? 413 : 400,
+      headers: CORS,
+    })
+  }
+  try {
+    const result = await env.AI.run('@cf/openai/whisper-large-v3-turbo', {
+      audio: Array.from(bytes),
+      task: 'transcribe',
+      language: 'zh',
+      vad_filter: true,
+      condition_on_previous_text: false,
+      no_speech_threshold: 0.6,
+      initial_prompt: '以下是自然的普通话对话，也可能夹杂常见英文名称。请准确转写，保留原意。',
+    })
+    const text = String(result?.text || result?.transcription_info?.text || '').trim()
+    return Response.json({ text }, { headers: { ...CORS, 'Cache-Control': 'no-store' } })
+  } catch (error) {
+    console.error('[STT] Workers AI failed:', error?.message || String(error))
+    const status = /limit|quota|capacity|rate/i.test(error?.message || '') ? 429 : 502
+    return Response.json({ error: status === 429 ? 'Cloudflare STT quota unavailable' : 'Cloudflare STT failed' }, {
+      status,
+      headers: { ...CORS, 'Cache-Control': 'no-store' },
+    })
+  }
 }
 
 async function handleChatProxy(request) {
