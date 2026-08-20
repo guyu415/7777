@@ -8,10 +8,12 @@ export async function recognizeCloudSpeech(samples, { workerUrl, signal } = {}) 
   const base = String(workerUrl || '').replace(/\/$/, '')
   const password = localStorage.getItem('auth.password') || ''
   if (!base || !password) throw new Error('Cloudflare STT 尚未配置')
+  const form = new FormData()
+  form.append('password', password)
+  form.append('audio', encodePcmWav(samples), 'speech.wav')
   const response = await fetch(`${base}/stt`, {
     method: 'POST',
-    headers: { 'Content-Type': 'audio/wav', 'X-Eunoia-Password': password },
-    body: encodePcmWav(samples),
+    body: form,
     signal,
   })
   const payload = await response.json().catch(() => ({}))

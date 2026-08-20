@@ -313,7 +313,7 @@ export function useVoiceCall() {
       setSpeechEngine('browser')
       setModelStatus('fallback')
       setModelFallbackReason('cloud-error')
-      setError('云端识别暂不可用，已切换系统识别')
+      setError(`云端识别不可用：${e.message || '未知错误'}；已切换系统识别`)
       setTimeout(() => setError(''), 3500)
       setTimeout(() => listen(), 200)
     }
