@@ -935,7 +935,7 @@ export function sendCodexMessage(text, imageUrl, options = {}) {
   const sessionId = normalizeCodexSessionId(options?.sessionId || selectedCodexSessionId)
   const prompt = typeof options?.prompt === 'string' ? options.prompt : ''
   const id = `codex-eunoia-${Date.now()}-${++codexSeq}`
-  return sendRaw(buildCodexMessagePayload({ id, text, segments: options?.segments, imageUrl, imageSeparate: options?.imageSeparate, file: options?.file, sessionId, prompt, clientTime: clientTimeContext(), voiceEmotion: options?.voiceEmotion }))
+  return sendRaw(buildCodexMessagePayload({ id, text, segments: options?.segments, imageUrl, imageSeparate: options?.imageSeparate, file: options?.file, sessionId, prompt, clientTime: clientTimeContext(), voiceEmotion: options?.voiceEmotion, voiceAcoustics: options?.voiceAcoustics }))
 }
 
 /**
@@ -947,7 +947,7 @@ export function sendCodexMessage(text, imageUrl, options = {}) {
  * the whole answer-so-far, not deltas, so this adapter converts them back to
  * deltas and ignores the final bubble-splitting replay.
  */
-export async function* streamChatViaCodex({ text, sessionId, prompt = '', signal, voiceEmotion }) {
+export async function* streamChatViaCodex({ text, sessionId, prompt = '', signal, voiceEmotion, voiceAcoustics }) {
   if (signal?.aborted) return
 
   const wantedSessionId = normalizeCodexSessionId(sessionId)
@@ -1024,7 +1024,7 @@ export async function* streamChatViaCodex({ text, sessionId, prompt = '', signal
 
   try {
     selectCodexSession(wantedSessionId)
-    const sent = sendCodexMessage(text, undefined, { sessionId: wantedSessionId, prompt, voiceEmotion })
+    const sent = sendCodexMessage(text, undefined, { sessionId: wantedSessionId, prompt, voiceEmotion, voiceAcoustics })
     if (!sent) throw new Error('companion 未连接')
     while (true) {
       const item = await next()
@@ -1333,7 +1333,7 @@ export function sendDeleteNotice(text, messageIds = []) {
  * the module-level `deliveredIds` set, so a reconnect-triggered history
  * replay can never re-yield something already seen live, or vice versa.
  */
-export async function* streamChatViaCompanion({ text, imagePath, file, signal, messageId, voiceEmotion }) {
+export async function* streamChatViaCompanion({ text, imagePath, file, signal, messageId, voiceEmotion, voiceAcoustics }) {
   if (signal?.aborted) return
 
   await ensureFreshConnectionBeforeSend()
@@ -1519,6 +1519,7 @@ export async function* streamChatViaCompanion({ text, imagePath, file, signal, m
       id, text, ...(imagePath ? { imagePath } : {}),
       ...(file?.path ? { filePath: file.path, fileName: file.name, fileSize: file.size, fileType: file.mimeType } : {}),
       ...(voiceEmotion ? { voiceEmotion } : {}),
+      ...(voiceAcoustics ? { voiceAcoustics } : {}),
       clientTime: clientTimeContext(),
     })
     if (!sent) {

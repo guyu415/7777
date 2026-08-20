@@ -57,7 +57,9 @@ describe('companion connection recovery', () => {
 
   it('recovers an in-flight reply after a forced foreground reconnect', async () => {
     const companion = await import('../companion.js')
-    const stream = companion.streamChatViaCompanion({ text: '在吗', messageId: 'turn-1' })
+    const stream = companion.streamChatViaCompanion({
+      text: '在吗', messageId: 'turn-1', voiceEmotion: 'sad', voiceAcoustics: { pitchHz: 129 },
+    })
     const firstChunk = stream.next()
     await flush()
 
@@ -65,6 +67,9 @@ describe('companion connection recovery', () => {
     oldSocket.open()
     await flush()
     expect(oldSocket.sent.some(m => m.id === 'turn-1')).toBe(true)
+    expect(oldSocket.sent.find(m => m.id === 'turn-1')).toMatchObject({
+      voiceEmotion: 'sad', voiceAcoustics: { pitchHz: 129 },
+    })
 
     companion.reconnectCompanion()
     const freshSocket = MockWebSocket.instances[1]

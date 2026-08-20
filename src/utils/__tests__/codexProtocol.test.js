@@ -20,9 +20,13 @@ describe('Codex session request protocol', () => {
   })
 
   it('carries acoustic emotion separately from the visible user text', () => {
-    const payload = buildCodexMessagePayload({ id: 'voice-1', text: '我没事', sessionId: 's1', voiceEmotion: 'sad' })
+    const payload = buildCodexMessagePayload({
+      id: 'voice-1', text: '我没事', sessionId: 's1', voiceEmotion: 'sad',
+      voiceAcoustics: { pitchHz: 129, pitchRangeSemitones: 3.9 },
+    })
     expect(payload.text).toBe('我没事')
     expect(payload.voiceEmotion).toBe('sad')
+    expect(payload.voiceAcoustics).toEqual({ pitchHz: 129, pitchRangeSemitones: 3.9 })
   })
 
   it('marks an image as its own bubble beside split text messages', () => {

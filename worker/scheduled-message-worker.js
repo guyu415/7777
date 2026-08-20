@@ -368,7 +368,8 @@ async function transcribeWithVpsSenseVoice(bytes, env) {
       emotion: String(result?.emotion || 'unknown').toLowerCase(),
       event: String(result?.event || ''),
       language: String(result?.language || ''),
-      engine: 'sensevoice',
+      acoustics: result?.acoustics && typeof result.acoustics === 'object' ? result.acoustics : null,
+      engine: String(result?.engine || 'sensevoice'),
     }
   } finally {
     clearTimeout(timeout)
@@ -428,7 +429,7 @@ export async function handleSpeechTranscription(request, env) {
       initial_prompt: '以下是自然的普通话对话，也可能夹杂常见英文名称。请准确转写，保留原意。',
     })
     const text = String(result?.text || result?.transcription_info?.text || '').trim()
-    return Response.json({ text, emotion: 'unknown', event: '', language: 'zh', engine: 'whisper' }, {
+    return Response.json({ text, emotion: 'unknown', event: '', language: 'zh', acoustics: null, engine: 'whisper' }, {
       headers: { ...CORS, 'Cache-Control': 'no-store' },
     })
   } catch (error) {

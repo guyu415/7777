@@ -156,8 +156,47 @@ export const VOICE_EMOTION_LABELS = {
   unknown: '未判断',
 }
 
-export function voiceEmotionContext(emotion) {
+const ACOUSTIC_BOUNDS = {
+  pitchHz: [50, 900], pitchRangeSemitones: [0, 36], loudnessDb: [-100, 20],
+  rhythmPeaksPerSecond: [0, 20], hnrDb: [-30, 60], jitterPercent: [0, 20], shimmerDb: [0, 10],
+}
+
+export function normalizeVoiceAcoustics(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null
+  const result = {}
+  for (const [key, [min, max]] of Object.entries(ACOUSTIC_BOUNDS)) {
+    const number = Number(value[key])
+    if (Number.isFinite(number) && number >= min && number <= max) result[key] = number
+  }
+  return Object.keys(result).length ? result : null
+}
+
+export function formatVoiceAcoustics(value) {
+  const acoustics = normalizeVoiceAcoustics(value)
+  if (!acoustics) return ''
+  return [
+    acoustics.pitchHz !== undefined ? `音高 ${acoustics.pitchHz}Hz` : '',
+    acoustics.pitchRangeSemitones !== undefined ? `起伏 ${acoustics.pitchRangeSemitones} 半音` : '',
+    acoustics.loudnessDb !== undefined ? `相对响度 ${acoustics.loudnessDb}dB` : '',
+    acoustics.rhythmPeaksPerSecond !== undefined ? `节奏 ${acoustics.rhythmPeaksPerSecond}/秒` : '',
+    acoustics.hnrDb !== undefined ? `谐噪比 ${acoustics.hnrDb}dB` : '',
+    acoustics.jitterPercent !== undefined ? `音高微抖 ${acoustics.jitterPercent}%` : '',
+    acoustics.shimmerDb !== undefined ? `响度微抖 ${acoustics.shimmerDb}dB` : '',
+  ].filter(Boolean).join(' · ')
+}
+
+export function voiceEmotionContext(emotion, acousticsValue) {
   const label = VOICE_EMOTION_LABELS[emotion]
-  if (!label || emotion === 'neutral' || emotion === 'unknown') return ''
-  return `本轮来自语音输入；声音模型给出的粗略语气标签是“${label}”。这只是可能出错的声音线索，请结合原话和上下文自然理解，不要机械复述标签，也不要声称确定知道用户内心。`
+  const acoustics = normalizeVoiceAcoustics(acousticsValue)
+  const fields = [
+    label && emotion !== 'neutral' && emotion !== 'unknown' ? `emotion~${label}` : '',
+    acoustics?.pitchHz !== undefined ? `f0=${acoustics.pitchHz}Hz` : '',
+    acoustics?.pitchRangeSemitones !== undefined ? `range=${acoustics.pitchRangeSemitones}st` : '',
+    acoustics?.loudnessDb !== undefined ? `level=${acoustics.loudnessDb}dB` : '',
+    acoustics?.rhythmPeaksPerSecond !== undefined ? `rhythm=${acoustics.rhythmPeaksPerSecond}/s` : '',
+    acoustics?.hnrDb !== undefined ? `HNR=${acoustics.hnrDb}dB` : '',
+    acoustics?.jitterPercent !== undefined ? `jitter=${acoustics.jitterPercent}%` : '',
+    acoustics?.shimmerDb !== undefined ? `shimmer=${acoustics.shimmerDb}dB` : '',
+  ].filter(Boolean)
+  return fields.length ? `[voice acoustics; ${fields.join('; ')}; objective cues, not certain feelings]` : ''
 }
