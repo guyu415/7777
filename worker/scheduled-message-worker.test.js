@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { encodeAudioBase64, handleSpeechTranscription, isFixedVpsSession, ordinaryProactiveEnabled } from './scheduled-message-worker.js'
 
 describe('ordinary proactive target separation', () => {
@@ -25,6 +25,8 @@ describe('Cloudflare speech transcription', () => {
     return new Request('https://chat.xiaoman.xyz/stt', { method: 'POST', body: form })
   }
 
+  afterEach(() => vi.restoreAllMocks())
+
   it('protects Workers AI usage with the existing user secret', async () => {
     const response = await handleSpeechTranscription(requestWith('wrong'), {
       USER_PASSWORD: 'right', CHAT_KV: { get: async () => null }, AI: { run() {} },
@@ -39,7 +41,9 @@ describe('Cloudflare speech transcription', () => {
       AI: { run: async (...args) => { calls.push(args); return { text: '你好，世界。' } } },
     })
     expect(response.status).toBe(200)
-    expect(await response.json()).toEqual({ text: '你好，世界。' })
+    expect(await response.json()).toEqual({
+      text: '你好，世界。', emotion: 'unknown', event: '', language: 'zh', engine: 'whisper',
+    })
     expect(calls[0][0]).toBe('@cf/openai/whisper-large-v3-turbo')
     expect(typeof calls[0][1].audio).toBe('string')
     expect(Uint8Array.from(atob(calls[0][1].audio), char => char.charCodeAt(0))).toEqual(wav)
@@ -60,5 +64,32 @@ describe('Cloudflare speech transcription', () => {
       AI: { run: async () => ({ text: '可以了' }) },
     })
     expect(response.status).toBe(200)
+  })
+
+  it('prefers VPS SenseVoice and preserves its acoustic emotion label', async () => {
+    const upstream = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({
+      text: '我真的生气了', emotion: 'angry', event: 'SPEECH', language: 'zh', engine: 'sensevoice',
+    }), { status: 200, headers: { 'Content-Type': 'application/json' } }))
+    const aiRun = vi.fn()
+    const response = await handleSpeechTranscription(requestWith('right'), {
+      USER_PASSWORD: 'right', VPS_SERVICE_KEY: 'service-key',
+      SENSEVOICE_URL: 'https://companion.example/stt/sensevoice', AI: { run: aiRun },
+    })
+    expect(response.status).toBe(200)
+    expect(await response.json()).toMatchObject({ text: '我真的生气了', emotion: 'angry', engine: 'sensevoice' })
+    expect(upstream).toHaveBeenCalledWith('https://companion.example/stt/sensevoice', expect.objectContaining({
+      method: 'POST', headers: expect.objectContaining({ 'X-VPS-Key': 'service-key' }),
+    }))
+    expect(aiRun).not.toHaveBeenCalled()
+  })
+
+  it('falls back to Whisper without inventing an emotion when VPS is down', async () => {
+    vi.spyOn(globalThis, 'fetch').mockRejectedValue(new TypeError('VPS unavailable'))
+    const response = await handleSpeechTranscription(requestWith('right'), {
+      USER_PASSWORD: 'right', VPS_SERVICE_KEY: 'service-key',
+      AI: { run: async () => ({ text: '只有转写' }) },
+    })
+    expect(response.status).toBe(200)
+    expect(await response.json()).toMatchObject({ text: '只有转写', emotion: 'unknown', engine: 'whisper' })
   })
 })

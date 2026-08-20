@@ -77,7 +77,13 @@ export async function recognizeCloudSpeech(samples, { workerUrl, signal } = {}) 
         }
         throw error
       }
-      return { text: String(payload.text || '').trim() }
+      return {
+        text: String(payload.text || '').trim(),
+        emotion: String(payload.emotion || 'unknown'),
+        event: String(payload.event || ''),
+        language: String(payload.language || ''),
+        engine: String(payload.engine || 'unknown'),
+      }
     } catch (error) {
       if (error?.name === 'AbortError' || signal?.aborted) throw error
       if (error?.retryable === false) throw error

@@ -115,7 +115,7 @@ export default function VoiceCall({ theme, onClose, audioKit }) {
           {modelStatus === 'loading'
             ? `本地语音模型准备中${modelProgress ? ` ${modelProgress}%` : ''} · 暂用系统识别`
             : speechEngine === 'cloud'
-              ? 'Cloudflare Whisper · 音频发送至云端'
+              ? 'SenseVoice 云端识别 · 支持声学情绪'
             : speechEngine === 'local'
               ? 'SenseVoice 本地识别 · 音频不上传'
               : modelStatus === 'ready'
@@ -130,7 +130,7 @@ export default function VoiceCall({ theme, onClose, audioKit }) {
           {userCaption && (
             <div className="text-right mb-3">
               <p className="text-sm" style={{ color: '#b08794', lineHeight: 1.6 }}>{userCaption}</p>
-              {voiceEmotionLabel && speechEngine === 'local' && (
+              {voiceEmotionLabel && (
                 <span className="inline-block mt-1 px-2 py-0.5 rounded-full text-xs" style={{ color: '#a9687c', background: 'rgba(255,255,255,.55)' }}>
                   语气：{voiceEmotionLabel}
                 </span>

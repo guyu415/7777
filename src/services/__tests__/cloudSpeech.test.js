@@ -28,7 +28,7 @@ describe('cloud speech transport', () => {
 
     await expect(recognizeCloudSpeech(new Float32Array([0.1]), {
       workerUrl: 'https://chat.example.com',
-    })).resolves.toEqual({ text: '你好' })
+    })).resolves.toEqual({ text: '你好', emotion: 'unknown', event: '', language: '', engine: 'unknown' })
     expect(fetchMock).toHaveBeenCalledTimes(2)
     expect(fetchMock.mock.calls[0][1].body).toBeInstanceOf(FormData)
     expect(fetchMock.mock.calls[1][1].body).toBeInstanceOf(FormData)
@@ -46,5 +46,16 @@ describe('cloud speech transport', () => {
       workerUrl: 'https://chat.example.com',
     })).rejects.toThrow('unauthorized')
     expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('preserves a real acoustic emotion returned by SenseVoice', async () => {
+    vi.stubGlobal('localStorage', { getItem: () => 'test-password' })
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      text: '别烦我', emotion: 'angry', event: 'SPEECH', language: 'zh', engine: 'sensevoice',
+    }), { status: 200, headers: { 'Content-Type': 'application/json' } })))
+
+    await expect(recognizeCloudSpeech(new Float32Array([0.1]), {
+      workerUrl: 'https://chat.example.com',
+    })).resolves.toMatchObject({ text: '别烦我', emotion: 'angry', engine: 'sensevoice' })
   })
 })

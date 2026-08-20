@@ -79,6 +79,7 @@ import {
   type VisibleCcMessage,
 } from './cc-tidal-memory.ts'
 import { splitCompletedCodexMessage } from './codex-chat-history.ts'
+import { SENSEVOICE_MAX_AUDIO_BYTES, transcribeWithSenseVoice } from './sensevoice-stt.ts'
 import {
   CARE_ROLE_IDS,
   baziSolarMonthContext,
@@ -130,6 +131,11 @@ const DIARY_LETTER_SCHEDULE_FILE = process.env.AI_COMPANION_DIARY_LETTER_SCHEDUL
 const COOKIE_NAME = 'ai_companion_token'
 const SELF_ORIGIN = 'https://companion.xiaoman.xyz'
 const TURN_WATCHDOG_MS = 10 * 60 * 1000 // generous — real completion comes from Stop/StopFailure hooks
+const SENSEVOICE_BINARY = process.env.AI_COMPANION_SENSEVOICE_BINARY
+  ?? join(ROOT, 'models', 'sensevoice', 'llama-funasr-sensevoice')
+const SENSEVOICE_MODEL = process.env.AI_COMPANION_SENSEVOICE_MODEL
+  ?? join(ROOT, 'models', 'sensevoice', 'sensevoice-small-q8.gguf')
+let senseVoiceBusy = false
 
 // The real Auto Memory directory the production brain session (cwd=ROOT)
 // actually reads/writes, per Claude Code's own project-path encoding
@@ -7747,6 +7753,47 @@ Bun.serve<{ authed: true }>({
 
     if (url.pathname === '/health') {
       return jsonResponse({ status: 'ok', ts: Date.now() })
+    }
+
+    // Server-to-server acoustic ASR/SER. The browser never calls this route:
+    // the account-authenticated Cloudflare Worker forwards a bounded WAV and
+    // proves its identity with the existing VPS service key.
+    if (url.pathname === '/stt/sensevoice' && req.method === 'POST') {
+      if (!vpsServiceKey || req.headers.get('X-VPS-Key') !== vpsServiceKey) {
+        return jsonResponse({ error: 'unauthorized' }, { status: 401 })
+      }
+      const contentLength = Number(req.headers.get('Content-Length') || 0)
+      if (contentLength > SENSEVOICE_MAX_AUDIO_BYTES) {
+        return jsonResponse({ error: 'audio too large' }, { status: 413 })
+      }
+      if (senseVoiceBusy) return jsonResponse({ error: 'SenseVoice busy' }, { status: 429 })
+      const audio = new Uint8Array(await req.arrayBuffer())
+      if (audio.length < 44 || audio.length > SENSEVOICE_MAX_AUDIO_BYTES) {
+        return jsonResponse({ error: audio.length > SENSEVOICE_MAX_AUDIO_BYTES ? 'audio too large' : 'audio too short' }, {
+          status: audio.length > SENSEVOICE_MAX_AUDIO_BYTES ? 413 : 400,
+        })
+      }
+      senseVoiceBusy = true
+      const startedAt = Date.now()
+      try {
+        const result = await transcribeWithSenseVoice(audio, {
+          binary: SENSEVOICE_BINARY,
+          model: SENSEVOICE_MODEL,
+          timeoutMs: 15_000,
+        })
+        log('sensevoice_transcribed', {
+          audioBytes: audio.length, elapsedMs: Date.now() - startedAt,
+          textChars: result.text.length, emotion: result.emotion, event: result.event,
+        })
+        return jsonResponse({ ...result, engine: 'sensevoice' }, {
+          headers: { 'cache-control': 'no-store' },
+        })
+      } catch (err) {
+        log('sensevoice_failed', { audioBytes: audio.length, elapsedMs: Date.now() - startedAt, error: String(err) })
+        return jsonResponse({ error: 'SenseVoice failed' }, { status: 502 })
+      } finally {
+        senseVoiceBusy = false
+      }
     }
 
     if (req.method === 'OPTIONS') {
