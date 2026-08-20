@@ -346,16 +346,22 @@ export function useVoiceCall() {
 
     const isClaudeVps = cfg.providerName === 'claude-code-vps'
     const isCodexVps = cfg.providerName === 'codex-vps'
-    const isPersistentVps = isClaudeVps || isCodexVps
 
-    // VPS runtimes own their history server-side. Persisting a second local
-    // copy here was the other half of the split-brain bug: the call looked
-    // like it belonged to the open chat while its model turn went elsewhere.
-    if (!isPersistentVps) {
+    // Codex broadcasts its canonical history straight into useCodexChat, but
+    // Claude Code's call adapter consumes the matching wire events itself.
+    // That means App.jsx correctly does not treat those replies as proactive,
+    // so the call must mirror its accepted turn into the resident chat just
+    // like useChat does. Reuse the user bubble id as the server turn id and
+    // retain reply wire ids below; the next history replay can then dedupe the
+    // local mirror instead of either losing it or showing it twice.
+    let userMessageId = ''
+    if (!isCodexVps) {
       const state = useStore.getState()
-      const userMsg = { id: genId(), conversationId: sessionId, role: 'user', type: 'text', content: text, timestamp: Date.now() }
+      userMessageId = genId()
+      const userMsg = { id: userMessageId, conversationId: sessionId, role: 'user', type: 'text', content: text, timestamp: Date.now() }
       state.addMessage(userMsg)
       try { await saveMessage(userMsg) } catch {}
+      state.updateSession(sessionId, { lastMsgPreview: text.slice(0, 40), lastMsgTime: userMsg.timestamp })
     }
 
     // 上下文：本会话最近 24 条（含刚说的这句），首条必须是 user
@@ -404,11 +410,12 @@ export function useVoiceCall() {
     abortRef.current = controller
     let full = ''
     let segBuf = ''
+    const replyWireIds = []
     try {
       const chunkSource = isCodexVps
         ? streamChatViaCodex({ text, sessionId, prompt: cfg.systemPrompt, signal: controller.signal, voiceEmotion: voiceMeta.emotion })
         : isClaudeVps
-          ? streamChatViaCompanion({ text, signal: controller.signal, voiceEmotion: voiceMeta.emotion })
+          ? streamChatViaCompanion({ text, messageId: userMessageId, signal: controller.signal, voiceEmotion: voiceMeta.emotion })
           : streamChat({
               apiKey: cfg.apiKey, apiBaseUrl: cfg.baseUrl, model: cfg.model,
               systemPrompt: cfg.systemPrompt + CALL_RULES + (voiceEmotionContext(voiceMeta.emotion) ? `\n\n【本轮语音线索】${voiceEmotionContext(voiceMeta.emotion)}` : ''),
@@ -418,9 +425,12 @@ export function useVoiceCall() {
               disableThinking: true, webSearch: false, providerName: cfg.providerName,
             })
       for await (const chunk of chunkSource) {
-        if (!chunk.text) continue
-        full += chunk.text
-        segBuf += chunk.text
+        const chunkText = chunk.text || chunk.voice?.text || ''
+        if (!chunkText) continue
+        const wireId = chunk.wireId || chunk.voice?.id
+        if (wireId && !replyWireIds.includes(wireId)) replyWireIds.push(wireId)
+        full += chunkText
+        segBuf += chunkText
         setAiCaption(cleanForSpeech(full)) // 字幕跟着生成实时更新
         // 句末标点即成句，切出去合成
         let cut
@@ -446,13 +456,17 @@ export function useVoiceCall() {
     if (!blobQueue.length) pushSeg(spoken) // 一句都没切出来的兜底
     queueClosed = true
 
-    if (!isPersistentVps) {
-      const aiMsg = { id: genId(), conversationId: sessionId, role: 'assistant', type: 'text', content: spoken, timestamp: Date.now() }
+    if (!isCodexVps) {
+      const aiMsg = {
+        id: genId(), conversationId: sessionId, role: 'assistant', type: 'text', content: spoken,
+        timestamp: Date.now(),
+        ...(isClaudeVps && replyWireIds.length ? { wireIds: replyWireIds } : {}),
+      }
       useStore.getState().addMessage(aiMsg)
       try { await saveMessage(aiMsg) } catch {}
     }
     setAiCaption(spoken)
-    if (!isPersistentVps) {
+    if (!isCodexVps) {
       useStore.getState().updateSession(sessionId, { lastMsgPreview: spoken.slice(0, 40), lastMsgTime: Date.now() })
     }
 
