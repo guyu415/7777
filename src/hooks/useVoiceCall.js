@@ -12,6 +12,7 @@ import {
   initializeLocalSenseVoice,
   recognizeLocalSpeech,
   releaseLocalSenseVoice,
+  normalizeVoiceEmotion,
   VOICE_EMOTION_LABELS,
   voiceEmotionContext,
 } from '../services/localSenseVoice'
@@ -299,9 +300,13 @@ export function useVoiceCall() {
         setTimeout(() => listen(), 180)
         return
       }
-      // Whisper returns text only. Do not attach a made-up emotion hint: it
-      // adds tokens without providing any acoustic evidence.
-      handleTurn(result.text, { engine: 'cloud' })
+      const emotion = normalizeVoiceEmotion(result.emotion)
+      if (emotion !== 'unknown') setVoiceEmotion(emotion)
+      handleTurn(result.text, {
+        engine: result.engine || 'cloud',
+        emotion: emotion === 'unknown' ? undefined : emotion,
+        event: result.event,
+      })
     } catch (e) {
       captureAbortRef.current = null
       if (e.name === 'AbortError' || !activeRef.current) return

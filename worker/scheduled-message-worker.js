@@ -345,6 +345,36 @@ export function encodeAudioBase64(bytes) {
   return btoa(binary)
 }
 
+async function transcribeWithVpsSenseVoice(bytes, env) {
+  if (!env.VPS_SERVICE_KEY) return null
+  const controller = new AbortController()
+  const timeout = setTimeout(() => controller.abort(), 15_000)
+  try {
+    const response = await fetch(env.SENSEVOICE_URL || 'https://companion.xiaoman.xyz/stt/sensevoice', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'audio/wav',
+        'X-VPS-Key': env.VPS_SERVICE_KEY,
+      },
+      body: bytes,
+      signal: controller.signal,
+    })
+    if (!response.ok) throw new Error(`SenseVoice upstream ${response.status}`)
+    const result = await response.json()
+    const text = String(result?.text || '').trim()
+    if (!text) throw new Error('SenseVoice returned no transcript')
+    return {
+      text,
+      emotion: String(result?.emotion || 'unknown').toLowerCase(),
+      event: String(result?.event || ''),
+      language: String(result?.language || ''),
+      engine: 'sensevoice',
+    }
+  } finally {
+    clearTimeout(timeout)
+  }
+}
+
 export async function handleSpeechTranscription(request, env) {
   let form
   try {
@@ -360,9 +390,6 @@ export async function handleSpeechTranscription(request, env) {
   if (!password || (!secretMatches && existingUser == null)) {
     return Response.json({ error: 'unauthorized' }, { status: 401, headers: CORS })
   }
-  if (!env.AI?.run) {
-    return Response.json({ error: 'Workers AI binding is unavailable' }, { status: 503, headers: CORS })
-  }
   const audio = form.get('audio')
   if (!audio || typeof audio.arrayBuffer !== 'function') {
     return Response.json({ error: 'WAV audio file required' }, { status: 400, headers: CORS })
@@ -373,6 +400,19 @@ export async function handleSpeechTranscription(request, env) {
       status: bytes.length > STT_MAX_AUDIO_BYTES ? 413 : 400,
       headers: CORS,
     })
+  }
+  try {
+    const senseVoiceResult = await transcribeWithVpsSenseVoice(bytes, env)
+    if (senseVoiceResult) {
+      return Response.json(senseVoiceResult, { headers: { ...CORS, 'Cache-Control': 'no-store' } })
+    }
+  } catch (error) {
+    // SenseVoice is the real acoustic-emotion path. Whisper stays available
+    // strictly as a transcription-only outage fallback.
+    console.error('[STT] VPS SenseVoice failed, falling back to Workers AI:', error?.message || String(error))
+  }
+  if (!env.AI?.run) {
+    return Response.json({ error: 'Speech recognition backends are unavailable' }, { status: 503, headers: CORS })
   }
   try {
     const result = await env.AI.run('@cf/openai/whisper-large-v3-turbo', {
@@ -388,7 +428,9 @@ export async function handleSpeechTranscription(request, env) {
       initial_prompt: '以下是自然的普通话对话，也可能夹杂常见英文名称。请准确转写，保留原意。',
     })
     const text = String(result?.text || result?.transcription_info?.text || '').trim()
-    return Response.json({ text }, { headers: { ...CORS, 'Cache-Control': 'no-store' } })
+    return Response.json({ text, emotion: 'unknown', event: '', language: 'zh', engine: 'whisper' }, {
+      headers: { ...CORS, 'Cache-Control': 'no-store' },
+    })
   } catch (error) {
     console.error('[STT] Workers AI failed:', error?.message || String(error))
     const status = /limit|quota|capacity|rate/i.test(error?.message || '') ? 429 : 502
