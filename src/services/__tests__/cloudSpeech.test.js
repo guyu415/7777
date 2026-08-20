@@ -1,10 +1,19 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { recognizeCloudSpeech } from '../cloudSpeech'
+import { cloudSpeechEndpoint, recognizeCloudSpeech } from '../cloudSpeech'
 
 describe('cloud speech transport', () => {
   afterEach(() => {
     vi.restoreAllMocks()
     vi.unstubAllGlobals()
+  })
+
+  it('uses a same-origin gateway on the production PWA', () => {
+    expect(cloudSpeechEndpoint('https://chat.xiaoman.xyz', {
+      hostname: 'eunoia.xiaoman.xyz',
+    })).toBe('/api/stt')
+    expect(cloudSpeechEndpoint('https://chat.xiaoman.xyz', {
+      hostname: 'localhost',
+    })).toBe('https://chat.xiaoman.xyz/stt')
   })
 
   it('retries a transient Safari Load failed without losing the utterance', async () => {
