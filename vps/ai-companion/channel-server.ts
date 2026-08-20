@@ -2656,12 +2656,16 @@ const VOICE_EMOTION_LABELS: Record<string, string> = {
 function normalizeVoiceEmotion(value: unknown): string | undefined {
   if (typeof value !== 'string') return undefined
   const normalized = value.trim().toLowerCase()
+  if (normalized === 'contextual') return normalized
   return VOICE_EMOTION_LABELS[normalized] ? normalized : undefined
 }
 
 function voiceEmotionContextLine(value: unknown): string {
   const emotion = normalizeVoiceEmotion(value)
   if (!emotion || emotion === 'neutral') return ''
+  if (emotion === 'contextual') {
+    return '[本轮来自语音转写，但没有可靠的声学情绪标签。请仅根据用户的措辞、语义和近期上下文谨慎理解可能的情绪，不要声称听出了具体语气或确定知道用户内心。]'
+  }
   return `[本轮来自语音输入；声音模型给出的粗略语气标签是“${VOICE_EMOTION_LABELS[emotion]}”。这只是可能出错的声音线索，请结合原话和上下文自然理解，不要机械复述标签，也不要声称确定知道用户内心。]`
 }
 

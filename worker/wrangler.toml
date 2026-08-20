@@ -7,6 +7,8 @@ account_id = "e364fa0eb012df759b774bfcada11422"
 binding = "CHAT_KV"
 id = "ee2f737d334c4af7b56a89f83b61092c"
 
+[ai]
+binding = "AI"
 
 [triggers]
 crons = ["*/30 * * * *"]

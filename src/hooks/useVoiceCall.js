@@ -5,6 +5,7 @@ import { streamChatViaCompanion, streamChatViaCodex } from '../services/companio
 import { fetchTTSAudio } from '../services/tts'
 import { saveSessionMsgs } from '../services/sync'
 import { captureUtterance } from '../services/voiceCapture'
+import { canUseCloudSpeech, recognizeCloudSpeech } from '../services/cloudSpeech'
 import {
   canUseLocalSenseVoice,
   localSenseVoiceUnavailableReason,
@@ -52,8 +53,8 @@ export function useVoiceCall() {
   const [seconds, setSeconds] = useState(0)
   const [muted, setMuted] = useState(false)
   const [voiceEmotion, setVoiceEmotion] = useState('')
-  const [speechEngine, setSpeechEngine] = useState('browser') // browser | local
-  const [modelStatus, setModelStatus] = useState('idle') // idle | loading | ready | fallback
+  const [speechEngine, setSpeechEngine] = useState('browser') // browser | local | cloud
+  const [modelStatus, setModelStatus] = useState('idle') // idle | loading | ready | cloud | fallback
   const [modelProgress, setModelProgress] = useState(0)
   const [modelFallbackReason, setModelFallbackReason] = useState('')
 
@@ -71,6 +72,7 @@ export function useVoiceCall() {
   const sessionIdRef = useRef('main')
   const visHandlerRef = useRef(null)
   const localReadyRef = useRef(false)
+  const cloudReadyRef = useRef(false)
 
   const setSt = (s) => { statusRef.current = s; setStatus(s) }
 
@@ -115,9 +117,11 @@ export function useVoiceCall() {
   const preloadLocalModel = () => {
     const unavailableReason = localSenseVoiceUnavailableReason()
     if (unavailableReason) {
-      setSpeechEngine('browser')
-      setModelStatus('fallback')
-      setModelFallbackReason(unavailableReason)
+      const cloudReady = unavailableReason === 'ios-memory' && canUseCloudSpeech(cfgRef.current?.workerUrl)
+      cloudReadyRef.current = cloudReady
+      setSpeechEngine(cloudReady ? 'cloud' : 'browser')
+      setModelStatus(cloudReady ? 'cloud' : 'fallback')
+      setModelFallbackReason(cloudReady ? '' : unavailableReason)
       return
     }
     setModelStatus('loading')
@@ -261,10 +265,65 @@ export function useVoiceCall() {
     }
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
+  const listenCloud = useCallback(async () => {
+    if (!activeRef.current) return
+    if (mutedRef.current) { setSt('muted'); return }
+    setSpeechEngine('cloud')
+    setModelStatus('cloud')
+    setSt('listening')
+    setUserCaption('')
+    setVoiceEmotion('')
+    const controller = new AbortController()
+    captureAbortRef.current = controller
+    try {
+      const samples = await captureUtterance({
+        signal: controller.signal,
+        onSpeechStart: () => { if (activeRef.current) setUserCaption('正在听…') },
+      })
+      if (!activeRef.current || mutedRef.current) return
+      if (!samples.length) {
+        captureAbortRef.current = null
+        setTimeout(() => listen(), 180)
+        return
+      }
+      setSt('recognizing')
+      setUserCaption('云端正在识别…')
+      const result = await recognizeCloudSpeech(samples, {
+        workerUrl: cfgRef.current?.workerUrl,
+        signal: controller.signal,
+      })
+      captureAbortRef.current = null
+      if (!activeRef.current) return
+      if (!result.text) {
+        setUserCaption('')
+        setTimeout(() => listen(), 180)
+        return
+      }
+      handleTurn(result.text, { engine: 'cloud', emotion: 'contextual' })
+    } catch (e) {
+      captureAbortRef.current = null
+      if (e.name === 'AbortError' || !activeRef.current) return
+      if (e.name === 'NotAllowedError') {
+        setError('麦克风权限被拒绝，请在系统设置里允许')
+        endCall()
+        return
+      }
+      console.warn('[CALL] Cloudflare STT 失败，回退系统识别:', e.message)
+      cloudReadyRef.current = false
+      setSpeechEngine('browser')
+      setModelStatus('fallback')
+      setModelFallbackReason('cloud-error')
+      setError('云端识别暂不可用，已切换系统识别')
+      setTimeout(() => setError(''), 3500)
+      setTimeout(() => listen(), 200)
+    }
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
   const listen = useCallback(() => {
     if (localReadyRef.current) return listenLocal()
+    if (cloudReadyRef.current) return listenCloud()
     return listenBrowser()
-  }, [listenBrowser, listenLocal])
+  }, [listenBrowser, listenCloud, listenLocal])
 
   const handleTurn = useCallback(async (text, voiceMeta = {}) => {
     const cfg = cfgRef.current
@@ -408,10 +467,12 @@ export function useVoiceCall() {
     setAiCaption('')
     setVoiceEmotion('')
     localReadyRef.current = false
-    setSpeechEngine('browser')
     const unavailableReason = localSenseVoiceUnavailableReason()
-    setModelStatus(unavailableReason ? 'fallback' : 'loading')
-    setModelFallbackReason(unavailableReason)
+    const cloudReady = unavailableReason === 'ios-memory' && canUseCloudSpeech(cfg.workerUrl)
+    cloudReadyRef.current = cloudReady
+    setSpeechEngine(cloudReady ? 'cloud' : 'browser')
+    setModelStatus(cloudReady ? 'cloud' : unavailableReason ? 'fallback' : 'loading')
+    setModelFallbackReason(cloudReady ? '' : unavailableReason)
     setModelProgress(0)
     clearInterval(timerRef.current)
     timerRef.current = setInterval(() => setSeconds(s => s + 1), 1000)
@@ -460,6 +521,7 @@ export function useVoiceCall() {
     audioCtxRef.current = null
     if (ctx) { try { ctx.close() } catch {} }
     localReadyRef.current = false
+    cloudReadyRef.current = false
     releaseLocalSenseVoice().catch(() => {})
     setSt('idle')
     // 普通 API 会话的通话内容整体同步到云端（一次写入）。VPS 会话
