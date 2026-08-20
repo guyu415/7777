@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { handleSpeechTranscription, isFixedVpsSession, ordinaryProactiveEnabled } from './scheduled-message-worker.js'
+import { encodeAudioBase64, handleSpeechTranscription, isFixedVpsSession, ordinaryProactiveEnabled } from './scheduled-message-worker.js'
 
 describe('ordinary proactive target separation', () => {
   it('treats both CC and Codex fixed runtimes as non-API targets', () => {
@@ -32,7 +32,7 @@ describe('Cloudflare speech transcription', () => {
     expect(response.status).toBe(401)
   })
 
-  it('passes bounded WAV bytes to Whisper Large V3 Turbo', async () => {
+  it('passes bounded WAV bytes as the current Whisper base64 schema', async () => {
     const calls = []
     const response = await handleSpeechTranscription(requestWith('right'), {
       USER_PASSWORD: 'right',
@@ -41,8 +41,16 @@ describe('Cloudflare speech transcription', () => {
     expect(response.status).toBe(200)
     expect(await response.json()).toEqual({ text: '你好，世界。' })
     expect(calls[0][0]).toBe('@cf/openai/whisper-large-v3-turbo')
-    expect(calls[0][1].audio).toHaveLength(wav.length)
+    expect(typeof calls[0][1].audio).toBe('string')
+    expect(Uint8Array.from(atob(calls[0][1].audio), char => char.charCodeAt(0))).toEqual(wav)
     expect(calls[0][1].language).toBe('zh')
+  })
+
+  it('base64-encodes audio larger than the JavaScript spread limit', () => {
+    const bytes = Uint8Array.from({ length: 100_000 }, (_, index) => index % 251)
+    const encoded = encodeAudioBase64(bytes)
+    const decoded = Uint8Array.from(atob(encoded), char => char.charCodeAt(0))
+    expect(decoded).toEqual(bytes)
   })
 
   it('accepts an existing synced user when the scheduled-user secret differs', async () => {
