@@ -18,21 +18,23 @@ describe('ordinary proactive target separation', () => {
 
 describe('Cloudflare speech transcription', () => {
   const wav = new Uint8Array(64).fill(1)
+  const requestWith = (password) => {
+    const form = new FormData()
+    form.append('password', password)
+    form.append('audio', new Blob([wav], { type: 'audio/wav' }), 'speech.wav')
+    return new Request('https://chat.xiaoman.xyz/stt', { method: 'POST', body: form })
+  }
 
   it('protects Workers AI usage with the existing user secret', async () => {
-    const request = new Request('https://chat.xiaoman.xyz/stt', {
-      method: 'POST', headers: { 'Content-Type': 'audio/wav', 'X-Eunoia-Password': 'wrong' }, body: wav,
+    const response = await handleSpeechTranscription(requestWith('wrong'), {
+      USER_PASSWORD: 'right', CHAT_KV: { get: async () => null }, AI: { run() {} },
     })
-    const response = await handleSpeechTranscription(request, { USER_PASSWORD: 'right', AI: { run() {} } })
     expect(response.status).toBe(401)
   })
 
   it('passes bounded WAV bytes to Whisper Large V3 Turbo', async () => {
     const calls = []
-    const request = new Request('https://chat.xiaoman.xyz/stt', {
-      method: 'POST', headers: { 'Content-Type': 'audio/wav', 'X-Eunoia-Password': 'right' }, body: wav,
-    })
-    const response = await handleSpeechTranscription(request, {
+    const response = await handleSpeechTranscription(requestWith('right'), {
       USER_PASSWORD: 'right',
       AI: { run: async (...args) => { calls.push(args); return { text: '你好，世界。' } } },
     })
@@ -41,5 +43,14 @@ describe('Cloudflare speech transcription', () => {
     expect(calls[0][0]).toBe('@cf/openai/whisper-large-v3-turbo')
     expect(calls[0][1].audio).toHaveLength(wav.length)
     expect(calls[0][1].language).toBe('zh')
+  })
+
+  it('accepts an existing synced user when the scheduled-user secret differs', async () => {
+    const response = await handleSpeechTranscription(requestWith('phone-login'), {
+      USER_PASSWORD: 'scheduled-user',
+      CHAT_KV: { get: async (key) => key === 'user:phone-login:settings' ? '{}' : null },
+      AI: { run: async () => ({ text: '可以了' }) },
+    })
+    expect(response.status).toBe(200)
   })
 })

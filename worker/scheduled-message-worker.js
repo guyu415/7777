@@ -336,22 +336,28 @@ export default {
 const STT_MAX_AUDIO_BYTES = 1_100_000
 
 export async function handleSpeechTranscription(request, env) {
-  const password = request.headers.get('X-Eunoia-Password') || ''
-  if (!env.USER_PASSWORD || password !== env.USER_PASSWORD) {
+  let form
+  try {
+    form = await request.formData()
+  } catch {
+    return Response.json({ error: 'multipart form required' }, { status: 415, headers: CORS })
+  }
+  const password = String(form.get('password') || '')
+  const secretMatches = !!env.USER_PASSWORD && password === env.USER_PASSWORD
+  const existingUser = !secretMatches && password
+    ? await env.CHAT_KV?.get?.(`user:${password}:settings`)
+    : null
+  if (!password || (!secretMatches && existingUser == null)) {
     return Response.json({ error: 'unauthorized' }, { status: 401, headers: CORS })
   }
   if (!env.AI?.run) {
     return Response.json({ error: 'Workers AI binding is unavailable' }, { status: 503, headers: CORS })
   }
-  const contentType = request.headers.get('Content-Type') || ''
-  if (!contentType.toLowerCase().startsWith('audio/wav')) {
-    return Response.json({ error: 'audio/wav required' }, { status: 415, headers: CORS })
+  const audio = form.get('audio')
+  if (!audio || typeof audio.arrayBuffer !== 'function') {
+    return Response.json({ error: 'WAV audio file required' }, { status: 400, headers: CORS })
   }
-  const declaredSize = Number(request.headers.get('Content-Length') || 0)
-  if (declaredSize > STT_MAX_AUDIO_BYTES) {
-    return Response.json({ error: 'audio too large' }, { status: 413, headers: CORS })
-  }
-  const bytes = new Uint8Array(await request.arrayBuffer())
+  const bytes = new Uint8Array(await audio.arrayBuffer())
   if (bytes.length < 44 || bytes.length > STT_MAX_AUDIO_BYTES) {
     return Response.json({ error: bytes.length > STT_MAX_AUDIO_BYTES ? 'audio too large' : 'audio too short' }, {
       status: bytes.length > STT_MAX_AUDIO_BYTES ? 413 : 400,
