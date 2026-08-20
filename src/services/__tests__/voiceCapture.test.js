@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { downsampleAudio, encodePcmWav, mergeAudioChunks, rootMeanSquare } from '../voiceCapture'
-import { isIOSUserAgent, normalizeVoiceEmotion, voiceEmotionContext } from '../localSenseVoice'
+import { formatVoiceAcoustics, isIOSUserAgent, normalizeVoiceAcoustics, normalizeVoiceEmotion, voiceEmotionContext } from '../localSenseVoice'
 
 describe('local voice helpers', () => {
   it('downsamples microphone audio without changing its duration', () => {
@@ -34,9 +34,19 @@ describe('local voice helpers', () => {
   it('normalizes SenseVoice tags and keeps uncertainty in the AI hint', () => {
     expect(normalizeVoiceEmotion('<|SAD|>')).toBe('sad')
     expect(normalizeVoiceEmotion('<|NEUTRAL|>')).toBe('neutral')
-    expect(voiceEmotionContext('sad')).toContain('可能出错')
+    expect(voiceEmotionContext('sad')).toContain('emotion~难过')
     expect(voiceEmotionContext('neutral')).toBe('')
     expect(voiceEmotionContext('contextual')).toBe('')
+  })
+
+  it('keeps objective openSMILE measurements bounded and compact', () => {
+    expect(normalizeVoiceAcoustics({ pitchHz: 129, pitchRangeSemitones: 3.9, hnrDb: 5.2, extra: 99 })).toEqual({
+      pitchHz: 129, pitchRangeSemitones: 3.9, hnrDb: 5.2,
+    })
+    expect(normalizeVoiceAcoustics({ pitchHz: 9999 })).toBeNull()
+    expect(formatVoiceAcoustics({ pitchHz: 129, pitchRangeSemitones: 3.9, hnrDb: 5.2 }))
+      .toBe('音高 129Hz · 起伏 3.9 半音 · 谐噪比 5.2dB')
+    expect(voiceEmotionContext('neutral', { pitchHz: 129 })).toContain('f0=129Hz')
   })
 
   it('recognizes iPhone and iPad user agents for the memory safety fallback', () => {

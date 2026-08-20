@@ -23,7 +23,7 @@ export default function VoiceCall({ theme, onClose, audioKit }) {
   } = useStore()
   const {
     status, userCaption, aiCaption, error, seconds, muted,
-    voiceEmotionLabel, speechEngine, modelStatus, modelProgress, modelFallbackReason,
+    voiceEmotionLabel, voiceAcousticsLabel, speechEngine, modelStatus, modelProgress, modelFallbackReason,
     startCall, endCall, toggleMute,
   } = useVoiceCall()
   const startedRef = useRef(false)
@@ -115,7 +115,7 @@ export default function VoiceCall({ theme, onClose, audioKit }) {
           {modelStatus === 'loading'
             ? `本地语音模型准备中${modelProgress ? ` ${modelProgress}%` : ''} · 暂用系统识别`
             : speechEngine === 'cloud'
-              ? 'SenseVoice 云端识别 · 支持声学情绪'
+              ? 'SenseVoice + openSMILE 云端识别'
             : speechEngine === 'local'
               ? 'SenseVoice 本地识别 · 音频不上传'
               : modelStatus === 'ready'
@@ -134,6 +134,11 @@ export default function VoiceCall({ theme, onClose, audioKit }) {
                 <span className="inline-block mt-1 px-2 py-0.5 rounded-full text-xs" style={{ color: '#a9687c', background: 'rgba(255,255,255,.55)' }}>
                   语气：{voiceEmotionLabel}
                 </span>
+              )}
+              {voiceAcousticsLabel && (
+                <p className="mt-1 text-xs" style={{ color: '#a9687c', lineHeight: 1.5 }}>
+                  声学：{voiceAcousticsLabel}
+                </p>
               )}
             </div>
           )}

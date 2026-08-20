@@ -82,6 +82,7 @@ export async function recognizeCloudSpeech(samples, { workerUrl, signal } = {}) 
         emotion: String(payload.emotion || 'unknown'),
         event: String(payload.event || ''),
         language: String(payload.language || ''),
+        acoustics: payload.acoustics && typeof payload.acoustics === 'object' ? payload.acoustics : null,
         engine: String(payload.engine || 'unknown'),
       }
     } catch (error) {

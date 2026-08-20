@@ -42,7 +42,7 @@ describe('Cloudflare speech transcription', () => {
     })
     expect(response.status).toBe(200)
     expect(await response.json()).toEqual({
-      text: '你好，世界。', emotion: 'unknown', event: '', language: 'zh', engine: 'whisper',
+      text: '你好，世界。', emotion: 'unknown', event: '', language: 'zh', acoustics: null, engine: 'whisper',
     })
     expect(calls[0][0]).toBe('@cf/openai/whisper-large-v3-turbo')
     expect(typeof calls[0][1].audio).toBe('string')
@@ -66,9 +66,10 @@ describe('Cloudflare speech transcription', () => {
     expect(response.status).toBe(200)
   })
 
-  it('prefers VPS SenseVoice and preserves its acoustic emotion label', async () => {
+  it('prefers VPS SenseVoice and preserves openSMILE acoustic measurements', async () => {
     const upstream = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({
-      text: '我真的生气了', emotion: 'angry', event: 'SPEECH', language: 'zh', engine: 'sensevoice',
+      text: '我真的生气了', emotion: 'angry', event: 'SPEECH', language: 'zh', engine: 'sensevoice+opensmile',
+      acoustics: { pitchHz: 180, pitchRangeSemitones: 8.2, hnrDb: 12.4 },
     }), { status: 200, headers: { 'Content-Type': 'application/json' } }))
     const aiRun = vi.fn()
     const response = await handleSpeechTranscription(requestWith('right'), {
@@ -76,7 +77,9 @@ describe('Cloudflare speech transcription', () => {
       SENSEVOICE_URL: 'https://companion.example/stt/sensevoice', AI: { run: aiRun },
     })
     expect(response.status).toBe(200)
-    expect(await response.json()).toMatchObject({ text: '我真的生气了', emotion: 'angry', engine: 'sensevoice' })
+    expect(await response.json()).toMatchObject({
+      text: '我真的生气了', emotion: 'angry', engine: 'sensevoice+opensmile', acoustics: { pitchHz: 180 },
+    })
     expect(upstream).toHaveBeenCalledWith('https://companion.example/stt/sensevoice', expect.objectContaining({
       method: 'POST', headers: expect.objectContaining({ 'X-VPS-Key': 'service-key' }),
     }))

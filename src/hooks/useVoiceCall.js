@@ -13,6 +13,8 @@ import {
   recognizeLocalSpeech,
   releaseLocalSenseVoice,
   normalizeVoiceEmotion,
+  normalizeVoiceAcoustics,
+  formatVoiceAcoustics,
   VOICE_EMOTION_LABELS,
   voiceEmotionContext,
 } from '../services/localSenseVoice'
@@ -54,6 +56,7 @@ export function useVoiceCall() {
   const [seconds, setSeconds] = useState(0)
   const [muted, setMuted] = useState(false)
   const [voiceEmotion, setVoiceEmotion] = useState('')
+  const [voiceAcoustics, setVoiceAcoustics] = useState(null)
   const [speechEngine, setSpeechEngine] = useState('browser') // browser | local | cloud
   const [modelStatus, setModelStatus] = useState('idle') // idle | loading | ready | cloud | fallback
   const [modelProgress, setModelProgress] = useState(0)
@@ -163,6 +166,7 @@ export function useVoiceCall() {
     setSt('listening')
     setUserCaption('')
     setVoiceEmotion('')
+    setVoiceAcoustics(null)
     let finalText = ''
     let heard = '' // finals + 当前 interim（iOS 经常不标 isFinal，必须兜底）
     let silenceTimer = null
@@ -222,6 +226,7 @@ export function useVoiceCall() {
     setSt('listening')
     setUserCaption('')
     setVoiceEmotion('')
+    setVoiceAcoustics(null)
     const controller = new AbortController()
     captureAbortRef.current = controller
     try {
@@ -274,6 +279,7 @@ export function useVoiceCall() {
     setSt('listening')
     setUserCaption('')
     setVoiceEmotion('')
+    setVoiceAcoustics(null)
     const controller = new AbortController()
     captureAbortRef.current = controller
     try {
@@ -301,11 +307,14 @@ export function useVoiceCall() {
         return
       }
       const emotion = normalizeVoiceEmotion(result.emotion)
+      const acoustics = normalizeVoiceAcoustics(result.acoustics)
       if (emotion !== 'unknown') setVoiceEmotion(emotion)
+      setVoiceAcoustics(acoustics)
       handleTurn(result.text, {
         engine: result.engine || 'cloud',
         emotion: emotion === 'unknown' ? undefined : emotion,
         event: result.event,
+        acoustics,
       })
     } catch (e) {
       captureAbortRef.current = null
@@ -412,13 +421,14 @@ export function useVoiceCall() {
     let segBuf = ''
     const replyWireIds = []
     try {
+      const voiceContext = voiceEmotionContext(voiceMeta.emotion, voiceMeta.acoustics)
       const chunkSource = isCodexVps
-        ? streamChatViaCodex({ text, sessionId, prompt: cfg.systemPrompt, signal: controller.signal, voiceEmotion: voiceMeta.emotion })
+        ? streamChatViaCodex({ text, sessionId, prompt: cfg.systemPrompt, signal: controller.signal, voiceEmotion: voiceMeta.emotion, voiceAcoustics: voiceMeta.acoustics })
         : isClaudeVps
-          ? streamChatViaCompanion({ text, messageId: userMessageId, signal: controller.signal, voiceEmotion: voiceMeta.emotion })
+          ? streamChatViaCompanion({ text, messageId: userMessageId, signal: controller.signal, voiceEmotion: voiceMeta.emotion, voiceAcoustics: voiceMeta.acoustics })
           : streamChat({
               apiKey: cfg.apiKey, apiBaseUrl: cfg.baseUrl, model: cfg.model,
-              systemPrompt: cfg.systemPrompt + CALL_RULES + (voiceEmotionContext(voiceMeta.emotion) ? `\n\n【本轮语音线索】${voiceEmotionContext(voiceMeta.emotion)}` : ''),
+              systemPrompt: cfg.systemPrompt + CALL_RULES + (voiceContext ? `\n\n${voiceContext}` : ''),
               messages: ctx,
               workerUrl: cfg.workerUrl, useWorkerProxy: cfg.useWorkerProxy,
               signal: controller.signal,
@@ -492,6 +502,7 @@ export function useVoiceCall() {
     setUserCaption('')
     setAiCaption('')
     setVoiceEmotion('')
+    setVoiceAcoustics(null)
     localReadyRef.current = false
     const unavailableReason = localSenseVoiceUnavailableReason()
     const cloudReady = unavailableReason === 'ios-memory' && canUseCloudSpeech(cfg.workerUrl)
@@ -578,6 +589,7 @@ export function useVoiceCall() {
   return {
     status, userCaption, aiCaption, error, seconds, muted,
     voiceEmotion, voiceEmotionLabel: VOICE_EMOTION_LABELS[voiceEmotion] || '',
+    voiceAcoustics, voiceAcousticsLabel: formatVoiceAcoustics(voiceAcoustics),
     speechEngine, modelStatus, modelProgress, modelFallbackReason,
     startCall, endCall, toggleMute,
   }

@@ -80,6 +80,7 @@ import {
 } from './cc-tidal-memory.ts'
 import { splitCompletedCodexMessage } from './codex-chat-history.ts'
 import { SENSEVOICE_MAX_AUDIO_BYTES, transcribeWithSenseVoice } from './sensevoice-stt.ts'
+import { analyzeVoiceAcoustics, type VoiceAcoustics } from './opensmile-acoustics.ts'
 import {
   CARE_ROLE_IDS,
   baziSolarMonthContext,
@@ -135,6 +136,10 @@ const SENSEVOICE_BINARY = process.env.AI_COMPANION_SENSEVOICE_BINARY
   ?? join(ROOT, 'models', 'sensevoice', 'llama-funasr-sensevoice')
 const SENSEVOICE_MODEL = process.env.AI_COMPANION_SENSEVOICE_MODEL
   ?? join(ROOT, 'models', 'sensevoice', 'sensevoice-small-q8.gguf')
+const OPENSMILE_BINARY = process.env.AI_COMPANION_OPENSMILE_BINARY
+  ?? join(ROOT, 'models', 'opensmile', 'bin', 'SMILExtract')
+const OPENSMILE_CONFIG = process.env.AI_COMPANION_OPENSMILE_CONFIG
+  ?? join(ROOT, 'models', 'opensmile', 'config', 'egemaps', 'v02', 'eGeMAPSv02.conf')
 let senseVoiceBusy = false
 
 // The real Auto Memory directory the production brain session (cwd=ROOT)
@@ -2665,10 +2670,35 @@ function normalizeVoiceEmotion(value: unknown): string | undefined {
   return VOICE_EMOTION_LABELS[normalized] ? normalized : undefined
 }
 
-function voiceEmotionContextLine(value: unknown): string {
-  const emotion = normalizeVoiceEmotion(value)
-  if (!emotion || emotion === 'neutral') return ''
-  return `[本轮来自语音输入；声音模型给出的粗略语气标签是“${VOICE_EMOTION_LABELS[emotion]}”。这只是可能出错的声音线索，请结合原话和上下文自然理解，不要机械复述标签，也不要声称确定知道用户内心。]`
+function normalizeVoiceAcoustics(value: unknown): VoiceAcoustics {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {}
+  const raw = value as Record<string, unknown>
+  const bounds: Record<keyof VoiceAcoustics, [number, number]> = {
+    pitchHz: [50, 900], pitchRangeSemitones: [0, 36], loudnessDb: [-100, 20],
+    rhythmPeaksPerSecond: [0, 20], hnrDb: [-30, 60], jitterPercent: [0, 20], shimmerDb: [0, 10],
+  }
+  const result: VoiceAcoustics = {}
+  for (const [key, [min, max]] of Object.entries(bounds) as [keyof VoiceAcoustics, [number, number]][]) {
+    const number = Number(raw[key])
+    if (Number.isFinite(number) && number >= min && number <= max) result[key] = number
+  }
+  return result
+}
+
+function voiceSignalContextLine(emotionValue: unknown, acousticsValue?: unknown): string {
+  const emotion = normalizeVoiceEmotion(emotionValue)
+  const acoustics = normalizeVoiceAcoustics(acousticsValue)
+  const fields = [
+    emotion && emotion !== 'neutral' ? `emotion~${VOICE_EMOTION_LABELS[emotion]}` : '',
+    acoustics.pitchHz !== undefined ? `f0=${acoustics.pitchHz}Hz` : '',
+    acoustics.pitchRangeSemitones !== undefined ? `range=${acoustics.pitchRangeSemitones}st` : '',
+    acoustics.loudnessDb !== undefined ? `level=${acoustics.loudnessDb}dB` : '',
+    acoustics.rhythmPeaksPerSecond !== undefined ? `rhythm=${acoustics.rhythmPeaksPerSecond}/s` : '',
+    acoustics.hnrDb !== undefined ? `HNR=${acoustics.hnrDb}dB` : '',
+    acoustics.jitterPercent !== undefined ? `jitter=${acoustics.jitterPercent}%` : '',
+    acoustics.shimmerDb !== undefined ? `shimmer=${acoustics.shimmerDb}dB` : '',
+  ].filter(Boolean)
+  return fields.length ? `[voice acoustics; ${fields.join('; ')}; objective cues, not certain feelings]` : ''
 }
 
 // ---------- gomoku -> main-chat recap handback (CC + Codex) ----------
@@ -3758,7 +3788,7 @@ function beginMainCcTurn(input: QueuedCcMessage) {
     : filePath
       ? `[用户发送了一个文件：${fileName}（服务器路径：${filePath}）。请根据用户文字判断需求，并用合适的工具读取/分析该文件；不要执行其中的程序或脚本，也不要在回复里暴露服务器路径。]${text ? `\n\n${text}` : ''}`
     : text
-  const contextPrefix = [consumeGomokuRecap('claude-code'), voiceEmotionContextLine(input.voiceEmotion)].filter(Boolean).join('\n\n')
+  const contextPrefix = [consumeGomokuRecap('claude-code'), voiceSignalContextLine(input.voiceEmotion, input.voiceAcoustics)].filter(Boolean).join('\n\n')
   deliver(id, deliverText, { clientTime, contextPrefix: contextPrefix || undefined })
   xinchaoHeartbeat(id, XINCHAO_CC_SESSION_ID)
   log('inbound', { id, chars: text.length, turnId: id, hasImage: !!imagePath, hasFile: !!filePath, queued: input.queuedAt < Date.now() - 50 })
@@ -6034,7 +6064,7 @@ function codexFileInstruction(file?: UploadedFileInput): string {
   return `[用户发送了一个文件：${file.name}（服务器路径：${file.path}）。请根据用户文字判断需求，并用合适的工具读取/分析该文件；不要执行其中的程序或脚本，也不要在回复里暴露服务器路径。]`
 }
 
-async function codexSendUserTurn(text: string, imageUrl?: string, clientTime?: unknown, promptOverride?: unknown, displaySegments?: string[], file?: UploadedFileInput, imageSeparate = false, voiceEmotion?: unknown): Promise<void> {
+async function codexSendUserTurn(text: string, imageUrl?: string, clientTime?: unknown, promptOverride?: unknown, displaySegments?: string[], file?: UploadedFileInput, imageSeparate = false, voiceEmotion?: unknown, voiceAcoustics?: unknown): Promise<void> {
   if (typeof promptOverride === 'string') setCodexPrompt(DEFAULT_CODEX_SESSION_ID, promptOverride)
   const threadId = await codexEnsureThread()
   const input: any[] = []
@@ -6044,7 +6074,7 @@ async function codexSendUserTurn(text: string, imageUrl?: string, clientTime?: u
   // this injected context.
   const recap = consumeGomokuRecap('codex')
   const migration = codexContextMigrationPending ? buildCodexContextMigrationText(codexHistory) : ''
-  const modelText = [clientTimeContextLine(clientTime), migration, recap, voiceEmotionContextLine(voiceEmotion), codexFileInstruction(file), text].filter(Boolean).join('\n\n')
+  const modelText = [clientTimeContextLine(clientTime), migration, recap, voiceSignalContextLine(voiceEmotion, voiceAcoustics), codexFileInstruction(file), text].filter(Boolean).join('\n\n')
   if (imageUrl && imageSeparate) input.push({ type: 'image', url: imageUrl })
   if (modelText.trim()) input.push({ type: 'text', text: modelText, text_elements: [] })
   if (imageUrl && !imageSeparate) input.push({ type: 'image', url: imageUrl })
@@ -6143,7 +6173,7 @@ async function codexRecoverKnownChatThreads(): Promise<{
   return { recoveredSessions, failedSessions }
 }
 
-async function codexSendExtraUserTurn(state: CodexSessionState, text: string, imageUrl?: string, clientTime?: unknown, promptOverride?: unknown, displaySegments?: string[], file?: UploadedFileInput, imageSeparate = false, voiceEmotion?: unknown): Promise<void> {
+async function codexSendExtraUserTurn(state: CodexSessionState, text: string, imageUrl?: string, clientTime?: unknown, promptOverride?: unknown, displaySegments?: string[], file?: UploadedFileInput, imageSeparate = false, voiceEmotion?: unknown, voiceAcoustics?: unknown): Promise<void> {
   if (typeof promptOverride === 'string') {
     state.prompt = setCodexPrompt(state.sessionId, promptOverride)
     saveExtraCodexSession(state)
@@ -6151,7 +6181,7 @@ async function codexSendExtraUserTurn(state: CodexSessionState, text: string, im
   const threadId = await codexEnsureExtraThread(state)
   const input: any[] = []
   const migration = state.contextMigrationPending ? buildCodexContextMigrationText(state.history) : ''
-  const modelText = [clientTimeContextLine(clientTime), migration, voiceEmotionContextLine(voiceEmotion), codexFileInstruction(file), text].filter(Boolean).join('\n\n')
+  const modelText = [clientTimeContextLine(clientTime), migration, voiceSignalContextLine(voiceEmotion, voiceAcoustics), codexFileInstruction(file), text].filter(Boolean).join('\n\n')
   if (imageUrl && imageSeparate) input.push({ type: 'image', url: imageUrl })
   if (modelText.trim()) input.push({ type: 'text', text: modelText, text_elements: [] })
   if (imageUrl && !imageSeparate) input.push({ type: 'image', url: imageUrl })
@@ -7776,16 +7806,27 @@ Bun.serve<{ authed: true }>({
       senseVoiceBusy = true
       const startedAt = Date.now()
       try {
-        const result = await transcribeWithSenseVoice(audio, {
-          binary: SENSEVOICE_BINARY,
-          model: SENSEVOICE_MODEL,
-          timeoutMs: 15_000,
-        })
+        const [result, acoustics] = await Promise.all([
+          transcribeWithSenseVoice(audio, {
+            binary: SENSEVOICE_BINARY,
+            model: SENSEVOICE_MODEL,
+            timeoutMs: 15_000,
+          }),
+          analyzeVoiceAcoustics(audio, {
+            binary: OPENSMILE_BINARY,
+            config: OPENSMILE_CONFIG,
+            timeoutMs: 5_000,
+          }).catch((error) => {
+            log('opensmile_failed', { error: String(error) })
+            return {}
+          }),
+        ])
         log('sensevoice_transcribed', {
           audioBytes: audio.length, elapsedMs: Date.now() - startedAt,
           textChars: result.text.length, emotion: result.emotion, event: result.event,
         })
-        return jsonResponse({ ...result, engine: 'sensevoice' }, {
+        const engine = Object.keys(acoustics).length ? 'sensevoice+opensmile' : 'sensevoice'
+        return jsonResponse({ ...result, acoustics, engine }, {
           headers: { 'cache-control': 'no-store' },
         })
       } catch (err) {
@@ -9720,7 +9761,7 @@ Bun.serve<{ authed: true }>({
     },
     message(ws, raw) {
       try {
-        const parsed = JSON.parse(String(raw)) as { id?: string; text?: string; messageIds?: string[]; segments?: string[]; type?: string; turnId?: string; runtime?: string; imageUrl?: string; imageSeparate?: boolean; imagePath?: string; filePath?: string; fileName?: string; fileSize?: number; fileType?: string; clientTime?: unknown; sessionId?: string; prompt?: string; voiceEmotion?: string }
+        const parsed = JSON.parse(String(raw)) as { id?: string; text?: string; messageIds?: string[]; segments?: string[]; type?: string; turnId?: string; runtime?: string; imageUrl?: string; imageSeparate?: boolean; imagePath?: string; filePath?: string; fileName?: string; fileSize?: number; fileType?: string; clientTime?: unknown; sessionId?: string; prompt?: string; voiceEmotion?: string; voiceAcoustics?: unknown }
 
         // App-level heartbeat — a WS can look "open" to the browser for a
         // long time after the underlying network path has actually died
@@ -9809,8 +9850,8 @@ Bun.serve<{ authed: true }>({
             return
           }
           const send = extraState
-            ? codexSendExtraUserTurn(extraState, codexTurnText, codexImageUrl, parsed.clientTime, parsed.prompt, codexSegments, codexFile, parsed.imageSeparate === true, parsed.voiceEmotion)
-            : codexSendUserTurn(codexTurnText, codexImageUrl, parsed.clientTime, parsed.prompt, codexSegments, codexFile, parsed.imageSeparate === true, parsed.voiceEmotion)
+            ? codexSendExtraUserTurn(extraState, codexTurnText, codexImageUrl, parsed.clientTime, parsed.prompt, codexSegments, codexFile, parsed.imageSeparate === true, parsed.voiceEmotion, parsed.voiceAcoustics)
+            : codexSendUserTurn(codexTurnText, codexImageUrl, parsed.clientTime, parsed.prompt, codexSegments, codexFile, parsed.imageSeparate === true, parsed.voiceEmotion, parsed.voiceAcoustics)
           send.catch((err) => {
             log('codex_send_error', { error: String(err) })
             if (extraState) {
@@ -9864,7 +9905,7 @@ Bun.serve<{ authed: true }>({
         }
 
         if (tidalIsActive()) {
-          tidalEnqueueMessage({ id, text, ...(imagePath ? { imagePath } : {}), ...(filePath ? { filePath, fileName, fileSize: parsed.fileSize, fileType: parsed.fileType } : {}), clientTime: parsed.clientTime, voiceEmotion: normalizeVoiceEmotion(parsed.voiceEmotion), queuedAt: Date.now() })
+          tidalEnqueueMessage({ id, text, ...(imagePath ? { imagePath } : {}), ...(filePath ? { filePath, fileName, fileSize: parsed.fileSize, fileType: parsed.fileType } : {}), clientTime: parsed.clientTime, voiceEmotion: normalizeVoiceEmotion(parsed.voiceEmotion), voiceAcoustics: normalizeVoiceAcoustics(parsed.voiceAcoustics), queuedAt: Date.now() })
           return
         }
 
@@ -9880,7 +9921,7 @@ Bun.serve<{ authed: true }>({
           return
         }
 
-        beginMainCcTurn({ id, text, ...(imagePath ? { imagePath } : {}), ...(filePath ? { filePath, fileName, fileSize: parsed.fileSize, fileType: parsed.fileType } : {}), clientTime: parsed.clientTime, voiceEmotion: normalizeVoiceEmotion(parsed.voiceEmotion), queuedAt: Date.now() })
+        beginMainCcTurn({ id, text, ...(imagePath ? { imagePath } : {}), ...(filePath ? { filePath, fileName, fileSize: parsed.fileSize, fileType: parsed.fileType } : {}), clientTime: parsed.clientTime, voiceEmotion: normalizeVoiceEmotion(parsed.voiceEmotion), voiceAcoustics: normalizeVoiceAcoustics(parsed.voiceAcoustics), queuedAt: Date.now() })
       } catch (err) {
         log('ws_message_error', { error: String(err) })
       }
