@@ -6,6 +6,7 @@ import { fetchTTSAudio } from '../services/tts'
 import { saveSessionMsgs } from '../services/sync'
 import { captureUtterance } from '../services/voiceCapture'
 import { canUseCloudSpeech, recognizeCloudSpeech } from '../services/cloudSpeech'
+import { isLikelyPlaybackEcho } from './voiceCallUtils'
 import {
   canUseLocalSenseVoice,
   localSenseVoiceUnavailableReason,
@@ -77,8 +78,20 @@ export function useVoiceCall() {
   const visHandlerRef = useRef(null)
   const localReadyRef = useRef(false)
   const cloudReadyRef = useRef(false)
+  const lastPlaybackRef = useRef({ text: '', endedAt: 0 })
 
   const setSt = (s) => { statusRef.current = s; setStatus(s) }
+
+  const submitRecognizedTurn = (text, voiceMeta) => {
+    const lastPlayback = lastPlaybackRef.current
+    if (isLikelyPlaybackEcho(text, lastPlayback.text, Date.now() - lastPlayback.endedAt)) {
+      console.info('[CALL] 忽略扬声器回声:', text)
+      setUserCaption('')
+      setTimeout(() => { if (activeRef.current && !mutedRef.current) listen() }, 80)
+      return
+    }
+    handleTurn(text, voiceMeta)
+  }
 
   // 优先 WebAudio：AudioContext 在通话按钮的点击手势里已解锁，
   // 之后可以无手势自由播放（iOS 对无手势的 audio.play() 很苛刻）
@@ -211,7 +224,7 @@ export function useVoiceCall() {
       if (!activeRef.current || mutedRef.current) return
       if (document.visibilityState === 'hidden') { setSt('paused'); return } // 锁屏暂停，回前台再续
       const text = (finalText.trim() || heard).trim()
-      if (text) handleTurn(text, { engine: 'browser' })
+      if (text) submitRecognizedTurn(text, { engine: 'browser' })
       else setTimeout(() => listen(), 180) // 没听到内容，继续听
     }
     recRef.current = rec
@@ -251,7 +264,7 @@ export function useVoiceCall() {
       }
       const emotion = result.emotion || 'unknown'
       setVoiceEmotion(emotion)
-      handleTurn(result.text, { engine: 'local', emotion, event: result.event })
+      submitRecognizedTurn(result.text, { engine: 'local', emotion, event: result.event })
     } catch (e) {
       captureAbortRef.current = null
       if (e.name === 'AbortError' || !activeRef.current) return
@@ -310,7 +323,7 @@ export function useVoiceCall() {
       const acoustics = normalizeVoiceAcoustics(result.acoustics)
       if (emotion !== 'unknown') setVoiceEmotion(emotion)
       setVoiceAcoustics(acoustics)
-      handleTurn(result.text, {
+      submitRecognizedTurn(result.text, {
         engine: result.engine || 'cloud',
         emotion: emotion === 'unknown' ? undefined : emotion,
         event: result.event,
@@ -425,7 +438,7 @@ export function useVoiceCall() {
       const chunkSource = isCodexVps
         ? streamChatViaCodex({ text, sessionId, prompt: cfg.systemPrompt, signal: controller.signal, voiceEmotion: voiceMeta.emotion, voiceAcoustics: voiceMeta.acoustics })
         : isClaudeVps
-          ? streamChatViaCompanion({ text, messageId: userMessageId, signal: controller.signal, voiceEmotion: voiceMeta.emotion, voiceAcoustics: voiceMeta.acoustics })
+          ? streamChatViaCompanion({ text, messageId: userMessageId, signal: controller.signal, voiceEmotion: voiceMeta.emotion, voiceAcoustics: voiceMeta.acoustics, callMode: true })
           : streamChat({
               apiKey: cfg.apiKey, apiBaseUrl: cfg.baseUrl, model: cfg.model,
               systemPrompt: cfg.systemPrompt + CALL_RULES + (voiceContext ? `\n\n${voiceContext}` : ''),
@@ -481,7 +494,8 @@ export function useVoiceCall() {
     }
 
     await consumer // 等所有句子播完
-    if (activeRef.current) setTimeout(() => listen(), 180)
+    lastPlaybackRef.current = { text: spoken, endedAt: Date.now() }
+    if (activeRef.current) setTimeout(() => listen(), 80)
   }, [listen])
 
   // audioKit：调用方在用户点击的调用栈里创建并解锁的 { el: <audio>, ctx: AudioContext }
@@ -503,6 +517,7 @@ export function useVoiceCall() {
     setAiCaption('')
     setVoiceEmotion('')
     setVoiceAcoustics(null)
+    lastPlaybackRef.current = { text: '', endedAt: 0 }
     localReadyRef.current = false
     const unavailableReason = localSenseVoiceUnavailableReason()
     const cloudReady = unavailableReason === 'ios-memory' && canUseCloudSpeech(cfg.workerUrl)

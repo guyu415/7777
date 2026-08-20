@@ -108,6 +108,21 @@ describe('companion connection recovery', () => {
     await expect(stream.next()).resolves.toEqual({ value: undefined, done: true })
   })
 
+  it('marks voice-call turns without changing their visible text', async () => {
+    const companion = await import('../companion.js')
+    const stream = companion.streamChatViaCompanion({ text: '喂', messageId: 'call-1', callMode: true })
+    const firstChunk = stream.next()
+    await flush()
+    const socket = MockWebSocket.instances[0]
+    socket.open()
+    await flush()
+    expect(socket.sent.find(m => m.id === 'call-1')).toMatchObject({ id: 'call-1', text: '喂', callMode: true })
+    socket.message({ type: 'msg', id: 'reply-call-1', from: 'cc', text: '在呢。', ts: Date.now(), turnId: 'call-1' })
+    socket.message({ type: 'turn_end', turnId: 'call-1' })
+    await expect(firstChunk).resolves.toEqual({ value: { text: '在呢。', wireId: 'reply-call-1' }, done: false })
+    await expect(stream.next()).resolves.toEqual({ value: undefined, done: true })
+  })
+
   it('broadcasts server-side message deletions to subscribers', async () => {
     const companion = await import('../companion.js')
     const deleted = []

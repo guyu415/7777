@@ -16,6 +16,7 @@ export type QueuedCcMessage = {
   fileName?: string
   fileSize?: number
   fileType?: string
+  callMode?: boolean
   clientTime?: unknown
   voiceEmotion?: string
   voiceAcoustics?: unknown
