@@ -5,7 +5,7 @@ export function normalizeCodexSessionId(value) {
   return raw && raw.length <= 120 ? raw : DEFAULT_CODEX_SESSION_ID
 }
 
-export function buildCodexMessagePayload({ id, text, segments, imageUrl, imageSeparate, file, sessionId, prompt, clientTime }) {
+export function buildCodexMessagePayload({ id, text, segments, imageUrl, imageSeparate, file, sessionId, prompt, clientTime, voiceEmotion }) {
   return {
     runtime: 'codex',
     id,
@@ -13,6 +13,7 @@ export function buildCodexMessagePayload({ id, text, segments, imageUrl, imageSe
     sessionId: normalizeCodexSessionId(sessionId),
     prompt: typeof prompt === 'string' ? prompt : '',
     clientTime,
+    ...(voiceEmotion ? { voiceEmotion } : {}),
     ...(Array.isArray(segments) && segments.length ? { segments } : {}),
     ...(imageUrl ? { imageUrl } : {}),
     ...(imageSeparate ? { imageSeparate: true } : {}),
