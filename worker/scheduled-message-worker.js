@@ -335,6 +335,16 @@ export default {
 
 const STT_MAX_AUDIO_BYTES = 1_100_000
 
+export function encodeAudioBase64(bytes) {
+  let binary = ''
+  // Avoid spreading the whole utterance at once: 30 seconds of PCM is large
+  // enough to overflow the JavaScript argument stack in a Worker.
+  for (let offset = 0; offset < bytes.length; offset += 0x8000) {
+    binary += String.fromCharCode(...bytes.subarray(offset, offset + 0x8000))
+  }
+  return btoa(binary)
+}
+
 export async function handleSpeechTranscription(request, env) {
   let form
   try {
@@ -366,7 +376,10 @@ export async function handleSpeechTranscription(request, env) {
   }
   try {
     const result = await env.AI.run('@cf/openai/whisper-large-v3-turbo', {
-      audio: Array.from(bytes),
+      // Current Workers AI schema accepts a base64 string (or a structured
+      // binary object). The old number[] form is rejected by the model with a
+      // generic 5xx, which surfaced to the iPhone as a permanent 502.
+      audio: encodeAudioBase64(bytes),
       task: 'transcribe',
       language: 'zh',
       vad_filter: true,
