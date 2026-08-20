@@ -4,9 +4,18 @@ import { streamChat } from '../services/claude'
 import { streamChatViaCompanion, streamChatViaCodex } from '../services/companion'
 import { fetchTTSAudio } from '../services/tts'
 import { saveSessionMsgs } from '../services/sync'
+import { captureUtterance } from '../services/voiceCapture'
+import {
+  canUseLocalSenseVoice,
+  initializeLocalSenseVoice,
+  recognizeLocalSpeech,
+  releaseLocalSenseVoice,
+  VOICE_EMOTION_LABELS,
+  voiceEmotionContext,
+} from '../services/localSenseVoice'
 
 const SpeechRecognitionAPI = window.SpeechRecognition || window.webkitSpeechRecognition
-export const supportsVoiceCall = !!SpeechRecognitionAPI
+export const supportsVoiceCall = !!SpeechRecognitionAPI || !!navigator.mediaDevices?.getUserMedia
 
 function genId() {
   return Date.now().toString(36) + Math.random().toString(36).slice(2)
@@ -41,11 +50,16 @@ export function useVoiceCall() {
   const [error, setError] = useState('')
   const [seconds, setSeconds] = useState(0)
   const [muted, setMuted] = useState(false)
+  const [voiceEmotion, setVoiceEmotion] = useState('')
+  const [speechEngine, setSpeechEngine] = useState('browser') // browser | local
+  const [modelStatus, setModelStatus] = useState('idle') // idle | loading | ready | fallback
+  const [modelProgress, setModelProgress] = useState(0)
 
   const activeRef = useRef(false)
   const mutedRef = useRef(false)
   const statusRef = useRef('idle')
   const recRef = useRef(null)
+  const captureAbortRef = useRef(null)
   const abortRef = useRef(null)
   const audioElRef = useRef(null)
   const audioCtxRef = useRef(null)
@@ -54,6 +68,7 @@ export function useVoiceCall() {
   const cfgRef = useRef(null)
   const sessionIdRef = useRef('main')
   const visHandlerRef = useRef(null)
+  const localReadyRef = useRef(false)
 
   const setSt = (s) => { statusRef.current = s; setStatus(s) }
 
@@ -95,11 +110,48 @@ export function useVoiceCall() {
     })
   }
 
-  const listen = useCallback(() => {
+  const preloadLocalModel = () => {
+    if (!canUseLocalSenseVoice()) {
+      setSpeechEngine('browser')
+      setModelStatus('fallback')
+      return
+    }
+    setModelStatus('loading')
+    setModelProgress(0)
+    initializeLocalSenseVoice(({ loaded, total }) => {
+      if (!activeRef.current) return
+      if (total > 0) setModelProgress(Math.min(100, Math.round(loaded / total * 100)))
+    }).then((ready) => {
+      if (!activeRef.current || !ready) return
+      localReadyRef.current = true
+      setModelStatus('ready')
+      setModelProgress(100)
+      setError('')
+      // Firefox has microphone capture but no Web Speech API. Its first turn
+      // waits for the local model instead of having a browser-STT fallback.
+      if (!SpeechRecognitionAPI && !mutedRef.current) setTimeout(() => listenLocal(), 0)
+    }).catch((e) => {
+      if (!activeRef.current) return
+      console.warn('[CALL] 本地 SenseVoice 加载失败，回退浏览器识别:', e.message)
+      localReadyRef.current = false
+      setSpeechEngine('browser')
+      setModelStatus('fallback')
+      setError('本地语音模型暂不可用，已切换系统识别')
+      setTimeout(() => setError(''), 4000)
+    })
+  }
+
+  const listenBrowser = useCallback(() => {
     if (!activeRef.current) return
     if (mutedRef.current) { setSt('muted'); return }
+    if (!SpeechRecognitionAPI) {
+      setError('本地模型不可用，且此浏览器不支持系统语音识别')
+      return
+    }
+    setSpeechEngine('browser')
     setSt('listening')
     setUserCaption('')
+    setVoiceEmotion('')
     let finalText = ''
     let heard = '' // finals + 当前 interim（iOS 经常不标 isFinal，必须兜底）
     let silenceTimer = null
@@ -107,8 +159,10 @@ export function useVoiceCall() {
     const rec = new SpeechRecognitionAPI()
     rec.lang = 'zh-CN'
     rec.interimResults = true
+    rec.maxAlternatives = 3
     // iOS 的识别器不会在停顿后自动结束（安卓才会），所以用 continuous
-    // 模式自己判停：有内容且 1.4s 没有新结果就主动 stop
+    // 模式自己判停：有内容且 0.8s 没有新结果就主动 stop。
+    // 原来的 1.4s 是通话体感卡顿的主要固定延迟。
     rec.continuous = true
     const stopRec = () => { try { rec.stop() } catch {} }
     rec.onresult = (e) => {
@@ -123,7 +177,7 @@ export function useVoiceCall() {
       heard = (finalText + interim).trim() || heard
       setUserCaption(heard)
       clearTimeout(silenceTimer)
-      if (heard) silenceTimer = setTimeout(stopRec, 1400)
+      if (heard) silenceTimer = setTimeout(stopRec, 800)
     }
     rec.onerror = (e) => {
       if (e.error === 'not-allowed' || e.error === 'service-not-allowed') {
@@ -142,15 +196,70 @@ export function useVoiceCall() {
       if (!activeRef.current || mutedRef.current) return
       if (document.visibilityState === 'hidden') { setSt('paused'); return } // 锁屏暂停，回前台再续
       const text = (finalText.trim() || heard).trim()
-      if (text) handleTurn(text)
-      else setTimeout(() => listen(), 300) // 没听到内容，继续听
+      if (text) handleTurn(text, { engine: 'browser' })
+      else setTimeout(() => listen(), 180) // 没听到内容，继续听
     }
     recRef.current = rec
     maxTimer = setTimeout(stopRec, 30_000) // 单句上限 30s
-    try { rec.start() } catch { setTimeout(() => listen(), 500) }
+    try { rec.start() } catch { setTimeout(() => listen(), 350) }
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
-  const handleTurn = useCallback(async (text) => {
+  const listenLocal = useCallback(async () => {
+    if (!activeRef.current) return
+    if (mutedRef.current) { setSt('muted'); return }
+    setSpeechEngine('local')
+    setSt('listening')
+    setUserCaption('')
+    setVoiceEmotion('')
+    const controller = new AbortController()
+    captureAbortRef.current = controller
+    try {
+      const samples = await captureUtterance({
+        signal: controller.signal,
+        onSpeechStart: () => { if (activeRef.current) setUserCaption('正在听…') },
+      })
+      captureAbortRef.current = null
+      if (!activeRef.current || mutedRef.current) return
+      if (!samples.length) {
+        setTimeout(() => listen(), 180)
+        return
+      }
+      setSt('recognizing')
+      setUserCaption('正在识别…')
+      const result = await recognizeLocalSpeech(samples)
+      if (!activeRef.current) return
+      if (!result.text) {
+        setUserCaption('')
+        setTimeout(() => listen(), 180)
+        return
+      }
+      const emotion = result.emotion || 'unknown'
+      setVoiceEmotion(emotion)
+      handleTurn(result.text, { engine: 'local', emotion, event: result.event })
+    } catch (e) {
+      captureAbortRef.current = null
+      if (e.name === 'AbortError' || !activeRef.current) return
+      if (e.name === 'NotAllowedError') {
+        setError('麦克风权限被拒绝，请在系统设置里允许')
+        endCall()
+        return
+      }
+      console.warn('[CALL] 本地识别失败，回退浏览器识别:', e.message)
+      localReadyRef.current = false
+      setSpeechEngine('browser')
+      setModelStatus('fallback')
+      setError('本地识别失败，已切换系统识别')
+      setTimeout(() => setError(''), 3500)
+      setTimeout(() => listen(), 200)
+    }
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
+  const listen = useCallback(() => {
+    if (localReadyRef.current) return listenLocal()
+    return listenBrowser()
+  }, [listenBrowser, listenLocal])
+
+  const handleTurn = useCallback(async (text, voiceMeta = {}) => {
     const cfg = cfgRef.current
     const sessionId = sessionIdRef.current
     setSt('thinking')
@@ -219,12 +328,12 @@ export function useVoiceCall() {
     let segBuf = ''
     try {
       const chunkSource = isCodexVps
-        ? streamChatViaCodex({ text, sessionId, prompt: cfg.systemPrompt, signal: controller.signal })
+        ? streamChatViaCodex({ text, sessionId, prompt: cfg.systemPrompt, signal: controller.signal, voiceEmotion: voiceMeta.emotion })
         : isClaudeVps
-          ? streamChatViaCompanion({ text, signal: controller.signal })
+          ? streamChatViaCompanion({ text, signal: controller.signal, voiceEmotion: voiceMeta.emotion })
           : streamChat({
               apiKey: cfg.apiKey, apiBaseUrl: cfg.baseUrl, model: cfg.model,
-              systemPrompt: cfg.systemPrompt + CALL_RULES,
+              systemPrompt: cfg.systemPrompt + CALL_RULES + (voiceEmotionContext(voiceMeta.emotion) ? `\n\n【本轮语音线索】${voiceEmotionContext(voiceMeta.emotion)}` : ''),
               messages: ctx,
               workerUrl: cfg.workerUrl, useWorkerProxy: cfg.useWorkerProxy,
               signal: controller.signal,
@@ -270,12 +379,12 @@ export function useVoiceCall() {
     }
 
     await consumer // 等所有句子播完
-    if (activeRef.current) setTimeout(() => listen(), 250)
+    if (activeRef.current) setTimeout(() => listen(), 180)
   }, [listen])
 
   // audioKit：调用方在用户点击的调用栈里创建并解锁的 { el: <audio>, ctx: AudioContext }
   const startCall = useCallback(({ sessionId, audioKit, ...cfg }) => {
-    if (!SpeechRecognitionAPI) { setError('此浏览器不支持语音识别，无法通话'); return false }
+    if (!SpeechRecognitionAPI && !navigator.mediaDevices?.getUserMedia) { setError('此浏览器不支持语音识别，无法通话'); return false }
     const isPersistentVps = cfg.providerName === 'claude-code-vps' || cfg.providerName === 'codex-vps'
     if (!isPersistentVps && !cfg.apiKey) { setError('请先在设置中配置 API Key'); return false }
     if (!cfg.ttsApiKey || !cfg.ttsGroupId) { setError('请先在设置中配置语音（TTS）密钥'); return false }
@@ -290,13 +399,21 @@ export function useVoiceCall() {
     setSeconds(0)
     setUserCaption('')
     setAiCaption('')
+    setVoiceEmotion('')
+    localReadyRef.current = false
+    setSpeechEngine('browser')
+    setModelStatus(canUseLocalSenseVoice() ? 'loading' : 'fallback')
+    setModelProgress(0)
     clearInterval(timerRef.current)
     timerRef.current = setInterval(() => setSeconds(s => s + 1), 1000)
     // 锁屏/切后台：iOS 会掐断麦克风，安静暂停；回到前台自动恢复聆听
     const onVis = () => {
       if (!activeRef.current) return
       if (document.visibilityState === 'hidden') {
+        setSt('paused')
         try { recRef.current?.abort() } catch {}
+        captureAbortRef.current?.abort()
+        captureAbortRef.current = null
       } else {
         setError('')
         const c = audioCtxRef.current
@@ -308,6 +425,7 @@ export function useVoiceCall() {
     }
     visHandlerRef.current = onVis
     document.addEventListener('visibilitychange', onVis)
+    preloadLocalModel()
     listen()
     return true
   }, [listen])
@@ -321,6 +439,8 @@ export function useVoiceCall() {
     }
     try { recRef.current?.abort() } catch {}
     recRef.current = null
+    captureAbortRef.current?.abort()
+    captureAbortRef.current = null
     abortRef.current?.abort()
     abortRef.current = null
     try { sourceRef.current?.stop() } catch {}
@@ -330,6 +450,8 @@ export function useVoiceCall() {
     const ctx = audioCtxRef.current
     audioCtxRef.current = null
     if (ctx) { try { ctx.close() } catch {} }
+    localReadyRef.current = false
+    releaseLocalSenseVoice().catch(() => {})
     setSt('idle')
     // 普通 API 会话的通话内容整体同步到云端（一次写入）。VPS 会话
     // 已由服务端持久化，重复上传本地副本会重新制造两套历史。
@@ -348,11 +470,18 @@ export function useVoiceCall() {
     setMuted(next)
     if (next) {
       try { recRef.current?.abort() } catch {}
+      captureAbortRef.current?.abort()
+      captureAbortRef.current = null
       if (statusRef.current === 'listening') setSt('muted')
     } else if (activeRef.current && (statusRef.current === 'muted' || statusRef.current === 'listening')) {
       listen()
     }
   }, [listen])
 
-  return { status, userCaption, aiCaption, error, seconds, muted, startCall, endCall, toggleMute }
+  return {
+    status, userCaption, aiCaption, error, seconds, muted,
+    voiceEmotion, voiceEmotionLabel: VOICE_EMOTION_LABELS[voiceEmotion] || '',
+    speechEngine, modelStatus, modelProgress,
+    startCall, endCall, toggleMute,
+  }
 }

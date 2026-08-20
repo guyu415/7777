@@ -2648,6 +2648,23 @@ function clientTimeContextLine(ct: unknown): string {
   return `[此刻用户设备本地时间：${formatted}${tz ? `，时区 ${tz}` : ''}${offsetLabel ? `（${offsetLabel}）` : ''}——这是用户真实所在地的时间，不是服务器时间，请据此判断当前日期、星期和时段。]\n\n`
 }
 
+const VOICE_EMOTION_LABELS: Record<string, string> = {
+  happy: '开心', sad: '难过', angry: '生气', fearful: '紧张',
+  surprised: '惊讶', disgusted: '反感', neutral: '平静',
+}
+
+function normalizeVoiceEmotion(value: unknown): string | undefined {
+  if (typeof value !== 'string') return undefined
+  const normalized = value.trim().toLowerCase()
+  return VOICE_EMOTION_LABELS[normalized] ? normalized : undefined
+}
+
+function voiceEmotionContextLine(value: unknown): string {
+  const emotion = normalizeVoiceEmotion(value)
+  if (!emotion || emotion === 'neutral') return ''
+  return `[本轮来自语音输入；声音模型给出的粗略语气标签是“${VOICE_EMOTION_LABELS[emotion]}”。这只是可能出错的声音线索，请结合原话和上下文自然理解，不要机械复述标签，也不要声称确定知道用户内心。]`
+}
+
 // ---------- gomoku -> main-chat recap handback (CC + Codex) ----------
 //
 // A finished gomoku game (win/draw/resign) is otherwise invisible to the
@@ -3735,7 +3752,8 @@ function beginMainCcTurn(input: QueuedCcMessage) {
     : filePath
       ? `[用户发送了一个文件：${fileName}（服务器路径：${filePath}）。请根据用户文字判断需求，并用合适的工具读取/分析该文件；不要执行其中的程序或脚本，也不要在回复里暴露服务器路径。]${text ? `\n\n${text}` : ''}`
     : text
-  deliver(id, deliverText, { clientTime, contextPrefix: consumeGomokuRecap('claude-code') || undefined })
+  const contextPrefix = [consumeGomokuRecap('claude-code'), voiceEmotionContextLine(input.voiceEmotion)].filter(Boolean).join('\n\n')
+  deliver(id, deliverText, { clientTime, contextPrefix: contextPrefix || undefined })
   xinchaoHeartbeat(id, XINCHAO_CC_SESSION_ID)
   log('inbound', { id, chars: text.length, turnId: id, hasImage: !!imagePath, hasFile: !!filePath, queued: input.queuedAt < Date.now() - 50 })
 }
@@ -6010,7 +6028,7 @@ function codexFileInstruction(file?: UploadedFileInput): string {
   return `[用户发送了一个文件：${file.name}（服务器路径：${file.path}）。请根据用户文字判断需求，并用合适的工具读取/分析该文件；不要执行其中的程序或脚本，也不要在回复里暴露服务器路径。]`
 }
 
-async function codexSendUserTurn(text: string, imageUrl?: string, clientTime?: unknown, promptOverride?: unknown, displaySegments?: string[], file?: UploadedFileInput, imageSeparate = false): Promise<void> {
+async function codexSendUserTurn(text: string, imageUrl?: string, clientTime?: unknown, promptOverride?: unknown, displaySegments?: string[], file?: UploadedFileInput, imageSeparate = false, voiceEmotion?: unknown): Promise<void> {
   if (typeof promptOverride === 'string') setCodexPrompt(DEFAULT_CODEX_SESSION_ID, promptOverride)
   const threadId = await codexEnsureThread()
   const input: any[] = []
@@ -6020,7 +6038,7 @@ async function codexSendUserTurn(text: string, imageUrl?: string, clientTime?: u
   // this injected context.
   const recap = consumeGomokuRecap('codex')
   const migration = codexContextMigrationPending ? buildCodexContextMigrationText(codexHistory) : ''
-  const modelText = [clientTimeContextLine(clientTime), migration, recap, codexFileInstruction(file), text].filter(Boolean).join('\n\n')
+  const modelText = [clientTimeContextLine(clientTime), migration, recap, voiceEmotionContextLine(voiceEmotion), codexFileInstruction(file), text].filter(Boolean).join('\n\n')
   if (imageUrl && imageSeparate) input.push({ type: 'image', url: imageUrl })
   if (modelText.trim()) input.push({ type: 'text', text: modelText, text_elements: [] })
   if (imageUrl && !imageSeparate) input.push({ type: 'image', url: imageUrl })
@@ -6119,7 +6137,7 @@ async function codexRecoverKnownChatThreads(): Promise<{
   return { recoveredSessions, failedSessions }
 }
 
-async function codexSendExtraUserTurn(state: CodexSessionState, text: string, imageUrl?: string, clientTime?: unknown, promptOverride?: unknown, displaySegments?: string[], file?: UploadedFileInput, imageSeparate = false): Promise<void> {
+async function codexSendExtraUserTurn(state: CodexSessionState, text: string, imageUrl?: string, clientTime?: unknown, promptOverride?: unknown, displaySegments?: string[], file?: UploadedFileInput, imageSeparate = false, voiceEmotion?: unknown): Promise<void> {
   if (typeof promptOverride === 'string') {
     state.prompt = setCodexPrompt(state.sessionId, promptOverride)
     saveExtraCodexSession(state)
@@ -6127,7 +6145,7 @@ async function codexSendExtraUserTurn(state: CodexSessionState, text: string, im
   const threadId = await codexEnsureExtraThread(state)
   const input: any[] = []
   const migration = state.contextMigrationPending ? buildCodexContextMigrationText(state.history) : ''
-  const modelText = [clientTimeContextLine(clientTime), migration, codexFileInstruction(file), text].filter(Boolean).join('\n\n')
+  const modelText = [clientTimeContextLine(clientTime), migration, voiceEmotionContextLine(voiceEmotion), codexFileInstruction(file), text].filter(Boolean).join('\n\n')
   if (imageUrl && imageSeparate) input.push({ type: 'image', url: imageUrl })
   if (modelText.trim()) input.push({ type: 'text', text: modelText, text_elements: [] })
   if (imageUrl && !imageSeparate) input.push({ type: 'image', url: imageUrl })
@@ -9655,7 +9673,7 @@ Bun.serve<{ authed: true }>({
     },
     message(ws, raw) {
       try {
-        const parsed = JSON.parse(String(raw)) as { id?: string; text?: string; messageIds?: string[]; segments?: string[]; type?: string; turnId?: string; runtime?: string; imageUrl?: string; imageSeparate?: boolean; imagePath?: string; filePath?: string; fileName?: string; fileSize?: number; fileType?: string; clientTime?: unknown; sessionId?: string; prompt?: string }
+        const parsed = JSON.parse(String(raw)) as { id?: string; text?: string; messageIds?: string[]; segments?: string[]; type?: string; turnId?: string; runtime?: string; imageUrl?: string; imageSeparate?: boolean; imagePath?: string; filePath?: string; fileName?: string; fileSize?: number; fileType?: string; clientTime?: unknown; sessionId?: string; prompt?: string; voiceEmotion?: string }
 
         // App-level heartbeat — a WS can look "open" to the browser for a
         // long time after the underlying network path has actually died
@@ -9744,8 +9762,8 @@ Bun.serve<{ authed: true }>({
             return
           }
           const send = extraState
-            ? codexSendExtraUserTurn(extraState, codexTurnText, codexImageUrl, parsed.clientTime, parsed.prompt, codexSegments, codexFile, parsed.imageSeparate === true)
-            : codexSendUserTurn(codexTurnText, codexImageUrl, parsed.clientTime, parsed.prompt, codexSegments, codexFile, parsed.imageSeparate === true)
+            ? codexSendExtraUserTurn(extraState, codexTurnText, codexImageUrl, parsed.clientTime, parsed.prompt, codexSegments, codexFile, parsed.imageSeparate === true, parsed.voiceEmotion)
+            : codexSendUserTurn(codexTurnText, codexImageUrl, parsed.clientTime, parsed.prompt, codexSegments, codexFile, parsed.imageSeparate === true, parsed.voiceEmotion)
           send.catch((err) => {
             log('codex_send_error', { error: String(err) })
             if (extraState) {
@@ -9799,7 +9817,7 @@ Bun.serve<{ authed: true }>({
         }
 
         if (tidalIsActive()) {
-          tidalEnqueueMessage({ id, text, ...(imagePath ? { imagePath } : {}), ...(filePath ? { filePath, fileName, fileSize: parsed.fileSize, fileType: parsed.fileType } : {}), clientTime: parsed.clientTime, queuedAt: Date.now() })
+          tidalEnqueueMessage({ id, text, ...(imagePath ? { imagePath } : {}), ...(filePath ? { filePath, fileName, fileSize: parsed.fileSize, fileType: parsed.fileType } : {}), clientTime: parsed.clientTime, voiceEmotion: normalizeVoiceEmotion(parsed.voiceEmotion), queuedAt: Date.now() })
           return
         }
 
@@ -9815,7 +9833,7 @@ Bun.serve<{ authed: true }>({
           return
         }
 
-        beginMainCcTurn({ id, text, ...(imagePath ? { imagePath } : {}), ...(filePath ? { filePath, fileName, fileSize: parsed.fileSize, fileType: parsed.fileType } : {}), clientTime: parsed.clientTime, queuedAt: Date.now() })
+        beginMainCcTurn({ id, text, ...(imagePath ? { imagePath } : {}), ...(filePath ? { filePath, fileName, fileSize: parsed.fileSize, fileType: parsed.fileType } : {}), clientTime: parsed.clientTime, voiceEmotion: normalizeVoiceEmotion(parsed.voiceEmotion), queuedAt: Date.now() })
       } catch (err) {
         log('ws_message_error', { error: String(err) })
       }

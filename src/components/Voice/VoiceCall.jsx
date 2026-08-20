@@ -5,6 +5,7 @@ import { useVoiceCall } from '../../hooks/useVoiceCall'
 
 const STATUS_TEXT = {
   listening: '在听你说…',
+  recognizing: '正在识别…',
   thinking: '想想怎么回…',
   speaking: '正在说话',
   muted: '已静音',
@@ -12,7 +13,7 @@ const STATUS_TEXT = {
   idle: '连接中…',
 }
 
-// 全屏语音通话界面：识别（浏览器 STT）→ 对话模型 → MiniMax TTS 循环
+// 全屏语音通话界面：本地 SenseVoice / 系统 STT → 对话模型 → MiniMax TTS 循环
 export default function VoiceCall({ theme, onClose, audioKit }) {
   const {
     apiKey, apiBaseUrl, model, systemPrompt, workerUrl, useWorkerProxy,
@@ -20,7 +21,11 @@ export default function VoiceCall({ theme, onClose, audioKit }) {
     aiName, aiAvatar,
     sessions, currentSessionId, providers, selectedProviderId,
   } = useStore()
-  const { status, userCaption, aiCaption, error, seconds, muted, startCall, endCall, toggleMute } = useVoiceCall()
+  const {
+    status, userCaption, aiCaption, error, seconds, muted,
+    voiceEmotionLabel, speechEngine, modelStatus, modelProgress,
+    startCall, endCall, toggleMute,
+  } = useVoiceCall()
   const startedRef = useRef(false)
 
   const session = sessions?.find(s => s.id === (currentSessionId || 'main'))
@@ -106,13 +111,27 @@ export default function VoiceCall({ theme, onClose, audioKit }) {
         <span className="mt-5 text-sm font-medium" style={{ color: '#a86b7c' }}>
           {STATUS_TEXT[status] || ''}
         </span>
+        <span className="mt-1 text-xs" style={{ color: '#bd8796' }}>
+          {modelStatus === 'loading'
+            ? `本地语音模型准备中${modelProgress ? ` ${modelProgress}%` : ''} · 暂用系统识别`
+            : speechEngine === 'local'
+              ? 'SenseVoice 本地识别 · 音频不上传'
+              : modelStatus === 'ready'
+                ? 'SenseVoice 已就绪 · 下轮切换本地识别'
+              : '系统语音识别'}
+        </span>
 
         {/* 字幕区 */}
         <div className="px-8 mt-6 w-full max-w-sm" style={{ minHeight: 96 }}>
           {userCaption && (
-            <p className="text-sm text-right mb-3" style={{ color: '#b08794', lineHeight: 1.6 }}>
-              {userCaption}
-            </p>
+            <div className="text-right mb-3">
+              <p className="text-sm" style={{ color: '#b08794', lineHeight: 1.6 }}>{userCaption}</p>
+              {voiceEmotionLabel && speechEngine === 'local' && (
+                <span className="inline-block mt-1 px-2 py-0.5 rounded-full text-xs" style={{ color: '#a9687c', background: 'rgba(255,255,255,.55)' }}>
+                  语气：{voiceEmotionLabel}
+                </span>
+              )}
+            </div>
           )}
           {aiCaption && (
             <p className="text-sm" style={{ color: '#8b5060', lineHeight: 1.7 }}>
