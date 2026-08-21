@@ -242,34 +242,38 @@ function MessageBubble({ message, onLongPress, onRegenerate, onRegenerateRound, 
   // pasted onto an unrelated rounded rectangle.
   const textFrameStyle = isUser ? {
     ...userBubbleStyle,
-    padding: '0 5px',
-    background: 'transparent',
-    backdropFilter: 'none',
-    WebkitBackdropFilter: 'none',
+    padding: '2px 8px',
+    background: theme?.userBubble || 'rgba(91, 201, 167, .88)',
+    backgroundClip: 'padding-box',
+    backdropFilter: 'blur(9px)',
+    WebkitBackdropFilter: 'blur(9px)',
+    borderRadius: 17,
     borderStyle: 'solid',
     borderColor: 'transparent',
-    borderWidth: '14px 46px 31px 15px',
+    borderWidth: '6px 24px 15px 8px',
     borderImageSource: "url('/assets/bubble-dog-tail-frame.png')",
     borderImageSlice: '70 250 130 80 fill',
-    borderImageWidth: '14px 46px 31px 15px',
-    borderImageOutset: '3px 8px 7px 3px',
+    borderImageWidth: '6px 24px 15px 8px',
+    borderImageOutset: '2px 4px 3px 2px',
     borderImageRepeat: 'stretch',
-    boxShadow: 'none',
+    boxShadow: `0 3px 12px ${theme?.userBubbleShadow || 'rgba(70,130,105,.16)'}`,
   } : {
     ...aiBubbleStyle,
-    padding: '0 5px',
-    background: 'transparent',
-    backdropFilter: 'none',
-    WebkitBackdropFilter: 'none',
+    padding: '2px 8px',
+    background: theme?.aiBubble || 'rgba(226, 246, 235, .9)',
+    backgroundClip: 'padding-box',
+    backdropFilter: 'blur(9px)',
+    WebkitBackdropFilter: 'blur(9px)',
+    borderRadius: 17,
     borderStyle: 'solid',
     borderColor: 'transparent',
-    borderWidth: '29px 20px 14px 48px',
+    borderWidth: '16px 10px 7px 25px',
     borderImageSource: "url('/assets/bubble-dog-head-frame.png')",
     borderImageSlice: '130 180 70 240 fill',
-    borderImageWidth: '29px 20px 14px 48px',
-    borderImageOutset: '7px 4px 3px 8px',
+    borderImageWidth: '16px 10px 7px 25px',
+    borderImageOutset: '3px 2px 2px 4px',
     borderImageRepeat: 'stretch',
-    boxShadow: 'none',
+    boxShadow: `0 3px 12px ${theme?.aiBubbleShadow || 'rgba(80,130,100,.14)'}`,
   }
 
   return (
@@ -394,7 +398,7 @@ function MessageBubble({ message, onLongPress, onRegenerate, onRegenerateRound, 
               // flow rather than a stray dot near the avatar; long messages
               // are unaffected since their intrinsic content width already
               // exceeds this floor.
-              minWidth: '40%',
+              minWidth: 0,
             }}
             {...pressProps}
           >

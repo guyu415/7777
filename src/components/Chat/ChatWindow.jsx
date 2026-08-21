@@ -679,15 +679,14 @@ export default function ChatWindow({ theme }) {
               <div className="font-semibold text-sm" style={{
                 flex: 1, minWidth: 0,
                 overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-                color: primaryColor,
-                textShadow: `0 0 8px ${primaryColor}cc, 0 0 18px ${primaryColor}80`,
+                color: primaryDarkColor,
               }}>
                 {effectiveAiName || currentSession?.name || '新对话'}
               </div>
             </div>
             <div className="flex items-center min-w-0" style={{ height: 20, gap: 4 }}>
               <div className="min-w-0" style={{ flex: 1, overflow: 'hidden' }}>
-                <Signature text={effectiveSignature || '在线'} color={primaryColor} shadow={`0 0 6px ${primaryColor}aa, 0 0 14px ${primaryColor}60`} />
+                <Signature text={effectiveSignature || '在线'} color={primaryDarkColor} shadow="none" />
               </div>
               {effectiveWebSearch && (
                 <span style={{
