@@ -78,41 +78,37 @@ function TypingIndicator() {
   )
 }
 
-function PuppyBubbleBackdrop({ gradientId }) {
+function PuppyBubbleBackdrop() {
   return (
-    <svg
-      viewBox="0 0 100 100"
-      preserveAspectRatio="none"
+    <span
       aria-hidden="true"
       style={{
-        position: 'absolute', inset: 0, width: '100%', height: '100%',
-        zIndex: 0, pointerEvents: 'none', overflow: 'visible',
-        filter: 'drop-shadow(0 2px 4px rgba(186, 121, 144, 0.10))',
+        position: 'absolute', inset: 0, zIndex: 0, pointerEvents: 'none',
+        background: 'linear-gradient(180deg, #fffefe 0%, #fff9fb 52%, #fbeef3 100%)',
+        border: '1.4px solid #d9c0c9',
+        // The reference keeps both sides regular. Only the top/bottom corner
+        // radii differ slightly, which gives the horizontal edges their soft,
+        // hand-drawn character without turning the whole bubble into a wedge.
+        borderRadius: '18px 18px 16px 16px / 16px 16px 20px 20px',
+        boxShadow: '0 2px 5px rgba(186, 121, 144, 0.10), inset 0 1px 0 rgba(255,255,255,0.86)',
       }}
-    >
-      <defs>
-        <linearGradient id={gradientId} x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0%" stopColor="#fffefe" />
-          <stop offset="52%" stopColor="#fff9fb" />
-          <stop offset="100%" stopColor="#fbeef3" />
-        </linearGradient>
-      </defs>
-      <path
-        d="M8 2 H92 C96 2 98 5 98 10 L97 89 C97 95 96 98 92 98 H8 C4 98 3 95 3 89 L2 10 C2 5 4 2 8 2 Z"
-        fill={`url(#${gradientId})`}
-        stroke="#dfb5c3"
-        strokeWidth="1.35"
-        vectorEffect="non-scaling-stroke"
-      />
-    </svg>
+    />
   )
 }
 
 function PuppyBubbleDecorations() {
   return (
     <>
+      {/* Two tiny blush strokes live inside each rounded end in the sample. */}
+      <svg viewBox="0 0 10 7" aria-hidden="true" style={{ position: 'absolute', left: 7, bottom: 7, width: 9, zIndex: 2, pointerEvents: 'none' }}>
+        <path d="M2 2.5v2M6 1.5v3" stroke="#edcbd6" strokeWidth="1.4" strokeLinecap="round" />
+      </svg>
+      <svg viewBox="0 0 10 7" aria-hidden="true" style={{ position: 'absolute', right: 7, bottom: 7, width: 9, zIndex: 2, pointerEvents: 'none' }}>
+        <path d="M2 1.5v3M6 2.5v2" stroke="#edcbd6" strokeWidth="1.4" strokeLinecap="round" />
+      </svg>
+
       {/* Ticket-like sparkle above the right rim, matching the reference. */}
-      <svg viewBox="0 0 34 28" aria-hidden="true" style={{ position: 'absolute', right: 15, top: -17, width: 31, zIndex: 3, pointerEvents: 'none', overflow: 'visible' }}>
+      <svg viewBox="0 0 34 28" aria-hidden="true" style={{ position: 'absolute', right: 7, top: -11, width: 21, zIndex: 3, pointerEvents: 'none', overflow: 'visible' }}>
         <path d="M8 2 23 8 18 24 3 17Z" fill="#fff6f9" stroke="#dfb5c3" strokeWidth="1.4" strokeLinejoin="round" />
         <path d="m13 7 1.6 3.2 3.5.5-2.6 2.5.7 3.5-3.2-1.7-3.1 1.7.6-3.5-2.5-2.5 3.5-.5Z" fill="none" stroke="#dda9bb" strokeWidth="1" strokeLinejoin="round" />
         <path d="M28 8c-2.8-3.1-6.7 1.2 0 5.4 6.7-4.2 2.8-8.5 0-5.4Z" fill="#f3ccd8" />
@@ -120,7 +116,7 @@ function PuppyBubbleDecorations() {
       </svg>
 
       {/* Small candy, paw trail and star tucked under the left edge. */}
-      <svg viewBox="0 0 54 24" aria-hidden="true" style={{ position: 'absolute', left: -9, bottom: -15, width: 49, zIndex: 3, pointerEvents: 'none', overflow: 'visible' }}>
+      <svg viewBox="0 0 54 24" aria-hidden="true" style={{ position: 'absolute', left: -7, bottom: -8, width: 29, zIndex: 3, pointerEvents: 'none', overflow: 'visible' }}>
         <path d="m8 8-5-3v9l5-3M16 8l5-3v9l-5-3" fill="#fff7fa" stroke="#dfb5c3" strokeWidth="1" strokeLinejoin="round" />
         <rect x="8" y="6" width="8" height="7" rx="2" transform="rotate(-9 12 9.5)" fill="#f6d4df" stroke="#dfb5c3" strokeWidth="1" />
         <circle cx="27" cy="14" r="1.7" fill="#e8b7c8" />
@@ -130,7 +126,7 @@ function PuppyBubbleDecorations() {
       </svg>
 
       {/* Heart-and-sparkle cluster attached to the rounded right end. */}
-      <svg viewBox="0 0 34 38" aria-hidden="true" style={{ position: 'absolute', right: -18, top: 4, width: 34, zIndex: 3, pointerEvents: 'none', overflow: 'visible' }}>
+      <svg viewBox="0 0 34 38" aria-hidden="true" style={{ position: 'absolute', right: -12, top: 7, width: 22, zIndex: 3, pointerEvents: 'none', overflow: 'visible' }}>
         <path d="M12 5c-3.3-3.7-8 1.4 0 6.7 8-5.3 3.3-10.4 0-6.7Z" fill="none" stroke="#dfb5c3" strokeWidth="1.2" />
         <path d="M24 13c-3.7-4.1-8.9 1.6 0 7.5 8.9-5.9 3.7-11.6 0-7.5Z" fill="#efbfd0" />
         <path d="M11 24c-2.5-2.8-6 .9 0 5 6-4.1 2.5-7.8 0-5Z" fill="#f5d5df" />
@@ -161,7 +157,6 @@ function MessageBubble({ message, onLongPress, onRegenerate, onRegenerateRound, 
   const [diceRolling, setDiceRolling] = useState(false)
   const [diceJustSettled, setDiceJustSettled] = useState(false)
   const replyQuote = message.type === 'text' ? parseReplyQuotes(message.content) : null
-  const bubbleGradientId = `puppy-bubble-${String(message.id ?? message.timestamp ?? 'message').replace(/[^a-zA-Z0-9_-]/g, '')}`
   const pressTimer = useRef(null)
   const pressAnimTimer = useRef(null)
   // CC creates an empty assistant bubble as soon as it starts thinking, then
@@ -444,7 +439,7 @@ function MessageBubble({ message, onLongPress, onRegenerate, onRegenerateRound, 
             }}
             {...pressProps}
           >
-            <PuppyBubbleBackdrop gradientId={bubbleGradientId} />
+            <PuppyBubbleBackdrop />
             <PuppyBubbleDecorations />
             <img
               src={isUser ? '/assets/shy-puppy-tail-v5.png' : '/assets/shy-puppy-head-v5.png'}
@@ -452,17 +447,17 @@ function MessageBubble({ message, onLongPress, onRegenerate, onRegenerateRound, 
               aria-hidden="true"
               style={isUser ? {
                 position: 'absolute',
-                right: -11,
-                bottom: -9,
-                width: 40,
+                right: -8,
+                bottom: -6,
+                width: 30,
                 height: 'auto',
                 zIndex: 4,
                 pointerEvents: 'none',
               } : {
                 position: 'absolute',
-                left: -8,
-                top: -18,
-                width: 48,
+                left: -7,
+                top: -16,
+                width: 44,
                 height: 'auto',
                 zIndex: 4,
                 pointerEvents: 'none',
