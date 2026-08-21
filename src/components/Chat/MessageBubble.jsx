@@ -78,6 +78,69 @@ function TypingIndicator() {
   )
 }
 
+function PuppyBubbleBackdrop({ gradientId }) {
+  return (
+    <svg
+      viewBox="0 0 100 100"
+      preserveAspectRatio="none"
+      aria-hidden="true"
+      style={{
+        position: 'absolute', inset: 0, width: '100%', height: '100%',
+        zIndex: 0, pointerEvents: 'none', overflow: 'visible',
+        filter: 'drop-shadow(0 2px 4px rgba(186, 121, 144, 0.10))',
+      }}
+    >
+      <defs>
+        <linearGradient id={gradientId} x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stopColor="#fffefe" />
+          <stop offset="52%" stopColor="#fff9fb" />
+          <stop offset="100%" stopColor="#fbeef3" />
+        </linearGradient>
+      </defs>
+      <path
+        d="M8 2 H92 C96 2 98 5 98 10 L97 89 C97 95 96 98 92 98 H8 C4 98 3 95 3 89 L2 10 C2 5 4 2 8 2 Z"
+        fill={`url(#${gradientId})`}
+        stroke="#dfb5c3"
+        strokeWidth="1.35"
+        vectorEffect="non-scaling-stroke"
+      />
+    </svg>
+  )
+}
+
+function PuppyBubbleDecorations() {
+  return (
+    <>
+      {/* Ticket-like sparkle above the right rim, matching the reference. */}
+      <svg viewBox="0 0 34 28" aria-hidden="true" style={{ position: 'absolute', right: 15, top: -17, width: 31, zIndex: 3, pointerEvents: 'none', overflow: 'visible' }}>
+        <path d="M8 2 23 8 18 24 3 17Z" fill="#fff6f9" stroke="#dfb5c3" strokeWidth="1.4" strokeLinejoin="round" />
+        <path d="m13 7 1.6 3.2 3.5.5-2.6 2.5.7 3.5-3.2-1.7-3.1 1.7.6-3.5-2.5-2.5 3.5-.5Z" fill="none" stroke="#dda9bb" strokeWidth="1" strokeLinejoin="round" />
+        <path d="M28 8c-2.8-3.1-6.7 1.2 0 5.4 6.7-4.2 2.8-8.5 0-5.4Z" fill="#f3ccd8" />
+        <path d="M31 17c-1.8-2-4.2.8 0 3.5 4.2-2.7 1.8-5.5 0-3.5Z" fill="none" stroke="#e0b3c2" strokeWidth="1" />
+      </svg>
+
+      {/* Small candy, paw trail and star tucked under the left edge. */}
+      <svg viewBox="0 0 54 24" aria-hidden="true" style={{ position: 'absolute', left: -9, bottom: -15, width: 49, zIndex: 3, pointerEvents: 'none', overflow: 'visible' }}>
+        <path d="m8 8-5-3v9l5-3M16 8l5-3v9l-5-3" fill="#fff7fa" stroke="#dfb5c3" strokeWidth="1" strokeLinejoin="round" />
+        <rect x="8" y="6" width="8" height="7" rx="2" transform="rotate(-9 12 9.5)" fill="#f6d4df" stroke="#dfb5c3" strokeWidth="1" />
+        <circle cx="27" cy="14" r="1.7" fill="#e8b7c8" />
+        <circle cx="31.5" cy="11" r="1.4" fill="#e8b7c8" />
+        <circle cx="35.5" cy="8" r="1.1" fill="#e8b7c8" />
+        <path d="m45 4 1.7 3.4 3.8.6-2.8 2.6.7 3.8-3.4-1.8-3.4 1.8.7-3.8-2.8-2.6 3.8-.6Z" fill="#fff" stroke="#d9b9c4" strokeWidth="1" strokeLinejoin="round" />
+      </svg>
+
+      {/* Heart-and-sparkle cluster attached to the rounded right end. */}
+      <svg viewBox="0 0 34 38" aria-hidden="true" style={{ position: 'absolute', right: -18, top: 4, width: 34, zIndex: 3, pointerEvents: 'none', overflow: 'visible' }}>
+        <path d="M12 5c-3.3-3.7-8 1.4 0 6.7 8-5.3 3.3-10.4 0-6.7Z" fill="none" stroke="#dfb5c3" strokeWidth="1.2" />
+        <path d="M24 13c-3.7-4.1-8.9 1.6 0 7.5 8.9-5.9 3.7-11.6 0-7.5Z" fill="#efbfd0" />
+        <path d="M11 24c-2.5-2.8-6 .9 0 5 6-4.1 2.5-7.8 0-5Z" fill="#f5d5df" />
+        <path d="M27 26v8M23 30h8" stroke="#dcb4c2" strokeWidth="1.2" strokeLinecap="round" />
+        <path d="M4 14v5M1.5 16.5h5" stroke="#e4bdca" strokeWidth="1" strokeLinecap="round" />
+      </svg>
+    </>
+  )
+}
+
 function formatTime(ts) {
   return new Date(ts).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
 }
@@ -98,6 +161,7 @@ function MessageBubble({ message, onLongPress, onRegenerate, onRegenerateRound, 
   const [diceRolling, setDiceRolling] = useState(false)
   const [diceJustSettled, setDiceJustSettled] = useState(false)
   const replyQuote = message.type === 'text' ? parseReplyQuotes(message.content) : null
+  const bubbleGradientId = `puppy-bubble-${String(message.id ?? message.timestamp ?? 'message').replace(/[^a-zA-Z0-9_-]/g, '')}`
   const pressTimer = useRef(null)
   const pressAnimTimer = useRef(null)
   // CC creates an empty assistant bubble as soon as it starts thinking, then
@@ -245,12 +309,12 @@ function MessageBubble({ message, onLongPress, onRegenerate, onRegenerateRound, 
     padding: isUser ? '6px 24px 7px 16px' : '6px 20px 7px 42px',
     lineHeight: 1.55,
     letterSpacing: '0.035em',
-    background: 'linear-gradient(180deg, rgba(255,254,254,0.98) 0%, rgba(255,248,250,0.98) 48%, rgba(252,237,243,0.98) 100%)',
+    background: 'transparent',
     backdropFilter: 'none',
     WebkitBackdropFilter: 'none',
-    border: '1.5px solid rgba(226, 171, 189, 0.9)',
-    borderRadius: 18,
-    boxShadow: '0 2px 6px rgba(186, 121, 144, 0.10), inset 0 1px 0 rgba(255,255,255,0.82)',
+    border: 0,
+    borderRadius: 0,
+    boxShadow: 'none',
     overflow: 'visible',
   }
 
@@ -380,6 +444,8 @@ function MessageBubble({ message, onLongPress, onRegenerate, onRegenerateRound, 
             }}
             {...pressProps}
           >
+            <PuppyBubbleBackdrop gradientId={bubbleGradientId} />
+            <PuppyBubbleDecorations />
             <img
               src={isUser ? '/assets/shy-puppy-tail-v5.png' : '/assets/shy-puppy-head-v5.png'}
               alt=""
@@ -390,7 +456,7 @@ function MessageBubble({ message, onLongPress, onRegenerate, onRegenerateRound, 
                 bottom: -9,
                 width: 40,
                 height: 'auto',
-                zIndex: 2,
+                zIndex: 4,
                 pointerEvents: 'none',
               } : {
                 position: 'absolute',
@@ -398,7 +464,7 @@ function MessageBubble({ message, onLongPress, onRegenerate, onRegenerateRound, 
                 top: -18,
                 width: 48,
                 height: 'auto',
-                zIndex: 2,
+                zIndex: 4,
                 pointerEvents: 'none',
               }}
             />
