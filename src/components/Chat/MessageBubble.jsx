@@ -235,40 +235,24 @@ function MessageBubble({ message, onLongPress, onRegenerate, onRegenerateRound, 
     overflowWrap: 'anywhere',
   }
 
-  // Complete, newly illustrated bubble frames. The large quiet middle strip
-  // is nine-sliced by border-image, so only the middle stretches; the puppy
-  // head / tail corners keep their proportions for both one-line and long
-  // messages. This replaces the old separate dog PNGs that visibly looked
-  // pasted onto an unrelated rounded rectangle.
+  // Use each completed illustration as one intact bubble image. Do not slice
+  // it into borders and do not rebuild its fill in CSS: the puppy, outline,
+  // decorations and opaque inner fill all come from this single artwork.
   const textFrameStyle = isUser ? {
     ...userBubbleStyle,
-    padding: '1px 7px',
+    padding: '8px 34px 15px 15px',
     background: 'transparent',
     backdropFilter: 'none',
     WebkitBackdropFilter: 'none',
-    borderStyle: 'solid',
-    borderColor: 'transparent',
-    borderWidth: '6px 24px 15px 8px',
-    borderImageSource: "url('/assets/bubble-dog-tail-frame.png')",
-    borderImageSlice: '70 250 130 80 fill',
-    borderImageWidth: '6px 24px 15px 8px',
-    borderImageOutset: '2px 4px 3px 2px',
-    borderImageRepeat: 'stretch',
+    border: 'none',
     boxShadow: 'none',
   } : {
     ...aiBubbleStyle,
-    padding: '1px 7px',
+    padding: '17px 15px 8px 36px',
     background: 'transparent',
     backdropFilter: 'none',
     WebkitBackdropFilter: 'none',
-    borderStyle: 'solid',
-    borderColor: 'transparent',
-    borderWidth: '16px 10px 7px 25px',
-    borderImageSource: "url('/assets/bubble-dog-head-frame.png')",
-    borderImageSlice: '130 180 70 240 fill',
-    borderImageWidth: '16px 10px 7px 25px',
-    borderImageOutset: '3px 2px 2px 4px',
-    borderImageRepeat: 'stretch',
+    border: 'none',
     boxShadow: 'none',
   }
 
@@ -398,10 +382,20 @@ function MessageBubble({ message, onLongPress, onRegenerate, onRegenerateRound, 
             }}
             {...pressProps}
           >
+            <img
+              src={isUser ? '/assets/shy-puppy-tail-bubble-v2.png' : '/assets/shy-puppy-head-bubble-v2.png'}
+              alt=""
+              aria-hidden="true"
+              style={{
+                position: 'absolute', inset: 0,
+                width: '100%', height: '100%', objectFit: 'fill',
+                pointerEvents: 'none', zIndex: 0,
+              }}
+            />
             {message.streaming && !message.content ? (
-              <TypingIndicator />
+              <div style={{ position: 'relative', zIndex: 1 }}><TypingIndicator /></div>
             ) : (
-              <span className="whitespace-pre-wrap break-words" style={{ display: 'block', minWidth: 0, maxWidth: '100%', overflow: 'hidden' }}>
+              <span className="whitespace-pre-wrap break-words" style={{ position: 'relative', zIndex: 1, display: 'block', minWidth: 0, maxWidth: '100%', overflow: 'hidden' }}>
                 {replyQuote && (
                   <span style={{
                     display: 'block', marginBottom: 7, padding: '5px 8px',
