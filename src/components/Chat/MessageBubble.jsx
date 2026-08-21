@@ -235,6 +235,43 @@ function MessageBubble({ message, onLongPress, onRegenerate, onRegenerateRound, 
     overflowWrap: 'anywhere',
   }
 
+  // Complete, newly illustrated bubble frames. The large quiet middle strip
+  // is nine-sliced by border-image, so only the middle stretches; the puppy
+  // head / tail corners keep their proportions for both one-line and long
+  // messages. This replaces the old separate dog PNGs that visibly looked
+  // pasted onto an unrelated rounded rectangle.
+  const textFrameStyle = isUser ? {
+    ...userBubbleStyle,
+    padding: '0 5px',
+    background: 'transparent',
+    backdropFilter: 'none',
+    WebkitBackdropFilter: 'none',
+    borderStyle: 'solid',
+    borderColor: 'transparent',
+    borderWidth: '14px 46px 31px 15px',
+    borderImageSource: "url('/assets/bubble-dog-tail-frame.png')",
+    borderImageSlice: '70 250 130 80 fill',
+    borderImageWidth: '14px 46px 31px 15px',
+    borderImageOutset: '3px 8px 7px 3px',
+    borderImageRepeat: 'stretch',
+    boxShadow: 'none',
+  } : {
+    ...aiBubbleStyle,
+    padding: '0 5px',
+    background: 'transparent',
+    backdropFilter: 'none',
+    WebkitBackdropFilter: 'none',
+    borderStyle: 'solid',
+    borderColor: 'transparent',
+    borderWidth: '29px 20px 14px 48px',
+    borderImageSource: "url('/assets/bubble-dog-head-frame.png')",
+    borderImageSlice: '130 180 70 240 fill',
+    borderImageWidth: '29px 20px 14px 48px',
+    borderImageOutset: '7px 4px 3px 8px',
+    borderImageRepeat: 'stretch',
+    boxShadow: 'none',
+  }
+
   return (
     <div className={clsx('flex w-full min-w-0 items-end gap-2 animate-fade-up', sameSenderAsNext ? 'mb-1' : 'mb-4', isUser ? 'flex-row-reverse' : 'flex-row')}>
       {avatarEl}
@@ -350,9 +387,9 @@ function MessageBubble({ message, onLongPress, onRegenerate, onRegenerateRound, 
         )}
         {message.type === 'text' && !diceValue && !message.voiceLoading && (
           <div
-            className={clsx('relative rounded-[20px] leading-relaxed select-none cursor-default', pressed ? 'bubble-press' : '')}
+            className={clsx('relative leading-relaxed select-none cursor-default', pressed ? 'bubble-press' : '')}
             style={{
-              ...(isUser ? userBubbleStyle : aiBubbleStyle),
+              ...textFrameStyle,
               // A one-word bubble still reads as part of a full conversation
               // flow rather than a stray dot near the avatar; long messages
               // are unaffected since their intrinsic content width already
@@ -361,41 +398,6 @@ function MessageBubble({ message, onLongPress, onRegenerate, onRegenerateRound, 
             }}
             {...pressProps}
           >
-            <span className={isUser ? '' : 'bubble-ai'} style={{ position:'absolute', inset:0, borderRadius:'inherit', pointerEvents:'none' }} />
-            {/* AI bubble dog head — chin at bubble border, paws ~25px inside */}
-            {!isUser && (
-              <img
-                src="/assets/dog-head.png"
-                alt=""
-                style={{
-                  position: 'absolute',
-                  top: -25,
-                  left: -8,
-                  width: 50, height: 50,
-                  objectFit: 'contain',
-                  pointerEvents: 'none',
-                  zIndex: 5,
-                  filter: 'drop-shadow(0 2px 5px rgba(0,0,0,0.12))',
-                }}
-              />
-            )}
-            {/* User bubble dog tail — rotated 30° toward lower-right, clear of avatar */}
-            {isUser && (
-              <img
-                src="/assets/dog-tail.png"
-                alt=""
-                style={{
-                  position: 'absolute',
-                  bottom: -10,
-                  right: -14,
-                  width: 30, height: 30,
-                  objectFit: 'contain',
-                  pointerEvents: 'none',
-                  zIndex: 5,
-                  transform: 'rotate(30deg)',
-                }}
-              />
-            )}
             {message.streaming && !message.content ? (
               <TypingIndicator />
             ) : (

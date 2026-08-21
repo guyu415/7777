@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, useLayoutEffect } from 'react'
-import { ArrowLeft, Menu, Cat, Search, Settings2, Trash2, Waves, X } from 'lucide-react'
+import { ArrowLeft, Cat, Search, Settings2, Trash2, Waves, X } from 'lucide-react'
 import { useShallow } from 'zustand/react/shallow'
 import MessageList from './MessageList'
 import MessageSearch from './MessageSearch'
@@ -196,6 +196,39 @@ export default function ChatWindow({ theme }) {
   const [showSearch, setShowSearch] = useState(false)
   const callAudioRef = useRef(null)
   const messageListRef = useRef(null)
+  const navPressTimerRef = useRef(null)
+  const navLongPressTriggeredRef = useRef(false)
+
+  const startNavPress = useCallback((event) => {
+    if (event.pointerType === 'mouse' && event.button !== 0) return
+    event.currentTarget.setPointerCapture?.(event.pointerId)
+    clearTimeout(navPressTimerRef.current)
+    navLongPressTriggeredRef.current = false
+    navPressTimerRef.current = setTimeout(() => {
+      navLongPressTriggeredRef.current = true
+      setShowSessionDrawer(true)
+      navigator.vibrate?.(15)
+    }, 480)
+  }, [])
+
+  const finishNavPress = useCallback((event) => {
+    if (event.currentTarget.hasPointerCapture?.(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId)
+    }
+    clearTimeout(navPressTimerRef.current)
+    if (!navLongPressTriggeredRef.current) setCurrentView('sessions')
+    navLongPressTriggeredRef.current = false
+  }, [setCurrentView])
+
+  const cancelNavPress = useCallback((event) => {
+    if (event.currentTarget.hasPointerCapture?.(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId)
+    }
+    clearTimeout(navPressTimerRef.current)
+    navLongPressTriggeredRef.current = false
+  }, [])
+
+  useEffect(() => () => clearTimeout(navPressTimerRef.current), [])
 
   const selectedProvider = providers?.find(p => p.id === selectedProviderId)
   const effectiveApiKey = selectedProvider?.apiKey || apiKey
@@ -602,7 +635,7 @@ export default function ChatWindow({ theme }) {
   const primaryDarkColor = theme?.primaryDark || '#2196d3'
 
   return (
-    <div className="flex flex-col h-full" style={{ background: 'transparent' }}>
+    <div className="chat-window-shell flex flex-col h-full" style={{ background: 'transparent' }}>
       {/* Header */}
       <div className="safe-top"
         style={{
@@ -610,31 +643,26 @@ export default function ChatWindow({ theme }) {
           paddingBottom: 6,
           paddingLeft: 13,
           paddingRight: 13,
-          background: `linear-gradient(180deg, rgba(255,252,253,.7), ${primaryColor}0d)`,
-          backdropFilter: 'blur(18px)',
-          WebkitBackdropFilter: 'blur(18px)',
+          background: `linear-gradient(180deg, rgba(255,255,255,.34), ${primaryColor}08 72%, transparent)`,
+          backdropFilter: 'blur(10px)',
+          WebkitBackdropFilter: 'blur(10px)',
           flexShrink: 0,
           position: 'relative',
           zIndex: 10,
         }}>
         <div className="flex items-center min-w-0" style={{ gap: 8 }}>
           <button
-            onClick={() => setCurrentView('sessions')}
-            title="返回铃兰花园"
-            aria-label="返回铃兰花园"
+            onPointerDown={startNavPress}
+            onPointerUp={finishNavPress}
+            onPointerCancel={cancelNavPress}
+            onContextMenu={(event) => event.preventDefault()}
+            onClick={(event) => { if (event.detail === 0) setCurrentView('sessions') }}
+            title="返回；长按切换对话"
+            aria-label="返回铃兰花园；长按切换对话"
             className="w-9 h-9 flex items-center justify-center flex-shrink-0"
-            style={{ border: 0, borderRadius: '52% 48% 58% 42% / 43% 57% 43% 57%', background: 'rgba(255,255,255,.48)', color: primaryDarkColor }}
+            style={{ border: '1px solid rgba(255,255,255,.34)', borderRadius: '52% 48% 58% 42% / 43% 57% 43% 57%', background: 'rgba(255,255,255,.34)', color: primaryDarkColor, backdropFilter: 'blur(10px)', WebkitBackdropFilter: 'blur(10px)' }}
           >
             <ArrowLeft size={20} />
-          </button>
-          <button
-            onClick={() => setShowSessionDrawer(true)}
-            title="切换对话"
-            aria-label="切换对话"
-            className="w-9 h-9 flex items-center justify-center flex-shrink-0"
-            style={{ border: 0, borderRadius: '47% 53% 40% 60% / 58% 43% 57% 42%', background: `${primaryColor}10`, color: primaryColor }}
-          >
-            <Menu size={17} />
           </button>
           <div className="w-10 h-10 rounded-full overflow-hidden flex items-center justify-center text-xl flex-shrink-0"
             style={{
@@ -684,16 +712,6 @@ export default function ChatWindow({ theme }) {
             <img src="/assets/whale.png" alt="" style={{ width: 70, height: 70, objectFit: 'contain', flexShrink: 0 }} />
           </button>
         </div>
-      </div>
-
-      {/* Wave divider — 原聊天窗口的既有装饰，保留。 */}
-      <div style={{ height: 8, overflow: 'hidden', marginTop: -1, flexShrink: 0 }}>
-        <svg viewBox="0 0 400 8" preserveAspectRatio="none" style={{ width: '100%', height: '100%' }}>
-          <path d="M0,4 C50,0 100,8 150,4 C200,0 250,8 300,4 C350,0 400,8 400,4 L400,8 L0,8 Z"
-            fill={`${theme?.primary || '#ff85b3'}20`} />
-          <path d="M0,4 C50,0 100,8 150,4 C200,0 250,8 300,4 C350,0 400,8 400,4"
-            fill="none" stroke="#FFE4A1" strokeWidth="1.5" />
-        </svg>
       </div>
 
       {showHeaderTools && (
@@ -981,10 +999,11 @@ export default function ChatWindow({ theme }) {
         style={{
           position: 'relative',
           zIndex: 5,
-          background: `linear-gradient(to bottom, rgba(255,255,255,0.38), rgba(255,255,255,0.26))`,
-          backdropFilter: 'blur(22px)',
-          WebkitBackdropFilter: 'blur(22px)',
-          borderTop: `1px solid ${primaryColor}18`,
+          marginTop: -12,
+          paddingTop: 12,
+          background: 'linear-gradient(to bottom, transparent, rgba(255,255,255,.18) 28%, rgba(255,255,255,.3))',
+          backdropFilter: 'blur(12px)',
+          WebkitBackdropFilter: 'blur(12px)',
         }}
       >
         {isCodexSession && codex.sendError && (
