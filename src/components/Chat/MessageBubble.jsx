@@ -235,45 +235,23 @@ function MessageBubble({ message, onLongPress, onRegenerate, onRegenerateRound, 
     overflowWrap: 'anywhere',
   }
 
-  // The completed artwork is a real nine-slice skin, not a background image.
-  // Keeping its illustrated corners in the border regions means short and
-  // long messages can grow independently without stretching the puppy, tail,
-  // paws or rounded outline. `fill` uses the artwork's own opaque centre, so
-  // there is no second CSS rectangle sitting inside the frame.
-  const textFrameStyle = isUser ? {
-    ...userBubbleStyle,
-    padding: '0 4px',
-    lineHeight: 1.65,
-    letterSpacing: '0.06em',
-    background: 'transparent',
+  // Keep the flexible bubble and the illustrated ornaments independent.
+  // A nine-slice border stretches its side artwork on tall messages; a normal
+  // CSS bubble grows cleanly while the puppy head/tail stay a fixed size.
+  const textFrameStyle = {
+    ...(isUser ? userBubbleStyle : aiBubbleStyle),
+    width: 'fit-content',
+    minHeight: 42,
+    padding: isUser ? '6px 24px 7px 16px' : '6px 20px 7px 42px',
+    lineHeight: 1.55,
+    letterSpacing: '0.035em',
+    background: 'linear-gradient(180deg, rgba(255,254,254,0.98) 0%, rgba(255,248,250,0.98) 48%, rgba(252,237,243,0.98) 100%)',
     backdropFilter: 'none',
     WebkitBackdropFilter: 'none',
-    borderStyle: 'solid',
-    borderColor: 'transparent',
-    borderWidth: '4px 32px 8px 10px',
-    borderImageSource: "url('/assets/shy-puppy-tail-bubble-v4.png')",
-    borderImageSlice: '65 190 90 90 fill',
-    borderImageWidth: '8px 40px 16px 14px',
-    borderImageOutset: '2px 8px 8px 2px',
-    borderImageRepeat: 'stretch',
-    boxShadow: 'none',
-  } : {
-    ...aiBubbleStyle,
-    padding: '0 4px',
-    lineHeight: 1.65,
-    letterSpacing: '0.06em',
-    background: 'transparent',
-    backdropFilter: 'none',
-    WebkitBackdropFilter: 'none',
-    borderStyle: 'solid',
-    borderColor: 'transparent',
-    borderWidth: '8px 18px 4px 36px',
-    borderImageSource: "url('/assets/shy-puppy-head-bubble-v4.png')",
-    borderImageSlice: '175 180 48 300 fill',
-    borderImageWidth: '18px 24px 6px 40px',
-    borderImageOutset: '10px 3px 1px 3px',
-    borderImageRepeat: 'stretch',
-    boxShadow: 'none',
+    border: '1.5px solid rgba(226, 171, 189, 0.9)',
+    borderRadius: 18,
+    boxShadow: '0 2px 6px rgba(186, 121, 144, 0.10), inset 0 1px 0 rgba(255,255,255,0.82)',
+    overflow: 'visible',
   }
 
   return (
@@ -402,10 +380,32 @@ function MessageBubble({ message, onLongPress, onRegenerate, onRegenerateRound, 
             }}
             {...pressProps}
           >
+            <img
+              src={isUser ? '/assets/shy-puppy-tail-v5.png' : '/assets/shy-puppy-head-v5.png'}
+              alt=""
+              aria-hidden="true"
+              style={isUser ? {
+                position: 'absolute',
+                right: -11,
+                bottom: -9,
+                width: 40,
+                height: 'auto',
+                zIndex: 2,
+                pointerEvents: 'none',
+              } : {
+                position: 'absolute',
+                left: -8,
+                top: -18,
+                width: 48,
+                height: 'auto',
+                zIndex: 2,
+                pointerEvents: 'none',
+              }}
+            />
             {message.streaming && !message.content ? (
               <TypingIndicator />
             ) : (
-              <span className="whitespace-pre-wrap break-words" style={{ display: 'block', minWidth: 0, maxWidth: '100%', overflow: 'hidden' }}>
+              <span className="whitespace-pre-wrap break-words" style={{ position: 'relative', zIndex: 1, display: 'block', minWidth: 0, maxWidth: '100%' }}>
                 {replyQuote && (
                   <span style={{
                     display: 'block', marginBottom: 7, padding: '5px 8px',
