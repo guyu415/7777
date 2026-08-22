@@ -105,14 +105,14 @@ export default function ChatWindow({ theme }) {
     currentView, setCurrentView, apiKey, aiAvatar: globalAiAvatar, aiName: globalAiName,
     userAvatar: globalUserAvatar,
     deleteMessagesFrom, workerUrl, currentSessionId, sessions, providers, selectedProviderId,
-    summaryToast, setSummaryToast, showFallingParticles,
+    summaryToast, setSummaryToast, showFallingParticles, bubbleSkin,
   } = useStore(useShallow(s => ({
     currentView: s.currentView, setCurrentView: s.setCurrentView, apiKey: s.apiKey,
     aiAvatar: s.aiAvatar, aiName: s.aiName, userAvatar: s.userAvatar,
     deleteMessagesFrom: s.deleteMessagesFrom, workerUrl: s.workerUrl, currentSessionId: s.currentSessionId,
     sessions: s.sessions, providers: s.providers, selectedProviderId: s.selectedProviderId,
     summaryToast: s.summaryToast, setSummaryToast: s.setSummaryToast,
-    showFallingParticles: s.showFallingParticles,
+    showFallingParticles: s.showFallingParticles, bubbleSkin: s.bubbleSkin,
   })))
 
   const currentSession = sessions?.find(s => s.id === currentSessionId)
@@ -819,6 +819,7 @@ export default function ChatWindow({ theme }) {
             userAvatar={effectiveUserAvatar}
             aiAvatar={effectiveAiAvatar}
             theme={theme}
+            bubbleSkin={bubbleSkin}
             selectionMode={selectedMessageIds.size > 0}
             selectedIds={selectedMessageIds}
             onToggleSelect={toggleMessageSelection}

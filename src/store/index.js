@@ -168,6 +168,9 @@ export const useStore = create(
 
       // Theme, background, font (global defaults)
       themeId: 'pink',
+      // Decorative frame used by ordinary text messages. It is independent
+      // from the selected colour theme, font, and chat background.
+      bubbleSkin: 'puppy',
       // Null follows the selected theme; a hex value overrides only text in
       // the user's own message bubbles across every single-chat theme.
       userBubbleTextColor: null,
@@ -264,6 +267,7 @@ export const useStore = create(
       setAiAvatar: (v) => set({ aiAvatar: v }),
       setAiName: (name) => set({ aiName: name }),
       setChatTheme: (id) => set({ themeId: id }),
+      setBubbleSkin: (id) => set({ bubbleSkin: id }),
       setUserBubbleTextColor: (value) => set({ userBubbleTextColor: value }),
       setChatBg: (bg) => set({ chatBg: bg }),
       setFontFamily: (f) => set({ fontFamily: f }),
@@ -488,7 +492,7 @@ export const useStore = create(
     }),
     {
       name: 'pink-chat-settings',
-      version: 22,
+      version: 23,
       migrate: (persisted, version) => {
         if (version < 2) {
           const providers = [
@@ -678,6 +682,9 @@ export const useStore = create(
         if (version < 22) {
           persisted = { showFallingParticles: true, ...persisted }
         }
+        if (version < 23) {
+          persisted = { bubbleSkin: 'puppy', ...persisted }
+        }
         return persisted
       },
       partialize: (state) => ({
@@ -693,6 +700,7 @@ export const useStore = create(
         aiAvatar: state.aiAvatar,
         aiName: state.aiName,
         themeId: state.themeId,
+        bubbleSkin: state.bubbleSkin,
         userBubbleTextColor: state.userBubbleTextColor,
         chatBg: state.chatBg,
         fontFamily: state.fontFamily,

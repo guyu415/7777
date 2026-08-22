@@ -32,7 +32,7 @@ const ESTIMATED_ITEM_HEIGHT = 88
 const MessageList = forwardRef(function MessageList({
   messages, sessionId,
   onLongPress, lastAiId, onRegenerate, onRegenerateRound, onRetry,
-  isLoading, userAvatar, aiAvatar, theme,
+  isLoading, userAvatar, aiAvatar, theme, bubbleSkin,
   selectionMode, selectedIds, onToggleSelect,
   emptyAiName, emptyHasApiKey, onEmptyConfigureClick,
 }, ref) {
@@ -230,6 +230,7 @@ const MessageList = forwardRef(function MessageList({
                   userAvatar={userAvatar}
                   aiAvatar={aiAvatar}
                   theme={theme}
+                  bubbleSkin={bubbleSkin}
                   sameSenderAsPrev={sameSenderAsPrev}
                   sameSenderAsNext={sameSenderAsNext}
                 />
