@@ -137,6 +137,52 @@ function PuppyBubbleDecorations() {
   )
 }
 
+function ApplePixelBubbleBackdrop({ isUser }) {
+  const tailSide = isUser ? { right: 8 } : { left: 8, transform: 'scaleX(-1)' }
+  return (
+    <>
+      <span aria-hidden="true" style={{
+        position: 'absolute', inset: 0, zIndex: 0, pointerEvents: 'none',
+        background: 'linear-gradient(180deg, #fcffe9 0%, #f5fad9 48%, #eaf3c9 100%)',
+        border: '1.5px solid #a8b779', borderRadius: 2,
+        boxShadow: '2px 2px 0 rgba(160,177,111,.18), inset 0 1px 0 rgba(255,255,255,.92)',
+      }} />
+      <svg viewBox="0 0 18 13" aria-hidden="true" style={{ position: 'absolute', bottom: -9, width: 18, height: 13, zIndex: 0, pointerEvents: 'none', overflow: 'visible', ...tailSide }}>
+        <path d="M1 1h15v3h-3v3h-4v4L4 7V4H1Z" fill="#edf5cd" stroke="#a8b779" strokeWidth="1.35" strokeLinejoin="miter" />
+        <path d="M2 1h13" stroke="#fcffe9" strokeWidth="1" />
+      </svg>
+    </>
+  )
+}
+
+function ApplePixelBubbleDecorations({ isUser }) {
+  const side = (userValue, aiValue) => isUser ? userValue : aiValue
+  return (
+    <>
+      <svg viewBox="0 0 36 14" aria-hidden="true" style={{ position: 'absolute', top: -12, ...side({ left: 1 }, { right: 1 }), width: 34, zIndex: 3, pointerEvents: 'none', overflow: 'visible', transform: side(undefined, 'scaleX(-1)') }}>
+        <path d="M4 3 7 0l3 3-3 4ZM13 3l3-3 3 3-3 4ZM23 3l3-3 3 3-3 4Z" fill="#b7cd7c" />
+        <path d="M12 10h3M13.5 8.5v3M31 8h3M32.5 6.5v3" stroke="#a7b77a" strokeWidth="1" />
+      </svg>
+      <svg viewBox="0 0 34 30" aria-hidden="true" style={{ position: 'absolute', bottom: -12, ...side({ left: -8 }, { right: -8 }), width: 28, zIndex: 3, pointerEvents: 'none', overflow: 'visible', transform: side(undefined, 'scaleX(-1)') }}>
+        <path d="M15 8c-2-5 2-7 4-7" fill="none" stroke="#91a45f" strokeWidth="1.6" />
+        <path d="M17 5c3-3 6-2 7 0-3 2-5 2-7 0Z" fill="#bed880" stroke="#91a45f" strokeWidth="1" />
+        <path d="M16 9c-9-5-15 3-12 11 2 7 8 8 12 5 4 3 10 2 12-5 3-8-3-16-12-11Z" fill="#f8fce3" stroke="#9fb06d" strokeWidth="1.5" strokeLinejoin="miter" />
+        <path d="M8 17h2v2H8Zm14-2h2v2h-2Z" fill="#a7b77a" />
+      </svg>
+      <svg viewBox="0 0 40 39" aria-hidden="true" style={{ position: 'absolute', top: -18, ...side({ right: -8 }, { left: -8 }), width: 35, zIndex: 4, pointerEvents: 'none', overflow: 'visible', transform: side(undefined, 'scaleX(-1)') }}>
+        <path d="M19 10c0-5 3-8 7-8" fill="none" stroke="#71854b" strokeWidth="2" />
+        <path d="M22 7c4-5 9-4 11-1-4 3-8 4-11 1Z" fill="#98b957" stroke="#71854b" strokeWidth="1.3" />
+        <path d="M20 10C8 3 2 13 5 25c3 11 11 13 15 8 5 5 13 3 16-8 3-12-4-22-16-15Z" fill="#b8d86d" stroke="#94ad58" strokeWidth="1.5" strokeLinejoin="miter" />
+        <path d="M10 14h4v3h-4Z" fill="#d9eb9f" opacity=".9" />
+      </svg>
+      <svg viewBox="0 0 35 23" aria-hidden="true" style={{ position: 'absolute', bottom: -13, ...side({ right: -14 }, { left: -14 }), width: 31, zIndex: 3, pointerEvents: 'none', overflow: 'visible', transform: side(undefined, 'scaleX(-1)') }}>
+        <path d="M4 4h3V1h3v3h3v3h-3v3H7V7H4ZM27 15h3v-3h3v3h2v3h-2v3h-3v-3h-3Z" fill="#b5c979" />
+        <path d="M18 5h3V2h4v3h3v4h-3v3h-4V9h-3Z" fill="none" stroke="#91a45f" strokeWidth="1" />
+      </svg>
+    </>
+  )
+}
+
 function formatTime(ts) {
   return new Date(ts).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
 }
@@ -146,7 +192,7 @@ function formatFileBytes(bytes) {
   return `${Math.max(1, Math.round(bytes / 1024))}KB`
 }
 
-function MessageBubble({ message, onLongPress, onRegenerate, onRegenerateRound, onRetry, isLoading, userAvatar, aiAvatar, theme, sameSenderAsPrev, sameSenderAsNext }) {
+function MessageBubble({ message, onLongPress, onRegenerate, onRegenerateRound, onRetry, isLoading, userAvatar, aiAvatar, theme, bubbleSkin = 'puppy', sameSenderAsPrev, sameSenderAsNext }) {
   const [viewerSrc, setViewerSrc] = useState(null)
   const [pressed, setPressed] = useState(false)
   const [showVoiceText, setShowVoiceText] = useState(false)
@@ -312,6 +358,15 @@ function MessageBubble({ message, onLongPress, onRegenerate, onRegenerateRound, 
     boxShadow: 'none',
     overflow: 'visible',
   }
+  const isApplePixel = bubbleSkin === 'apple-pixel'
+  const activeTextFrameStyle = isApplePixel ? {
+    ...textFrameStyle,
+    minHeight: 38,
+    padding: '6px 14px 7px',
+    lineHeight: 1.5,
+    letterSpacing: '0.025em',
+    color: isUser ? (theme?.userBubbleText || '#5f6848') : '#5f6848',
+  } : textFrameStyle
 
   return (
     <div className={clsx('flex w-full min-w-0 items-end gap-2 animate-fade-up', sameSenderAsNext ? 'mb-1' : 'mb-4', isUser ? 'flex-row-reverse' : 'flex-row')}>
@@ -430,7 +485,7 @@ function MessageBubble({ message, onLongPress, onRegenerate, onRegenerateRound, 
           <div
             className={clsx('relative leading-relaxed select-none cursor-default', pressed ? 'bubble-press' : '')}
             style={{
-              ...textFrameStyle,
+              ...activeTextFrameStyle,
               // A one-word bubble still reads as part of a full conversation
               // flow rather than a stray dot near the avatar; long messages
               // are unaffected since their intrinsic content width already
@@ -439,9 +494,9 @@ function MessageBubble({ message, onLongPress, onRegenerate, onRegenerateRound, 
             }}
             {...pressProps}
           >
-            <PuppyBubbleBackdrop />
-            <PuppyBubbleDecorations />
-            <img
+            {isApplePixel ? <ApplePixelBubbleBackdrop isUser={isUser} /> : <PuppyBubbleBackdrop />}
+            {isApplePixel ? <ApplePixelBubbleDecorations isUser={isUser} /> : <PuppyBubbleDecorations />}
+            {!isApplePixel && <img
               src={isUser ? '/assets/shy-puppy-tail-v5.png' : '/assets/shy-puppy-head-v5.png'}
               alt=""
               aria-hidden="true"
@@ -464,7 +519,7 @@ function MessageBubble({ message, onLongPress, onRegenerate, onRegenerateRound, 
                 transform: 'rotate(-5deg)',
                 transformOrigin: '70% 85%',
               }}
-            />
+            />}
             {message.streaming && !message.content ? (
               <TypingIndicator />
             ) : (
