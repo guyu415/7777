@@ -24,7 +24,7 @@ export async function onRequest(context) {
 
   try {
     // Buffering at this hop is intentional: it avoids request-stream quirks in
-    // WebKit/Pages while the Worker still enforces the 1.1 MB audio limit.
+    // WebKit/Pages while the Worker still enforces the bounded audio limit.
     const body = await request.arrayBuffer()
     const upstream = await fetch(STT_UPSTREAM, {
       method: 'POST',

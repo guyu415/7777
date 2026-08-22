@@ -1,10 +1,16 @@
 import { useState, useRef, useEffect, useCallback, forwardRef, useImperativeHandle } from 'react'
 import { Maximize2, Minimize2, X as CloseIcon } from 'lucide-react'
 import { compressChatImage } from '../../utils/image'
-import { captureAndRecognizePushToTalk } from '../../services/pushToTalk'
+import { captureAndRecognizePushToTalk, shouldCancelVoiceGesture } from '../../services/pushToTalk'
+import { voiceCaptureConfig } from '../../services/voiceCapture'
 import { buildReplyMessage, buildReplyMessageBatch, buildReplyQuotePrefix, parseReplyQuotes } from '../../utils/replyQuotes'
 
 const PAW_LONG_PRESS_MS = 420
+
+function formatRecordingTime(ms) {
+  const seconds = Math.max(0, Math.floor(ms / 1000))
+  return `${String(Math.floor(seconds / 60)).padStart(2, '0')}:${String(seconds % 60).padStart(2, '0')}`
+}
 
 function formatImageBytes(bytes) {
   if (bytes >= 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)}MB`
@@ -238,6 +244,8 @@ const MessageInput = forwardRef(function MessageInput({ onSend, onSendBatch, onS
   const [inputCanExpand, setInputCanExpand] = useState(false)
   const [voiceState, setVoiceState] = useState('idle') // idle | recording | recognizing
   const [voiceLevel, setVoiceLevel] = useState(0)
+  const [voiceElapsedMs, setVoiceElapsedMs] = useState(0)
+  const [voiceCancelArmed, setVoiceCancelArmed] = useState(false)
   // A picked image sits here as a draft — thumbnail + cancel, still editable
   // alongside the text field — until Send is actually pressed. Shared by
   // every provider that reaches this component (Claude Code VPS, Codex VPS,
@@ -256,6 +264,9 @@ const MessageInput = forwardRef(function MessageInput({ onSend, onSendBatch, onS
   const pawLongPressTimerRef = useRef(null)
   const voiceAbortRef = useRef(null)
   const voiceStopRef = useRef(null)
+  const voiceStartedAtRef = useRef(0)
+  const pawPointerStartYRef = useRef(null)
+  const voiceCancelArmedRef = useRef(false)
   const suppressPawClickRef = useRef(false)
   const hasSendableContent = text.trim().length > 0 || segments.length > 0 || !!imageDraft || !!fileDraft
   const canSend = hasSendableContent && !isSendingAttachment
@@ -300,6 +311,10 @@ const MessageInput = forwardRef(function MessageInput({ onSend, onSendBatch, onS
     voiceStopRef.current = null
     setVoiceState('idle')
     setVoiceLevel(0)
+    setVoiceElapsedMs(0)
+    setVoiceCancelArmed(false)
+    voiceCancelArmedRef.current = false
+    pawPointerStartYRef.current = null
     const restored = readDraft(draftStorageKey)
     textRef.current = restored.text
     segmentsRef.current = restored.segments
@@ -328,6 +343,17 @@ const MessageInput = forwardRef(function MessageInput({ onSend, onSendBatch, onS
     voiceAbortRef.current?.abort()
     voiceStopRef.current?.abort()
   }, [])
+
+  useEffect(() => {
+    if (voiceState !== 'recording') return undefined
+    const updateElapsed = () => setVoiceElapsedMs(Math.min(
+      Date.now() - voiceStartedAtRef.current,
+      voiceCaptureConfig.maxUtteranceMs,
+    ))
+    updateElapsed()
+    const timer = window.setInterval(updateElapsed, 200)
+    return () => window.clearInterval(timer)
+  }, [voiceState])
 
   // 点击菜单外部收起
   useEffect(() => {
@@ -493,14 +519,19 @@ const MessageInput = forwardRef(function MessageInput({ onSend, onSendBatch, onS
     const stopController = new AbortController()
     voiceAbortRef.current = abortController
     voiceStopRef.current = stopController
+    voiceStartedAtRef.current = Date.now()
     setVoiceState('recording')
     setVoiceLevel(0)
+    setVoiceElapsedMs(0)
+    setVoiceCancelArmed(false)
+    voiceCancelArmedRef.current = false
     try {
       const result = await captureAndRecognizePushToTalk({
         workerUrl: voiceWorkerUrl,
         signal: abortController.signal,
         stopSignal: stopController.signal,
         onLevel: setVoiceLevel,
+        onRecordingEnd: () => setVoiceState(current => current === 'recording' ? 'recognizing' : current),
       })
       if (abortController.signal.aborted) return
       if (!result.text) throw new Error('没有听清，再按住说一次吧')
@@ -513,24 +544,59 @@ const MessageInput = forwardRef(function MessageInput({ onSend, onSendBatch, onS
       if (voiceStopRef.current === stopController) voiceStopRef.current = null
       setVoiceState('idle')
       setVoiceLevel(0)
+      setVoiceElapsedMs(0)
+      setVoiceCancelArmed(false)
+      voiceCancelArmedRef.current = false
     }
   }
 
   const handlePawPointerDown = (event) => {
     if (!onSendVoice || voiceState !== 'idle') return
     event.currentTarget.setPointerCapture?.(event.pointerId)
+    pawPointerStartYRef.current = event.clientY
+    voiceCancelArmedRef.current = false
+    setVoiceCancelArmed(false)
     suppressPawClickRef.current = false
     clearTimeout(pawLongPressTimerRef.current)
     pawLongPressTimerRef.current = setTimeout(beginPawVoice, PAW_LONG_PRESS_MS)
   }
 
+  const handlePawPointerMove = (event) => {
+    if (!voiceAbortRef.current || voiceState !== 'recording') return
+    const armed = shouldCancelVoiceGesture(pawPointerStartYRef.current, event.clientY)
+    if (armed === voiceCancelArmedRef.current) return
+    voiceCancelArmedRef.current = armed
+    setVoiceCancelArmed(armed)
+  }
+
+  const cancelPawVoice = () => {
+    clearTimeout(pawLongPressTimerRef.current)
+    pawLongPressTimerRef.current = null
+    suppressPawClickRef.current = true
+    voiceAbortRef.current?.abort()
+    voiceStopRef.current?.abort()
+    setVoiceState('idle')
+    setVoiceLevel(0)
+    setVoiceElapsedMs(0)
+    setVoiceCancelArmed(false)
+    voiceCancelArmedRef.current = false
+    pawPointerStartYRef.current = null
+  }
+
   const finishPawPress = () => {
     clearTimeout(pawLongPressTimerRef.current)
     pawLongPressTimerRef.current = null
+    if (voiceCancelArmedRef.current) {
+      cancelPawVoice()
+      return
+    }
     if (voiceStopRef.current && !voiceStopRef.current.signal.aborted) {
       setVoiceState('recognizing')
       voiceStopRef.current?.abort()
     }
+    pawPointerStartYRef.current = null
+    setVoiceCancelArmed(false)
+    voiceCancelArmedRef.current = false
   }
 
   // 云社媒浏览器入口——第一版只是人工进入 https://browser.xiaoman.xyz 的
@@ -742,8 +808,9 @@ const MessageInput = forwardRef(function MessageInput({ onSend, onSendBatch, onS
         ) : (
           <button
             onPointerDown={handlePawPointerDown}
+            onPointerMove={handlePawPointerMove}
             onPointerUp={finishPawPress}
-            onPointerCancel={finishPawPress}
+            onPointerCancel={cancelPawVoice}
             onLostPointerCapture={finishPawPress}
             onContextMenu={event => event.preventDefault()}
             onClick={() => {
@@ -779,12 +846,20 @@ const MessageInput = forwardRef(function MessageInput({ onSend, onSendBatch, onS
             />
             {voiceState !== 'idle' && (
               <span style={{
-                position: 'absolute', right: -2, bottom: 50, padding: '3px 7px', borderRadius: 10,
-                color: '#fff', background: voiceState === 'recording' ? '#ee6d89' : '#aa8793',
-                fontSize: 10, lineHeight: 1.2, whiteSpace: 'nowrap', boxShadow: '0 2px 8px rgba(80,40,55,.18)',
+                position: 'absolute', right: -2, bottom: 52, minWidth: 126, padding: '7px 10px', borderRadius: 13,
+                color: '#fff', background: voiceCancelArmed ? '#d84d68' : voiceState === 'recording' ? '#ee6d89' : '#aa8793',
+                fontSize: 10, lineHeight: 1.35, whiteSpace: 'nowrap', textAlign: 'center', boxShadow: '0 3px 12px rgba(80,40,55,.24)',
                 pointerEvents: 'none',
               }}>
-                {voiceState === 'recording' ? '松开发送' : '识别中…'}
+                {voiceState === 'recording' ? (
+                  <>
+                    <span style={{ display: 'block', fontSize: 11, fontWeight: 700 }}>
+                      <span aria-hidden="true" style={{ display: 'inline-block', width: 7, height: 7, borderRadius: '50%', marginRight: 5, background: '#fff', boxShadow: '0 0 0 3px rgba(255,255,255,.18)' }} />
+                      正在录制 {formatRecordingTime(voiceElapsedMs)} / {formatRecordingTime(voiceCaptureConfig.maxUtteranceMs)}
+                    </span>
+                    <span style={{ display: 'block', marginTop: 2, opacity: .92 }}>{voiceCancelArmed ? '松开取消' : '上滑取消 · 松开发送'}</span>
+                  </>
+                ) : '正在识别并发送…'}
               </span>
             )}
           </button>

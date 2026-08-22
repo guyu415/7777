@@ -333,11 +333,12 @@ export default {
   },
 }
 
-const STT_MAX_AUDIO_BYTES = 1_100_000
+// 120 s of 16 kHz/16-bit mono PCM plus the WAV header is ~3.84 MB.
+const STT_MAX_AUDIO_BYTES = 4_100_000
 
 export function encodeAudioBase64(bytes) {
   let binary = ''
-  // Avoid spreading the whole utterance at once: 30 seconds of PCM is large
+  // Avoid spreading the whole utterance at once: two minutes of PCM is large
   // enough to overflow the JavaScript argument stack in a Worker.
   for (let offset = 0; offset < bytes.length; offset += 0x8000) {
     binary += String.fromCharCode(...bytes.subarray(offset, offset + 0x8000))
@@ -348,7 +349,7 @@ export function encodeAudioBase64(bytes) {
 async function transcribeWithVpsSenseVoice(bytes, env) {
   if (!env.VPS_SERVICE_KEY) return null
   const controller = new AbortController()
-  const timeout = setTimeout(() => controller.abort(), 15_000)
+  const timeout = setTimeout(() => controller.abort(), 45_000)
   try {
     const response = await fetch(env.SENSEVOICE_URL || 'https://companion.xiaoman.xyz/stt/sensevoice', {
       method: 'POST',

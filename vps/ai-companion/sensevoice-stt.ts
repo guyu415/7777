@@ -2,7 +2,8 @@ import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-export const SENSEVOICE_MAX_AUDIO_BYTES = 1_100_000
+// Matches the browser's two-minute 16 kHz/16-bit mono capture ceiling.
+export const SENSEVOICE_MAX_AUDIO_BYTES = 4_100_000
 
 const KNOWN_EMOTIONS = new Set([
   'HAPPY', 'SAD', 'ANGRY', 'NEUTRAL', 'FEARFUL', 'DISGUSTED', 'SURPRISED',

@@ -1,6 +1,8 @@
 import { encodePcmWav } from './voiceCapture'
 
-const REQUEST_TIMEOUT_MS = 20_000
+// A two-minute PCM utterance takes longer to upload and transcribe than the
+// former 30-second cap, especially on mobile data.
+const REQUEST_TIMEOUT_MS = 60_000
 const NETWORK_RETRY_DELAY_MS = 300
 
 export function cloudSpeechEndpoint(workerUrl, locationLike = globalThis.location) {
