@@ -3,7 +3,10 @@ const PRE_ROLL_MS = 320
 const END_SILENCE_MS = 720
 const KEEP_TRAILING_MS = 180
 const MIN_SPEECH_MS = 180
-const MAX_UTTERANCE_MS = 30000
+// Push-to-talk used to stop silently at 30 seconds. Two minutes leaves enough
+// room for a normal one-minute message while keeping the raw PCM upload
+// bounded (~3.84 MB at 16 kHz/16-bit mono).
+const MAX_UTTERANCE_MS = 120000
 
 export function rootMeanSquare(samples) {
   if (!samples?.length) return 0
@@ -200,4 +203,5 @@ export async function captureUtterance({ signal, stopSignal, manualStop = false,
 export const voiceCaptureConfig = {
   sampleRate: TARGET_SAMPLE_RATE,
   endSilenceMs: END_SILENCE_MS,
+  maxUtteranceMs: MAX_UTTERANCE_MS,
 }

@@ -7,7 +7,11 @@ import { normalizeVoiceAcoustics, normalizeVoiceEmotion } from './localSenseVoic
  * SenseVoice + OpenSMILE endpoint used by voice calls on iOS. Nothing is
  * loaded or requested before an actual long press.
  */
-export async function captureAndRecognizePushToTalk({ workerUrl, signal, stopSignal, onSpeechStart, onLevel } = {}) {
+export function shouldCancelVoiceGesture(startY, currentY, threshold = 64) {
+  return Number.isFinite(startY) && Number.isFinite(currentY) && startY - currentY >= threshold
+}
+
+export async function captureAndRecognizePushToTalk({ workerUrl, signal, stopSignal, onSpeechStart, onLevel, onRecordingEnd } = {}) {
   if (!canUseCloudSpeech(workerUrl)) throw new Error('语音识别尚未配置')
   const samples = await captureUtterance({
     signal,
@@ -16,6 +20,7 @@ export async function captureAndRecognizePushToTalk({ workerUrl, signal, stopSig
     onSpeechStart,
     onLevel,
   })
+  onRecordingEnd?.()
   if (!samples.length) return { text: '', emotion: undefined, acoustics: null, engine: 'cloud', audioBlob: null, duration: 0 }
 
   const result = await recognizeCloudSpeech(samples, { workerUrl, signal })
