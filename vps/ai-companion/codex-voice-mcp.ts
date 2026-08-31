@@ -99,6 +99,13 @@ mcp.setRequestHandler(ListToolsRequestSchema, async () => ({
       },
     },
     {
+      name: 'get_music_context',
+      description:
+        'Read the song and estimated current lyric from the user\'s NetEase phone-play card. Use when the user ' +
+        'asks about what is playing or the current lyric. The returned position is estimated, not native iOS playback telemetry.',
+      inputSchema: { type: 'object', properties: {} },
+    },
+    {
       name: 'start_focus',
       description:
         'Genuinely start a focus/Pomodoro session for the user RIGHT NOW — a real global action, not a suggestion: ' +
@@ -256,6 +263,11 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
         const { ok, body, status } = await callInternal('/internal/codex/play-music-on-phone', { body: { title, artist, text } })
         if (!ok || !body?.ok) return { content: [{ type: 'text', text: `failed to deliver NetEase action: ${body?.error ?? status}` }], isError: true }
         return { content: [{ type: 'text', text: `sent NetEase phone action (${body.id ?? 'ok'})` }] }
+      }
+      case 'get_music_context': {
+        const { ok, body, status } = await callInternal('/internal/codex/music-context', { method: 'GET' })
+        if (!ok) return { content: [{ type: 'text', text: `failed to read music context: ${status}` }], isError: true }
+        return { content: [{ type: 'text', text: JSON.stringify(body) }] }
       }
       case 'get_focus_status': {
         const { ok, body, status } = await callInternal('/internal/focus/status', { method: 'GET' })

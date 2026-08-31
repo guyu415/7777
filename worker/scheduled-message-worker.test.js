@@ -120,4 +120,29 @@ describe('NetEase phone control catalog search', () => {
     expect(upstream).toHaveBeenCalledTimes(2)
     expect(upstream.mock.calls[0][0]).toBe('https://music.163.com/api/search/get')
   })
+
+  it('returns LRC text without ever requesting media bytes', async () => {
+    const upstream = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({
+      lrc: { lyric: '[00:01.00]第一句' }, tlyric: { lyric: '[00:01.00]First line' },
+    }), { status: 200, headers: { 'Content-Type': 'application/json' } }))
+    const response = await handleNeteaseControlApi(new Request('https://chat.xiaoman.xyz/netease/lyric?id=186016', {
+      headers: { Referer: 'https://chat.xiaoman.xyz/' },
+    }), {})
+    expect(await response.json()).toMatchObject({ ok: true, lrc: '[00:01.00]第一句', tlyric: '[00:01.00]First line' })
+    expect(upstream.mock.calls[0][0]).toContain('/api/song/lyric?id=186016')
+  })
+
+  it('forwards calibrated playback context through the signed VPS bridge', async () => {
+    const upstream = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({ ok: true, estimated: true }), {
+      status: 200, headers: { 'Content-Type': 'application/json' },
+    }))
+    const response = await handleNeteaseControlApi(new Request('https://chat.xiaoman.xyz/netease/playback', {
+      method: 'POST', headers: { Referer: 'https://chat.xiaoman.xyz/', 'Content-Type': 'application/json' },
+      body: JSON.stringify({ songId: '186016', name: '晴天', artists: '周杰伦', positionMs: 5000 }),
+    }), { VPS_SERVICE_KEY: 'secret' })
+    expect(response.status).toBe(200)
+    expect(upstream).toHaveBeenCalledWith('https://companion.xiaoman.xyz/netease/playback', expect.objectContaining({
+      method: 'POST', headers: expect.objectContaining({ 'X-VPS-Key': 'secret' }),
+    }))
+  })
 })

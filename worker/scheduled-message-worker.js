@@ -321,7 +321,7 @@ export default {
     }
 
     // ── 网易云手机控制：只搜索歌曲元数据，不获取或代理音频 ─────
-    if (pathname.startsWith('/netease/') && request.method === 'GET') {
+    if (pathname.startsWith('/netease/') && (request.method === 'GET' || request.method === 'POST')) {
       return handleNeteaseControlApi(request, env)
     }
 
@@ -623,7 +623,44 @@ export async function handleNeteaseControlApi(request, env) {
     return Response.json({ error: 'unauthorized' }, { status: 401, headers: CORS })
   }
 
-  if (url.pathname !== '/netease/search') {
+  if (url.pathname === '/netease/lyric' && request.method === 'GET') {
+    const id = (url.searchParams.get('id') || '').trim()
+    if (!/^\d+$/.test(id)) return Response.json({ ok: false, error: 'invalid song id' }, { status: 400, headers: CORS })
+    if (env.VPS_SERVICE_KEY) {
+      try {
+        const bridgeResponse = await fetch(`https://companion.xiaoman.xyz/netease/lyric?id=${id}`, { headers: { 'X-VPS-Key': env.VPS_SERVICE_KEY } })
+        const bridgeData = await bridgeResponse.json().catch(() => null)
+        if (bridgeResponse.ok && bridgeData?.ok) return Response.json(bridgeData, { headers: CORS })
+      } catch { /* use direct fallback */ }
+    }
+    try {
+      const upstream = await fetch(`https://music.163.com/api/song/lyric?id=${id}&lv=1&kv=1&tv=-1`, { headers: { 'User-Agent': 'Mozilla/5.0', Referer: 'https://music.163.com/' } })
+      const data = await upstream.json().catch(() => null)
+      if (!upstream.ok || !data) throw new Error(`HTTP ${upstream.status}`)
+      return Response.json({ ok: true, lrc: data.lrc?.lyric || '', tlyric: data.tlyric?.lyric || '' }, { headers: CORS })
+    } catch (error) {
+      return Response.json({ ok: false, error: `歌词上游失败: ${error.message}` }, { status: 502, headers: CORS })
+    }
+  }
+
+  if (url.pathname === '/netease/playback' && request.method === 'POST') {
+    if (!env.VPS_SERVICE_KEY) return Response.json({ ok: true, synced: false }, { headers: CORS })
+    const body = await request.json().catch(() => ({}))
+    if (!/^\d+$/.test(String(body.songId || ''))) return Response.json({ ok: false, error: 'invalid song id' }, { status: 400, headers: CORS })
+    try {
+      const bridgeResponse = await fetch('https://companion.xiaoman.xyz/netease/playback', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-VPS-Key': env.VPS_SERVICE_KEY },
+        body: JSON.stringify(body),
+      })
+      const data = await bridgeResponse.json().catch(() => null)
+      return Response.json(data || { ok: bridgeResponse.ok }, { status: bridgeResponse.status, headers: CORS })
+    } catch (error) {
+      return Response.json({ ok: false, error: `播放状态同步失败: ${error.message}` }, { status: 502, headers: CORS })
+    }
+  }
+
+  if (url.pathname !== '/netease/search' || request.method !== 'GET') {
     return Response.json({ error: 'unknown netease route' }, { status: 404, headers: CORS })
   }
 

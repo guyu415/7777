@@ -162,6 +162,69 @@ type NeteaseCatalogSong = {
   duration: number
 }
 
+type TimedLyric = { timeMs: number; text: string; translation?: string }
+type NeteasePlaybackContext = {
+  songId: string
+  name: string
+  artists: string
+  startedAt: number
+  lyrics: TimedLyric[]
+  updatedAt: number
+}
+
+let neteasePlaybackContext: NeteasePlaybackContext | null = null
+
+function parseNeteaseLrc(value: unknown): Map<number, string> {
+  const rows = new Map<number, string>()
+  let offset = 0
+  for (const rawLine of String(value || '').split(/\r?\n/)) {
+    const offsetMatch = rawLine.match(/^\[offset:([+-]?\d+)\]/i)
+    if (offsetMatch) { offset = Number(offsetMatch[1]) || 0; continue }
+    const stamps = [...rawLine.matchAll(/\[(\d{1,3}):(\d{2})(?:[.:](\d{1,3}))?\]/g)]
+    const text = rawLine.replace(/\[[^\]]+\]/g, '').trim()
+    if (!text) continue
+    for (const stamp of stamps) {
+      const fractionMs = stamp[3] ? Number(`0.${stamp[3]}`) * 1000 : 0
+      const timeMs = Math.max(0, Math.round((Number(stamp[1]) * 60 + Number(stamp[2])) * 1000 + fractionMs + offset))
+      rows.set(timeMs, text)
+    }
+  }
+  return rows
+}
+
+async function fetchNeteaseLyrics(songId: string): Promise<{ lrc: string; tlyric: string; lines: TimedLyric[] }> {
+  if (!/^\d+$/.test(songId)) throw new Error('invalid song id')
+  const response = await fetch(`https://music.163.com/api/song/lyric?id=${songId}&lv=1&kv=1&tv=-1`, {
+    headers: { 'User-Agent': 'Mozilla/5.0', Referer: 'https://music.163.com/' },
+    signal: AbortSignal.timeout(10_000),
+  })
+  const data = await response.json().catch(() => null) as any
+  if (!response.ok || !data) throw new Error(`NetEase lyric HTTP ${response.status}`)
+  const lrc = String(data.lrc?.lyric || '')
+  const tlyric = String(data.tlyric?.lyric || '')
+  const original = parseNeteaseLrc(lrc)
+  const translated = parseNeteaseLrc(tlyric)
+  const lines = [...original.entries()].sort((a, b) => a[0] - b[0]).map(([timeMs, text]) => ({ timeMs, text, translation: translated.get(timeMs) || '' }))
+  return { lrc, tlyric, lines }
+}
+
+function currentNeteasePlayback() {
+  const context = neteasePlaybackContext
+  if (!context) return { active: false }
+  const positionMs = Math.max(0, Date.now() - context.startedAt)
+  let lyricIndex = -1
+  for (let i = 0; i < context.lyrics.length && context.lyrics[i].timeMs <= positionMs; i++) lyricIndex = i
+  return {
+    active: true,
+    estimated: true,
+    song: { id: context.songId, name: context.name, artists: context.artists },
+    positionMs,
+    currentLyric: lyricIndex >= 0 ? context.lyrics[lyricIndex] : null,
+    nextLyric: context.lyrics[lyricIndex + 1] || null,
+    note: 'Progress is estimated from the phone play tap and user calibration; NetEase iOS does not expose live playback state.',
+  }
+}
+
 async function searchNeteaseSongs(titleValue: unknown, artistValue: unknown, limitValue: unknown = 1): Promise<NeteaseCatalogSong[]> {
   const title = String(titleValue ?? '').trim().slice(0, 100)
   const artist = String(artistValue ?? '').trim().slice(0, 100)
@@ -2102,7 +2165,9 @@ const mcp = new Server(
       `the main chat. If kind:"gomoku_move", the user just placed a black stone and it's your turn as white. ` +
       `Decide your move for real — there is no engine or algorithm choosing it for you, it's genuinely your call, ` +
       `and it should be quick — a board move doesn't need deep deliberation the way a real conversational answer ` +
-      `might. Call gomoku_move with the given gameId and your chosen row/col (0-14) to place it; call ` +
+      `might. The get_music_context tool reads the current phone-play card and estimated current lyric; use it ` +
+      `when the user asks about the playing song/lyrics, and always treat its progress as estimated rather than native iOS telemetry.\n\n` +
+      `Call gomoku_move with the given gameId and your chosen row/col (0-14) to place it; call ` +
       `gomoku_get_state first if you want to re-check the board. The server validates legality and tells you why ` +
       `if a move is rejected — just retry with a different cell. If kind:"gomoku_undo_request", the user wants to ` +
       `take back the last round — genuinely decide, then answer with gomoku_undo_response (agree:true/false), not ` +
@@ -2197,6 +2262,14 @@ mcp.setRequestHandler(ListToolsRequestSchema, async () => ({
         },
         required: ['title'],
       },
+    },
+    {
+      name: 'get_music_context',
+      description:
+        'Read the song and current lyric shown on the user\'s NetEase phone-play card. Progress is explicitly ' +
+        'estimated from the play tap and ±5 second calibration because iOS does not expose NetEase playback state. ' +
+        'Use when the user asks what is playing, discusses the current lyric, or wants a response tied to the song.',
+      inputSchema: { type: 'object', properties: {} },
     },
     {
       name: 'roll_dice',
@@ -2526,6 +2599,8 @@ mcp.setRequestHandler(CallToolRequestSchema, async req => {
         log('netease_phone_action_sent', { id, songId: action.songId, turnId, hasThinking: !!thinking })
         return { content: [{ type: 'text', text: `sent NetEase phone action (${id})` }] }
       }
+      case 'get_music_context':
+        return { content: [{ type: 'text', text: JSON.stringify(currentNeteasePlayback()) }] }
       case 'roll_dice': {
         const turnId = currentTurn?.turnId
         if (!turnId || currentTurn?.surface !== 'main') {
@@ -6145,7 +6220,7 @@ const CODEX_DEVELOPER_INSTRUCTIONS = [
   'Call send_voice whenever the user explicitly asks you to speak/send voice (e.g. "发语音", "说给我听", "语音回复我") — always honor an explicit request.',
   'You may also choose it yourself sometimes for a short, warm, casual reply, but most replies should stay normal text — do not overuse it.',
   'If you use send_voice, keep the spoken text short (well under 300 characters).',
-  'You also have a real `play_music_on_phone` tool. When the user explicitly asks to play/hear/pick/change a song, call it with the title and optional artist. It sends a visible card that opens the official NetEase Cloud Music app on the user\'s phone; full/member playback stays in their logged-in phone app and never passes through this VPS. Do not claim it is already playing — tell them it is ready to tap. Do not call it unprompted, and do not duplicate its visible message with a normal reply. For pause/resume/stop, tell an iPhone user to use the lock screen or Control Center.',
+  'You also have a real `play_music_on_phone` tool. When the user explicitly asks to play/hear/pick/change a song, call it with the title and optional artist. It sends a visible card that opens the official NetEase Cloud Music app on the user\'s phone; full/member playback stays in their logged-in phone app and never passes through this VPS. Do not claim it is already playing — tell them it is ready to tap. Do not call it unprompted, and do not duplicate its visible message with a normal reply. For pause/resume/stop, tell an iPhone user to use the lock screen or Control Center. Use `get_music_context` when the user refers to the current song or lyric; its progress is estimated from the card play tap/calibration, not native iOS telemetry.',
   'You also have real Focus tools: start_focus/get_focus_status/extend_focus/finish_focus/approve_focus_request/deny_focus_request/pause_focus/stop_focus/resume_focus, controlling ONE real global Pomodoro-style focus session (system-wide, not per-conversation).',
   'Call start_focus only when the user actually asks to focus/study/work, or clearly agrees to your offer — it takes effect immediately (their screen switches to a running countdown, no click needed from them), so never call it speculatively; it fails if a session is already active.',
   'Once you start one, you are its sole manager: while it runs, a message delivered as a real turn on this same conversation means the user is talking to you from the focus screen (reply normally, using your real memory of everything so far) or is asking to pause/end early with a stated reason (you must genuinely decide and call the real approve/deny/pause_focus/stop_focus tool — text alone does nothing; deny requires a real reason).',
@@ -7994,6 +8069,37 @@ Bun.serve<{ authed: true }>({
       } catch (error) {
         return jsonResponse({ ok: false, error: String(error) }, { status: 502 })
       }
+    }
+
+    if (url.pathname === '/netease/lyric' && req.method === 'GET') {
+      if (!vpsServiceKey || req.headers.get('X-VPS-Key') !== vpsServiceKey) return jsonResponse({ error: 'unauthorized' }, { status: 401 })
+      const id = url.searchParams.get('id') || ''
+      try {
+        const lyrics = await fetchNeteaseLyrics(id)
+        return jsonResponse({ ok: true, source: 'netease-lyric-vps', lrc: lyrics.lrc, tlyric: lyrics.tlyric })
+      } catch (error) {
+        return jsonResponse({ ok: false, error: String(error) }, { status: 502 })
+      }
+    }
+
+    if (url.pathname === '/netease/playback' && req.method === 'POST') {
+      if (!vpsServiceKey || req.headers.get('X-VPS-Key') !== vpsServiceKey) return jsonResponse({ error: 'unauthorized' }, { status: 401 })
+      const body = await req.json().catch(() => ({} as Record<string, unknown>)) as any
+      const songId = String(body.songId || '')
+      if (!/^\d+$/.test(songId)) return jsonResponse({ ok: false, error: 'invalid song id' }, { status: 400 })
+      const positionMs = Math.min(Math.max(Number(body.positionMs) || 0, 0), 24 * 60 * 60 * 1000)
+      let lyrics: TimedLyric[] = []
+      try { lyrics = (await fetchNeteaseLyrics(songId)).lines } catch { /* context remains useful without lyrics */ }
+      neteasePlaybackContext = {
+        songId,
+        name: String(body.name || '').slice(0, 100),
+        artists: String(body.artists || '').slice(0, 100),
+        startedAt: Date.now() - positionMs,
+        lyrics,
+        updatedAt: Date.now(),
+      }
+      log('netease_playback_synced', { songId, positionMs, lyricLines: lyrics.length })
+      return jsonResponse({ ok: true, estimated: true })
     }
 
     // Server-to-server acoustic ASR/SER. The browser never calls this route:
@@ -10375,6 +10481,11 @@ ${awareness ? `你自己的知觉：${awareness}\n` : ''}${note ? `背景：${no
         activeTurns: codexActiveTurnCount(),
         restartInFlight: codexRestartInFlight,
       })
+    }
+
+    if (url.pathname === '/internal/codex/music-context' && req.method === 'GET') {
+      if (!internalAuthOk(req)) return unauthorized()
+      return jsonResponse(currentNeteasePlayback())
     }
 
     if (url.pathname === '/internal/codex/restart' && req.method === 'POST') {

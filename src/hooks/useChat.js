@@ -429,6 +429,9 @@ export function useChat() {
         const np = getPlayerState()
         if (np.current) {
           builtSystemPrompt += `\n【最近一次为用户选择的歌曲】《${np.current.name}》-${np.current.artists}`
+          if (np.startedAt && np.currentLyric) {
+            builtSystemPrompt += `\n【手机播放估算状态】约播放到 ${Math.floor(np.positionMs / 60000)}:${String(Math.floor(np.positionMs / 1000) % 60).padStart(2, '0')}，当前歌词：“${np.currentLyric.text}”${np.currentLyric.translation ? `（${np.currentLyric.translation}）` : ''}。这是从用户点击播放和手动校准推算的，不是网易云返回的真实进度；可以结合这句回应，但不得声称精确同步或自动监听。`
+          }
         }
       }
 
