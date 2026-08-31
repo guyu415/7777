@@ -12,7 +12,7 @@ export const EMPTY_ROLLING_SUMMARY = [
 export const EMPTY_LONG_TERM_TEXT = ['关系与身份连续性：', '明确事实和约定：', '用户偏好：'].join('\n')
 export const EMPTY_RECENT_TEXT = ['重要情绪与互动状态：', '正在进行的事情：', '待办：'].join('\n')
 
-const SUMMARY_FIELDS = [
+export const SUMMARY_FIELDS = [
   ['relationshipIdentity', '关系与身份连续性'],
   ['emotionInteraction', '重要情绪与互动状态'],
   ['factsCommitments', '明确事实和约定'],

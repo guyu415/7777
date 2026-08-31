@@ -2,21 +2,26 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { ChevronDown, ChevronLeft, ChevronUp, Eraser, RefreshCw, RotateCcw, Save } from 'lucide-react'
 import { getTidalMemoryStatus, saveTidalMemorySummary } from '../services/companion'
 import {
-  EMPTY_LONG_TERM_TEXT,
-  EMPTY_RECENT_TEXT,
   EMPTY_ROLLING_SUMMARY,
   formatTidalCoverage,
   formatTidalTime,
-  mergeTidalLayers,
   parseTidalSummary,
-  renderTidalLongTerm,
-  renderTidalRecent,
+  renderTidalSummary,
+  SUMMARY_FIELDS,
   tidalStatusPresentation,
 } from '../utils/tidalMemory'
 
-function splitSummaryText(text) {
-  const fields = parseTidalSummary(text)
-  return [renderTidalLongTerm(fields), renderTidalRecent(fields)]
+// Grouping only — display order and the canonical save order both come from
+// SUMMARY_FIELDS, so a field's label can never drift out of sync between
+// what's shown here and what actually gets parsed/rendered.
+const LONG_TERM_KEYS = ['relationshipIdentity', 'factsCommitments', 'preferences']
+const RECENT_KEYS = ['emotionInteraction', 'ongoing', 'todos']
+const FIELD_LABELS = Object.fromEntries(SUMMARY_FIELDS)
+const EMPTY_FIELDS = Object.fromEntries(SUMMARY_FIELDS.map(([key]) => [key, '']))
+const FIELD_KEYS = SUMMARY_FIELDS.map(([key]) => key)
+
+function fieldsFromText(text) {
+  return parseTidalSummary(text) || EMPTY_FIELDS
 }
 
 function Card({ children, style }) {
@@ -27,37 +32,54 @@ function Card({ children, style }) {
   )
 }
 
+function FieldEditor({ fieldKey, label, value, onChange, dirty, primary }) {
+  return (
+    <div className="mb-2.5 last:mb-0">
+      <div className="flex items-center justify-between mb-1">
+        <span className="text-[11px] font-medium" style={{ color: '#4f7092' }}>{label}</span>
+        <span className="text-[10px]" style={{ color: '#9ab0c7' }}>{value.length}/1200</span>
+      </div>
+      <textarea
+        value={value}
+        onChange={(event) => onChange(fieldKey, event.target.value)}
+        maxLength={1200}
+        spellCheck={false}
+        className="w-full rounded-xl px-3 py-2.5 text-sm outline-none"
+        style={{ minHeight: 76, resize: 'vertical', color: '#315778', background: 'rgba(248,252,255,0.9)', border: `1px solid ${dirty ? `${primary}88` : 'rgba(150,185,220,0.38)'}`, lineHeight: 1.6 }}
+        aria-label={label}
+      />
+    </div>
+  )
+}
+
 export default function TidalMemory({ theme, onBack }) {
   const primary = theme?.primary || '#4aacf0'
   const primaryDark = theme?.primaryDark || '#2196d3'
   const [status, setStatus] = useState(null)
-  const [longTermDraft, setLongTermDraft] = useState('')
-  const [recentDraft, setRecentDraft] = useState('')
-  const [savedLongTerm, setSavedLongTerm] = useState('')
-  const [savedRecent, setSavedRecent] = useState('')
+  const [fields, setFields] = useState(EMPTY_FIELDS)
+  const [savedFields, setSavedFields] = useState(EMPTY_FIELDS)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [feedback, setFeedback] = useState(null)
   const [coreOpen, setCoreOpen] = useState(false)
   const [checkpointOpen, setCheckpointOpen] = useState(false)
 
-  const dirty = longTermDraft !== savedLongTerm || recentDraft !== savedRecent
+  const dirty = FIELD_KEYS.some((key) => fields[key] !== savedFields[key])
   const tideView = tidalStatusPresentation(status?.tide)
   const saveBlocked = status?.tide?.status === 'running' || status?.tide?.status === 'retry_wait'
+  const durableTotal = LONG_TERM_KEYS.reduce((n, key) => n + fields[key].length, 0)
+  const recentTotal = RECENT_KEYS.reduce((n, key) => n + fields[key].length, 0)
 
   const load = useCallback(async ({ discardDraft = false } = {}) => {
     setLoading(true)
     setFeedback(null)
     try {
       const next = await getTidalMemoryStatus()
-      const nextText = next.rollingSummary?.text || EMPTY_ROLLING_SUMMARY
-      const [nextLongTerm, nextRecent] = splitSummaryText(nextText)
+      const nextFields = fieldsFromText(next.rollingSummary?.text || EMPTY_ROLLING_SUMMARY)
       setStatus(next)
       if (discardDraft || !dirty) {
-        setLongTermDraft(nextLongTerm)
-        setRecentDraft(nextRecent)
-        setSavedLongTerm(nextLongTerm)
-        setSavedRecent(nextRecent)
+        setFields(nextFields)
+        setSavedFields(nextFields)
       } else if (next.revision !== status?.revision) {
         setFeedback({ type: 'error', text: '摘要已在别处更新。当前修改未丢失，请复制留存或取消修改后刷新。' })
       }
@@ -73,13 +95,10 @@ export default function TidalMemory({ theme, onBack }) {
     getTidalMemoryStatus()
       .then((next) => {
         if (!live) return
-        const text = next.rollingSummary?.text || EMPTY_ROLLING_SUMMARY
-        const [nextLongTerm, nextRecent] = splitSummaryText(text)
+        const nextFields = fieldsFromText(next.rollingSummary?.text || EMPTY_ROLLING_SUMMARY)
         setStatus(next)
-        setLongTermDraft(nextLongTerm)
-        setRecentDraft(nextRecent)
-        setSavedLongTerm(nextLongTerm)
-        setSavedRecent(nextRecent)
+        setFields(nextFields)
+        setSavedFields(nextFields)
       })
       .catch((error) => {
         if (!live) return
@@ -95,24 +114,22 @@ export default function TidalMemory({ theme, onBack }) {
   }
 
   const handleCancel = () => {
-    setLongTermDraft(savedLongTerm)
-    setRecentDraft(savedRecent)
+    setFields(savedFields)
     setFeedback(null)
   }
 
   const handleClear = () => {
-    setLongTermDraft(EMPTY_LONG_TERM_TEXT)
-    setRecentDraft(EMPTY_RECENT_TEXT)
+    setFields(EMPTY_FIELDS)
     setFeedback(null)
+  }
+
+  const updateField = (key, value) => {
+    setFields((prev) => ({ ...prev, [key]: value }))
   }
 
   const handleSave = async () => {
     if (!status || !dirty || saving || saveBlocked) return
-    const merged = mergeTidalLayers(longTermDraft, recentDraft)
-    if (!merged) {
-      setFeedback({ type: 'error', text: '请保留两个框各自的三个固定标题和冒号（标题下的内容可以留空）。' })
-      return
-    }
+    const merged = renderTidalSummary(fields)
     setSaving(true)
     setFeedback(null)
     try {
@@ -121,20 +138,17 @@ export default function TidalMemory({ theme, onBack }) {
         expectedRevision: status.revision,
         summaryText: merged,
       })
-      const nextText = next.rollingSummary?.text || merged
-      const [nextLongTerm, nextRecent] = splitSummaryText(nextText)
+      const nextFields = fieldsFromText(next.rollingSummary?.text || merged)
       setStatus(next)
-      setLongTermDraft(nextLongTerm)
-      setRecentDraft(nextRecent)
-      setSavedLongTerm(nextLongTerm)
-      setSavedRecent(nextRecent)
+      setFields(nextFields)
+      setSavedFields(nextFields)
       setFeedback({ type: 'success', text: '摘要已保存，并写入 CC 的权威潮汐记忆。' })
     } catch (error) {
       const messages = {
         version_conflict: '摘要或潮汐状态已变化，请刷新后重试；你的输入仍保留在文本框中。',
         tidal_active: '潮汐任务正在处理，暂不能保存；请稍后重试。你的输入仍保留在文本框中。',
         session_mismatch: '会话已变化，请刷新页面后重试。',
-        invalid_summary: '内容没通过服务端校验（可能是某一段超出长度上限），请检查后重试；你的输入仍保留在文本框中。',
+        invalid_summary: '某一段超出长度上限了，请检查后重试；你的输入仍保留在文本框中。',
         write_failed: '服务器写入失败，请稍后重试；你的输入仍保留在文本框中。',
       }
       setFeedback({ type: 'error', text: messages[error.code] || error.message || '保存失败，旧摘要保持不变。' })
@@ -216,20 +230,13 @@ export default function TidalMemory({ theme, onBack }) {
           <div className="flex items-center justify-between gap-2 mb-2">
             <div>
               <div className="text-xs font-medium" style={{ color: '#2c5282' }}>长期记忆摘要</div>
-              <div className="text-[10px] mt-0.5" style={{ color: '#9ab0c7' }}>{status?.rollingSummary ? `版本 ${status.revision}${status.rollingSummary.source === 'manual' ? ' · 已人工修订' : ''}` : '尚无摘要，可按固定六段格式创建'}</div>
+              <div className="text-[10px] mt-0.5" style={{ color: '#9ab0c7' }}>{status?.rollingSummary ? `版本 ${status.revision}${status.rollingSummary.source === 'manual' ? ' · 已人工修订' : ''}` : '尚无摘要，可直接填写创建'}</div>
             </div>
-            <span className="px-2.5 py-1 rounded-full text-[10px]" style={{ color: primaryDark, background: `${primary}14` }}>固定上限</span>
+            <span className="px-2.5 py-1 rounded-full text-[10px]" style={{ color: primaryDark, background: `${primary}14` }}>{durableTotal}/2600</span>
           </div>
-          <textarea
-            value={longTermDraft}
-            onChange={(event) => setLongTermDraft(event.target.value)}
-            maxLength={2600}
-            spellCheck={false}
-            className="w-full rounded-xl px-3 py-3 text-sm outline-none"
-            style={{ minHeight: 260, resize: 'vertical', color: '#315778', background: 'rgba(248,252,255,0.9)', border: `1px solid ${dirty ? `${primary}88` : 'rgba(150,185,220,0.38)'}`, lineHeight: 1.7 }}
-            aria-label="长期记忆摘要"
-          />
-          <div className="flex justify-between mt-1 text-[10px]" style={{ color: '#9ab0c7' }}><span>保留身份、关系里程碑、明确约定和稳定偏好</span><span>{longTermDraft.length}/2600</span></div>
+          {LONG_TERM_KEYS.map((key) => (
+            <FieldEditor key={key} fieldKey={key} label={FIELD_LABELS[key]} value={fields[key]} onChange={updateField} dirty={dirty} primary={primary} />
+          ))}
         </Card>
 
         <Card>
@@ -238,17 +245,12 @@ export default function TidalMemory({ theme, onBack }) {
               <div className="text-xs font-medium" style={{ color: '#2c5282' }}>已模糊的早期事件概括</div>
               <div className="text-[10px] mt-0.5" style={{ color: '#9ab0c7' }}>只覆盖 CC 已确认闭合的旧前缀；当前状态以检查点和边界后原文为准</div>
             </div>
+            <span className="px-2.5 py-1 rounded-full text-[10px]" style={{ color: primaryDark, background: `${primary}14` }}>{recentTotal}/2400</span>
           </div>
-          <textarea
-            value={recentDraft}
-            onChange={(event) => setRecentDraft(event.target.value)}
-            maxLength={2400}
-            spellCheck={false}
-            className="w-full rounded-xl px-3 py-3 text-sm outline-none"
-            style={{ minHeight: 220, resize: 'vertical', color: '#315778', background: 'rgba(248,252,255,0.9)', border: `1px solid ${dirty ? `${primary}88` : 'rgba(150,185,220,0.38)'}`, lineHeight: 1.7 }}
-            aria-label="已模糊的早期事件概括"
-          />
-          <div className="flex justify-between mt-1 text-[10px]" style={{ color: '#9ab0c7' }}><span>{dirty ? '有未保存修改' : '已与服务端一致'}</span><span>{recentDraft.length}/2400</span></div>
+          {RECENT_KEYS.map((key) => (
+            <FieldEditor key={key} fieldKey={key} label={FIELD_LABELS[key]} value={fields[key]} onChange={updateField} dirty={dirty} primary={primary} />
+          ))}
+          <div className="text-[10px] mt-1" style={{ color: '#9ab0c7' }}>{dirty ? '有未保存修改' : '已与服务端一致'}</div>
           <p className="text-[10px] mt-2 leading-relaxed" style={{ color: '#8a7aa0' }}>
             两层会作为同一版潮汐记忆一起保存；不会触发 /compact，原始聊天记录不会被修改。
           </p>
