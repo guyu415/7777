@@ -67,6 +67,7 @@ export async function syncNeteasePlayback(action, positionMs = 0) {
     songId,
     name: String(action?.name || '').slice(0, 100),
     artists: String(action?.artists || '').slice(0, 100),
+    durationMs: Math.max(0, Math.round(Number(action?.durationMs) || 0)),
     positionMs: Math.max(0, Math.round(Number(positionMs) || 0)),
   }
   const res = await fetch(`${SYNC_BASE}/netease/playback`, {
@@ -96,6 +97,7 @@ export function createNeteasePhoneAction(song) {
     artists: song.artists || '',
     album: song.album || '',
     cover: song.cover || '',
+    durationMs: Math.max(0, Math.round(Number(song.duration) || 0) * 1000),
     deepLink: buildNeteaseDeepLink(song.id),
     webUrl: buildNeteaseWebUrl(song.id),
   }

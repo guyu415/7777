@@ -10,7 +10,9 @@ export default function NeteasePlayCard({ action }) {
   const [lyricsState, setLyricsState] = useState('loading')
   const [player, setPlayer] = useState(() => getPlayerState())
   const [expanded, setExpanded] = useState(false)
-  const isActive = valid && player.action?.songId === songId && player.startedAt > 0
+  const isThisPlayback = valid && player.action?.songId === songId && player.startedAt > 0
+  const hasEnded = isThisPlayback && player.ended
+  const isActive = isThisPlayback && !player.ended
 
   useEffect(() => {
     if (!valid) return
@@ -47,7 +49,9 @@ export default function NeteasePlayCard({ action }) {
   const webUrl = `https://music.163.com/song?id=${songId}`
   const handlePlay = () => setPlayer(startPhonePlayback(action, lyrics))
   const nudge = (deltaMs) => setPlayer(calibratePhonePlayback(Math.max(0, player.positionMs + deltaMs)))
-  const compactLyric = isActive
+  const compactLyric = hasEnded
+    ? '播放已结束'
+    : isActive
     ? (player.currentLyric?.text || '正在等待第一句…')
     : (lyricsState === 'loading' ? '正在取歌词…' : (visibleLyrics[0]?.text || '点播放后显示歌词'))
 

@@ -13,7 +13,7 @@ describe('NetEase phone handoff', () => {
 
   it('creates a serializable chat-card action', () => {
     expect(createNeteasePhoneAction({ id: 42, name: '晴天', artists: '周杰伦' })).toEqual({
-      provider: 'netease', songId: '42', name: '晴天', artists: '周杰伦', album: '', cover: '',
+      provider: 'netease', songId: '42', name: '晴天', artists: '周杰伦', album: '', cover: '', durationMs: 0,
       deepLink: 'orpheus://song/42/?autoplay=1', webUrl: 'https://music.163.com/song?id=42',
     })
   })

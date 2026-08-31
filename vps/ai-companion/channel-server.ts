@@ -149,6 +149,7 @@ type NeteasePhoneAction = {
   artists: string
   album: string
   cover: string
+  durationMs: number
   deepLink: string
   webUrl: string
 }
@@ -167,6 +168,7 @@ type NeteasePlaybackContext = {
   songId: string
   name: string
   artists: string
+  durationMs: number
   startedAt: number
   lyrics: TimedLyric[]
   updatedAt: number
@@ -212,6 +214,18 @@ function currentNeteasePlayback() {
   const context = neteasePlaybackContext
   if (!context) return { active: false }
   const positionMs = Math.max(0, Date.now() - context.startedAt)
+  const lastLyricMs = Number(context.lyrics[context.lyrics.length - 1]?.timeMs) || 0
+  const endAtMs = context.durationMs || (lastLyricMs ? lastLyricMs + 30_000 : 0)
+  if (endAtMs > 0 && positionMs >= endAtMs) {
+    return {
+      active: false,
+      ended: true,
+      estimated: true,
+      song: { id: context.songId, name: context.name, artists: context.artists },
+      positionMs: endAtMs,
+      note: 'Estimated playback expired at the catalog duration; no current lyric is supplied.',
+    }
+  }
   let lyricIndex = -1
   for (let i = 0; i < context.lyrics.length && context.lyrics[i].timeMs <= positionMs; i++) lyricIndex = i
   return {
@@ -299,6 +313,7 @@ async function resolveNeteasePhoneAction(titleValue: unknown, artistValue: unkno
     artists: String(song?.artists || artist),
     album: String(song?.album || ''),
     cover: String(song?.cover || ''),
+    durationMs: Math.max(0, Math.round(Number(song?.duration) || 0) * 1000),
     deepLink: `orpheus://song/${songId}/?autoplay=1`,
     webUrl: `https://music.163.com/song?id=${songId}`,
   }
@@ -8088,12 +8103,14 @@ Bun.serve<{ authed: true }>({
       const songId = String(body.songId || '')
       if (!/^\d+$/.test(songId)) return jsonResponse({ ok: false, error: 'invalid song id' }, { status: 400 })
       const positionMs = Math.min(Math.max(Number(body.positionMs) || 0, 0), 24 * 60 * 60 * 1000)
+      const durationMs = Math.min(Math.max(Number(body.durationMs) || 0, 0), 24 * 60 * 60 * 1000)
       let lyrics: TimedLyric[] = []
       try { lyrics = (await fetchNeteaseLyrics(songId)).lines } catch { /* context remains useful without lyrics */ }
       neteasePlaybackContext = {
         songId,
         name: String(body.name || '').slice(0, 100),
         artists: String(body.artists || '').slice(0, 100),
+        durationMs,
         startedAt: Date.now() - positionMs,
         lyrics,
         updatedAt: Date.now(),

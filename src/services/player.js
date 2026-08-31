@@ -27,8 +27,17 @@ export function subscribePlayer(fn) {
 
 export function getPlayerState() {
   const positionMs = state.startedAt ? Math.max(0, Date.now() - state.startedAt) : 0
-  const lyricIndex = findLyricIndex(state.lyrics, positionMs)
-  return { ...state, positionMs, lyricIndex, currentLyric: lyricIndex >= 0 ? state.lyrics[lyricIndex] : null }
+  const endAtMs = playbackEndAtMs(state.action, state.lyrics)
+  const ended = !!state.startedAt && endAtMs > 0 && positionMs >= endAtMs
+  const lyricIndex = ended ? -1 : findLyricIndex(state.lyrics, positionMs)
+  return { ...state, positionMs, endAtMs, ended, lyricIndex, currentLyric: lyricIndex >= 0 ? state.lyrics[lyricIndex] : null }
+}
+
+export function playbackEndAtMs(action, lyrics) {
+  const durationMs = Math.max(0, Number(action?.durationMs) || 0)
+  if (durationMs) return durationMs
+  const lastLyricMs = Number(lyrics?.[lyrics.length - 1]?.timeMs) || 0
+  return lastLyricMs ? lastLyricMs + 30_000 : 0
 }
 
 export function findLyricIndex(lines, positionMs) {
