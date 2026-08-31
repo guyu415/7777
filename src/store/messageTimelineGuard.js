@@ -120,9 +120,11 @@ if (!globalThis[INSTALL_KEY]) {
       clearIrrelevantPending(activeConversationId)
       const incoming = rawIncoming.filter(message => !isTombstoned(message))
       const current = state.messages.filter(message => !isTombstoned(message))
-      const next = incoming.length === 0
+      const next = rawIncoming.length === 0
         ? []
-        : reconcileTimelineSnapshot(current, incoming)
+        : incoming.length === 0
+          ? current
+          : reconcileTimelineSnapshot(current, incoming)
       return { messages: next }
     })
   }
