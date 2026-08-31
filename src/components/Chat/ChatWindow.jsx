@@ -504,13 +504,20 @@ export default function ChatWindow({ theme }) {
 
   const handleDeleteSelected = useCallback(async () => {
     const ids = messages.filter((message) => selectedMessageIds.has(message.id)).map((message) => message.id)
-    if (!ids.length) return
-    if (!window.confirm(`确定删除选中的 ${ids.length} 条消息吗？`)) return
-    let failed = 0
-    for (const id of ids) {
-      try { await deleteMsg(id) } catch { failed += 1 }
+    if (!ids.length) {
+      setSelectedMessageIds(new Set())
+      return
     }
+    if (!window.confirm(`确定删除选中的 ${ids.length} 条消息吗？`)) return
+
+    // Treat a confirmed multi-delete as one UI action: leave selection mode
+    // immediately, then start every optimistic local delete before waiting on
+    // IndexedDB/server cleanup. The old sequential await made bubbles vanish
+    // one-by-one while the selection bar stayed on screen, which felt like the
+    // user had to press Delete repeatedly.
     setSelectedMessageIds(new Set())
+    const results = await Promise.allSettled(ids.map((id) => deleteMsg(id)))
+    const failed = results.filter((result) => result.status === 'rejected').length
     showToast(failed ? `已删除 ${ids.length - failed} 条，${failed} 条失败` : `已删除 ${ids.length} 条消息`)
   }, [deleteMsg, messages, selectedMessageIds])
 
@@ -820,7 +827,7 @@ export default function ChatWindow({ theme }) {
             aiAvatar={effectiveAiAvatar}
             theme={theme}
             bubbleSkin={bubbleSkin}
-            selectionMode={selectedMessageIds.size > 0}
+            selectionMode={messages.some((message) => selectedMessageIds.has(message.id))}
             selectedIds={selectedMessageIds}
             onToggleSelect={toggleMessageSelection}
             emptyAiName={effectiveAiName}
@@ -929,10 +936,10 @@ export default function ChatWindow({ theme }) {
         </div>
       )}
 
-      {selectedMessageIds.size > 0 && (
+      {messages.some((message) => selectedMessageIds.has(message.id)) && (
         <div className="fixed left-1/2 -translate-x-1/2 flex items-center gap-2 rounded-full px-2 py-2" style={{ bottom: 'calc(var(--safe-bottom) + 78px)', zIndex: 45, background: 'rgba(255,255,255,.96)', boxShadow: '0 8px 30px rgba(70,45,60,.2)', border: `1px solid ${primaryColor}30`, backdropFilter: 'blur(16px)' }}>
           <button onClick={cancelMultiSelect} className="w-9 h-9 rounded-full grid place-items-center" style={{ color: '#8b7580', background: '#f5f0f2' }} aria-label="取消多选"><X size={17} /></button>
-          <span className="px-2 text-sm font-medium" style={{ color: '#76525e', minWidth: 74, textAlign: 'center' }}>已选 {selectedMessageIds.size} 条</span>
+          <span className="px-2 text-sm font-medium" style={{ color: '#76525e', minWidth: 74, textAlign: 'center' }}>已选 {messages.filter((message) => selectedMessageIds.has(message.id)).length} 条</span>
           <button onClick={handleReplySelected} className="h-9 rounded-full px-4 flex items-center gap-1.5 text-sm" style={{ color: '#8b5060', background: '#f8e9ef' }}>↩️ 引用</button>
           <button onClick={handleDeleteSelected} className="h-9 rounded-full px-4 flex items-center gap-1.5 text-sm text-white" style={{ background: '#df6f7b' }}><Trash2 size={15} />删除</button>
         </div>
