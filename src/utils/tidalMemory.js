@@ -67,7 +67,6 @@ export function mergeTidalLayers(longTermText, recentText) {
       const tail = normalized.slice(bodyStart)
       const next = nextLabel ? new RegExp(`\\n${nextLabel}[：:]`).exec(tail) : null
       out[key] = tail.slice(0, next?.index ?? tail.length).trim()
-      if (!out[key]) return null
     }
     return out
   }
