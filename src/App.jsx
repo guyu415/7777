@@ -687,7 +687,7 @@ export default function App() {
       }, 0)
     }
 
-    const unsub = onProactiveMessage(async ({ id, text, ts, kind, voice, thinking }) => {
+    const unsub = onProactiveMessage(async ({ id, text, ts, kind, voice, thinking, musicAction }) => {
       const vpsSession = useStore.getState().sessions?.find(s => s.providerName === 'claude-code-vps')
       if (!vpsSession) return
       // A live-delivered turn saves its bubbles under local ids but records
@@ -768,7 +768,7 @@ export default function App() {
         return
       }
 
-      const msg = { id, conversationId: vpsSession.id, role: 'assistant', type: 'text', content: text, timestamp: ts, streaming: false, source: 'cc-proactive', ...reasoningFields }
+      const msg = { id, conversationId: vpsSession.id, role: 'assistant', type: 'text', content: text, timestamp: ts, streaming: false, source: 'cc-proactive', ...(musicAction ? { musicAction } : {}), ...reasoningFields }
       await showAndPersist(msg, text.slice(0, 40))
     })
     return () => {

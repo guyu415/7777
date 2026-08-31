@@ -83,6 +83,7 @@ function toBubble(codexMsg, userVoiceMap = {}) {
     streaming: !!codexMsg.streaming,
     reasoning: codexMsg.reasoning || undefined,
     reasoningStreaming: !!(codexMsg.streaming && codexMsg.reasoning),
+    musicAction: codexMsg.musicAction || undefined,
   }
 }
 

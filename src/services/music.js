@@ -1,32 +1,46 @@
-// iTunes / Apple Music 试听（经 Worker 的 /itunes/* 代理）
-// 迭代：网易云（地区 404）→ B 站音频区（412）→ B 站视频区（机房 IP 风控 412）
-// → iTunes。境外机房 IP 反而是优势：iTunes 不封境外、零登录、零风控，
-// 几乎每首华语流行都有，返回可直接播放的 m4a。代价：每首 30 秒试听。
+// 网易云手机播放控制：这里只搜索歌曲并生成 App Deep Link。
+// 音频始终由手机上的网易云官方客户端获取，VPS 不解析或缓存歌曲文件。
 
 const SYNC_BASE = 'https://chat.xiaoman.xyz'
 
-export async function searchSongs(keywords, limit = 12) {
-  const res = await fetch(`${SYNC_BASE}/itunes/search?keywords=${encodeURIComponent(keywords)}&limit=${limit}`)
-  if (!res.ok) throw new Error(`搜索失败 HTTP ${res.status}`)
+function numericSongId(id) {
+  const value = String(id ?? '').trim()
+  if (!/^\d+$/.test(value)) throw new Error('无效的网易云歌曲 ID')
+  return value
+}
+
+export async function searchSongs(keywords, limit = 12, match = {}) {
+  const query = String(keywords || '').trim()
+  if (!query) return []
+  const size = Math.min(Math.max(Number(limit) || 12, 1), 20)
+  const params = new URLSearchParams({ keywords: query, limit: String(size) })
+  if (match.title) params.set('title', match.title)
+  if (match.artist) params.set('artist', match.artist)
+  const res = await fetch(`${SYNC_BASE}/netease/search?${params}`)
+  if (!res.ok) throw new Error(`网易云搜索失败 HTTP ${res.status}`)
   const data = await res.json()
+  if (!data.ok) throw new Error(data.error || '网易云搜索失败')
   return data.songs || []
 }
 
-export async function getPlayUrl(id) {
-  const res = await fetch(`${SYNC_BASE}/itunes/playurl?id=${encodeURIComponent(id)}`)
-  if (!res.ok) throw new Error(`获取播放链接失败 HTTP ${res.status}`)
-  return res.json() // { ok, url, br, code }
+export function buildNeteaseDeepLink(id) {
+  return `orpheus://song/${numericSongId(id)}/?autoplay=1`
 }
 
-export async function getLyric(id) {
-  const res = await fetch(`${SYNC_BASE}/itunes/lyric?id=${encodeURIComponent(id)}`)
-  if (!res.ok) return { lrc: '', tlyric: '' }
-  return res.json()
+export function buildNeteaseWebUrl(id) {
+  return `https://music.163.com/song?id=${numericSongId(id)}`
 }
 
-// 数据源探测：面板顶部显示"数据源：Apple Music 试听 · 探测正常 (N 首)"
-export async function getMusicStatus() {
-  const res = await fetch(`${SYNC_BASE}/itunes/status`)
-  if (!res.ok) throw new Error(`HTTP ${res.status}`)
-  return res.json() // { ok, source, probe }
+export function createNeteasePhoneAction(song) {
+  if (!song?.id) throw new Error('歌曲信息不完整')
+  return {
+    provider: 'netease',
+    songId: String(song.id),
+    name: song.name || '未知歌曲',
+    artists: song.artists || '',
+    album: song.album || '',
+    cover: song.cover || '',
+    deepLink: buildNeteaseDeepLink(song.id),
+    webUrl: buildNeteaseWebUrl(song.id),
+  }
 }

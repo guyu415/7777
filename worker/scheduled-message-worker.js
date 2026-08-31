@@ -320,6 +320,11 @@ export default {
       return handleItunesApi(request, env)
     }
 
+    // ── 网易云手机控制：只搜索歌曲元数据，不获取或代理音频 ─────
+    if (pathname.startsWith('/netease/') && request.method === 'GET') {
+      return handleNeteaseControlApi(request, env)
+    }
+
     // ── NetEase Cloud Music API proxy ─────────────────────────────
     if (pathname.startsWith('/music/') && (request.method === 'GET' || request.method === 'POST')) {
       return handleMusicProxy(request, env)
@@ -605,6 +610,84 @@ async function handleItunesApi(request, env) {
     return Response.json({ error: 'unknown itunes route' }, { status: 404, headers: CORS })
   } catch (e) {
     return Response.json({ error: `${e.name}: ${e.message}` }, { status: 500, headers: CORS })
+  }
+}
+
+export async function handleNeteaseControlApi(request, env) {
+  const url = new URL(request.url)
+  const authKey = url.searchParams.get('authKey') || url.searchParams.get('key') || ''
+  const referer = request.headers.get('Referer') || ''
+  const keyOk = !!env.MUSIC_AUTH_KEY && authKey === env.MUSIC_AUTH_KEY
+  const refOk = referer.includes('xiaoman.xyz') || referer.includes('pink-chat-blt.pages.dev')
+  if (!keyOk && !refOk) {
+    return Response.json({ error: 'unauthorized' }, { status: 401, headers: CORS })
+  }
+
+  if (url.pathname !== '/netease/search') {
+    return Response.json({ error: 'unknown netease route' }, { status: 404, headers: CORS })
+  }
+
+  const keywords = (url.searchParams.get('keywords') || '').trim().slice(0, 100)
+  const wantedTitle = (url.searchParams.get('title') || '').trim().slice(0, 100)
+  const wantedArtist = (url.searchParams.get('artist') || '').trim().slice(0, 100)
+  if (!keywords) return Response.json({ ok: true, songs: [] }, { headers: CORS })
+  const limit = Math.min(Math.max(parseInt(url.searchParams.get('limit') || '12', 10) || 12, 1), 20)
+  const headers = {
+    'Content-Type': 'application/x-www-form-urlencoded',
+    'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15',
+    'Referer': 'https://music.163.com/',
+  }
+  if (env.NCM_COOKIE) headers.Cookie = env.NCM_COOKIE
+
+  try {
+    const upstream = await fetch('https://music.163.com/api/search/get', {
+      method: 'POST',
+      headers,
+      // Fetch a wider candidate pool because this legacy endpoint often puts
+      // covers/remixes before the requested original recording.
+      body: new URLSearchParams({ s: keywords, type: '1', limit: '100', offset: '0' }).toString(),
+    })
+    const data = await upstream.json().catch(() => null)
+    if (!upstream.ok || !data) {
+      return Response.json({ ok: false, error: `网易云搜索上游 HTTP ${upstream.status}` }, { status: 502, headers: CORS })
+    }
+    const normalize = (value) => String(value || '').toLocaleLowerCase('zh-CN').replace(/[\s·・•,，.。:：()（）[\]【】《》〈〉'"“”‘’_-]/g, '')
+    const titleNeedle = normalize(wantedTitle)
+    const artistNeedle = normalize(wantedArtist)
+    let songs = (data.result?.songs || []).map((song, index) => ({
+      id: song.id,
+      name: song.name || '',
+      artists: (song.artists || song.ar || []).map((artist) => artist.name || '').filter(Boolean).join(' / '),
+      album: song.album?.name || song.al?.name || '',
+      cover: song.album?.picUrl || song.al?.picUrl || '',
+      duration: Math.round(Number(song.duration || song.dt || 0) / 1000),
+      _index: index,
+    })).filter((song) => /^\d+$/.test(String(song.id))).map((song) => {
+      const name = normalize(song.name)
+      const artists = normalize(song.artists)
+      let score = 0
+      if (titleNeedle) score += name === titleNeedle ? 120 : (name.includes(titleNeedle) ? 35 : 0)
+      if (artistNeedle) score += artists === artistNeedle ? 120 : (artists.includes(artistNeedle) ? 55 : 0)
+      if (titleNeedle && name !== titleNeedle && /翻唱|翻自|伴奏|dj|live|版/i.test(song.name)) score -= 25
+      return { ...song, _score: score }
+    }).sort((a, b) => b._score - a._score || a._index - b._index).slice(0, limit)
+      .map(({ _index, _score, ...song }) => song)
+    try {
+      const ids = songs.map((song) => song.id).join(',')
+      if (ids) {
+        const detailResponse = await fetch(`https://music.163.com/api/song/detail?ids=[${ids}]`, {
+          headers: { 'User-Agent': headers['User-Agent'], 'Referer': headers.Referer, ...(headers.Cookie ? { Cookie: headers.Cookie } : {}) },
+        })
+        const details = await detailResponse.json().catch(() => null)
+        const covers = new Map((details?.songs || []).map((song) => [String(song.id), song.album?.picUrl || song.al?.picUrl || '']))
+        songs = songs.map((song) => ({ ...song, cover: song.cover || covers.get(String(song.id)) || '' }))
+      }
+    } catch {
+      // The app-opening action only needs a song id; artwork is best-effort.
+    }
+    return Response.json({ ok: true, source: 'netease-catalog', songs }, { headers: CORS })
+  } catch (error) {
+    return Response.json({ ok: false, error: `${error.name}: ${error.message}` }, { status: 502, headers: CORS })
   }
 }
 

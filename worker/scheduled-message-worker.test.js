@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { encodeAudioBase64, handleSpeechTranscription, isFixedVpsSession, ordinaryProactiveEnabled } from './scheduled-message-worker.js'
+import { encodeAudioBase64, handleNeteaseControlApi, handleSpeechTranscription, isFixedVpsSession, ordinaryProactiveEnabled } from './scheduled-message-worker.js'
 
 describe('ordinary proactive target separation', () => {
   it('treats both CC and Codex fixed runtimes as non-API targets', () => {
@@ -94,5 +94,30 @@ describe('Cloudflare speech transcription', () => {
     })
     expect(response.status).toBe(200)
     expect(await response.json()).toMatchObject({ text: '只有转写', emotion: 'unknown', engine: 'whisper' })
+  })
+})
+
+describe('NetEase phone control catalog search', () => {
+  afterEach(() => vi.restoreAllMocks())
+
+  it('returns song ids for app handoff without requesting an audio URL', async () => {
+    const upstream = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(new Response(JSON.stringify({
+      result: { songs: [
+        { id: 1, name: '测试歌曲 (翻唱版)', artists: [{ name: '其他人' }], album: { name: '翻唱专辑' }, duration: 230000 },
+        { id: 1855080368, name: '测试歌曲', artists: [{ name: '测试歌手' }], album: { name: '测试专辑' }, duration: 240000 },
+      ] },
+    }), { status: 200, headers: { 'Content-Type': 'application/json' } })).mockResolvedValueOnce(new Response(JSON.stringify({
+      songs: [{ id: 1855080368, album: { picUrl: 'https://img.example/cover.jpg' } }],
+    }), { status: 200, headers: { 'Content-Type': 'application/json' } }))
+    const request = new Request('https://chat.xiaoman.xyz/netease/search?keywords=test&title=%E6%B5%8B%E8%AF%95%E6%AD%8C%E6%9B%B2&artist=%E6%B5%8B%E8%AF%95%E6%AD%8C%E6%89%8B&limit=5', {
+      headers: { Referer: 'https://chat.xiaoman.xyz/' },
+    })
+    const response = await handleNeteaseControlApi(request, {})
+    expect(response.status).toBe(200)
+    const payload = await response.json()
+    expect(payload.ok).toBe(true)
+    expect(payload.songs[0]).toMatchObject({ id: 1855080368, name: '测试歌曲', artists: '测试歌手', cover: 'https://img.example/cover.jpg' })
+    expect(upstream).toHaveBeenCalledTimes(2)
+    expect(upstream.mock.calls[0][0]).toBe('https://music.163.com/api/search/get')
   })
 })

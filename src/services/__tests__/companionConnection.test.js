@@ -123,6 +123,30 @@ describe('companion connection recovery', () => {
     await expect(stream.next()).resolves.toEqual({ value: undefined, done: true })
   })
 
+  it('delivers a NetEase phone action with its visible reply', async () => {
+    const companion = await import('../companion.js')
+    const stream = companion.streamChatViaCompanion({ text: '放晴天', messageId: 'music-turn' })
+    const firstChunk = stream.next()
+    await flush()
+    const socket = MockWebSocket.instances[0]
+    socket.open()
+    await flush()
+    const musicAction = {
+      provider: 'netease', songId: '186016', name: '晴天', artists: '周杰伦', album: '叶惠美', cover: '',
+      deepLink: 'orpheus://song/186016/?autoplay=1', webUrl: 'https://music.163.com/song?id=186016',
+    }
+    socket.message({
+      type: 'msg', id: 'music-reply', from: 'cc', text: '给你找到了，点一下播放。',
+      ts: Date.now(), turnId: 'music-turn', musicAction,
+    })
+    socket.message({ type: 'turn_end', turnId: 'music-turn' })
+    await expect(firstChunk).resolves.toEqual({
+      value: { text: '给你找到了，点一下播放。', wireId: 'music-reply', musicAction },
+      done: false,
+    })
+    await expect(stream.next()).resolves.toEqual({ value: undefined, done: true })
+  })
+
   it('broadcasts server-side message deletions to subscribers', async () => {
     const companion = await import('../companion.js')
     const deleted = []

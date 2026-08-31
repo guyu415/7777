@@ -4,6 +4,7 @@ import VoicePlayer from '../Voice/VoicePlayer'
 import ImageViewer from '../ImageViewer'
 import AcCard from './AcCard'
 import LetterCard from './LetterCard'
+import NeteasePlayCard from './NeteasePlayCard'
 import clsx from 'clsx'
 import { parseReplyQuotes } from '../../utils/replyQuotes'
 
@@ -758,6 +759,11 @@ function MessageBubble({ message, onLongPress, onRegenerate, onRegenerateRound, 
         {/* AC status card */}
         {!isUser && message.acStatus && (
           <AcCard status={message.acStatus} />
+        )}
+
+        {/* iOS requires this explicit tap before another app can open. */}
+        {!isUser && message.musicAction && (
+          <NeteasePlayCard action={message.musicAction} />
         )}
 
         {/* Timestamp */}

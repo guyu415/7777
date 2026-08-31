@@ -1,44 +1,12 @@
-// 全局音乐播放器单例：AI 的 [MUSIC:...] 指令使用。
-import { searchSongs, getPlayUrl } from './music'
+// AI 点歌的手机交接层。
+// Eunoia 只选歌并生成网易云 App Deep Link，不在网页或 VPS 上播放音频。
+import { createNeteasePhoneAction, searchSongs } from './music'
 
-const state = { current: null, playing: false, progress: 0, duration: 0 }
+const state = { current: null, mode: 'phone-handoff' }
 const listeners = new Set()
-let audio = null
 
 function emit() {
   for (const fn of listeners) fn({ ...state })
-}
-
-// iOS 不允许无手势的音频播放。页面上任意一次点按（比如发消息）都会
-// 提前用静音 wav 解锁 audio 元素，这样 AI 回复触发的播放就不会被拒。
-const SILENT_WAV = 'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAIA+AAACABAAZGF0YQAAAAA='
-let unlocked = false
-function unlockOnce() {
-  if (unlocked) return
-  unlocked = true
-  const a = getAudio()
-  if (!a.src) {
-    a.src = SILENT_WAV
-    a.play().then(() => { a.pause(); a.removeAttribute('src') }).catch(() => {})
-  }
-  document.removeEventListener('touchend', unlockOnce)
-  document.removeEventListener('click', unlockOnce)
-}
-if (typeof document !== 'undefined') {
-  document.addEventListener('touchend', unlockOnce, { passive: true })
-  document.addEventListener('click', unlockOnce)
-}
-
-function getAudio() {
-  if (!audio) {
-    audio = new Audio()
-    audio.addEventListener('timeupdate', () => { state.progress = audio.currentTime; emit() })
-    audio.addEventListener('durationchange', () => { state.duration = audio.duration || 0; emit() })
-    audio.addEventListener('play', () => { state.playing = true; emit() })
-    audio.addEventListener('pause', () => { state.playing = false; emit() })
-    audio.addEventListener('ended', () => { state.playing = false; emit() })
-  }
-  return audio
 }
 
 export function subscribePlayer(fn) {
@@ -51,73 +19,26 @@ export function getPlayerState() {
   return { ...state }
 }
 
-export async function playSong(song) {
-  const { ok, url, code } = await getPlayUrl(song.id)
-  if (!ok || !url) {
-    return { ok: false, reason: `拿不到播放链接（code ${code ?? '?'}），可能无版权或已下架` }
-  }
-  const a = getAudio()
-  a.src = url
-  await a.play()
+export async function playByQuery(query, match = {}) {
+  const songs = await searchSongs(query, 8, match)
+  if (!songs.length) return { ok: false, reason: `网易云没搜到「${query}」` }
+  const song = songs[0]
+  const action = createNeteasePhoneAction(song)
   state.current = song
   emit()
-  if ('mediaSession' in navigator) {
-    try {
-      navigator.mediaSession.metadata = new MediaMetadata({
-        title: song.name, artist: song.artists, album: song.album,
-        artwork: song.cover ? [{ src: song.cover, sizes: '512x512', type: 'image/jpeg' }] : [],
-      })
-      navigator.mediaSession.setActionHandler('play', () => getAudio().play())
-      navigator.mediaSession.setActionHandler('pause', () => getAudio().pause())
-    } catch {}
-  }
-  return { ok: true, song, trial }
-}
-
-// AI 点歌入口：搜索并按顺序尝试前几首（跳过放不出来的）
-export async function playByQuery(query) {
-  const songs = await searchSongs(query, 6)
-  if (!songs.length) return { ok: false, reason: `没搜到「${query}」` }
-  for (const song of songs.slice(0, 3)) {
-    try {
-      const r = await playSong(song)
-      if (r.ok) return r
-    } catch (e) {
-      console.warn('[PLAYER] 尝试播放失败:', song.name, e.message)
-    }
-  }
-  return { ok: false, reason: '搜到了但都播放不了' }
+  return { ok: true, song, action }
 }
 
 export function pausePlayer() {
-  const a = getAudio()
-  if (a.src) a.pause()
+  return { ok: false, reason: '请用网易云或手机控制中心暂停' }
 }
 
 export function resumePlayer() {
-  const a = getAudio()
-  if (a.src && state.current) a.play().catch(() => {})
+  return { ok: false, reason: '请用网易云或手机控制中心继续播放' }
 }
 
 export function stopPlayer() {
-  const a = getAudio()
-  a.pause()
-  a.removeAttribute('src')
   state.current = null
-  state.playing = false
-  state.progress = 0
-  state.duration = 0
   emit()
-}
-
-export function togglePlayer() {
-  const a = getAudio()
-  if (!a.src) return
-  if (a.paused) a.play().catch(() => {})
-  else a.pause()
-}
-
-export function seekPlayer(seconds) {
-  const a = getAudio()
-  if (a.src && Number.isFinite(seconds)) a.currentTime = seconds
+  return { ok: false, reason: '请用网易云或手机控制中心停止播放' }
 }

@@ -36,7 +36,7 @@ date 用当天日期。
 import { fetchTTSAudio } from '../services/tts'
 import { pruneReasoningBeyondTurns } from '../utils/pruneReasoning'
 import { getSessionMsgs, saveSessionMsgs, putAssetDataUrl, loadAsset } from '../services/sync'
-import { playByQuery, pausePlayer, resumePlayer, stopPlayer, getPlayerState } from '../services/player'
+import { playByQuery, getPlayerState } from '../services/player'
 import { addLetter, getRecentLettersByCharacter } from '../services/letters'
 import { getFocusState, startFocus as startFocusApi, apiManagerApproveFocus, apiManagerDenyFocus, apiManagerFinishFocus, apiManagerExtendFocus } from '../services/companion'
 
@@ -314,6 +314,7 @@ export function useChat() {
     let currentTextId = assistantId
     let currentTextAdded = true // assistantId was already added() above
     let vpsUsedVoiceThisTurn = false
+    let vpsCurrentMusicAction = null
     // Server-side wire ids (Wire.id) this turn delivered live. Persisted onto
     // every bubble the turn saves (`wireIds` field) so App.jsx's proactive
     // handler can recognize them when the server's history snapshot replays
@@ -343,10 +344,11 @@ export function useChat() {
       // activity list is live-only and vanishes on the next page load, which
       // reads as a bug rather than as intended transience.
       const toolFields = toolUses.length ? { toolUses: [...toolUses] } : {}
+      const musicFields = vpsCurrentMusicAction ? { musicAction: vpsCurrentMusicAction } : {}
       if (contentStarted && fullContent.trim()) {
         const doneContent = stripDisplayTags(fullContent)
-        updateMessage(currentTextId, { content: doneContent, streaming: false, ...reasoningFields, ...toolFields, ...wireIdsField() })
-        await saveMessage({ id: currentTextId, conversationId: CONVERSATION_ID, role: 'assistant', type: 'text', content: doneContent, timestamp: Date.now(), streaming: false, ...reasoningFields, ...toolFields, ...wireIdsField() })
+        updateMessage(currentTextId, { content: doneContent, streaming: false, ...reasoningFields, ...toolFields, ...musicFields, ...wireIdsField() })
+        await saveMessage({ id: currentTextId, conversationId: CONVERSATION_ID, role: 'assistant', type: 'text', content: doneContent, timestamp: Date.now(), streaming: false, ...reasoningFields, ...toolFields, ...musicFields, ...wireIdsField() })
         return true
       }
       if (currentTextAdded) deleteMessage(currentTextId)
@@ -421,12 +423,12 @@ export function useChat() {
         builtSystemPrompt += '\n\n你有空调控制能力。当用户提到温度不舒适、想开/关空调、调温度时，在回复末尾自然地加上控制指令标签（不要向用户提及标签格式本身）。\n格式：[AC:动作,温度,模式,风速]\n- 动作：on(开机)/off(关机)/set(调节)\n- 温度：16-30 的整数（推断不到默认26）\n- 模式：cool(制冷)/heat(制热)/auto(自动)/fan(送风)/dry(除湿)\n- 风速：auto(自动)/low(低)/mid(中)/high(高)\n示例："好的已经帮你开空调啦～[AC:on,26,cool,auto]"'
       }
 
-      // 音乐控制（碟片播放器）
+      // 音乐控制（把播放交给手机上的网易云官方客户端）
       {
-        builtSystemPrompt += '\n\n你有音乐播放能力。当用户想听歌/点歌/换歌/暂停/继续/关掉音乐时，在回复末尾自然地加上指令标签（不要向用户提及标签格式本身）。播放的是官方 30 秒试听片段，若用户追问为何只有半分钟，可自然说明是试听。\n格式：\n- [MUSIC:play,歌名,歌手] 搜索并播放（歌手可省略：[MUSIC:play,歌名]）\n- [MUSIC:pause] 暂停　[MUSIC:resume] 继续　[MUSIC:stop] 停止\n只在用户明确表达想听歌或控制音乐时使用，不要自作主张放歌。\n示例："好呀，这就给你放～[MUSIC:play,晴天,周杰伦]"'
+        builtSystemPrompt += '\n\n你可以替用户在手机网易云里选歌。当用户明确想听歌、点歌或换歌时，在回复末尾自然地加上指令标签（不要向用户提及标签格式本身）：[MUSIC:play,歌名,歌手]，歌手可省略。系统会显示一个“在网易云播放”按钮，用户点一下后由手机上的网易云官方 App 播放完整歌曲。不要说你已经直接播放了，应该说“给你找到了”“点一下就能在网易云播放”。不要自行点歌。由于 iOS 不允许网页跨 App 静默控制当前播放会话，用户要求暂停、继续或停止时，不要输出 MUSIC 标签，直接请用户使用锁屏或控制中心。\n示例："给你找到啦，点一下就能在网易云听～[MUSIC:play,晴天,周杰伦]"'
         const np = getPlayerState()
         if (np.current) {
-          builtSystemPrompt += `\n【正在播放】《${np.current.name}》- ${np.current.artists}（${np.playing ? '播放中' : '已暂停'}）`
+          builtSystemPrompt += `\n【最近一次为用户选择的歌曲】《${np.current.name}》-${np.current.artists}`
         }
       }
 
@@ -619,6 +621,7 @@ export function useChat() {
             dirty = true
           }
           if (isVpsProvider && chunk.wireId) vpsWireIds.push(chunk.wireId)
+          if (isVpsProvider && chunk.musicAction) vpsCurrentMusicAction = chunk.musicAction
           if (isVpsProvider && chunk.voice) {
             vpsUsedVoiceThisTurn = true
             // Finalize whatever text bubble was accumulating (if any) before
@@ -647,6 +650,7 @@ export function useChat() {
             toolUses = []
             storedToolCount = 0
             vpsWireIds.length = 0
+            vpsCurrentMusicAction = null
             dirty = false
             continue
           }
@@ -755,20 +759,22 @@ export function useChat() {
       // Handle MUSIC command
       const musicMatch = fullContent.match(MUSIC_TAG_RE)
       let musicNote = ''
+      let musicAction = vpsCurrentMusicAction
       if (musicMatch) {
         const [action, ...rest] = musicMatch[1].split(',').map(s => s.trim())
         try {
           if (action === 'play') {
             const q = rest.filter(Boolean).join(' ')
             if (q) {
-              const r = await playByQuery(q)
+              const r = await playByQuery(q, { title: rest[0] || '', artist: rest.slice(1).filter(Boolean).join(' ') })
               musicNote = r.ok
-                ? `[♪ 正在播放《${r.song.name}》- ${r.song.artists}]`
-                : `[✗ 没放出来：${r.reason}]`
+                ? `[♪ 已找到《${r.song.name}》- ${r.song.artists}，点下方按钮在网易云播放]`
+                : `[✗ 没找到歌曲：${r.reason}]`
+              if (r.ok) musicAction = r.action
             }
-          } else if (action === 'pause') { pausePlayer(); musicNote = '[♪ 已暂停]' }
-          else if (action === 'resume') { resumePlayer(); musicNote = '[♪ 继续播放]' }
-          else if (action === 'stop') { stopPlayer(); musicNote = '[♪ 已停止]' }
+          } else {
+            musicNote = '[♪ 请使用网易云或手机控制中心控制当前播放]'
+          }
         } catch (e) {
           musicNote = `[✗ 音乐指令失败：${e.message}]`
         }
@@ -882,7 +888,9 @@ export function useChat() {
       for (let i = 0; i < tokens.length; i++) {
         const tk = tokens[i]
         const isLastToken = i === lastIdx
-        const attachAc = isLastToken && acStatus ? { acStatus } : {}
+        const attachActions = isLastToken
+          ? { ...(acStatus ? { acStatus } : {}), ...(musicAction ? { musicAction } : {}) }
+          : {}
         // API-provider paragraphs retain the chat-like stagger. Companion
         // reply() calls have already completed by this point, so delaying
         // them only makes later bubbles look as if they are still loading.
@@ -891,9 +899,9 @@ export function useChat() {
         if (tk.type === 'voice') {
           const id = placed === 0 ? assistantId : genId()
           if (placed === 0) {
-            updateMessage(assistantId, { content: '', voiceLoading: true, streaming: false, ...attachAc })
+            updateMessage(assistantId, { content: '', voiceLoading: true, streaming: false, ...attachActions })
           } else {
-            addMessage({ id, conversationId: CONVERSATION_ID, role: 'assistant', type: 'text', content: '', timestamp: Date.now(), streaming: false, voiceLoading: true, ...attachAc })
+            addMessage({ id, conversationId: CONVERSATION_ID, role: 'assistant', type: 'text', content: '', timestamp: Date.now(), streaming: false, voiceLoading: true, ...attachActions })
           }
           voicePlaceholders.push({ id, text: tk.text })
           lastPreview = tk.text
@@ -901,12 +909,12 @@ export function useChat() {
           let content = tk.content
           if (i === lastTextIdx && acNote) content = `${content}\n${acNote}`
           if (placed === 0) {
-            updateMessage(assistantId, { content, streaming: false, ...attachAc, ...tokenWireIdField(i) })
-            const save = saveMessage({ ...assistantMsg, content, streaming: false, ...attachAc, ...tokenWireIdField(i) })
+            updateMessage(assistantId, { content, streaming: false, ...attachActions, ...tokenWireIdField(i) })
+            const save = saveMessage({ ...assistantMsg, content, streaming: false, ...attachActions, ...tokenWireIdField(i) })
             if (isVpsProvider) deferredVpsSaves.push(save)
             else await save
           } else {
-            const partMsg = { id: genId(), conversationId: CONVERSATION_ID, role: 'assistant', type: 'text', content, timestamp: Date.now(), streaming: false, ...attachAc, ...tokenWireIdField(i) }
+            const partMsg = { id: genId(), conversationId: CONVERSATION_ID, role: 'assistant', type: 'text', content, timestamp: Date.now(), streaming: false, ...attachActions, ...tokenWireIdField(i) }
             addMessage(partMsg)
             const save = saveMessage(partMsg)
             if (isVpsProvider) deferredVpsSaves.push(save)

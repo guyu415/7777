@@ -131,6 +131,7 @@ const STUDY_SCHEDULE_FILE = process.env.AI_COMPANION_STUDY_SCHEDULE_FILE ?? join
 const DIARY_LETTER_SCHEDULE_FILE = process.env.AI_COMPANION_DIARY_LETTER_SCHEDULE_FILE ?? join(ROOT, 'state', 'diary-letter-schedule.json')
 const COOKIE_NAME = 'ai_companion_token'
 const SELF_ORIGIN = 'https://companion.xiaoman.xyz'
+const NETEASE_SEARCH_URL = process.env.AI_COMPANION_NETEASE_SEARCH_URL ?? 'https://chat.xiaoman.xyz/netease/search'
 const TURN_WATCHDOG_MS = 10 * 60 * 1000 // generous — real completion comes from Stop/StopFailure hooks
 const SENSEVOICE_BINARY = process.env.AI_COMPANION_SENSEVOICE_BINARY
   ?? join(ROOT, 'models', 'sensevoice', 'llama-funasr-sensevoice')
@@ -141,6 +142,51 @@ const OPENSMILE_BINARY = process.env.AI_COMPANION_OPENSMILE_BINARY
 const OPENSMILE_CONFIG = process.env.AI_COMPANION_OPENSMILE_CONFIG
   ?? join(ROOT, 'models', 'opensmile', 'config', 'egemaps', 'v02', 'eGeMAPSv02.conf')
 let senseVoiceBusy = false
+
+type NeteasePhoneAction = {
+  provider: 'netease'
+  songId: string
+  name: string
+  artists: string
+  album: string
+  cover: string
+  deepLink: string
+  webUrl: string
+}
+
+async function resolveNeteasePhoneAction(titleValue: unknown, artistValue: unknown): Promise<NeteasePhoneAction> {
+  const title = String(titleValue ?? '').trim().slice(0, 100)
+  const artist = String(artistValue ?? '').trim().slice(0, 100)
+  if (!title) throw new Error('title is required')
+
+  const query = [title, artist].filter(Boolean).join(' ')
+  const url = new URL(NETEASE_SEARCH_URL)
+  url.searchParams.set('keywords', query)
+  url.searchParams.set('title', title)
+  if (artist) url.searchParams.set('artist', artist)
+  url.searchParams.set('limit', '1')
+
+  const response = await fetch(url, {
+    headers: { Referer: SELF_ORIGIN },
+    signal: AbortSignal.timeout(12_000),
+  })
+  const data = await response.json().catch(() => null) as any
+  const song = data?.songs?.[0]
+  if (!response.ok || !data?.ok) throw new Error(data?.error || `NetEase search HTTP ${response.status}`)
+  const songId = String(song?.id ?? '').trim()
+  if (!/^\d+$/.test(songId)) throw new Error('song not found')
+
+  return {
+    provider: 'netease',
+    songId,
+    name: String(song?.name || title),
+    artists: String(song?.artists || artist),
+    album: String(song?.album || ''),
+    cover: String(song?.cover || ''),
+    deepLink: `orpheus://song/${songId}/?autoplay=1`,
+    webUrl: `https://music.163.com/song?id=${songId}`,
+  }
+}
 
 // The real Auto Memory directory the production brain session (cwd=ROOT)
 // actually reads/writes, per Claude Code's own project-path encoding
@@ -720,6 +766,9 @@ type Msg = {
   fileName?: string
   fileSize?: number
   fileType?: string
+  // A safe handoff into the user's official NetEase app. This contains only
+  // catalog metadata + app/web links; no audio URL, cookie, or media bytes.
+  musicAction?: NeteasePhoneAction
 }
 type MsgWire = { type: 'msg' } & Msg
 type TurnStartWire = { type: 'turn_start'; turnId: string; replyTo?: string; ts: number }
@@ -1348,7 +1397,7 @@ function broadcastMsg(m: MsgWire) {
 // message the user is about to see, and the gomoku/group tools narrate
 // themselves through their own wire events. Announcing them would just put a
 // "正在回复…" line above every reply.
-const TOOL_USE_MUTED = new Set(['reply', 'send_voice', 'roll_dice', 'gomoku_move', 'gomoku_banter', 'group_speak', 'group_pass'])
+const TOOL_USE_MUTED = new Set(['reply', 'send_voice', 'play_music_on_phone', 'roll_dice', 'gomoku_move', 'gomoku_banter', 'group_speak', 'group_pass'])
 
 // Live tool-activity for the open turn. Deliberately fire-and-forget and
 // never persisted: this is the "what is it doing right now" indicator, and a
@@ -1946,6 +1995,13 @@ const mcp = new Server(
       `nothing at all, even though you may have done real work.\n` +
       `Use reply for normal text messages. Use send_voice only when you specifically want the user to actually ` +
       `hear your voice (not for routine replies — most turns should still use reply).\n` +
+      `You also have a real play_music_on_phone tool. When the user explicitly asks to hear/play/pick a song, ` +
+      `call it with the song title and optional artist. It sends a visible button that opens the official NetEase ` +
+      `Cloud Music app on the user's phone; audio and membership playback stay entirely inside that app, never on ` +
+      `this VPS. Do not claim the song is already playing: say it is ready and the user can tap the button. ` +
+      `Do not call it unprompted. iOS does not allow this web app to silently pause/resume an existing NetEase ` +
+      `session, so for those controls tell the user to use the lock screen or Control Center. The tool itself is ` +
+      `a visible action, so do not also call reply merely to repeat the same sentence.\n` +
       `Keep replies short (well under the 2000 char tool limit) and split long answers into multiple reply calls if needed.\n` +
       `The user may write in Chinese or English; reply in whichever language they used.\n` +
       `ALWAYS end your turn with a plain-text line. After your last user-visible tool call, write one short sentence ` +
@@ -2069,6 +2125,24 @@ mcp.setRequestHandler(ListToolsRequestSchema, async () => ({
           reply_to: { type: 'string', description: 'message_id to quote-reply' },
         },
         required: ['text'],
+      },
+    },
+    {
+      name: 'play_music_on_phone',
+      description:
+        'Find a song in NetEase Cloud Music and send a REAL user-visible “在网易云播放” card to the phone. ' +
+        'Use only when the user explicitly asks to play/hear/pick/change a song. The card opens the official ' +
+        'NetEase app, so full/member playback is handled by the user\'s logged-in phone instead of this overseas ' +
+        'VPS. This does NOT mean playback has already started: word `text` as ready-to-tap, not “already playing”. ' +
+        'This tool itself is the visible reply; do not also send a duplicate reply for the same action.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          title: { type: 'string', maxLength: 100, description: 'song title' },
+          artist: { type: 'string', maxLength: 100, description: 'optional artist for exact matching' },
+          text: { type: 'string', maxLength: 300, description: 'optional short message shown above the play button' },
+        },
+        required: ['title'],
       },
     },
     {
@@ -2378,6 +2452,26 @@ mcp.setRequestHandler(CallToolRequestSchema, async req => {
         }
         log('reply_sent', { id, chars: text.length, turnId, hasThinking: !!thinking, gomoku: isGomokuTurn, focus: isFocusTurn })
         return { content: [{ type: 'text', text: `sent (${id})` }] }
+      }
+      case 'play_music_on_phone': {
+        const turnId = currentTurn?.turnId
+        if (!turnId || currentTurn?.surface !== 'main') {
+          return {
+            content: [{ type: 'text', text: 'play_music_on_phone is only available during an active main-chat turn' }],
+            isError: true,
+          }
+        }
+        const action = await resolveNeteasePhoneAction(args.title, args.artist)
+        const suppliedText = typeof args.text === 'string' ? args.text.trim().slice(0, 300) : ''
+        const text = suppliedText || `给你找到《${action.name}》了，点一下在网易云播放。`
+        const id = nextId()
+        const thinking = consumePendingThinking()
+        broadcastMsg({
+          type: 'msg', id, from: 'cc', text, ts: Date.now(), turnId, musicAction: action,
+          ...(thinking ? { thinking } : {}),
+        })
+        log('netease_phone_action_sent', { id, songId: action.songId, turnId, hasThinking: !!thinking })
+        return { content: [{ type: 'text', text: `sent NetEase phone action (${id})` }] }
       }
       case 'roll_dice': {
         const turnId = currentTurn?.turnId
@@ -4059,6 +4153,7 @@ type CodexMsg = {
   kind?: 'voice'
   voice?: string
   style?: string
+  musicAction?: NeteasePhoneAction
 }
 // Persisted/broadcast header status — deliberately only these three. A
 // finished turn (done/stopped/error) is NOT a status: it always resolves
@@ -5997,6 +6092,7 @@ const CODEX_DEVELOPER_INSTRUCTIONS = [
   'Call send_voice whenever the user explicitly asks you to speak/send voice (e.g. "发语音", "说给我听", "语音回复我") — always honor an explicit request.',
   'You may also choose it yourself sometimes for a short, warm, casual reply, but most replies should stay normal text — do not overuse it.',
   'If you use send_voice, keep the spoken text short (well under 300 characters).',
+  'You also have a real `play_music_on_phone` tool. When the user explicitly asks to play/hear/pick/change a song, call it with the title and optional artist. It sends a visible card that opens the official NetEase Cloud Music app on the user\'s phone; full/member playback stays in their logged-in phone app and never passes through this VPS. Do not claim it is already playing — tell them it is ready to tap. Do not call it unprompted, and do not duplicate its visible message with a normal reply. For pause/resume/stop, tell an iPhone user to use the lock screen or Control Center.',
   'You also have real Focus tools: start_focus/get_focus_status/extend_focus/finish_focus/approve_focus_request/deny_focus_request/pause_focus/stop_focus/resume_focus, controlling ONE real global Pomodoro-style focus session (system-wide, not per-conversation).',
   'Call start_focus only when the user actually asks to focus/study/work, or clearly agrees to your offer — it takes effect immediately (their screen switches to a running countdown, no click needed from them), so never call it speculatively; it fails if a session is already active.',
   'Once you start one, you are its sole manager: while it runs, a message delivered as a real turn on this same conversation means the user is talking to you from the focus screen (reply normally, using your real memory of everything so far) or is asking to pause/end early with a stated reason (you must genuinely decide and call the real approve/deny/pause_focus/stop_focus tool — text alone does nothing; deny requires a real reason).',
@@ -10252,6 +10348,31 @@ ${awareness ? `你自己的知觉：${awareness}\n` : ''}${note ? `背景：${no
       codexAppendMsg({ id, from: 'codex', text, ts: Date.now(), kind: 'voice', voice, style, turnId: codexCurrentTurnId })
       log('codex_voice_sent', { id, chars: text.length, turnId: codexCurrentTurnId })
       return jsonResponse({ ok: true, id })
+    }
+
+    // Real NetEase phone handoff for Codex. Unlike the legacy voice bridge,
+    // this safely routes to whichever single Codex conversation is currently
+    // active (main or a per-Eunoia-session thread), and refuses ambiguity.
+    if (url.pathname === '/internal/codex/play-music-on-phone' && req.method === 'POST') {
+      if (!internalAuthOk(req)) return unauthorized()
+      const body = await req.json().catch(() => ({} as Record<string, unknown>))
+      const activeExtras = [...extraCodexSessions.values()].filter((state) => !!state.currentTurnId)
+      const activeCount = Number(!!codexCurrentTurnId) + activeExtras.length
+      if (activeCount !== 1) {
+        return jsonResponse({ ok: false, error: activeCount ? 'multiple active Codex turns' : 'no active Codex conversation turn' }, { status: 409 })
+      }
+      const action = await resolveNeteasePhoneAction((body as any)?.title, (body as any)?.artist)
+      const suppliedText = typeof (body as any)?.text === 'string' ? (body as any).text.trim().slice(0, 300) : ''
+      const text = suppliedText || `给你找到《${action.name}》了，点一下在网易云播放。`
+      const id = nextId()
+      if (codexCurrentTurnId) {
+        codexAppendMsg({ id, from: 'codex', text, ts: Date.now(), musicAction: action, turnId: codexCurrentTurnId })
+      } else {
+        const state = activeExtras[0]
+        extraAppendMsg(state, { id, from: 'codex', text, ts: Date.now(), musicAction: action, turnId: state.currentTurnId! })
+      }
+      log('codex_netease_phone_action_sent', { id, songId: action.songId, session: codexCurrentTurnId ? 'main' : activeExtras[0].sessionId })
+      return jsonResponse({ ok: true, id, song: { id: action.songId, name: action.name, artists: action.artists } })
     }
 
     // Bridge for Codex's real Focus tools (see codex-voice-mcp.ts, extended

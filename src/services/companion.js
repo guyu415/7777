@@ -332,7 +332,7 @@ function announceCcMessageDeleted(ids) {
 // routed server-side into the game's own `messages` log (see onGomokuUpdate),
 // never broadcast as a main-chat wire `msg` in the first place.
 function maybeAnnounceProactive(wireMsg) {
-  const { id, text, ts, kind, voice, style, thinking } = wireMsg
+  const { id, text, ts, kind, voice, style, thinking, musicAction } = wireMsg
   // Deferred to the next tick: lets any active generator's listener (which
   // runs synchronously within the same notify() call) markDelivered() first.
   // Only messages still unclaimed after that are genuinely spontaneous.
@@ -341,7 +341,7 @@ function maybeAnnounceProactive(wireMsg) {
     markDelivered(id)
     for (const fn of proactiveListeners) {
       try {
-        fn({ id, text, ts, kind, voice, style, thinking })
+        fn({ id, text, ts, kind, voice, style, thinking, musicAction })
       } catch {
         // a subscriber throwing must not break delivery to the others
       }
@@ -1428,7 +1428,7 @@ export async function* streamChatViaCompanion({ text, imagePath, file, signal, m
           // delivered before the disconnect, so appending would duplicate it.
           if (r.thinking) push({ reasoningReplace: r.thinking })
           if (r.kind === 'voice') push({ voice: { id: r.id, text: r.text, voice: r.voice, style: r.style } })
-          else push({ text: r.text, wireId: r.id })
+          else push({ text: r.text, wireId: r.id, ...(r.musicAction ? { musicAction: r.musicAction } : {}) })
         }
         push({ done: true })
       } else if (!ackReceived) {
@@ -1488,7 +1488,7 @@ export async function* streamChatViaCompanion({ text, imagePath, file, signal, m
       markDelivered(m.id)
       thisTurnDeliveredIds.push(m.id)
       if (m.kind === 'voice') push({ voice: { id: m.id, text: m.text, voice: m.voice, style: m.style } })
-      else push({ text: m.text, wireId: m.id })
+      else push({ text: m.text, wireId: m.id, ...(m.musicAction ? { musicAction: m.musicAction } : {}) })
     } else if (m.type === 'turn_end') {
       push({ done: true })
     } else if (m.type === 'turn_error') {
@@ -1553,7 +1553,9 @@ export async function* streamChatViaCompanion({ text, imagePath, file, signal, m
       // which server-side message ids this turn already displayed — the
       // history-snapshot dedup in App.jsx matches against them (voice chunks
       // already carry their wire id inside `voice.id`).
-      else yield item.voice ? { voice: item.voice } : { text: item.text, wireId: item.wireId }
+      else yield item.voice
+        ? { voice: item.voice }
+        : { text: item.text, wireId: item.wireId, ...(item.musicAction ? { musicAction: item.musicAction } : {}) }
     }
   } finally {
     listeners.delete(onEvent)

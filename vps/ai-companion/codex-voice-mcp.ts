@@ -18,6 +18,9 @@
 // browser-facing wire path, dedup, and persistence exactly the same as every
 // other Codex message.
 //
+// play_music_on_phone: resolves a NetEase catalog item and delivers a real
+// app-opening card. Audio remains inside the official phone app.
+//
 // start_focus/get_focus_status/extend_focus/finish_focus/
 // approve_focus_request/deny_focus_request/pause_focus/stop_focus/
 // resume_focus: real control over the single GLOBAL Focus (专注) task — see
@@ -75,6 +78,24 @@ mcp.setRequestHandler(ListToolsRequestSchema, async () => ({
           style: { type: 'string', description: 'optional style/emotion hint; not all voices support this' },
         },
         required: ['text'],
+      },
+    },
+    {
+      name: 'play_music_on_phone',
+      description:
+        'Find a song and send a REAL visible “在网易云播放” card. Use only when the user explicitly asks to ' +
+        'play/hear/pick/change a song. The button opens the official NetEase Cloud Music app on their phone, so ' +
+        'full/member playback uses their logged-in mobile account and no audio passes through the overseas VPS. ' +
+        'Do not say it is already playing; say it is ready to tap. This tool itself posts the visible reply, so ' +
+        'do not duplicate it with a normal text answer.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          title: { type: 'string', maxLength: 100, description: 'song title' },
+          artist: { type: 'string', maxLength: 100, description: 'optional artist for exact matching' },
+          text: { type: 'string', maxLength: 300, description: 'optional short message shown above the play button' },
+        },
+        required: ['title'],
       },
     },
     {
@@ -226,6 +247,15 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
         const { ok, body, status } = await callInternal('/internal/codex/send-voice', { body: { text, voice, style } })
         if (!ok || !body?.ok) return { content: [{ type: 'text', text: `failed to deliver voice message: ${body?.error ?? status}` }], isError: true }
         return { content: [{ type: 'text', text: `sent (${body.id ?? 'ok'})` }] }
+      }
+      case 'play_music_on_phone': {
+        const title = String(args.title ?? '').trim()
+        const artist = typeof args.artist === 'string' ? args.artist.trim() : undefined
+        const text = typeof args.text === 'string' ? args.text.trim() : undefined
+        if (!title) return { content: [{ type: 'text', text: 'title is required and was empty' }], isError: true }
+        const { ok, body, status } = await callInternal('/internal/codex/play-music-on-phone', { body: { title, artist, text } })
+        if (!ok || !body?.ok) return { content: [{ type: 'text', text: `failed to deliver NetEase action: ${body?.error ?? status}` }], isError: true }
+        return { content: [{ type: 'text', text: `sent NetEase phone action (${body.id ?? 'ok'})` }] }
       }
       case 'get_focus_status': {
         const { ok, body, status } = await callInternal('/internal/focus/status', { method: 'GET' })
