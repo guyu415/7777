@@ -1,5 +1,5 @@
 name = "scheduled-message-worker"
-main = "scheduled-message-worker.js"
+main = "index.js"
 compatibility_date = "2024-09-23"
 account_id = "e364fa0eb012df759b774bfcada11422"
 
@@ -45,7 +45,6 @@ crons = ["*/30 * * * *"]
 #                    控制台 APIs & Services → Credentials → OAuth client ID
 #                    （Desktop app 类型）拿到的两个值
 #                    wrangler secret put GOOGLE_DRIVE_OAUTH_CLIENT_ID --name scheduled-message-worker
-#                    wrangler secret put GOOGLE_DRIVE_OAUTH_CLIENT_SECRET --name scheduled-message-worker
 #   GOOGLE_DRIVE_OAUTH_REFRESH_TOKEN — 用上面的 client 去
 #                    https://accounts.google.com/o/oauth2/v2/auth 走一次
 #                    response_type=code&scope=.../auth/drive&access_type=offline&prompt=consent
