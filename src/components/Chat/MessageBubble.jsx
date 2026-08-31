@@ -42,7 +42,7 @@ const TOOL_ICONS = {
 function toolLabel(tool) { return TOOL_LABELS[tool] || tool }
 function toolIcon(tool) { return TOOL_ICONS[tool] || '🔧' }
 
-const ACTION_SPLIT_RE = /(<i>[\s\S]*?<\/i>|\*[^*\n]+\*|\([^()\n]*\)|（[^（）\n]*）)/g
+const ACTION_SPLIT_RE = /(<i>[\s\S]*?<\/i>|\*\*[^*\n]+\*\*|\*[^*\n]+\*|\([^()\n]*\)|（[^（）\n]*）)/g
 
 function renderWithActions(text) {
   return text.split(ACTION_SPLIT_RE).map((seg, i) => {
@@ -52,6 +52,12 @@ function renderWithActions(text) {
           {seg.slice(3, -4)}
         </i>
       )
+    }
+    // Double-asterisk pairs must be checked before single-asterisk ones —
+    // otherwise `**text**` matches as `*` + bold(`*text*`) + `*`, leaving a
+    // stray star on each side instead of consuming all four.
+    if (seg.length >= 4 && seg.startsWith('**') && seg.endsWith('**')) {
+      return <b key={i}>{seg.slice(2, -2)}</b>
     }
     if (seg.length >= 2 && seg.startsWith('*') && seg.endsWith('*')) {
       return <b key={i}>{seg.slice(1, -1)}</b>
@@ -63,7 +69,11 @@ function renderWithActions(text) {
         </span>
       )
     }
-    return seg || null
+    // Any asterisk that didn't pair up (unclosed markup, mid-stream text,
+    // a stray list-style "*") is never meant to be visible — drop it rather
+    // than let it leak through as a literal character.
+    const cleaned = seg.includes('*') ? seg.replace(/\*/g, '') : seg
+    return cleaned || null
   })
 }
 
