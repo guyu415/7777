@@ -131,7 +131,6 @@ const STUDY_SCHEDULE_FILE = process.env.AI_COMPANION_STUDY_SCHEDULE_FILE ?? join
 const DIARY_LETTER_SCHEDULE_FILE = process.env.AI_COMPANION_DIARY_LETTER_SCHEDULE_FILE ?? join(ROOT, 'state', 'diary-letter-schedule.json')
 const COOKIE_NAME = 'ai_companion_token'
 const SELF_ORIGIN = 'https://companion.xiaoman.xyz'
-const NETEASE_SEARCH_URL = process.env.AI_COMPANION_NETEASE_SEARCH_URL ?? 'https://chat.xiaoman.xyz/netease/search'
 const TURN_WATCHDOG_MS = 10 * 60 * 1000 // generous — real completion comes from Stop/StopFailure hooks
 const SENSEVOICE_BINARY = process.env.AI_COMPANION_SENSEVOICE_BINARY
   ?? join(ROOT, 'models', 'sensevoice', 'llama-funasr-sensevoice')
@@ -154,25 +153,79 @@ type NeteasePhoneAction = {
   webUrl: string
 }
 
+type NeteaseCatalogSong = {
+  id: string
+  name: string
+  artists: string
+  album: string
+  cover: string
+  duration: number
+}
+
+async function searchNeteaseSongs(titleValue: unknown, artistValue: unknown, limitValue: unknown = 1): Promise<NeteaseCatalogSong[]> {
+  const title = String(titleValue ?? '').trim().slice(0, 100)
+  const artist = String(artistValue ?? '').trim().slice(0, 100)
+  if (!title) return []
+  const limit = Math.min(Math.max(Number(limitValue) || 1, 1), 20)
+  const query = [title, artist].filter(Boolean).join(' ')
+  const headers = {
+    'Content-Type': 'application/x-www-form-urlencoded',
+    'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15',
+    'Referer': 'https://music.163.com/',
+  }
+  const response = await fetch('https://music.163.com/api/search/get', {
+    method: 'POST',
+    headers,
+    body: new URLSearchParams({ s: query, type: '1', limit: '100', offset: '0' }).toString(),
+    signal: AbortSignal.timeout(12_000),
+  })
+  const data = await response.json().catch(() => null) as any
+  if (!response.ok || !data) throw new Error(`NetEase search HTTP ${response.status}`)
+
+  const normalize = (value: unknown) => String(value || '').toLocaleLowerCase('zh-CN').replace(/[\s·・•,，.。:：()（）[\]【】《》〈〉'"“”‘’_-]/g, '')
+  const titleNeedle = normalize(title)
+  const artistNeedle = normalize(artist)
+  let songs = (data.result?.songs || []).map((song: any, index: number) => ({
+    id: String(song.id || ''),
+    name: String(song.name || ''),
+    artists: (song.artists || song.ar || []).map((item: any) => item.name || '').filter(Boolean).join(' / '),
+    album: String(song.album?.name || song.al?.name || ''),
+    cover: String(song.album?.picUrl || song.al?.picUrl || ''),
+    duration: Math.round(Number(song.duration || song.dt || 0) / 1000),
+    _index: index,
+  })).filter((song: any) => /^\d+$/.test(song.id)).map((song: any) => {
+    const name = normalize(song.name)
+    const artists = normalize(song.artists)
+    let score = 0
+    if (titleNeedle) score += name === titleNeedle ? 120 : (name.includes(titleNeedle) ? 35 : 0)
+    if (artistNeedle) score += artists === artistNeedle ? 120 : (artists.includes(artistNeedle) ? 55 : 0)
+    if (titleNeedle && name !== titleNeedle && /翻唱|翻自|伴奏|dj|live|版/i.test(song.name)) score -= 25
+    return { ...song, _score: score }
+  }).sort((a: any, b: any) => b._score - a._score || a._index - b._index).slice(0, limit)
+    .map(({ _index, _score, ...song }: any) => song as NeteaseCatalogSong)
+
+  try {
+    const ids = songs.map((song) => song.id).join(',')
+    if (ids) {
+      const detailResponse = await fetch(`https://music.163.com/api/song/detail?ids=[${ids}]`, {
+        headers: { 'User-Agent': headers['User-Agent'], 'Referer': headers.Referer },
+        signal: AbortSignal.timeout(8_000),
+      })
+      const details = await detailResponse.json().catch(() => null) as any
+      const covers = new Map<string, string>((details?.songs || []).map((song: any) => [String(song.id), String(song.album?.picUrl || song.al?.picUrl || '')]))
+      songs = songs.map((song) => ({ ...song, cover: song.cover || covers.get(song.id) || '' }))
+    }
+  } catch {
+    // The handoff only requires the numeric song id; artwork is best-effort.
+  }
+  return songs
+}
+
 async function resolveNeteasePhoneAction(titleValue: unknown, artistValue: unknown): Promise<NeteasePhoneAction> {
   const title = String(titleValue ?? '').trim().slice(0, 100)
   const artist = String(artistValue ?? '').trim().slice(0, 100)
   if (!title) throw new Error('title is required')
-
-  const query = [title, artist].filter(Boolean).join(' ')
-  const url = new URL(NETEASE_SEARCH_URL)
-  url.searchParams.set('keywords', query)
-  url.searchParams.set('title', title)
-  if (artist) url.searchParams.set('artist', artist)
-  url.searchParams.set('limit', '1')
-
-  const response = await fetch(url, {
-    headers: { Referer: SELF_ORIGIN },
-    signal: AbortSignal.timeout(12_000),
-  })
-  const data = await response.json().catch(() => null) as any
-  const song = data?.songs?.[0]
-  if (!response.ok || !data?.ok) throw new Error(data?.error || `NetEase search HTTP ${response.status}`)
+  const song = (await searchNeteaseSongs(title, artist, 1))[0]
   const songId = String(song?.id ?? '').trim()
   if (!/^\d+$/.test(songId)) throw new Error('song not found')
 
@@ -7923,6 +7976,24 @@ Bun.serve<{ authed: true }>({
 
     if (url.pathname === '/health') {
       return jsonResponse({ status: 'ok', ts: Date.now() })
+    }
+
+    // Search-only bridge for the Cloudflare Worker. NetEase blocks the
+    // Worker's datacenter egress but allows this VPS to read catalog metadata;
+    // no audio URL, membership cookie, or media bytes cross this endpoint.
+    if (url.pathname === '/netease/search' && req.method === 'GET') {
+      if (!vpsServiceKey || req.headers.get('X-VPS-Key') !== vpsServiceKey) {
+        return jsonResponse({ error: 'unauthorized' }, { status: 401 })
+      }
+      const title = url.searchParams.get('title') || url.searchParams.get('keywords') || ''
+      const artist = url.searchParams.get('artist') || ''
+      const limit = url.searchParams.get('limit') || '12'
+      try {
+        const songs = await searchNeteaseSongs(title, artist, limit)
+        return jsonResponse({ ok: true, source: 'netease-catalog-vps', songs })
+      } catch (error) {
+        return jsonResponse({ ok: false, error: String(error) }, { status: 502 })
+      }
     }
 
     // Server-to-server acoustic ASR/SER. The browser never calls this route:

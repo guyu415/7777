@@ -632,6 +632,26 @@ export async function handleNeteaseControlApi(request, env) {
   const wantedArtist = (url.searchParams.get('artist') || '').trim().slice(0, 100)
   if (!keywords) return Response.json({ ok: true, songs: [] }, { headers: CORS })
   const limit = Math.min(Math.max(parseInt(url.searchParams.get('limit') || '12', 10) || 12, 1), 20)
+
+  // NetEase returns an empty catalog to Cloudflare datacenter IPs. Reuse the
+  // already-authenticated VPS bridge for metadata search; playback itself
+  // still happens only in the user's official mobile app.
+  if (env.VPS_SERVICE_KEY) {
+    try {
+      const bridgeUrl = new URL('https://companion.xiaoman.xyz/netease/search')
+      bridgeUrl.searchParams.set('keywords', keywords)
+      bridgeUrl.searchParams.set('title', wantedTitle || keywords)
+      if (wantedArtist) bridgeUrl.searchParams.set('artist', wantedArtist)
+      bridgeUrl.searchParams.set('limit', String(limit))
+      const bridgeResponse = await fetch(bridgeUrl, { headers: { 'X-VPS-Key': env.VPS_SERVICE_KEY } })
+      const bridgeData = await bridgeResponse.json().catch(() => null)
+      if (bridgeResponse.ok && bridgeData?.ok && bridgeData.songs?.length) {
+        return Response.json(bridgeData, { headers: CORS })
+      }
+    } catch {
+      // Fall through to direct search for local development/temporary VPS downtime.
+    }
+  }
   const headers = {
     'Content-Type': 'application/x-www-form-urlencoded',
     'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15',
