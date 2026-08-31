@@ -59,7 +59,7 @@ function renderWithActions(text) {
     if ((seg.startsWith('(') && seg.endsWith(')')) || (seg.startsWith('（') && seg.endsWith('）'))) {
       return (
         <span key={i} style={{ opacity: 0.6, fontSize: '0.85em' }}>
-          {seg}
+          {seg.slice(1, -1)}
         </span>
       )
     }
