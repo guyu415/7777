@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { ExternalLink, Music2, Play } from 'lucide-react'
+import { ChevronDown, ExternalLink, Music2, Play } from 'lucide-react'
 import { getNeteaseLyrics } from '../../services/music'
 import { attachPhonePlaybackLyrics, calibratePhonePlayback, getPlayerState, startPhonePlayback } from '../../services/player'
 
@@ -9,6 +9,7 @@ export default function NeteasePlayCard({ action }) {
   const [lyrics, setLyrics] = useState([])
   const [lyricsState, setLyricsState] = useState('loading')
   const [player, setPlayer] = useState(() => getPlayerState())
+  const [expanded, setExpanded] = useState(false)
   const isActive = valid && player.action?.songId === songId && player.startedAt > 0
 
   useEffect(() => {
@@ -46,23 +47,31 @@ export default function NeteasePlayCard({ action }) {
   const webUrl = `https://music.163.com/song?id=${songId}`
   const handlePlay = () => setPlayer(startPhonePlayback(action, lyrics))
   const nudge = (deltaMs) => setPlayer(calibratePhonePlayback(Math.max(0, player.positionMs + deltaMs)))
+  const compactLyric = isActive
+    ? (player.currentLyric?.text || '正在等待第一句…')
+    : (lyricsState === 'loading' ? '正在取歌词…' : (visibleLyrics[0]?.text || '点播放后显示歌词'))
 
   return (
-    <div className="netease-play-card">
+    <div className={`netease-play-card${expanded ? ' is-expanded' : ''}`} onClick={() => setExpanded(value => !value)}>
       <div className="netease-play-card__glow" />
       <div className="netease-play-card__head">
         <div className={`netease-play-card__cover${isActive ? ' is-playing' : ''}`}>
           {action.cover ? <img src={action.cover} alt="" /> : <Music2 size={22} aria-hidden="true" />}
         </div>
         <div className="netease-play-card__info">
-          <strong>{action.name || '网易云歌曲'}</strong>
-          <span>{action.artists || action.album || '网易云音乐'}</span>
+          <div className="netease-play-card__title">
+            <strong>{action.name || '网易云歌曲'}</strong>
+            <span>· {action.artists || action.album || '网易云音乐'}</span>
+          </div>
+          <p className="netease-play-card__compact-lyric">{compactLyric}</p>
         </div>
-        <a className="netease-play-card__open" href={deepLink} onClick={handlePlay} aria-label={`在网易云播放${action.name || '这首歌'}`}>
-          <Play size={13} fill="currentColor" aria-hidden="true" /><span>播放</span>
+        <ChevronDown className="netease-play-card__chevron" size={13} aria-hidden="true" />
+        <a className="netease-play-card__open" href={deepLink} onClick={(event) => { event.stopPropagation(); handlePlay() }} aria-label={`在网易云播放${action.name || '这首歌'}`}>
+          <Play size={13} fill="currentColor" aria-hidden="true" />
         </a>
       </div>
 
+      <div className="netease-play-card__expanded" aria-hidden={!expanded}>
       <div className="netease-play-card__lyrics" aria-live="polite">
         {lyricsState === 'loading' && <span className="netease-play-card__hint">正在取歌词…</span>}
         {lyricsState === 'empty' && <span className="netease-play-card__hint">这首歌暂时没有滚动歌词</span>}
@@ -76,24 +85,32 @@ export default function NeteasePlayCard({ action }) {
 
       <div className="netease-play-card__foot">
         {isActive ? <div className="netease-play-card__sync">
-          <span><i />估算同步</span><button type="button" onClick={() => nudge(-5000)}>−5s</button><button type="button" onClick={() => nudge(5000)}>+5s</button>
+          <span><i />估算同步</span><button type="button" onClick={(event) => { event.stopPropagation(); nudge(-5000) }}>−5s</button><button type="button" onClick={(event) => { event.stopPropagation(); nudge(5000) }}>+5s</button>
         </div> : <span className="netease-play-card__source">网易云音乐</span>}
-        <a className="netease-play-card__fallback" href={webUrl} target="_blank" rel="noreferrer" aria-label="打开歌曲网页"><ExternalLink size={12} aria-hidden="true" /></a>
+        <a className="netease-play-card__fallback" href={webUrl} target="_blank" rel="noreferrer" onClick={event => event.stopPropagation()} aria-label="打开歌曲网页"><ExternalLink size={12} aria-hidden="true" /></a>
+      </div>
       </div>
 
       <style>{`
-        .netease-play-card { position:relative; width:min(306px,calc(100vw - 82px)); margin-top:8px; padding:13px; overflow:hidden; border:1px solid rgba(255,255,255,.56); border-radius:22px; background:linear-gradient(145deg,rgba(255,255,255,.58),rgba(255,231,240,.28)); box-shadow:inset 0 1px 0 rgba(255,255,255,.72),0 12px 32px rgba(99,60,78,.13); backdrop-filter:blur(20px) saturate(1.35); -webkit-backdrop-filter:blur(20px) saturate(1.35); }
+        .netease-play-card { position:relative; width:min(306px,calc(100vw - 82px)); margin-top:8px; padding:10px; overflow:hidden; cursor:pointer; border:1px solid rgba(255,255,255,.56); border-radius:19px; background:linear-gradient(145deg,rgba(255,255,255,.58),rgba(255,231,240,.28)); box-shadow:inset 0 1px 0 rgba(255,255,255,.72),0 9px 24px rgba(99,60,78,.11); backdrop-filter:blur(20px) saturate(1.35); -webkit-backdrop-filter:blur(20px) saturate(1.35); transition:border-radius .25s ease,box-shadow .25s ease; }
+        .netease-play-card.is-expanded { padding:13px; border-radius:22px; box-shadow:inset 0 1px 0 rgba(255,255,255,.72),0 12px 32px rgba(99,60,78,.13); }
         .netease-play-card__glow { position:absolute; width:150px; height:120px; right:-55px; top:-64px; pointer-events:none; border-radius:50%; background:rgba(255,174,198,.42); filter:blur(28px); }
         .netease-play-card__head { position:relative; display:flex; min-width:0; align-items:center; gap:10px; }
         .netease-play-card__cover { display:grid; width:44px; height:44px; flex:none; place-items:center; overflow:hidden; border:1px solid rgba(255,255,255,.7); border-radius:14px; color:#d84c69; background:rgba(255,255,255,.36); box-shadow:0 5px 14px rgba(108,66,82,.12); }
         .netease-play-card__cover.is-playing { animation:netease-cover-pulse 2.4s ease-in-out infinite; }
         .netease-play-card__cover img { width:100%; height:100%; object-fit:cover; }
         .netease-play-card__info { min-width:0; flex:1; }
+        .netease-play-card__title { display:flex; min-width:0; align-items:baseline; gap:3px; }
         .netease-play-card__info strong,.netease-play-card__info span { display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
         .netease-play-card__info strong { color:#5f4651; font-size:14px; line-height:1.35; }
-        .netease-play-card__info span { margin-top:3px; color:rgba(101,72,84,.62); font-size:10.5px; }
-        .netease-play-card__open { display:flex; height:30px; flex:none; align-items:center; justify-content:center; gap:4px; padding:0 11px 0 9px; border:1px solid rgba(255,255,255,.66); border-radius:999px; color:#fff; background:linear-gradient(135deg,rgba(229,61,88,.92),rgba(217,77,117,.82)); box-shadow:0 5px 14px rgba(205,51,79,.2),inset 0 1px rgba(255,255,255,.25); font-size:11px; font-weight:650; text-decoration:none; -webkit-tap-highlight-color:transparent; }
+        .netease-play-card__info span { min-width:0; color:rgba(101,72,84,.58); font-size:10.5px; }
+        .netease-play-card__compact-lyric { margin:3px 0 0; overflow:hidden; color:rgba(95,69,80,.55); font-size:10.5px; line-height:1.25; text-overflow:ellipsis; white-space:nowrap; }
+        .netease-play-card__chevron { flex:none; color:rgba(93,67,77,.3); transition:transform .25s ease; }
+        .netease-play-card.is-expanded .netease-play-card__chevron { transform:rotate(180deg); }
+        .netease-play-card__open { display:grid; width:30px; height:30px; flex:none; place-items:center; padding:0; border:1px solid rgba(255,255,255,.66); border-radius:50%; color:#fff; background:linear-gradient(135deg,rgba(229,61,88,.92),rgba(217,77,117,.82)); box-shadow:0 5px 14px rgba(205,51,79,.2),inset 0 1px rgba(255,255,255,.25); text-decoration:none; -webkit-tap-highlight-color:transparent; }
         .netease-play-card__open:active { transform:scale(.96); }
+        .netease-play-card__expanded { max-height:0; overflow:hidden; opacity:0; transition:max-height .3s ease,opacity .2s ease; }
+        .netease-play-card.is-expanded .netease-play-card__expanded { max-height:150px; opacity:1; }
         .netease-play-card__lyrics { position:relative; display:flex; min-height:88px; flex-direction:column; justify-content:center; gap:4px; margin-top:11px; padding:9px 12px; overflow:hidden; border:1px solid rgba(255,255,255,.36); border-radius:16px; background:rgba(255,255,255,.2); mask-image:linear-gradient(to bottom,transparent,#000 18%,#000 82%,transparent); -webkit-mask-image:linear-gradient(to bottom,transparent,#000 18%,#000 82%,transparent); }
         .netease-play-card__lyrics p { margin:0; overflow:hidden; color:rgba(92,68,78,.34); font-size:11px; line-height:1.45; text-align:center; text-overflow:ellipsis; white-space:nowrap; transition:all .35s ease; }
         .netease-play-card__lyrics p.is-current,.netease-play-card__lyrics p.is-preview { color:#674954; font-size:13px; font-weight:650; text-shadow:0 1px rgba(255,255,255,.72); }
