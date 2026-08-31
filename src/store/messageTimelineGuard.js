@@ -9,12 +9,17 @@ import {
   reconcileTimelineSnapshot,
   updateTimelineMessage,
 } from '../utils/messageTimeline'
+import {
+  ensureConnected,
+  onCcMessageDeleted,
+  sendDeleteNotice,
+} from '../services/companion'
 
 // Every message source eventually touches the Zustand timeline except Codex's
 // isolated runtime. Install one guard before React mounts so history loads,
 // proactive history replay and live streaming all obey the same ordering /
 // dedupe rules instead of each call site inventing its own merge semantics.
-const INSTALL_KEY = '__eunoiaMessageTimelineGuardV2'
+const INSTALL_KEY = '__eunoiaMessageTimelineGuardV3'
 
 // A local delete must survive reconnect/history replay. Without a tombstone,
 // deleting only removes the row from Zustand/IndexedDB; a stale server history
@@ -24,6 +29,17 @@ const INSTALL_KEY = '__eunoiaMessageTimelineGuardV2'
 const TOMBSTONE_STORAGE_KEY = 'eunoia.messageTombstones.v1'
 const TOMBSTONE_TTL_MS = 30 * 24 * 60 * 60 * 1000
 const TOMBSTONE_LIMIT = 4000
+
+// Server deletion is intentionally stronger than the local tombstone. The old
+// path used sendDeleteNotice() as fire-and-forget: if Mobile Safari had a dead
+// WebSocket when the user tapped Delete, the request vanished and the VPS kept
+// the message forever. Persist a small outbox and retry until the server echoes
+// msg_deleted for those ids. This is idempotent server-side.
+const DELETE_OUTBOX_STORAGE_KEY = 'eunoia.ccDeleteOutbox.v1'
+const DELETE_OUTBOX_TTL_MS = 30 * 24 * 60 * 60 * 1000
+const DELETE_OUTBOX_LIMIT = 1000
+const DELETE_RETRY_MS = 3000
+const RECENT_DELETE_ACK_TTL_MS = 30 * 1000
 
 function tombstoneKey(conversationId, id) {
   return `${conversationId || ''}\u0000${id}`
@@ -52,10 +68,42 @@ function loadTombstones() {
   return tombstones
 }
 
+function normalizeDeleteOutboxItem(item) {
+  if (!item || typeof item !== 'object') return null
+  const ids = [...new Set((Array.isArray(item.ids) ? item.ids : [])
+    .filter(id => typeof id === 'string' && id.trim())
+    .map(id => id.trim()))]
+  if (!ids.length) return null
+  const createdAt = Number(item.createdAt) || Date.now()
+  const expiresAt = Number(item.expiresAt) || (createdAt + DELETE_OUTBOX_TTL_MS)
+  if (expiresAt <= Date.now()) return null
+  return {
+    conversationId: typeof item.conversationId === 'string' ? item.conversationId : '',
+    ids,
+    text: typeof item.text === 'string' ? item.text : '',
+    createdAt,
+    expiresAt,
+    lastAttemptAt: Number(item.lastAttemptAt) || 0,
+  }
+}
+
+function loadDeleteOutbox() {
+  try {
+    const parsed = JSON.parse(globalThis.localStorage?.getItem(DELETE_OUTBOX_STORAGE_KEY) || '[]')
+    if (!Array.isArray(parsed)) return []
+    return parsed.map(normalizeDeleteOutboxItem).filter(Boolean).slice(-DELETE_OUTBOX_LIMIT)
+  } catch {
+    return []
+  }
+}
+
 if (!globalThis[INSTALL_KEY]) {
   globalThis[INSTALL_KEY] = true
   const pendingAssistantPlaceholders = new Map()
   const tombstones = loadTombstones()
+  let deleteOutbox = loadDeleteOutbox()
+  const recentDeleteAcks = new Map()
+  let deleteRetryTimer = null
 
   const persistTombstones = () => {
     const now = Date.now()
@@ -71,6 +119,109 @@ if (!globalThis[INSTALL_KEY]) {
       // Best-effort only. The in-memory tombstone still protects this tab.
     }
   }
+
+  const persistDeleteOutbox = () => {
+    const now = Date.now()
+    deleteOutbox = deleteOutbox
+      .filter(item => item.ids.length > 0 && item.expiresAt > now)
+      .sort((a, b) => a.createdAt - b.createdAt)
+      .slice(-DELETE_OUTBOX_LIMIT)
+    try {
+      globalThis.localStorage?.setItem(DELETE_OUTBOX_STORAGE_KEY, JSON.stringify(deleteOutbox))
+    } catch {
+      // Best-effort only. The in-memory outbox still retries in this tab.
+    }
+  }
+
+  const pruneRecentDeleteAcks = () => {
+    const cutoff = Date.now() - RECENT_DELETE_ACK_TTL_MS
+    for (const [id, at] of recentDeleteAcks) {
+      if (at < cutoff) recentDeleteAcks.delete(id)
+    }
+  }
+
+  const scheduleDeleteRetry = () => {
+    if (deleteRetryTimer || deleteOutbox.length === 0) return
+    deleteRetryTimer = setTimeout(() => {
+      deleteRetryTimer = null
+      flushDeleteOutbox()
+    }, DELETE_RETRY_MS)
+  }
+
+  const flushDeleteOutbox = () => {
+    persistDeleteOutbox()
+    if (deleteOutbox.length === 0) return
+
+    ensureConnected()
+    const now = Date.now()
+    let changed = false
+    for (const item of deleteOutbox) {
+      if (now - item.lastAttemptAt < DELETE_RETRY_MS) continue
+      // sendDeleteNotice is fire-and-forget internally. Keep the item in the
+      // outbox regardless of this attempt; only msg_deleted removes it.
+      sendDeleteNotice(item.text, item.ids)
+      item.lastAttemptAt = now
+      changed = true
+    }
+    if (changed) persistDeleteOutbox()
+    scheduleDeleteRetry()
+  }
+
+  const isVpsConversation = (conversationId) => {
+    const state = useStore.getState()
+    const session = state.sessions?.find(session => session.id === conversationId)
+    return session?.providerName === 'claude-code-vps'
+  }
+
+  const queueReliableServerDelete = (message) => {
+    if (!message) return
+    const conversationId = message.conversationId || useStore.getState().currentSessionId || ''
+    if (!isVpsConversation(conversationId)) return
+
+    pruneRecentDeleteAcks()
+    const ids = messageIdentityKeys(message).filter(id => !recentDeleteAcks.has(id))
+    if (!ids.length) return
+
+    const idSet = new Set(ids)
+    const existing = deleteOutbox.find(item =>
+      item.conversationId === conversationId
+      && item.ids.some(id => idSet.has(id)))
+    if (existing) {
+      existing.ids = [...new Set([...existing.ids, ...ids])]
+      if (!existing.text) existing.text = message.voiceText || message.content || ''
+      existing.expiresAt = Date.now() + DELETE_OUTBOX_TTL_MS
+    } else {
+      deleteOutbox.push({
+        conversationId,
+        ids,
+        text: message.voiceText || message.content || '',
+        createdAt: Date.now(),
+        expiresAt: Date.now() + DELETE_OUTBOX_TTL_MS,
+        lastAttemptAt: 0,
+      })
+    }
+    persistDeleteOutbox()
+    // Give useChat's existing immediate send a brief chance to receive its ack;
+    // if it was offline/dead, this durable outbox takes over on the next tick.
+    scheduleDeleteRetry()
+  }
+
+  onCcMessageDeleted((ackIds) => {
+    if (!Array.isArray(ackIds) || ackIds.length === 0) return
+    const now = Date.now()
+    const ackSet = new Set(ackIds.filter(id => typeof id === 'string' && id))
+    for (const id of ackSet) recentDeleteAcks.set(id, now)
+
+    let changed = false
+    deleteOutbox = deleteOutbox.map(item => {
+      const remaining = item.ids.filter(id => !ackSet.has(id))
+      if (remaining.length !== item.ids.length) changed = true
+      return remaining.length ? { ...item, ids: remaining } : null
+    }).filter(Boolean)
+
+    if (changed) persistDeleteOutbox()
+    if (deleteOutbox.length) scheduleDeleteRetry()
+  })
 
   const addMessageTombstones = (message) => {
     if (!message) return
@@ -120,10 +271,14 @@ if (!globalThis[INSTALL_KEY]) {
       clearIrrelevantPending(activeConversationId)
       const incoming = rawIncoming.filter(message => !isTombstoned(message))
       const current = state.messages.filter(message => !isTombstoned(message))
-      const next = rawIncoming.length === 0
-        ? []
+      // If a stale snapshot consisted only of rows the user already deleted,
+      // filtering it must not mean "clear the whole live timeline". Preserve
+      // the current non-deleted rows instead. A genuinely empty setMessages([])
+      // still means clear and continues to work as before.
+      const next = rawIncoming.length > 0 && incoming.length === 0
+        ? current
         : incoming.length === 0
-          ? current
+          ? []
           : reconcileTimelineSnapshot(current, incoming)
       return { messages: next }
     })
@@ -171,7 +326,10 @@ if (!globalThis[INSTALL_KEY]) {
   const guardedDeleteMessage = (id) => {
     pendingAssistantPlaceholders.delete(id)
     const existing = useStore.getState().messages.find(message => message.id === id)
-    if (existing) addMessageTombstones(existing)
+    if (existing) {
+      addMessageTombstones(existing)
+      queueReliableServerDelete(existing)
+    }
     useStore.setState((state) => ({
       messages: state.messages.filter(message => message.id !== id && !isTombstoned(message)),
     }))
@@ -186,6 +344,7 @@ if (!globalThis[INSTALL_KEY]) {
       for (const message of removed) {
         pendingAssistantPlaceholders.delete(message.id)
         addMessageTombstones(message)
+        queueReliableServerDelete(message)
       }
       return { messages: canonicalizeTimeline(state.messages.slice(0, index).filter(message => !isTombstoned(message))) }
     })
@@ -198,4 +357,7 @@ if (!globalThis[INSTALL_KEY]) {
     deleteMessage: guardedDeleteMessage,
     deleteMessagesFrom: guardedDeleteMessagesFrom,
   })
+
+  // Resume deletes left behind by a previous background kill / refresh.
+  if (deleteOutbox.length) scheduleDeleteRetry()
 }
