@@ -18,4 +18,9 @@ describe('fortune formal casting', () => {
     const result = __fortuneTest.xiaoliurenFromNumbers([1, 1, 1])
     expect(result.palaces).toEqual(['大安', '大安', '大安'])
   })
+
+  it('keeps RWS tarot ids stable from the first major to the last minor', () => {
+    expect(__fortuneTest.tarotCardById('major00')).toMatchObject({ name: '愚者', wiki: 'RWS_Tarot_00_Fool.jpg' })
+    expect(__fortuneTest.tarotCardById('pentacles14')).toMatchObject({ name: '星币国王', wiki: 'Pents14.jpg' })
+  })
 })
