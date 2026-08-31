@@ -1,5 +1,5 @@
 name = "ac-mcp-controller"
-main = "src/index.ts"
+main = "src/index-health.ts"
 compatibility_date = "2025-03-01"
 compatibility_flags = ["nodejs_compat", "global_fetch_strictly_public"]
 
@@ -35,4 +35,6 @@ TUYA_BASE_URL  = "https://openapi-sg.iotbing.com"
 TUYA_CLIENT_ID = "43pypnu4k84sxtmus9g5"
 TUYA_IR_ID     = "a365b8d696e9af6606imhf"
 TUYA_AC_ID     = "a3d580e07fd41298b4ufil"
+# Apple Health proxy defaults to https://health.xiaoman.xyz and reuses
+# DEVICE_WRITE_TOKEN unless HEALTH_API_BASE_URL / HEALTH_API_TOKEN are set.
 # COOKIE_SECRET, TUYA_CLIENT_SECRET, DEVICE_WRITE_TOKEN, NCM_COOKIE and BILIBILI_COOKIE are stored as wrangler secrets
