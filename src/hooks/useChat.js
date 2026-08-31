@@ -325,6 +325,12 @@ export function useChat() {
     // notice.
     const vpsWireIds = []
     const wireIdsField = () => (isVpsProvider && vpsWireIds.length ? { wireIds: [...vpsWireIds] } : {})
+    // Parallel to vpsWireIds above, but never merged into one shared pool —
+    // one entry per raw reply() chunk in arrival order, kept apart so Pass 1's
+    // multi-bubble split (below) can attribute each bubble only its own wire
+    // id instead of the whole turn's. Unused by the live voice-rotation path,
+    // which already resets vpsWireIds correctly per bubble on its own.
+    const vpsWireIdLog = []
 
     // Finalizes whatever text has accumulated into currentTextId — persists
     // it to IndexedDB if it has real content, or drops the empty typing-
@@ -647,6 +653,11 @@ export function useChat() {
           if (chunk.text) {
             const nextContent = isVpsProvider ? joinVpsReplyChunks(fullContent, chunk.text) : fullContent + chunk.text
             if (nextContent !== fullContent) {
+              // Logged per raw chunk (not merged into one shared pool) so Pass 1
+              // below can hand each resulting bubble only the wire id(s) its own
+              // chunk actually contributed — see tokenWireIds there for why a
+              // shared list was the root cause of the whole-round-deleted bug.
+              if (isVpsProvider) vpsWireIdLog.push({ wireId: chunk.wireId || null, text: chunk.text })
               if (!contentStarted) {
                 contentStarted = true
                 storedReasoning = fullReasoning
@@ -836,6 +847,28 @@ export function useChat() {
       if (!doVoice) tokens = tokens.map(t => t.type === 'voice' ? { type: 'text', content: t.text } : t)
       if (tokens.length === 0) tokens = [{ type: 'text', content: cleanContent }]
 
+      // One wire id per token, in the same order as `tokens` above. Each
+      // logged chunk (one per raw reply() call) is retokenized on its own —
+      // joinVpsReplyChunks always inserts a paragraph break at chunk
+      // boundaries and tokenizeContent always splits on paragraph breaks, so
+      // a chunk's own token count/order here is guaranteed to match exactly
+      // how many of the tokens above it produced. LETTER blocks get the same
+      // placeholder-wrapping the real extraction above applies (only the id
+      // differs), since that's the one transform that can change a chunk's
+      // token count.
+      const tokenWireIds = []
+      if (isVpsProvider) {
+        for (const entry of vpsWireIdLog) {
+          const withPlaceholders = entry.text.replace(LETTER_RE, () => '\n\n__LETTER__\n\n')
+          const count = tokenizeContent(withPlaceholders.trim()).length
+          for (let n = 0; n < count; n++) tokenWireIds.push(entry.wireId)
+        }
+      }
+      const tokenWireIdField = (idx) => {
+        const wireId = tokenWireIds[idx]
+        return isVpsProvider && wireId ? { wireIds: [wireId] } : {}
+      }
+
       let lastTextIdx = -1
       tokens.forEach((t, i) => { if (t.type === 'text') lastTextIdx = i })
       const lastIdx = tokens.length - 1
@@ -868,12 +901,12 @@ export function useChat() {
           let content = tk.content
           if (i === lastTextIdx && acNote) content = `${content}\n${acNote}`
           if (placed === 0) {
-            updateMessage(assistantId, { content, streaming: false, ...attachAc, ...wireIdsField() })
-            const save = saveMessage({ ...assistantMsg, content, streaming: false, ...attachAc, ...wireIdsField() })
+            updateMessage(assistantId, { content, streaming: false, ...attachAc, ...tokenWireIdField(i) })
+            const save = saveMessage({ ...assistantMsg, content, streaming: false, ...attachAc, ...tokenWireIdField(i) })
             if (isVpsProvider) deferredVpsSaves.push(save)
             else await save
           } else {
-            const partMsg = { id: genId(), conversationId: CONVERSATION_ID, role: 'assistant', type: 'text', content, timestamp: Date.now(), streaming: false, ...attachAc, ...wireIdsField() }
+            const partMsg = { id: genId(), conversationId: CONVERSATION_ID, role: 'assistant', type: 'text', content, timestamp: Date.now(), streaming: false, ...attachAc, ...tokenWireIdField(i) }
             addMessage(partMsg)
             const save = saveMessage(partMsg)
             if (isVpsProvider) deferredVpsSaves.push(save)
