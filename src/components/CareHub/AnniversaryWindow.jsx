@@ -254,7 +254,7 @@ export default function AnniversaryWindow({ theme, onClose }) {
         .anniversary-window__texture {
           position: absolute;
           z-index: 0;
-          inset: 0;
+          inset: -22px 0 0;
           pointer-events: none;
           background: url('/backgrounds/daf99-anniversary-v1.webp') center top / cover no-repeat;
           opacity: .92;
