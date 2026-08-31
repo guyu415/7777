@@ -17,61 +17,9 @@ jobs:
           fetch-depth: 0
 
       - name: Patch ChatWindow multi-select delete UX
-        shell: bash
-        run: |
-          python3 - <<'PY'
-          from pathlib import Path
-
-          path = Path('src/components/Chat/ChatWindow.jsx')
-          text = path.read_text()
-
-          old = """  const handleDeleteSelected = useCallback(async () => {
-    const ids = messages.filter((message) => selectedMessageIds.has(message.id)).map((message) => message.id)
-    if (!ids.length) return
-    if (!window.confirm(`确定删除选中的 ${ids.length} 条消息吗？`)) return
-    let failed = 0
-    for (const id of ids) {
-      try { await deleteMsg(id) } catch { failed += 1 }
-    }
-    setSelectedMessageIds(new Set())
-    showToast(failed ? `已删除 ${ids.length - failed} 条，${failed} 条失败` : `已删除 ${ids.length} 条消息`)
-  }, [deleteMsg, messages, selectedMessageIds])
-"""
-          new = """  const handleDeleteSelected = useCallback(async () => {
-    const ids = messages.filter((message) => selectedMessageIds.has(message.id)).map((message) => message.id)
-    if (!ids.length) {
-      setSelectedMessageIds(new Set())
-      return
-    }
-    if (!window.confirm(`确定删除选中的 ${ids.length} 条消息吗？`)) return
-
-    // Treat a confirmed multi-delete as one UI action: leave selection mode
-    // immediately, then start every optimistic local delete before waiting on
-    // IndexedDB/server cleanup. The old sequential await made bubbles vanish
-    // one-by-one while the selection bar stayed on screen, which felt like the
-    // user had to press Delete repeatedly.
-    setSelectedMessageIds(new Set())
-    const results = await Promise.allSettled(ids.map((id) => deleteMsg(id)))
-    const failed = results.filter((result) => result.status === 'rejected').length
-    showToast(failed ? `已删除 ${ids.length - failed} 条，${failed} 条失败` : `已删除 ${ids.length} 条消息`)
-  }, [deleteMsg, messages, selectedMessageIds])
-"""
-          if old not in text:
-              raise SystemExit('handleDeleteSelected block not found; refusing unsafe patch')
-          text = text.replace(old, new, 1)
-
-          replacements = {
-              'selectionMode={selectedMessageIds.size > 0}': 'selectionMode={messages.some((message) => selectedMessageIds.has(message.id))}',
-              '{selectedMessageIds.size > 0 && (': '{messages.some((message) => selectedMessageIds.has(message.id)) && (',
-              '已选 {selectedMessageIds.size} 条': '已选 {messages.filter((message) => selectedMessageIds.has(message.id)).length} 条',
-          }
-          for before, after in replacements.items():
-              if before not in text:
-                  raise SystemExit(f'marker not found; refusing unsafe patch: {before}')
-              text = text.replace(before, after, 1)
-
-          path.write_text(text)
-          PY
+        env:
+          PATCH_SCRIPT_B64: "ZnJvbSBwYXRobGliIGltcG9ydCBQYXRoCgpwYXRoID0gUGF0aCgic3JjL2NvbXBvbmVudHMvQ2hhdC9DaGF0V2luZG93LmpzeCIpCnRleHQgPSBwYXRoLnJlYWRfdGV4dCgpCgpvbGQgPSAiIiIgIGNvbnN0IGhhbmRsZURlbGV0ZVNlbGVjdGVkID0gdXNlQ2FsbGJhY2soYXN5bmMgKCkgPT4gewogICAgY29uc3QgaWRzID0gbWVzc2FnZXMuZmlsdGVyKChtZXNzYWdlKSA9PiBzZWxlY3RlZE1lc3NhZ2VJZHMuaGFzKG1lc3NhZ2UuaWQpKS5tYXAoKG1lc3NhZ2UpID0+IG1lc3NhZ2UuaWQpCiAgICBpZiAoIWlkcy5sZW5ndGgpIHJldHVybgogICAgaWYgKCF3aW5kb3cuY29uZmlybShg56Gu5a6a5Yig6Zmk6YCJ5Lit55qEICR7aWRzLmxlbmd0aH0g5p2h5raI5oGv5ZCX77yfYCkpIHJldHVybgogICAgbGV0IGZhaWxlZCA9IDAKICAgIGZvciAoY29uc3QgaWQgb2YgaWRzKSB7CiAgICAgIHRyeSB7IGF3YWl0IGRlbGV0ZU1zZyhpZCkgfSBjYXRjaCB7IGZhaWxlZCArPSAxIH0KICAgIH0KICAgIHNldFNlbGVjdGVkTWVzc2FnZUlkcyhuZXcgU2V0KCkpCiAgICBzaG93VG9hc3QoZmFpbGVkID8gYOW3suWIoOmZpCAke2lkcy5sZW5ndGggLSBmYWlsZWR9IOadoe+8jCR7ZmFpbGVkfSDmnaHlpLHotKVgIDogYOW3suWIoOmZpCAke2lkcy5sZW5ndGh9IOadoea2iOaBr2ApCiAgfSwgW2RlbGV0ZU1zZywgbWVzc2FnZXMsIHNlbGVjdGVkTWVzc2FnZUlkc10pCiIiIgpuZXcgPSAiIiIgIGNvbnN0IGhhbmRsZURlbGV0ZVNlbGVjdGVkID0gdXNlQ2FsbGJhY2soYXN5bmMgKCkgPT4gewogICAgY29uc3QgaWRzID0gbWVzc2FnZXMuZmlsdGVyKChtZXNzYWdlKSA9PiBzZWxlY3RlZE1lc3NhZ2VJZHMuaGFzKG1lc3NhZ2UuaWQpKS5tYXAoKG1lc3NhZ2UpID0+IG1lc3NhZ2UuaWQpCiAgICBpZiAoIWlkcy5sZW5ndGgpIHsKICAgICAgc2V0U2VsZWN0ZWRNZXNzYWdlSWRzKG5ldyBTZXQoKSkKICAgICAgcmV0dXJuCiAgICB9CiAgICBpZiAoIXdpbmRvdy5jb25maXJtKGDnoa7lrprliKDpmaTpgInkuK3nmoQgJHtpZHMubGVuZ3RofSDmnaHmtojmga/lkJfvvJ9gKSkgcmV0dXJuCgogICAgLy8gVHJlYXQgYSBjb25maXJtZWQgbXVsdGktZGVsZXRlIGFzIG9uZSBVSSBhY3Rpb246IGxlYXZlIHNlbGVjdGlvbiBtb2RlCiAgICAvLyBpbW1lZGlhdGVseSwgdGhlbiBzdGFydCBldmVyeSBvcHRpbWlzdGljIGxvY2FsIGRlbGV0ZSBiZWZvcmUgd2FpdGluZyBvbgogICAgLy8gSW5kZXhlZERCL3NlcnZlciBjbGVhbnVwLiBUaGUgb2xkIHNlcXVlbnRpYWwgYXdhaXQgbWFkZSBidWJibGVzIHZhbmlzaAogICAgLy8gb25lLWJ5LW9uZSB3aGlsZSB0aGUgc2VsZWN0aW9uIGJhciBzdGF5ZWQgb24gc2NyZWVuLCB3aGljaCBmZWx0IGxpa2UgdGhlCiAgICAvLyB1c2VyIGhhZCB0byBwcmVzcyBEZWxldGUgcmVwZWF0ZWRseS4KICAgIHNldFNlbGVjdGVkTWVzc2FnZUlkcyhuZXcgU2V0KCkpCiAgICBjb25zdCByZXN1bHRzID0gYXdhaXQgUHJvbWlzZS5hbGxTZXR0bGVkKGlkcy5tYXAoKGlkKSA9PiBkZWxldGVNc2coaWQpKSkKICAgIGNvbnN0IGZhaWxlZCA9IHJlc3VsdHMuZmlsdGVyKChyZXN1bHQpID0+IHJlc3VsdC5zdGF0dXMgPT09ICdyZWplY3RlZCcpLmxlbmd0aAogICAgc2hvd1RvYXN0KGZhaWxlZCA/IGDlt7LliKDpmaQgJHtpZHMubGVuZ3RoIC0gZmFpbGVkfSDmnaHvvIwke2ZhaWxlZH0g5p2h5aSx6LSlYCA6IGDlt7LliKDpmaQgJHtpZHMubGVuZ3RofSDmnaHmtojmga9gKQogIH0sIFtkZWxldGVNc2csIG1lc3NhZ2VzLCBzZWxlY3RlZE1lc3NhZ2VJZHNdKQoiIiIKaWYgb2xkIG5vdCBpbiB0ZXh0OgogICAgcmFpc2UgU3lzdGVtRXhpdCgiaGFuZGxlRGVsZXRlU2VsZWN0ZWQgYmxvY2sgbm90IGZvdW5kOyByZWZ1c2luZyB1bnNhZmUgcGF0Y2giKQp0ZXh0ID0gdGV4dC5yZXBsYWNlKG9sZCwgbmV3LCAxKQoKcmVwbGFjZW1lbnRzID0gewogICAgInNlbGVjdGlvbk1vZGU9e3NlbGVjdGVkTWVzc2FnZUlkcy5zaXplID4gMH0iOiAic2VsZWN0aW9uTW9kZT17bWVzc2FnZXMuc29tZSgobWVzc2FnZSkgPT4gc2VsZWN0ZWRNZXNzYWdlSWRzLmhhcyhtZXNzYWdlLmlkKSl9IiwKICAgICJ7c2VsZWN0ZWRNZXNzYWdlSWRzLnNpemUgPiAwICYmICgiOiAie21lc3NhZ2VzLnNvbWUoKG1lc3NhZ2UpID0+IHNlbGVjdGVkTWVzc2FnZUlkcy5oYXMobWVzc2FnZS5pZCkpICYmICgiLAogICAgIuW3sumAiSB7c2VsZWN0ZWRNZXNzYWdlSWRzLnNpemV9IOadoSI6ICLlt7LpgIkge21lc3NhZ2VzLmZpbHRlcigobWVzc2FnZSkgPT4gc2VsZWN0ZWRNZXNzYWdlSWRzLmhhcyhtZXNzYWdlLmlkKSkubGVuZ3RofSDmnaEiLAp9CmZvciBiZWZvcmUsIGFmdGVyIGluIHJlcGxhY2VtZW50cy5pdGVtcygpOgogICAgaWYgYmVmb3JlIG5vdCBpbiB0ZXh0OgogICAgICAgIHJhaXNlIFN5c3RlbUV4aXQoZiJtYXJrZXIgbm90IGZvdW5kOyByZWZ1c2luZyB1bnNhZmUgcGF0Y2g6IHtiZWZvcmV9IikKICAgIHRleHQgPSB0ZXh0LnJlcGxhY2UoYmVmb3JlLCBhZnRlciwgMSkKCnBhdGgud3JpdGVfdGV4dCh0ZXh0KQo="
+        run: echo "$PATCH_SCRIPT_B64" | base64 --decode | python3
 
       - name: Build
         run: |
