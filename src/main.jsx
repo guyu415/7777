@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react'
 import { createRoot } from 'react-dom/client'
+import './store/messageTimelineGuard'
 import App from './App'
 import OpeningSplash from './components/OpeningSplash'
 import { PUSH_NAVIGATION_EVENT, isPushNavigationUrl } from './utils/notificationNavigation'
