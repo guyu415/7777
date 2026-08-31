@@ -42,7 +42,7 @@ const TOOL_ICONS = {
 function toolLabel(tool) { return TOOL_LABELS[tool] || tool }
 function toolIcon(tool) { return TOOL_ICONS[tool] || '🔧' }
 
-const ACTION_SPLIT_RE = /(<i>[\s\S]*?<\/i>)/g
+const ACTION_SPLIT_RE = /(<i>[\s\S]*?<\/i>|\*[^*\n]+\*|\([^()\n]*\)|（[^（）\n]*）)/g
 
 function renderWithActions(text) {
   return text.split(ACTION_SPLIT_RE).map((seg, i) => {
@@ -51,6 +51,16 @@ function renderWithActions(text) {
         <i key={i} style={{ fontSize: '0.92em', opacity: 0.7, fontStyle: 'italic', display: 'inline' }}>
           {seg.slice(3, -4)}
         </i>
+      )
+    }
+    if (seg.length >= 2 && seg.startsWith('*') && seg.endsWith('*')) {
+      return <b key={i}>{seg.slice(1, -1)}</b>
+    }
+    if ((seg.startsWith('(') && seg.endsWith(')')) || (seg.startsWith('（') && seg.endsWith('）'))) {
+      return (
+        <span key={i} style={{ opacity: 0.6, fontSize: '0.85em' }}>
+          {seg}
+        </span>
       )
     }
     return seg || null
