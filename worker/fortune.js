@@ -17,10 +17,46 @@ const HEXAGRAM_MATRIX = {
   坤: { 乾: [11, '泰'], 兑: [19, '临'], 离: [36, '明夷'], 震: [24, '复'], 巽: [46, '升'], 坎: [7, '师'], 艮: [15, '谦'], 坤: [2, '坤'] },
 }
 
-const MAJOR = ['愚者','魔术师','女祭司','皇后','皇帝','教皇','恋人','战车','力量','隐士','命运之轮','正义','倒吊人','死神','节制','恶魔','高塔','星星','月亮','太阳','审判','世界']
-const SUITS = ['权杖','圣杯','宝剑','星币']
+const MAJOR = [
+  ['major00','愚者','RWS_Tarot_00_Fool.jpg'],
+  ['major01','魔术师','RWS_Tarot_01_Magician.jpg'],
+  ['major02','女祭司','RWS_Tarot_02_High_Priestess.jpg'],
+  ['major03','皇后','RWS_Tarot_03_Empress.jpg'],
+  ['major04','皇帝','RWS_Tarot_04_Emperor.jpg'],
+  ['major05','教皇','RWS_Tarot_05_Hierophant.jpg'],
+  ['major06','恋人','RWS_Tarot_06_Lovers.jpg'],
+  ['major07','战车','RWS_Tarot_07_Chariot.jpg'],
+  ['major08','力量','RWS_Tarot_08_Strength.jpg'],
+  ['major09','隐士','RWS_Tarot_09_Hermit.jpg'],
+  ['major10','命运之轮','RWS_Tarot_10_Wheel_of_Fortune.jpg'],
+  ['major11','正义','RWS_Tarot_11_Justice.jpg'],
+  ['major12','倒吊人','RWS_Tarot_12_Hanged_Man.jpg'],
+  ['major13','死神','RWS_Tarot_13_Death.jpg'],
+  ['major14','节制','RWS_Tarot_14_Temperance.jpg'],
+  ['major15','恶魔','RWS_Tarot_15_Devil.jpg'],
+  ['major16','高塔','RWS_Tarot_16_Tower.jpg'],
+  ['major17','星星','RWS_Tarot_17_Star.jpg'],
+  ['major18','月亮','RWS_Tarot_18_Moon.jpg'],
+  ['major19','太阳','RWS_Tarot_19_Sun.jpg'],
+  ['major20','审判','RWS_Tarot_20_Judgement.jpg'],
+  ['major21','世界','RWS_Tarot_21_World.jpg'],
+]
+const SUITS = [
+  ['wands','权杖','Wands'],
+  ['cups','圣杯','Cups'],
+  ['swords','宝剑','Swords'],
+  ['pentacles','星币','Pents'],
+]
 const RANKS = ['王牌','二','三','四','五','六','七','八','九','十','侍从','骑士','王后','国王']
-const TAROT = [...MAJOR, ...SUITS.flatMap(suit => RANKS.map(rank => `${suit}${rank}`))]
+const TAROT = [
+  ...MAJOR.map(([id, name, wiki]) => ({ id, name, wiki })),
+  ...SUITS.flatMap(([suitId, suitName, wikiSuit]) => RANKS.map((rank, index) => ({
+    id: `${suitId}${String(index + 1).padStart(2, '0')}`,
+    name: `${suitName}${rank}`,
+    wiki: `${wikiSuit}${String(index + 1).padStart(2, '0')}.jpg`,
+  }))),
+]
+const TAROT_BY_ID = Object.fromEntries(TAROT.map(card => [card.id, card]))
 
 function randomInt(max) {
   if (!Number.isInteger(max) || max <= 0) throw new Error('invalid random range')
@@ -101,8 +137,9 @@ function tarotDraw(count) {
   const n = Math.max(1, Math.min(10, Number(count) || 3))
   const positions = n === 1 ? ['当下'] : n === 3 ? ['起因 / 过去', '核心 / 现在', '走向 / 未来']
     : ['现状','阻力','根基','过去','可能','近期','自我','环境','希望与恐惧','结果']
-  const cards = pickUnique(TAROT, n).map((name, index) => ({
-    name,
+  const cards = pickUnique(TAROT, n).map((card, index) => ({
+    id: card.id,
+    name: card.name,
     reversed: randomInt(3) === 0,
     position: positions[index] || `位置 ${index + 1}`,
   }))
@@ -139,6 +176,26 @@ function json(body, status = 200) {
     'Access-Control-Allow-Headers': 'Content-Type, X-Eunoia-Password',
     'Cache-Control': 'no-store',
   } })
+}
+
+async function tarotCardImage(pathname) {
+  const id = decodeURIComponent(pathname.slice('/api/fortune/tarot-card/'.length)).trim()
+  const card = TAROT_BY_ID[id]
+  if (!card) return new Response('not found', { status: 404 })
+  const source = `https://commons.wikimedia.org/wiki/Special:Redirect/file/${encodeURIComponent(card.wiki)}`
+  const upstream = await fetch(source, {
+    redirect: 'follow',
+    cf: { cacheEverything: true, cacheTtl: 604800 },
+  })
+  if (!upstream.ok || !upstream.body) return new Response('image unavailable', { status: 502 })
+  return new Response(upstream.body, {
+    status: 200,
+    headers: {
+      'Content-Type': upstream.headers.get('Content-Type') || 'image/jpeg',
+      'Cache-Control': 'public, max-age=604800, immutable',
+      'Access-Control-Allow-Origin': '*',
+    },
+  })
 }
 
 async function saveSession(env, session) {
@@ -266,6 +323,7 @@ export async function handleFortuneRequest(request, env) {
   const url = new URL(request.url)
   if (!url.pathname.startsWith('/api/fortune/')) return null
   if (request.method === 'OPTIONS') return json({ ok: true })
+  if (url.pathname.startsWith('/api/fortune/tarot-card/') && request.method === 'GET') return await tarotCardImage(url.pathname)
   if (!(await authorized(request, env))) return json({ error: 'unauthorized' }, 401)
   try {
     if (url.pathname === '/api/fortune/roll' && request.method === 'POST') return await roll(request, env)
@@ -279,4 +337,4 @@ export async function handleFortuneRequest(request, env) {
   }
 }
 
-export const __fortuneTest = { palaceChain, xiaoliurenFromNumbers, liuyaoFromYaos }
+export const __fortuneTest = { palaceChain, xiaoliurenFromNumbers, liuyaoFromYaos, tarotDraw, tarotCardById: id => TAROT_BY_ID[id] || null }
