@@ -38,3 +38,9 @@ export function saveFortuneVerdict(workerUrl, id, verdict) {
     body: JSON.stringify({ id, verdict }),
   })
 }
+
+export function tarotCardImageUrl(workerUrl, id) {
+  const base = (workerUrl || '').trim().replace(/\/$/, '')
+  if (!base || !id) return ''
+  return `${base}/api/fortune/tarot-card/${encodeURIComponent(id)}`
+}
