@@ -45,7 +45,12 @@ async function callHealthTool(
     body: JSON.stringify({ name, arguments: args }),
   });
 
-  const payload = await response.json<HealthProxyResponse>().catch(() => ({}));
+  let payload: HealthProxyResponse = {};
+  try {
+    payload = await response.json<HealthProxyResponse>();
+  } catch {
+    // Keep an empty typed payload so HTTP status still drives a useful error.
+  }
   if (!response.ok || payload.ok === false) {
     throw new Error(payload.error || `Apple Health 服务请求失败（HTTP ${response.status}）`);
   }
