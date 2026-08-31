@@ -4,31 +4,26 @@ on:
   push:
     branches: [main]
 
-permissions:
-  contents: write
-
 jobs:
   patch:
-    if: github.event.head_commit.message == 'chore: apply multiselect delete patch'
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: Patch ChatWindow multi-select delete UX
-        env:
-          PATCH_SCRIPT_B64: "ZnJvbSBwYXRobGliIGltcG9ydCBQYXRoCgpwYXRoID0gUGF0aCgic3JjL2NvbXBvbmVudHMvQ2hhdC9DaGF0V2luZG93LmpzeCIpCnRleHQgPSBwYXRoLnJlYWRfdGV4dCgpCgpvbGQgPSAiIiIgIGNvbnN0IGhhbmRsZURlbGV0ZVNlbGVjdGVkID0gdXNlQ2FsbGJhY2soYXN5bmMgKCkgPT4gewogICAgY29uc3QgaWRzID0gbWVzc2FnZXMuZmlsdGVyKChtZXNzYWdlKSA9PiBzZWxlY3RlZE1lc3NhZ2VJZHMuaGFzKG1lc3NhZ2UuaWQpKS5tYXAoKG1lc3NhZ2UpID0+IG1lc3NhZ2UuaWQpCiAgICBpZiAoIWlkcy5sZW5ndGgpIHJldHVybgogICAgaWYgKCF3aW5kb3cuY29uZmlybShg56Gu5a6a5Yig6Zmk6YCJ5Lit55qEICR7aWRzLmxlbmd0aH0g5p2h5raI5oGv5ZCX77yfYCkpIHJldHVybgogICAgbGV0IGZhaWxlZCA9IDAKICAgIGZvciAoY29uc3QgaWQgb2YgaWRzKSB7CiAgICAgIHRyeSB7IGF3YWl0IGRlbGV0ZU1zZyhpZCkgfSBjYXRjaCB7IGZhaWxlZCArPSAxIH0KICAgIH0KICAgIHNldFNlbGVjdGVkTWVzc2FnZUlkcyhuZXcgU2V0KCkpCiAgICBzaG93VG9hc3QoZmFpbGVkID8gYOW3suWIoOmZpCAke2lkcy5sZW5ndGggLSBmYWlsZWR9IOadoe+8jCR7ZmFpbGVkfSDmnaHlpLHotKVgIDogYOW3suWIoOmZpCAke2lkcy5sZW5ndGh9IOadoea2iOaBr2ApCiAgfSwgW2RlbGV0ZU1zZywgbWVzc2FnZXMsIHNlbGVjdGVkTWVzc2FnZUlkc10pCiIiIgpuZXcgPSAiIiIgIGNvbnN0IGhhbmRsZURlbGV0ZVNlbGVjdGVkID0gdXNlQ2FsbGJhY2soYXN5bmMgKCkgPT4gewogICAgY29uc3QgaWRzID0gbWVzc2FnZXMuZmlsdGVyKChtZXNzYWdlKSA9PiBzZWxlY3RlZE1lc3NhZ2VJZHMuaGFzKG1lc3NhZ2UuaWQpKS5tYXAoKG1lc3NhZ2UpID0+IG1lc3NhZ2UuaWQpCiAgICBpZiAoIWlkcy5sZW5ndGgpIHsKICAgICAgc2V0U2VsZWN0ZWRNZXNzYWdlSWRzKG5ldyBTZXQoKSkKICAgICAgcmV0dXJuCiAgICB9CiAgICBpZiAoIXdpbmRvdy5jb25maXJtKGDnoa7lrprliKDpmaTpgInkuK3nmoQgJHtpZHMubGVuZ3RofSDmnaHmtojmga/lkJfvvJ9gKSkgcmV0dXJuCgogICAgLy8gVHJlYXQgYSBjb25maXJtZWQgbXVsdGktZGVsZXRlIGFzIG9uZSBVSSBhY3Rpb246IGxlYXZlIHNlbGVjdGlvbiBtb2RlCiAgICAvLyBpbW1lZGlhdGVseSwgdGhlbiBzdGFydCBldmVyeSBvcHRpbWlzdGljIGxvY2FsIGRlbGV0ZSBiZWZvcmUgd2FpdGluZyBvbgogICAgLy8gSW5kZXhlZERCL3NlcnZlciBjbGVhbnVwLiBUaGUgb2xkIHNlcXVlbnRpYWwgYXdhaXQgbWFkZSBidWJibGVzIHZhbmlzaAogICAgLy8gb25lLWJ5LW9uZSB3aGlsZSB0aGUgc2VsZWN0aW9uIGJhciBzdGF5ZWQgb24gc2NyZWVuLCB3aGljaCBmZWx0IGxpa2UgdGhlCiAgICAvLyB1c2VyIGhhZCB0byBwcmVzcyBEZWxldGUgcmVwZWF0ZWRseS4KICAgIHNldFNlbGVjdGVkTWVzc2FnZUlkcyhuZXcgU2V0KCkpCiAgICBjb25zdCByZXN1bHRzID0gYXdhaXQgUHJvbWlzZS5hbGxTZXR0bGVkKGlkcy5tYXAoKGlkKSA9PiBkZWxldGVNc2coaWQpKSkKICAgIGNvbnN0IGZhaWxlZCA9IHJlc3VsdHMuZmlsdGVyKChyZXN1bHQpID0+IHJlc3VsdC5zdGF0dXMgPT09ICdyZWplY3RlZCcpLmxlbmd0aAogICAgc2hvd1RvYXN0KGZhaWxlZCA/IGDlt7LliKDpmaQgJHtpZHMubGVuZ3RoIC0gZmFpbGVkfSDmnaHvvIwke2ZhaWxlZH0g5p2h5aSx6LSlYCA6IGDlt7LliKDpmaQgJHtpZHMubGVuZ3RofSDmnaHmtojmga9gKQogIH0sIFtkZWxldGVNc2csIG1lc3NhZ2VzLCBzZWxlY3RlZE1lc3NhZ2VJZHNdKQoiIiIKaWYgb2xkIG5vdCBpbiB0ZXh0OgogICAgcmFpc2UgU3lzdGVtRXhpdCgiaGFuZGxlRGVsZXRlU2VsZWN0ZWQgYmxvY2sgbm90IGZvdW5kOyByZWZ1c2luZyB1bnNhZmUgcGF0Y2giKQp0ZXh0ID0gdGV4dC5yZXBsYWNlKG9sZCwgbmV3LCAxKQoKcmVwbGFjZW1lbnRzID0gewogICAgInNlbGVjdGlvbk1vZGU9e3NlbGVjdGVkTWVzc2FnZUlkcy5zaXplID4gMH0iOiAic2VsZWN0aW9uTW9kZT17bWVzc2FnZXMuc29tZSgobWVzc2FnZSkgPT4gc2VsZWN0ZWRNZXNzYWdlSWRzLmhhcyhtZXNzYWdlLmlkKSl9IiwKICAgICJ7c2VsZWN0ZWRNZXNzYWdlSWRzLnNpemUgPiAwICYmICgiOiAie21lc3NhZ2VzLnNvbWUoKG1lc3NhZ2UpID0+IHNlbGVjdGVkTWVzc2FnZUlkcy5oYXMobWVzc2FnZS5pZCkpICYmICgiLAogICAgIuW3sumAiSB7c2VsZWN0ZWRNZXNzYWdlSWRzLnNpemV9IOadoSI6ICLlt7LpgIkge21lc3NhZ2VzLmZpbHRlcigobWVzc2FnZSkgPT4gc2VsZWN0ZWRNZXNzYWdlSWRzLmhhcyhtZXNzYWdlLmlkKSkubGVuZ3RofSDmnaEiLAp9CmZvciBiZWZvcmUsIGFmdGVyIGluIHJlcGxhY2VtZW50cy5pdGVtcygpOgogICAgaWYgYmVmb3JlIG5vdCBpbiB0ZXh0OgogICAgICAgIHJhaXNlIFN5c3RlbUV4aXQoZiJtYXJrZXIgbm90IGZvdW5kOyByZWZ1c2luZyB1bnNhZmUgcGF0Y2g6IHtiZWZvcmV9IikKICAgIHRleHQgPSB0ZXh0LnJlcGxhY2UoYmVmb3JlLCBhZnRlciwgMSkKCnBhdGgud3JpdGVfdGV4dCh0ZXh0KQo="
-        run: echo "$PATCH_SCRIPT_B64" | base64 --decode | python3
-
-      - name: Build
-        run: |
-          npm ci
-          npm run build
-
-      - name: Commit patch
+      - name: Apply patch, build, and commit if needed
         shell: bash
         run: |
+          python3 .github/patch_multiselect_delete.py
+          if git diff --quiet -- src/components/Chat/ChatWindow.jsx; then
+            echo "ChatWindow already patched"
+            exit 0
+          fi
+          npm ci
+          npm run build
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add src/components/Chat/ChatWindow.jsx
