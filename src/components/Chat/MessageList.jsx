@@ -1,4 +1,4 @@
-import { memo, forwardRef, useCallback, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { memo, forwardRef, useCallback, useEffect, useImperativeHandle, useLayoutEffect, useRef, useState } from 'react'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import { ChevronUp, ChevronDown } from 'lucide-react'
 import MessageBubble from './MessageBubble'
@@ -18,142 +18,12 @@ const TOP_THRESHOLD_PX = 96
 // the moment each item mounts, so total scroll height stays accurate.
 const ESTIMATED_ITEM_HEIGHT = 88
 
-function messageTimestamp(message) {
-  const direct = Number(message?.timestamp)
-  if (Number.isFinite(direct) && direct > 0) return direct
-
-  // Several optimistic/client ids already contain Date.now(). Recover that
-  // value instead of treating a missing timestamp as epoch 0 (which is what
-  // made a brand-new bubble jump to the very front after a history merge).
-  const match = String(message?.id || '').match(/(?:^|\D)(1\d{12})(?:\D|$)/)
-  if (match) {
-    const embedded = Number(match[1])
-    if (Number.isFinite(embedded) && embedded > 0) return embedded
-  }
-
-  // Unknown timestamps belong at the end, never at 1970/the front. The
-  // source-order tie breaker below keeps multiple legacy items deterministic.
-  return Number.MAX_SAFE_INTEGER
-}
-
-function messageRichness(message) {
-  if (!message) return 0
-  let score = 0
-  score += typeof message.content === 'string' ? message.content.trim().length : 0
-  score += typeof message.voiceText === 'string' ? message.voiceText.trim().length : 0
-  score += typeof message.reasoning === 'string' ? message.reasoning.trim().length : 0
-  if (message.type === 'image' && (message.imageUrl || message.imageData)) score += 1000
-  if (message.type === 'file' && (message.filePath || message.fileName)) score += 1000
-  if (message.type === 'voice' && (message.voiceBlobId || message.voiceText)) score += 1000
-  if (message.error) score += 100
-  if (message.acStatus) score += 100
-  if (Array.isArray(message.toolUses) && message.toolUses.length) score += 100
-  if (message.streaming || message.voiceLoading) score += 10
-  return score
-}
-
-function isMeaningfulMessage(message) {
-  if (!message) return false
-  if (message.streaming || message.voiceLoading) return true
-  if (message.error || message.acStatus) return true
-  if (Array.isArray(message.toolUses) && message.toolUses.length) return true
-  if (typeof message.reasoning === 'string' && message.reasoning.trim()) return true
-  if (message.type === 'image') return !!(message.imageUrl || message.imageData)
-  if (message.type === 'file') return !!(message.filePath || message.fileName || message.content)
-  if (message.type === 'voice') return !!(message.voiceBlobId || message.voiceText || message.content)
-  return typeof message.content === 'string' && message.content.trim().length > 0
-}
-
-function mergeDuplicateMessage(existing, incoming) {
-  const richer = messageRichness(incoming) > messageRichness(existing) ? incoming : existing
-  const aliases = new Set([
-    ...(Array.isArray(existing?.wireIds) ? existing.wireIds : []),
-    ...(Array.isArray(incoming?.wireIds) ? incoming.wireIds : []),
-  ].filter(Boolean))
-  if (incoming?.id && incoming.id !== existing?.id) aliases.add(incoming.id)
-
-  const existingTs = messageTimestamp(existing)
-  const incomingTs = messageTimestamp(incoming)
-  const realTimestamp = Math.min(existingTs, incomingTs)
-
-  return {
-    ...existing,
-    ...richer,
-    // Keep the first rendered id stable. A live CC bubble commonly has a
-    // local id while its reconnect-history twin uses a server wire id; key
-    // replacement here would make the virtualizer recycle the wrong row.
-    id: existing.id,
-    ...(aliases.size ? { wireIds: [...aliases] } : {}),
-    timestamp: realTimestamp === Number.MAX_SAFE_INTEGER
-      ? (existing.timestamp ?? incoming.timestamp)
-      : realTimestamp,
-    __sourceIndex: Math.min(existing.__sourceIndex, incoming.__sourceIndex),
-  }
-}
-
-function normalizeTimeline(rawMessages) {
-  const canonical = []
-  const aliasToIndex = new Map()
-
-  for (let sourceIndex = 0; sourceIndex < rawMessages.length; sourceIndex++) {
-    const message = rawMessages[sourceIndex]
-    if (!message?.id) continue
-
-    const aliases = [
-      message.id,
-      ...(Array.isArray(message.wireIds) ? message.wireIds : []),
-    ].filter(Boolean)
-
-    let targetIndex
-    for (const alias of aliases) {
-      const found = aliasToIndex.get(alias)
-      if (found !== undefined) {
-        targetIndex = found
-        break
-      }
-    }
-
-    if (targetIndex === undefined) {
-      targetIndex = canonical.length
-      canonical.push({ ...message, __sourceIndex: sourceIndex })
-    } else {
-      canonical[targetIndex] = mergeDuplicateMessage(canonical[targetIndex], { ...message, __sourceIndex: sourceIndex })
-    }
-
-    const merged = canonical[targetIndex]
-    aliasToIndex.set(merged.id, targetIndex)
-    for (const alias of aliases) aliasToIndex.set(alias, targetIndex)
-    if (Array.isArray(merged.wireIds)) {
-      for (const wireId of merged.wireIds) if (wireId) aliasToIndex.set(wireId, targetIndex)
-    }
-  }
-
-  return canonical
-    // A completed assistant row with no displayable payload is a transport /
-    // persistence artefact, not a chat message. Keep real streaming and voice
-    // loading placeholders because those intentionally render while pending.
-    .filter(isMeaningfulMessage)
-    .sort((a, b) => {
-      const timeDiff = messageTimestamp(a) - messageTimestamp(b)
-      if (timeDiff !== 0) return timeDiff
-      return a.__sourceIndex - b.__sourceIndex
-    })
-    .map(({ __sourceIndex: _sourceIndex, ...message }) => message)
-}
-
 /**
  * Renders only the messages near the viewport (+ overscan buffer), not the
  * full history — this is the actual fix for long-conversation jank. The full
  * `messages` array is still held in memory/IndexedDB/store exactly as before
  * (see useChat.js/store) and is what's sent as model context; this component
  * only changes which of those messages become real DOM nodes.
- *
- * IMPORTANT: reconnect history and live delivery can race. Before feeding
- * anything into the virtualizer we canonicalize the raw array into one stable
- * timeline: id/wireId aliases are deduped, empty completed assistant artefacts
- * are removed, and missing timestamps can never sort to the front. This keeps
- * React keys and virtualizer indexes stable even while old history is being
- * recovered in the background.
  *
  * Wrapped in memo() so that state changes elsewhere in ChatWindow (settings
  * navigation, long-press menu, edit modal, toast, input text) never re-render
@@ -166,22 +36,13 @@ const MessageList = forwardRef(function MessageList({
   selectionMode, selectedIds, onToggleSelect,
   emptyAiName, emptyHasApiKey, onEmptyConfigureClick,
 }, ref) {
-  const visibleMessages = useMemo(() => normalizeTimeline(messages), [messages])
-  const effectiveLastAiId = useMemo(() => {
-    if (lastAiId && visibleMessages.some(message => message.id === lastAiId)) return lastAiId
-    for (let i = visibleMessages.length - 1; i >= 0; i--) {
-      if (visibleMessages[i]?.role === 'assistant') return visibleMessages[i].id
-    }
-    return null
-  }, [lastAiId, visibleMessages])
-
   const scrollRef = useRef(null)
   // Refs, not state — reading/writing them must never itself trigger a
   // re-render of this list on every scroll tick.
   const isNearBottomRef = useRef(true)
   const prevSessionIdRef = useRef(sessionId)
   const prevLastIdRef = useRef(null)
-  const prevMessageCountRef = useRef(visibleMessages.length)
+  const prevMessageCountRef = useRef(messages.length)
   const hasScrolledInitiallyRef = useRef(false)
   // These two ARE state (unlike the ref above) because they drive the jump
   // buttons' visibility — but only ever setState on a threshold *crossing*,
@@ -198,22 +59,22 @@ const MessageList = forwardRef(function MessageList({
   const idleTimerRef = useRef(null)
 
   const virtualizer = useVirtualizer({
-    count: visibleMessages.length,
+    count: messages.length,
     getScrollElement: () => scrollRef.current,
     estimateSize: () => ESTIMATED_ITEM_HEIGHT,
     overscan: 10,
-    getItemKey: (index) => visibleMessages[index]?.id ?? index,
+    getItemKey: (index) => messages[index]?.id ?? index,
   })
 
   // Lets the parent (search results, "jump to message") drive this list's
   // scroll position without reaching into virtualizer/DOM internals itself.
   useImperativeHandle(ref, () => ({
     scrollToIndex(index, opts) {
-      if (index < 0 || index >= visibleMessages.length) return
-      isNearBottomRef.current = index >= visibleMessages.length - 1
+      if (index < 0 || index >= messages.length) return
+      isNearBottomRef.current = index >= messages.length - 1
       virtualizer.scrollToIndex(index, { align: 'center', ...opts })
     },
-  }), [visibleMessages.length, virtualizer])
+  }), [messages.length, virtualizer])
 
   // Cheap, O(1) bottom-proximity check — reads three numbers off the scroll
   // container, never touches the messages array or any DOM node inside it.
@@ -254,44 +115,44 @@ const MessageList = forwardRef(function MessageList({
     if (switched) {
       prevSessionIdRef.current = sessionId
       hasScrolledInitiallyRef.current = false
-      prevMessageCountRef.current = visibleMessages.length
+      prevMessageCountRef.current = messages.length
       setNewBelowCount(0)
     }
-    if (!hasScrolledInitiallyRef.current && visibleMessages.length > 0) {
+    if (!hasScrolledInitiallyRef.current && messages.length > 0) {
       hasScrolledInitiallyRef.current = true
       isNearBottomRef.current = true
-      virtualizer.scrollToIndex(visibleMessages.length - 1, { align: 'end' })
+      virtualizer.scrollToIndex(messages.length - 1, { align: 'end' })
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sessionId, visibleMessages.length > 0])
+  }, [sessionId, messages.length > 0])
 
   // Count only newly appended bubbles while the reader is away from the
   // bottom. Streaming growth inside the current bubble does not inflate it.
   useLayoutEffect(() => {
     if (prevSessionIdRef.current !== sessionId) return
-    const added = visibleMessages.length - prevMessageCountRef.current
+    const added = messages.length - prevMessageCountRef.current
     if (added > 0 && !isNearBottomRef.current) {
       setNewBelowCount((count) => count + added)
     }
-    prevMessageCountRef.current = visibleMessages.length
-  }, [visibleMessages.length, sessionId])
+    prevMessageCountRef.current = messages.length
+  }, [messages.length, sessionId])
 
   // New message arrives, or the in-progress (streaming) message's own
   // content/reasoning grows — auto-follow ONLY if the user was already at
   // the bottom. A user who scrolled up to read history must never be yanked
   // back down mid-stream.
-  const lastMsg = visibleMessages[visibleMessages.length - 1]
+  const lastMsg = messages[messages.length - 1]
   useLayoutEffect(() => {
-    if (!visibleMessages.length) return
+    if (!messages.length) return
     const lastId = lastMsg?.id
     prevLastIdRef.current = lastId
     if (isNearBottomRef.current) {
-      virtualizer.scrollToIndex(visibleMessages.length - 1, { align: 'end' })
+      virtualizer.scrollToIndex(messages.length - 1, { align: 'end' })
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [visibleMessages.length, lastMsg?.content?.length, lastMsg?.reasoning?.length, lastMsg?.streaming])
+  }, [messages.length, lastMsg?.content?.length, lastMsg?.reasoning?.length, lastMsg?.streaming])
 
-  if (visibleMessages.length === 0) {
+  if (messages.length === 0) {
     return (
       <div className="absolute inset-0 overflow-y-auto px-2 py-4" style={{ zIndex: 1 }}>
         <div className="flex flex-col items-center justify-center h-full text-center gap-3">
@@ -336,11 +197,11 @@ const MessageList = forwardRef(function MessageList({
       >
         <div style={{ position: 'relative', height: virtualizer.getTotalSize(), width: '100%' }}>
           {items.map((vi) => {
-            const msg = visibleMessages[vi.index]
+            const msg = messages[vi.index]
             if (!msg) return null
-            const isLastAi = msg.id === effectiveLastAiId
-            const sameSenderAsPrev = visibleMessages[vi.index - 1]?.role === msg.role
-            const sameSenderAsNext = visibleMessages[vi.index + 1]?.role === msg.role
+            const isLastAi = msg.id === lastAiId
+            const sameSenderAsPrev = messages[vi.index - 1]?.role === msg.role
+            const sameSenderAsNext = messages[vi.index + 1]?.role === msg.role
             return (
               <div
                 key={vi.key}
@@ -364,7 +225,7 @@ const MessageList = forwardRef(function MessageList({
                   onLongPress={selectionMode ? null : onLongPress}
                   onRegenerate={isLastAi ? onRegenerate : null}
                   onRegenerateRound={isLastAi ? onRegenerateRound : null}
-                  onRetry={msg.error && vi.index === visibleMessages.length - 1 ? onRetry : null}
+                  onRetry={msg.error && vi.index === messages.length - 1 ? onRetry : null}
                   isLoading={isLoading}
                   userAvatar={userAvatar}
                   aiAvatar={aiAvatar}
@@ -401,7 +262,7 @@ const MessageList = forwardRef(function MessageList({
           onClick={() => {
             isNearBottomRef.current = true
             setNewBelowCount(0)
-            virtualizer.scrollToIndex(visibleMessages.length - 1, { align: 'end' })
+            virtualizer.scrollToIndex(messages.length - 1, { align: 'end' })
           }}
           title="回到底部"
           aria-label="回到底部"
