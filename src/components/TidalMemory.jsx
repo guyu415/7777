@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { ChevronDown, ChevronLeft, ChevronUp, RefreshCw, RotateCcw, Save } from 'lucide-react'
+import { ChevronDown, ChevronLeft, ChevronUp, Eraser, RefreshCw, RotateCcw, Save } from 'lucide-react'
 import { getTidalMemoryStatus, saveTidalMemorySummary } from '../services/companion'
 import {
+  EMPTY_LONG_TERM_TEXT,
+  EMPTY_RECENT_TEXT,
   EMPTY_ROLLING_SUMMARY,
   formatTidalCoverage,
   formatTidalTime,
@@ -11,6 +13,11 @@ import {
   renderTidalRecent,
   tidalStatusPresentation,
 } from '../utils/tidalMemory'
+
+function splitSummaryText(text) {
+  const fields = parseTidalSummary(text)
+  return [renderTidalLongTerm(fields), renderTidalRecent(fields)]
+}
 
 function Card({ children, style }) {
   return (
@@ -24,20 +31,19 @@ export default function TidalMemory({ theme, onBack }) {
   const primary = theme?.primary || '#4aacf0'
   const primaryDark = theme?.primaryDark || '#2196d3'
   const [status, setStatus] = useState(null)
-  const [draft, setDraft] = useState('')
-  const [savedText, setSavedText] = useState('')
+  const [longTermDraft, setLongTermDraft] = useState('')
+  const [recentDraft, setRecentDraft] = useState('')
+  const [savedLongTerm, setSavedLongTerm] = useState('')
+  const [savedRecent, setSavedRecent] = useState('')
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [feedback, setFeedback] = useState(null)
   const [coreOpen, setCoreOpen] = useState(false)
   const [checkpointOpen, setCheckpointOpen] = useState(false)
 
-  const dirty = draft !== savedText
+  const dirty = longTermDraft !== savedLongTerm || recentDraft !== savedRecent
   const tideView = tidalStatusPresentation(status?.tide)
   const saveBlocked = status?.tide?.status === 'running' || status?.tide?.status === 'retry_wait'
-  const parsedDraft = useMemo(() => parseTidalSummary(draft), [draft])
-  const longTermDraft = useMemo(() => renderTidalLongTerm(parsedDraft), [parsedDraft])
-  const recentDraft = useMemo(() => renderTidalRecent(parsedDraft), [parsedDraft])
 
   const load = useCallback(async ({ discardDraft = false } = {}) => {
     setLoading(true)
@@ -45,10 +51,13 @@ export default function TidalMemory({ theme, onBack }) {
     try {
       const next = await getTidalMemoryStatus()
       const nextText = next.rollingSummary?.text || EMPTY_ROLLING_SUMMARY
+      const [nextLongTerm, nextRecent] = splitSummaryText(nextText)
       setStatus(next)
       if (discardDraft || !dirty) {
-        setDraft(nextText)
-        setSavedText(nextText)
+        setLongTermDraft(nextLongTerm)
+        setRecentDraft(nextRecent)
+        setSavedLongTerm(nextLongTerm)
+        setSavedRecent(nextRecent)
       } else if (next.revision !== status?.revision) {
         setFeedback({ type: 'error', text: '摘要已在别处更新。当前修改未丢失，请复制留存或取消修改后刷新。' })
       }
@@ -65,9 +74,12 @@ export default function TidalMemory({ theme, onBack }) {
       .then((next) => {
         if (!live) return
         const text = next.rollingSummary?.text || EMPTY_ROLLING_SUMMARY
+        const [nextLongTerm, nextRecent] = splitSummaryText(text)
         setStatus(next)
-        setDraft(text)
-        setSavedText(text)
+        setLongTermDraft(nextLongTerm)
+        setRecentDraft(nextRecent)
+        setSavedLongTerm(nextLongTerm)
+        setSavedRecent(nextRecent)
       })
       .catch((error) => {
         if (!live) return
@@ -83,24 +95,39 @@ export default function TidalMemory({ theme, onBack }) {
   }
 
   const handleCancel = () => {
-    setDraft(savedText)
+    setLongTermDraft(savedLongTerm)
+    setRecentDraft(savedRecent)
+    setFeedback(null)
+  }
+
+  const handleClear = () => {
+    setLongTermDraft(EMPTY_LONG_TERM_TEXT)
+    setRecentDraft(EMPTY_RECENT_TEXT)
     setFeedback(null)
   }
 
   const handleSave = async () => {
     if (!status || !dirty || saving || saveBlocked) return
+    const merged = mergeTidalLayers(longTermDraft, recentDraft)
+    if (!merged) {
+      setFeedback({ type: 'error', text: '请保留两个框各自的三个固定标题和冒号（标题下的内容可以留空）。' })
+      return
+    }
     setSaving(true)
     setFeedback(null)
     try {
       const next = await saveTidalMemorySummary({
         sessionId: status.sessionId,
         expectedRevision: status.revision,
-        summaryText: draft,
+        summaryText: merged,
       })
-      const nextText = next.rollingSummary?.text || draft
+      const nextText = next.rollingSummary?.text || merged
+      const [nextLongTerm, nextRecent] = splitSummaryText(nextText)
       setStatus(next)
-      setDraft(nextText)
-      setSavedText(nextText)
+      setLongTermDraft(nextLongTerm)
+      setRecentDraft(nextRecent)
+      setSavedLongTerm(nextLongTerm)
+      setSavedRecent(nextRecent)
       setFeedback({ type: 'success', text: '摘要已保存，并写入 CC 的权威潮汐记忆。' })
     } catch (error) {
       const conflict = error.status === 409 || error.code === 'version_conflict' || error.code === 'tidal_active'
@@ -108,14 +135,6 @@ export default function TidalMemory({ theme, onBack }) {
     } finally {
       setSaving(false)
     }
-  }
-
-  const updateLayer = (layer, value) => {
-    const next = layer === 'longTerm'
-      ? mergeTidalLayers(value, recentDraft)
-      : mergeTidalLayers(longTermDraft, value)
-    if (next) setDraft(next)
-    setFeedback(next ? null : { type: 'error', text: '请保留该层的三个固定标题，且每段不要留空。' })
   }
 
   const metadata = useMemo(() => [
@@ -197,7 +216,7 @@ export default function TidalMemory({ theme, onBack }) {
           </div>
           <textarea
             value={longTermDraft}
-            onChange={(event) => updateLayer('longTerm', event.target.value)}
+            onChange={(event) => setLongTermDraft(event.target.value)}
             maxLength={2600}
             spellCheck={false}
             className="w-full rounded-xl px-3 py-3 text-sm outline-none"
@@ -216,7 +235,7 @@ export default function TidalMemory({ theme, onBack }) {
           </div>
           <textarea
             value={recentDraft}
-            onChange={(event) => updateLayer('recent', event.target.value)}
+            onChange={(event) => setRecentDraft(event.target.value)}
             maxLength={2400}
             spellCheck={false}
             className="w-full rounded-xl px-3 py-3 text-sm outline-none"
@@ -229,8 +248,9 @@ export default function TidalMemory({ theme, onBack }) {
           </p>
           {saveBlocked && <p className="text-[10px] mt-2" style={{ color: '#b87920' }}>潮汐任务正在处理或等待重试，暂不能保存；完成后刷新再试。</p>}
           {feedback && <div className="mt-2 p-2.5 rounded-xl text-xs" style={{ color: feedback.type === 'success' ? '#2f8f5c' : '#c45d65', background: feedback.type === 'success' ? 'rgba(59,159,104,0.08)' : 'rgba(208,95,103,0.08)' }}>{feedback.text}</div>}
-          <div className="grid grid-cols-3 gap-2 mt-3">
+          <div className="grid grid-cols-2 gap-2 mt-3">
             <button onClick={handleCancel} disabled={!dirty || saving} className="py-2.5 rounded-full text-xs font-medium flex items-center justify-center gap-1" style={{ color: '#6889aa', background: 'rgba(235,243,251,0.9)', opacity: !dirty || saving ? 0.5 : 1 }}><RotateCcw size={13} />取消修改</button>
+            <button onClick={handleClear} disabled={saving || loading} className="py-2.5 rounded-full text-xs font-medium flex items-center justify-center gap-1" style={{ color: '#6889aa', background: 'rgba(235,243,251,0.9)', opacity: saving || loading ? 0.5 : 1 }}><Eraser size={13} />清空重写</button>
             <button onClick={handleRefresh} disabled={loading || saving} className="py-2.5 rounded-full text-xs font-medium flex items-center justify-center gap-1" style={{ color: '#6889aa', background: 'rgba(235,243,251,0.9)', opacity: loading || saving ? 0.5 : 1 }}><RefreshCw size={13} />刷新状态</button>
             <button onClick={handleSave} disabled={!dirty || saving || saveBlocked || loading} className="py-2.5 rounded-full text-xs font-medium text-white flex items-center justify-center gap-1" style={{ background: `linear-gradient(135deg, ${primary}, ${primaryDark})`, opacity: !dirty || saving || saveBlocked || loading ? 0.5 : 1 }}><Save size={13} />{saving ? '保存中…' : '保存摘要'}</button>
           </div>
