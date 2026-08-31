@@ -104,13 +104,6 @@ export default function AnniversaryWindow({ theme, onClose }) {
         <button type="button" onClick={onClose} className="anniversary-window__back" aria-label="返回">
           <ArrowLeft size={20} />
         </button>
-
-        <div className="anniversary-window__hero-copy">
-          <h1><img className="anniversary-window__title-image" src="/assets/anniversary-title-handdrawn.png" alt="纪念日" /></h1>
-        </div>
-
-        <img className="anniversary-window__sticker anniversary-window__sticker--notebook" src="/assets/anniversary-sticker-notebook.png" alt="" aria-hidden="true" />
-        <img className="anniversary-window__sticker anniversary-window__sticker--jar-cloud" src="/assets/anniversary-sticker-jar-cloud.png" alt="" aria-hidden="true" />
       </div>
     </header>
   )
@@ -263,16 +256,15 @@ export default function AnniversaryWindow({ theme, onClose }) {
           z-index: 0;
           inset: 0;
           pointer-events: none;
-          background: url('/backgrounds/anniversary-journal-pastel.webp') center top / cover no-repeat;
+          background: url('/backgrounds/daf99-anniversary-v1.webp') center top / cover no-repeat;
           opacity: .92;
         }
         .anniversary-window > :not(.anniversary-window__texture) { position: relative; z-index: 1; }
         .anniversary-window__hero {
           min-height: 0;
           padding: calc(var(--safe-top) + 4px) 20px 0;
-          background: linear-gradient(180deg, rgba(255, 209, 224, .62), rgba(255, 242, 235, .26));
         }
-        .anniversary-window__hero-inner { position: relative; width: min(100%, 620px); min-height: clamp(112px, 29vw, 130px); margin: 0 auto; }
+        .anniversary-window__hero-inner { position: relative; width: min(100%, 620px); min-height: clamp(150px, 39vw, 175px); margin: 0 auto; }
         .anniversary-window__back {
           position: relative;
           z-index: 3;
@@ -288,36 +280,6 @@ export default function AnniversaryWindow({ theme, onClose }) {
           transition: transform .18s ease, background .18s ease;
         }
         .anniversary-window__back:active { transform: scale(.94); background: #fff; }
-        .anniversary-window__hero-copy { position: absolute; z-index: 3; top: clamp(50px, 14vw, 62px); left: clamp(78px, 20vw, 112px); margin: 0; }
-        .anniversary-window__hero-copy h1 { margin: 0; }
-        .anniversary-window__title-image {
-          display: block;
-          width: clamp(76px, 20vw, 96px);
-          height: auto;
-          filter: drop-shadow(0 1px 1px rgba(91, 127, 94, .08));
-        }
-        .anniversary-window__sticker {
-          position: absolute;
-          z-index: 2;
-          display: block;
-          max-width: none;
-          height: auto;
-          object-fit: contain;
-          pointer-events: none;
-          user-select: none;
-          filter: drop-shadow(0 5px 7px rgba(177, 118, 135, .13));
-        }
-        .anniversary-window__sticker--notebook {
-          bottom: -1px;
-          left: 0;
-          width: min(28vw, 130px);
-          transform: rotate(-3deg);
-        }
-        .anniversary-window__sticker--jar-cloud {
-          top: 0;
-          right: 0;
-          width: min(42vw, 180px);
-        }
         .anniversary-window__loading { position: relative; z-index: 1; color: var(--anniversary-primary); }
         .anniversary-window__retry {
           padding: 10px 20px;
@@ -483,14 +445,13 @@ export default function AnniversaryWindow({ theme, onClose }) {
           .anniversary-window__entry-card { padding-right: 25px; padding-left: 25px; }
         }
         @media (max-width: 360px) {
-          .anniversary-window__hero-inner { min-height: 112px; }
+          .anniversary-window__hero-inner { min-height: 150px; }
           .anniversary-window__calendar-card { padding: 18px 11px 17px; border-radius: 30px; }
           .anniversary-window .care-month-calendar__grid { column-gap: 3px; row-gap: 7px; }
           .anniversary-window .care-month-calendar__nav { margin-right: 1px; margin-left: 1px; }
           .anniversary-window__entry-card { padding-right: 14px; padding-left: 14px; }
           .anniversary-window__submit { width: 72px; }
           .anniversary-window__entry-heading { padding-right: 90px; }
-          .anniversary-window__sticker--jar-cloud { width: min(42vw, 160px); }
           .anniversary-window__entry-bear { width: 101px; }
         }
         @media (prefers-reduced-motion: reduce) {
