@@ -130,8 +130,14 @@ export default function TidalMemory({ theme, onBack }) {
       setSavedRecent(nextRecent)
       setFeedback({ type: 'success', text: '摘要已保存，并写入 CC 的权威潮汐记忆。' })
     } catch (error) {
-      const conflict = error.status === 409 || error.code === 'version_conflict' || error.code === 'tidal_active'
-      setFeedback({ type: 'error', text: conflict ? '摘要或潮汐状态已变化，请刷新后重试；你的输入仍保留在文本框中。' : (error.message || '保存失败，旧摘要保持不变。') })
+      const messages = {
+        version_conflict: '摘要或潮汐状态已变化，请刷新后重试；你的输入仍保留在文本框中。',
+        tidal_active: '潮汐任务正在处理，暂不能保存；请稍后重试。你的输入仍保留在文本框中。',
+        session_mismatch: '会话已变化，请刷新页面后重试。',
+        invalid_summary: '内容没通过服务端校验（可能是某一段超出长度上限），请检查后重试；你的输入仍保留在文本框中。',
+        write_failed: '服务器写入失败，请稍后重试；你的输入仍保留在文本框中。',
+      }
+      setFeedback({ type: 'error', text: messages[error.code] || error.message || '保存失败，旧摘要保持不变。' })
     } finally {
       setSaving(false)
     }
