@@ -16,9 +16,10 @@ Only the fixed Claude Code companion window reads these variables:
 | `AI_COMPANION_TIDAL_RECENT_MAX` | `16` | Maximum raw messages in recovery layer |
 | `AI_COMPANION_TIDAL_RECOVERY_TOKEN_BUDGET` | `4000` | Total three-layer recovery budget |
 | `AI_COMPANION_TIDAL_RETRY_MS` | `300000` | Retry delay after a failed stage |
-| `AI_COMPANION_TIDAL_SUMMARY_TIMEOUT_MS` | `250000` | Luna/fallback task timeout |
+| `AI_COMPANION_TIDAL_SUMMARY_TIMEOUT_MS` | `250000` | Luna/Gemini summary task timeout |
 | `AI_COMPANION_TIDAL_COMPACT_TIMEOUT_MS` | `180000` | Native `/compact` confirmation timeout |
-| `AI_COMPANION_TIDAL_FALLBACK_MODEL` | `Qwen/Qwen2.5-7B-Instruct` | Existing free SiliconFlow fallback |
+| `AI_COMPANION_TIDAL_GEMINI_KEY_FILE` | `config/gemini.secret` | Gemini fallback API key file |
+| `AI_COMPANION_TIDAL_GEMINI_MODEL` | `gemini-3.5-flash-lite` | Free Gemini fallback model |
 
 Luna runs through the root-owned fixed-path script
 `scripts/tidal-luna-summary.sh`. The narrow sudoers entry allows no

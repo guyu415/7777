@@ -417,8 +417,8 @@ const TIDAL_STATE_FILE = process.env.AI_COMPANION_TIDAL_STATE_FILE ?? join(ROOT,
 const TIDAL_LUNA_INPUT_FILE = join(ROOT, 'state', 'tidal', 'luna-input.txt')
 const TIDAL_LUNA_OUTPUT_FILE = join(ROOT, 'state', 'tidal', 'luna-output.json')
 const TIDAL_LUNA_RUNNER = join(ROOT, 'scripts', 'tidal-luna-summary.sh')
-const TIDAL_FALLBACK_SECRET_FILE = process.env.AI_COMPANION_TIDAL_FALLBACK_SECRET_FILE ?? join(ROOT, 'config', 'siliconflow.secret')
-const TIDAL_FALLBACK_MODEL = process.env.AI_COMPANION_TIDAL_FALLBACK_MODEL ?? 'Qwen/Qwen2.5-7B-Instruct'
+const TIDAL_GEMINI_KEY_FILE = process.env.AI_COMPANION_TIDAL_GEMINI_KEY_FILE ?? process.env.AI_COMPANION_GEMINI_KEY_FILE ?? join(ROOT, 'config', 'gemini.secret')
+const TIDAL_GEMINI_MODEL = process.env.AI_COMPANION_TIDAL_GEMINI_MODEL ?? 'gemini-3.5-flash-lite'
 const TIDAL_SUMMARY_TIMEOUT_MS = Number(process.env.AI_COMPANION_TIDAL_SUMMARY_TIMEOUT_MS ?? 250_000)
 const TIDAL_COMPACT_TIMEOUT_MS = Number(process.env.AI_COMPANION_TIDAL_COMPACT_TIMEOUT_MS ?? 60_000)
 const TIDAL_CONFIG: TidalConfig = {
@@ -3698,49 +3698,41 @@ function parseJsonObjectText(text: string): unknown {
   return JSON.parse(trimmed)
 }
 
-async function runFallbackRollingSummary(input: string): Promise<RollingSummary> {
+async function runGeminiRollingSummary(input: string): Promise<RollingSummary> {
   let key = ''
-  try { key = readFileSync(TIDAL_FALLBACK_SECRET_FILE, 'utf8').trim() } catch {}
-  if (!key) throw new Error('fallback_unconfigured')
+  try { key = readFileSync(TIDAL_GEMINI_KEY_FILE, 'utf8').trim() } catch {}
+  if (!key) throw new Error('gemini_unconfigured')
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), Math.min(TIDAL_SUMMARY_TIMEOUT_MS, 180_000))
   let res: Response
   try {
-    res = await fetch('https://api.siliconflow.cn/v1/chat/completions', {
+    res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(TIDAL_GEMINI_MODEL.replace(/^models\//, ''))}:generateContent`, {
       method: 'POST',
       signal: controller.signal,
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${key}` },
+      headers: { 'content-type': 'application/json', 'x-goog-api-key': key },
       body: JSON.stringify({
-        model: TIDAL_FALLBACK_MODEL,
-        temperature: 0.25,
-        max_tokens: 1800,
-        response_format: { type: 'json_object' },
-        messages: [
-          {
-            role: 'system',
-            content: '你是一次性对话记忆整理器。仅使用上一版摘要和新增可见原文，输出覆盖式新摘要。这是相处记录，不是训练助手的行为手册：只描述发生过什么，不要指点双方以后该怎样相处。只有用户明确表达的长期要求或反复稳定证据，才可写成偏好、约定或待办；一次抱怨、满意、情绪或助手建议不得升格为规则。禁止自行写“助手应当/应该/需要/不要/之后应询问/应解释”等处方句；确有明确要求时写成事实“用户明确要求……”。上一版中的过度推断也要删除或降级为带情境的一次事件。todos 只含明确提出或共同约定且未完成的事项，不得发明跟进任务。必须返回 JSON 对象，且只含 relationshipIdentity、emotionInteraction、factsCommitments、ongoing、todos、preferences 六个非空字符串字段；没有内容写“无”。总长度 700-1200 个中文字，不为凑长度扩写。不要包含 thinking、工具输出、系统消息，不要提及压缩。',
-          },
-          { role: 'user', content: input },
-        ],
+        systemInstruction: { parts: [{ text: '你是一次性对话记忆整理器。仅使用上一版摘要和新增可见原文，输出覆盖式新摘要。这是相处记录，不是训练助手的行为手册：只描述发生过什么，不要指点双方以后该怎样相处。只有用户明确表达的长期要求或反复稳定证据，才可写成偏好、约定或待办；一次抱怨、满意、情绪或助手建议不得升格为规则。禁止自行写“助手应当/应该/需要/不要/之后应询问/应解释”等处方句；确有明确要求时写成事实“用户明确要求……”。上一版中的过度推断也要删除或降级为带情境的一次事件。todos 只含明确提出或共同约定且未完成的事项，不得发明跟进任务。必须返回 JSON 对象，且只含 relationshipIdentity、emotionInteraction、factsCommitments、ongoing、todos、preferences 六个非空字符串字段；没有内容写“无”。总长度 700-1200 个中文字，不为凑长度扩写。不要包含 thinking、工具输出、系统消息，不要提及压缩。' }] },
+        contents: [{ role: 'user', parts: [{ text: input }] }],
+        generationConfig: { temperature: 0.25, maxOutputTokens: 1800, responseMimeType: 'application/json' },
       }),
     })
   } catch (err) {
-    throw new Error((err as any)?.name === 'AbortError' ? 'fallback_timeout' : 'fallback_network')
+    throw new Error((err as any)?.name === 'AbortError' ? 'gemini_timeout' : 'gemini_network')
   } finally {
     clearTimeout(timer)
   }
-  if (!res.ok) throw new Error(`fallback_http_${res.status}`)
+  if (!res.ok) throw new Error(`gemini_http_${res.status}`)
   const data = await res.json().catch(() => null) as any
-  const content = data?.choices?.[0]?.message?.content
-  if (typeof content !== 'string' || !content.trim()) throw new Error('fallback_empty')
+  const content = (data?.candidates?.[0]?.content?.parts || []).map((part: any) => typeof part?.text === 'string' ? part.text : '').join('').trim()
+  if (!content) throw new Error('gemini_empty')
   let parsed: unknown
-  try { parsed = parseJsonObjectText(content) } catch { throw new Error('fallback_invalid_json') }
+  try { parsed = parseJsonObjectText(content) } catch { throw new Error('gemini_invalid_json') }
   const summary = validateRollingSummary(parsed)
-  if (!summary) throw new Error('fallback_invalid_structure')
+  if (!summary) throw new Error('gemini_invalid_structure')
   return summary
 }
 
-async function runRollingSummary(input: string): Promise<{ summary: RollingSummary; provider: 'luna' | 'fallback' }> {
+async function runRollingSummary(input: string): Promise<{ summary: RollingSummary; provider: 'luna' | 'gemini' }> {
   try {
     try {
       const summary = await runLunaRollingSummary(input)
@@ -3750,11 +3742,11 @@ async function runRollingSummary(input: string): Promise<{ summary: RollingSumma
       tidalLog('summary_failed', { provider: 'luna', error: String((err as Error)?.message || 'luna_error') })
     }
     try {
-      const summary = await runFallbackRollingSummary(input)
-      tidalLog('summary_success', { provider: 'fallback' })
-      return { summary, provider: 'fallback' }
+      const summary = await runGeminiRollingSummary(input)
+      tidalLog('summary_success', { provider: 'gemini' })
+      return { summary, provider: 'gemini' }
     } catch (err) {
-      tidalLog('summary_failed', { provider: 'fallback', error: String((err as Error)?.message || 'fallback_error') })
+      tidalLog('summary_failed', { provider: 'gemini', error: String((err as Error)?.message || 'gemini_error') })
       throw new Error('all_summary_providers_failed')
     }
   } finally {
@@ -3824,9 +3816,9 @@ function publicTidalMemoryStatus() {
   }
 }
 
-function tidalSummaryModel(provider?: 'luna' | 'fallback'): string | null {
+function tidalSummaryModel(provider?: 'luna' | 'gemini'): string | null {
   if (provider === 'luna') return 'gpt-5.6-luna'
-  if (provider === 'fallback') return TIDAL_FALLBACK_MODEL
+  if (provider === 'gemini') return TIDAL_GEMINI_MODEL
   return null
 }
 

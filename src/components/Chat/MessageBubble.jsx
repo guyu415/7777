@@ -6,9 +6,11 @@ import AcCard from './AcCard'
 import LetterCard from './LetterCard'
 import NeteasePlayCard from './NeteasePlayCard'
 import HealthDataCard from './HealthDataCard'
+import HeartRateCard from './HeartRateCard'
 import clsx from 'clsx'
 import { parseReplyQuotes } from '../../utils/replyQuotes'
-import { isHealthTool } from '../../utils/healthData'
+import { healthDataCategories, isHealthTool } from '../../utils/healthData'
+import { extractHeartRate, isHeartRateTool } from '../../utils/heartRate'
 
 // Split content on letter markers — either {{LETTER_CARD:id}} (AI letters, phase 1)
 // or raw [LETTER mood=.. weather=.. date=..]..[/LETTER] (user letters written from diary)
@@ -222,9 +224,15 @@ function MessageBubble({ message, onLongPress, onRegenerate, onRegenerateRound, 
   const [showReasoning, setShowReasoning] = useState(false)
   const isUser = message.role === 'user'
   const allToolUses = Array.isArray(message.toolUses) ? message.toolUses : []
-  const healthToolUses = isUser ? [] : allToolUses.filter((item) => isHealthTool(item.tool))
-  const showHealthDataCard = healthToolUses.length > 0
-  const visibleToolUses = showHealthDataCard
+  const heartToolUses = isUser ? [] : allToolUses.filter((item) => isHeartRateTool(item.tool, item.detail))
+  const heartRate = isUser ? null : extractHeartRate(message.content)
+  const showHeartRateCard = heartRate !== null || (heartToolUses.length > 0 && message.streaming)
+  const otherHealthToolUses = isUser
+    ? []
+    : allToolUses.filter((item) => isHealthTool(item.tool) && !isHeartRateTool(item.tool, item.detail))
+  const otherHealthMetrics = healthDataCategories(otherHealthToolUses, message.content, { omitHeartRate: showHeartRateCard })
+  const showHealthDataCard = otherHealthToolUses.length > 0 && otherHealthMetrics.length > 0
+  const visibleToolUses = showHealthDataCard || showHeartRateCard
     ? allToolUses.filter((item) => !isHealthTool(item.tool))
     : allToolUses
   const diceValue = message.type === 'text' ? Number(message.content?.match(DICE_ONE)?.[1] || 0) : 0
@@ -409,8 +417,12 @@ function MessageBubble({ message, onLongPress, onRegenerate, onRegenerateRound, 
             fold because it happened before the reply it belongs to. Deliberately
             plain text rather than another collapsible: the whole point is being
             visible without a tap, and a turn rarely has more than a few. */}
+        {!isUser && showHeartRateCard && (
+          <HeartRateCard content={message.content} streaming={message.streaming} />
+        )}
+
         {!isUser && showHealthDataCard && (
-          <HealthDataCard toolUses={healthToolUses} content={message.content} streaming={message.streaming} />
+          <HealthDataCard toolUses={otherHealthToolUses} content={message.content} categories={otherHealthMetrics} streaming={message.streaming} />
         )}
 
         {!isUser && visibleToolUses.length > 0 && (

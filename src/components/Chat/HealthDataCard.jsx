@@ -1,8 +1,8 @@
 import { Activity } from 'lucide-react'
 import { healthDataCategories } from '../../utils/healthData'
 
-export default function HealthDataCard({ toolUses = [], content = '', streaming = false }) {
-  const categories = healthDataCategories(toolUses, content)
+export default function HealthDataCard({ toolUses = [], content = '', categories: suppliedCategories, streaming = false }) {
+  const categories = suppliedCategories ?? healthDataCategories(toolUses, content)
 
   return (
     <div

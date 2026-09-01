@@ -48,7 +48,7 @@ export type TidalPending = {
   boundaryTs: number
   sourceCount: number
   summary?: RollingSummary
-  summaryProvider?: 'luna' | 'fallback'
+  summaryProvider?: 'luna' | 'gemini'
   contextTokens: number
   compactStartedAt?: number
   compactConfirmedAt?: number

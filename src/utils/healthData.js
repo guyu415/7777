@@ -41,13 +41,19 @@ export function isHealthTool(tool = '') {
  * present in their arguments or reply; that prevents a blood-oxygen read
  * from being labelled as heart rate merely because it came from Apple Watch.
  */
-export function healthDataCategories(toolUses = [], content = '') {
+export function healthDataCategories(toolUses = [], content = '', { omitHeartRate = false } = {}) {
   const source = [
     ...toolUses.filter((item) => isHealthTool(item?.tool)).map((item) => `${item.tool || ''} ${item.detail || ''}`),
     content,
   ].join('\n')
-  const metrics = HEALTH_METRICS.filter((item) => item.pattern.test(source))
+  const detectedMetrics = HEALTH_METRICS.filter((item) => item.pattern.test(source))
+  const metrics = omitHeartRate
+    ? detectedMetrics.filter((item) => item.id !== 'heart-rate')
+    : detectedMetrics
   if (metrics.length) return metrics
+  // The heart-rate card owns an actual BPM result. Do not put a second generic
+  // card below it merely because health_latest itself is a generic tool.
+  if (omitHeartRate && detectedMetrics.length) return []
 
   const names = toolUses.map((item) => normalizedToolName(item?.tool).toLowerCase())
   if (names.includes('health_workouts')) return [HEALTH_METRICS.find((item) => item.id === 'workout')]
