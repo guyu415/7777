@@ -17,6 +17,14 @@ const TOP_THRESHOLD_PX = 96
 // actually measured; @tanstack/react-virtual corrects it via ResizeObserver
 // the moment each item mounts, so total scroll height stays accurate.
 const ESTIMATED_ITEM_HEIGHT = 88
+const LOADING_MESSAGE = Object.freeze({
+  id: '__assistant-loading__',
+  role: 'assistant',
+  type: 'text',
+  content: '',
+  streaming: true,
+  transient: true,
+})
 
 /**
  * Renders only the messages near the viewport (+ overscan buffer), not the
@@ -30,12 +38,20 @@ const ESTIMATED_ITEM_HEIGHT = 88
  * this subtree unless the props below actually change.
  */
 const MessageList = forwardRef(function MessageList({
-  messages, sessionId,
+  messages: sourceMessages, sessionId,
   onLongPress, lastAiId, onRegenerate, onRegenerateRound, onRetry,
   isLoading, userAvatar, aiAvatar, theme, bubbleSkin,
   selectionMode, selectedIds, onToggleSelect,
   emptyAiName, emptyHasApiKey, onEmptyConfigureClick,
 }, ref) {
+  // Some transports only create their authoritative assistant bubble after
+  // backend startup work. Keep the UI responsive throughout that gap. Once
+  // a real streaming assistant bubble arrives this synthetic row disappears
+  // without ever entering chat history or model context.
+  const hasStreamingAssistant = sourceMessages.some(message => message.role === 'assistant' && message.streaming)
+  const messages = isLoading && !hasStreamingAssistant
+    ? [...sourceMessages, LOADING_MESSAGE]
+    : sourceMessages
   const scrollRef = useRef(null)
   // Refs, not state — reading/writing them must never itself trigger a
   // re-render of this list on every scroll tick.

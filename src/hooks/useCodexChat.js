@@ -429,6 +429,11 @@ export function useCodexChat() {
       setSendError('未连接，请稍后重试')
     } else {
       lastFailedSendRef.current = null
+      // The server may need a few seconds to start/resume the Codex thread
+      // before its first codex_status event arrives. Reflect the accepted
+      // send immediately so MessageList can show the typing indicator during
+      // that otherwise completely silent gap.
+      setStatus('thinking')
     }
   }, [codexPrompt, codexSessionId])
 
@@ -451,6 +456,7 @@ export function useCodexChat() {
       setSendError('未连接，请稍后重试')
     } else {
       lastFailedSendRef.current = null
+      setStatus('thinking')
     }
   }, [codexPrompt, codexSessionId, sendMessage])
 
@@ -470,6 +476,7 @@ export function useCodexChat() {
       setSendError('未连接，请稍后重试')
     } else {
       lastFailedSendRef.current = null
+      setStatus('thinking')
     }
   }, [codexPrompt, codexSessionId])
 

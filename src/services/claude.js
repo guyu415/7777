@@ -252,53 +252,75 @@ export async function* streamChat({ apiKey, apiBaseUrl = 'https://api.anthropic.
     '| finish_reason=', [..._wr.finishReasons].join(',') || '(未见)',
   )
 
-  while (true) {
+  const parseSseLine = (rawLine) => {
+    const line = rawLine.replace(/\r$/, '')
+    // SSE permits both "data:value" and "data: value". Some compatible
+    // providers omit the optional space.
+    const match = /^data:\s?(.*)$/.exec(line)
+    if (!match) return { chunks: [], done: false }
+    const data = match[1].trim()
+    if (data === '[DONE]') return { chunks: [], done: true }
+
+    try {
+      const event = JSON.parse(data)
+      const chunks = []
+      // Anthropic format — thinking block
+      if (event.type === 'content_block_delta' && event.delta?.type === 'thinking_delta') {
+        chunks.push({ reasoning: event.delta.thinking })
+      }
+      // Anthropic format — text block
+      if (event.type === 'content_block_delta' && event.delta?.type === 'text_delta') {
+        chunks.push({ text: event.delta.text })
+      }
+      // OpenAI format
+      const delta = event.choices?.[0]?.delta
+      if (delta?.reasoning_content) chunks.push({ reasoning: delta.reasoning_content })
+      if (delta?.content) chunks.push({ text: delta.content })
+      if (delta?.tool_calls) console.log('[WEB] tool_calls事件:', JSON.stringify(delta.tool_calls))
+      if (event.choices?.[0]?.finish_reason === 'tool_calls') {
+        console.log('[WEB] finish_reason=tool_calls — 等待服务端执行搜索并继续生成')
+      }
+      const finishReason = event.choices?.[0]?.finish_reason || event.delta?.stop_reason
+      if (finishReason) _wr.finishReasons.add(finishReason)
+      return { chunks, done: false }
+    } catch {
+      return { chunks: [], done: false }
+    }
+  }
+
+  const truncationNotice = () => {
+    const truncated = [..._wr.finishReasons].some(reason => reason === 'length' || reason === 'max_tokens')
+    return truncated ? { text: '\n\n⚠️ 回复已达当前模型的输出上限，内容可能未完。' } : null
+  }
+
+  let streamDone = false
+  while (!streamDone) {
     const { done, value } = await reader.read()
     if (done) break
 
     buffer += decoder.decode(value, { stream: true })
-    const lines = buffer.split('\n')
+    const lines = buffer.split(/\r?\n/)
     buffer = lines.pop() || ''
 
     for (const line of lines) {
-      if (!line.startsWith('data: ')) continue
-      const data = line.slice(6).trim()
-      if (data === '[DONE]') { _logWR(); return }
-
-      try {
-        const event = JSON.parse(data)
-        // Anthropic format — thinking block
-        if (event.type === 'content_block_delta' && event.delta?.type === 'thinking_delta') {
-          yield { reasoning: event.delta.thinking }
-        }
-        // Anthropic format — text block
-        if (event.type === 'content_block_delta' && event.delta?.type === 'text_delta') {
-          yield { text: event.delta.text }
-        }
-        // OpenAI format
-        const delta = event.choices?.[0]?.delta
-        // Reasoning chunk (GLM / DeepSeek style)
-        if (delta?.reasoning_content) {
-          yield { reasoning: delta.reasoning_content }
-        }
-        // Content chunk
-        if (delta?.content) {
-          yield { text: delta.content }
-        }
-        // Web search tool_calls — log for debugging, no round-trip needed (server-side tools)
-        if (delta?.tool_calls) {
-          console.log('[WEB] tool_calls事件:', JSON.stringify(delta.tool_calls))
-        }
-        if (event.choices?.[0]?.finish_reason === 'tool_calls') {
-          console.log('[WEB] finish_reason=tool_calls — 等待服务端执行搜索并继续生成')
-        }
-        // Accumulate finish_reason for post-stream [WEB-RESP] summary
-        const _fr = event.choices?.[0]?.finish_reason || event.delta?.stop_reason
-        if (_fr) _wr.finishReasons.add(_fr)
-      } catch {
-        // ignore parse errors
-      }
+      const parsed = parseSseLine(line)
+      for (const chunk of parsed.chunks) yield chunk
+      if (parsed.done) { streamDone = true; break }
     }
   }
+
+  // TextDecoder may still hold a partial multibyte sequence, and a valid SSE
+  // stream is allowed to close without a trailing newline. Flush and process
+  // that final frame instead of silently dropping the end of the reply.
+  if (!streamDone) {
+    buffer += decoder.decode()
+    for (const line of buffer.split(/\r?\n/)) {
+      const parsed = parseSseLine(line)
+      for (const chunk of parsed.chunks) yield chunk
+      if (parsed.done) break
+    }
+  }
+  const notice = truncationNotice()
+  if (notice) yield notice
   _logWR()
 }
