@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { defaultStudySchedule, normalizeStudySchedule, setStudyCourse, studyScheduleRange } from '../study-schedule.ts'
+import { defaultStudySchedule, normalizeStudySchedule, seededStudySchedule, setStudyCourse, studyScheduleRange } from '../study-schedule.ts'
 
 describe('study schedule', () => {
   it('sets, reads and clears a course', () => {
@@ -14,6 +14,21 @@ describe('study schedule', () => {
   it('accepts mock exams as a course stage', () => {
     const result = setStudyCourse(defaultStudySchedule(1), '2026-08-12', 'afternoon', { subject: '数资', stage: '模考' }, 2)
     expect(result.entries['2026-08-12']?.afternoon).toEqual({ subject: '数资', stage: '模考' })
+  })
+
+  it('seeds only formal daytime courses from the reference timetable', () => {
+    const result = seededStudySchedule(1)
+    expect(result.entries['2026-09-01']).toEqual({
+      morning: { subject: '职测', stage: '基础' },
+      afternoon: { subject: '职测', stage: '基础' },
+    })
+    expect(result.entries['2026-10-02']).toEqual({
+      morning: { subject: '法律', stage: '基础' },
+      afternoon: { subject: '非法', stage: '基础' },
+    })
+    expect(result.entries['2026-09-04']).toBeUndefined()
+    expect(result.entries['2026-09-10']).toBeUndefined()
+    expect(result.entries['2026-09-22']).toBeUndefined()
   })
 
   it('drops malformed persisted records', () => {
