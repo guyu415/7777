@@ -646,6 +646,19 @@ export async function handleNeteaseControlApi(request, env) {
   if (url.pathname === '/netease/playback' && request.method === 'POST') {
     if (!env.VPS_SERVICE_KEY) return Response.json({ ok: true, synced: false }, { headers: CORS })
     const body = await request.json().catch(() => ({}))
+    if (body?.active === false) {
+      try {
+        const bridgeResponse = await fetch('https://companion.xiaoman.xyz/netease/playback', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'X-VPS-Key': env.VPS_SERVICE_KEY },
+          body: JSON.stringify({ active: false }),
+        })
+        const data = await bridgeResponse.json().catch(() => null)
+        return Response.json(data || { ok: bridgeResponse.ok }, { status: bridgeResponse.status, headers: CORS })
+      } catch (error) {
+        return Response.json({ ok: false, error: `播放状态同步失败: ${error.message}` }, { status: 502, headers: CORS })
+      }
+    }
     if (!/^\d+$/.test(String(body.songId || ''))) return Response.json({ ok: false, error: 'invalid song id' }, { status: 400, headers: CORS })
     try {
       const bridgeResponse = await fetch('https://companion.xiaoman.xyz/netease/playback', {

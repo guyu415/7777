@@ -99,13 +99,6 @@ mcp.setRequestHandler(ListToolsRequestSchema, async () => ({
       },
     },
     {
-      name: 'get_music_context',
-      description:
-        'Read the song and estimated current lyric from the user\'s NetEase phone-play card. Use when the user ' +
-        'asks about what is playing or the current lyric. The returned position is estimated, not native iOS playback telemetry.',
-      inputSchema: { type: 'object', properties: {} },
-    },
-    {
       name: 'start_focus',
       description:
         'Genuinely start a focus/Pomodoro session for the user RIGHT NOW — a real global action, not a suggestion: ' +

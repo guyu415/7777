@@ -79,6 +79,11 @@ import {
   type VisibleCcMessage,
 } from './cc-tidal-memory.ts'
 import { splitCompletedCodexMessage } from './codex-chat-history.ts'
+import {
+  injectMusicRuntimeContext,
+  injectMusicRuntimeContextIntoTurnParams,
+  renderMusicRuntimeContext,
+} from './music-runtime-context.ts'
 import { SENSEVOICE_MAX_AUDIO_BYTES, transcribeWithSenseVoice } from './sensevoice-stt.ts'
 import { analyzeVoiceAcoustics, type VoiceAcoustics } from './opensmile-acoustics.ts'
 import {
@@ -116,6 +121,9 @@ const CHAT_ID = 'web'
 const TOKEN_FILE = process.env.AI_COMPANION_TOKEN_FILE ?? join(ROOT, 'config', 'token.secret')
 const INTERNAL_SECRET_FILE = process.env.AI_COMPANION_INTERNAL_SECRET_FILE ?? join(ROOT, 'config', 'internal.secret')
 const LOG_FILE = process.env.AI_COMPANION_LOG_FILE ?? join(ROOT, 'logs', 'server.log')
+// Test-only boundary capture. Disabled unless explicitly configured and kept
+// separate from chat history and durable memory.
+const RUNTIME_CONTEXT_CAPTURE_FILE = process.env.AI_COMPANION_RUNTIME_CONTEXT_CAPTURE_FILE ?? ''
 // Append-only CC UI history. Tidal memory advances a processed boundary but
 // never removes visible user/assistant messages from this JSON.
 // Mirrors CODEX_HISTORY_FILE's own already-proven pattern below. Without
@@ -2188,8 +2196,8 @@ const mcp = new Server(
       `the main chat. If kind:"gomoku_move", the user just placed a black stone and it's your turn as white. ` +
       `Decide your move for real — there is no engine or algorithm choosing it for you, it's genuinely your call, ` +
       `and it should be quick — a board move doesn't need deep deliberation the way a real conversational answer ` +
-      `might. The get_music_context tool reads the current phone-play card and estimated current lyric; use it ` +
-      `when the user asks about the playing song/lyrics, and always treat its progress as estimated rather than native iOS telemetry.\n\n` +
+      `might. The channel server automatically injects the current NetEase song/lyric snapshot into each model turn ` +
+      `when active; treat its progress as estimated rather than native iOS telemetry.\n\n` +
       `Call gomoku_move with the given gameId and your chosen row/col (0-14) to place it; call ` +
       `gomoku_get_state first if you want to re-check the board. The server validates legality and tells you why ` +
       `if a move is rejected — just retry with a different cell. If kind:"gomoku_undo_request", the user wants to ` +
@@ -2285,14 +2293,6 @@ mcp.setRequestHandler(ListToolsRequestSchema, async () => ({
         },
         required: ['title'],
       },
-    },
-    {
-      name: 'get_music_context',
-      description:
-        'Read the song and current lyric shown on the user\'s NetEase phone-play card. Progress is explicitly ' +
-        'estimated from the play tap and ±5 second calibration because iOS does not expose NetEase playback state. ' +
-        'Use when the user asks what is playing, discusses the current lyric, or wants a response tied to the song.',
-      inputSchema: { type: 'object', properties: {} },
     },
     {
       name: 'roll_dice',
@@ -3029,15 +3029,41 @@ function buildGomokuRecap(game: GomokuGame, reason?: 'resign'): string {
   return lines.join('\n')
 }
 
-function deliver(id: string, text: string, opts?: { clientTime?: unknown; contextPrefix?: string }) {
-  const content = clientTimeContextLine(opts?.clientTime) + (opts?.contextPrefix ? `${opts.contextPrefix}\n\n` : '') + text
-  void mcp.notification({
+function captureModelRuntimeContext(kind: 'claude' | 'codex', payload: unknown, snapshot: unknown) {
+  if (!RUNTIME_CONTEXT_CAPTURE_FILE) return
+  const runtimeContext = renderMusicRuntimeContext(snapshot)
+  try {
+    mkdirSync(dirname(RUNTIME_CONTEXT_CAPTURE_FILE), { recursive: true })
+    appendFileSync(RUNTIME_CONTEXT_CAPTURE_FILE, JSON.stringify({
+      at: new Date().toISOString(),
+      kind,
+      musicActive: !!runtimeContext,
+      runtimeContext,
+      payload,
+    }) + '\n')
+  } catch (err) {
+    log('runtime_context_capture_error', { kind, error: String(err) })
+  }
+}
+
+async function sendClaudeChannelNotification(id: string, rawContent: string) {
+  const snapshot = currentNeteasePlayback()
+  const content = injectMusicRuntimeContext(rawContent, snapshot)
+  captureModelRuntimeContext('claude', { messageId: id, content }, snapshot)
+  return mcp.notification({
     method: 'notifications/claude/channel',
     params: {
       content,
       meta: { chat_id: CHAT_ID, message_id: id, user: 'user', ts: new Date().toISOString() },
     },
   })
+}
+
+function deliver(id: string, text: string, opts?: { clientTime?: unknown; contextPrefix?: string }) {
+  const content = clientTimeContextLine(opts?.clientTime) + (opts?.contextPrefix ? `${opts.contextPrefix}\n\n` : '') + text
+  // Read music context at the last possible point before the Claude request;
+  // this stays turn-local and never enters app history or durable memory.
+  void sendClaudeChannelNotification(id, content)
 }
 
 // ---------- session continuity announcement ----------
@@ -3612,13 +3638,7 @@ async function injectPreservedSummaryAfterClear(reset: CcResetMarker): Promise<b
   tidalStartupRestore = true
   startTurn(marker, 'tidal_recovery', false)
   try {
-    await mcp.notification({
-      method: 'notifications/claude/channel',
-      params: {
-        content: packet.content,
-        meta: { chat_id: CHAT_ID, message_id: marker, user: 'user', ts: new Date().toISOString() },
-      },
-    })
+    await sendClaudeChannelNotification(marker, packet.content)
     tidalLog('reset_summary_recovery_injected', { summaryRevision: tidalState.summaryRevision, recentCount: packet.recent.length })
     return true
   } catch (err) {
@@ -3864,13 +3884,7 @@ async function injectTidalRecovery() {
 
   startTurn(marker, 'tidal_recovery', false)
   try {
-    await mcp.notification({
-      method: 'notifications/claude/channel',
-      params: {
-        content: packet.content,
-        meta: { chat_id: CHAT_ID, message_id: marker, user: 'user', ts: new Date().toISOString() },
-      },
-    })
+    await sendClaudeChannelNotification(marker, packet.content)
     // A very fast Stop hook can settle/finalize the silent recovery before
     // the notification promise resumes this continuation. Never resurrect
     // that already-committed pending object afterward.
@@ -4166,13 +4180,7 @@ async function injectTidalStartupRecovery(): Promise<boolean> {
   tidalStartupRestore = true
   startTurn(marker, 'tidal_recovery', false)
   try {
-    await mcp.notification({
-      method: 'notifications/claude/channel',
-      params: {
-        content: packet.content,
-        meta: { chat_id: CHAT_ID, message_id: marker, user: 'user', ts: new Date().toISOString() },
-      },
-    })
+    await sendClaudeChannelNotification(marker, packet.content)
     tidalLog('startup_recovery_injected', { summaryRevision: tidalState.summaryRevision, recentCount: packet.recent.length })
     return true
   } catch {
@@ -5651,7 +5659,15 @@ function codexRequest(method: string, params: unknown): Promise<any> {
   return new Promise((resolve, reject) => {
     const id = codexNextReqId++
     codexPending.set(id, { resolve, reject })
-    codexWriteLine({ method, id, params })
+    // Every actual Codex generation uses turn/start. Read the process-local
+    // music snapshot at this exact boundary and inject it into this turn only;
+    // thread setup and persisted app history remain untouched.
+    const musicSnapshot = method === 'turn/start' ? currentNeteasePlayback() : null
+    const effectiveParams = method === 'turn/start'
+      ? injectMusicRuntimeContextIntoTurnParams(params, musicSnapshot)
+      : params
+    if (method === 'turn/start') captureModelRuntimeContext('codex', effectiveParams, musicSnapshot)
+    codexWriteLine({ method, id, params: effectiveParams })
   })
 }
 
@@ -6243,7 +6259,7 @@ const CODEX_DEVELOPER_INSTRUCTIONS = [
   'Call send_voice whenever the user explicitly asks you to speak/send voice (e.g. "发语音", "说给我听", "语音回复我") — always honor an explicit request.',
   'You may also choose it yourself sometimes for a short, warm, casual reply, but most replies should stay normal text — do not overuse it.',
   'If you use send_voice, keep the spoken text short (well under 300 characters).',
-  'You also have a real `play_music_on_phone` tool. When the user explicitly asks to play/hear/pick/change a song, call it with the title and optional artist. It sends a visible card that opens the official NetEase Cloud Music app on the user\'s phone; full/member playback stays in their logged-in phone app and never passes through this VPS. Do not claim it is already playing — tell them it is ready to tap. Do not call it unprompted, and do not duplicate its visible message with a normal reply. For pause/resume/stop, tell an iPhone user to use the lock screen or Control Center. Use `get_music_context` when the user refers to the current song or lyric; its progress is estimated from the card play tap/calibration, not native iOS telemetry.',
+  'You also have a real `play_music_on_phone` tool. When the user explicitly asks to play/hear/pick/change a song, call it with the title and optional artist. It sends a visible card that opens the official NetEase Cloud Music app on the user\'s phone; full/member playback stays in their logged-in phone app and never passes through this VPS. Do not claim it is already playing — tell them it is ready to tap. Do not call it unprompted, and do not duplicate its visible message with a normal reply. For pause/resume/stop, tell an iPhone user to use the lock screen or Control Center. The channel server automatically injects the current NetEase song and estimated lyric into each active model turn; use that request-local context when relevant and do not call a music-context tool.',
   'You also have real Focus tools: start_focus/get_focus_status/extend_focus/finish_focus/approve_focus_request/deny_focus_request/pause_focus/stop_focus/resume_focus, controlling ONE real global Pomodoro-style focus session (system-wide, not per-conversation).',
   'Call start_focus only when the user actually asks to focus/study/work, or clearly agrees to your offer — it takes effect immediately (their screen switches to a running countdown, no click needed from them), so never call it speculatively; it fails if a session is already active.',
   'Once you start one, you are its sole manager: while it runs, a message delivered as a real turn on this same conversation means the user is talking to you from the focus screen (reply normally, using your real memory of everything so far) or is asking to pause/end early with a stated reason (you must genuinely decide and call the real approve/deny/pause_focus/stop_focus tool — text alone does nothing; deny requires a real reason).',
@@ -7463,7 +7479,10 @@ async function mysteryCcSendTurn(gameId: string, charId: string, tmuxName: strin
   mysteryCcBusy.add(tmuxName)
   const tQueued = Date.now()
   try {
-    const flat = instruction.replace(/\r\n/g, '\n').split('\n').map((l) => l.trim()).filter(Boolean).join(' | ')
+    const musicSnapshot = currentNeteasePlayback()
+    const modelInstruction = injectMusicRuntimeContext(instruction, musicSnapshot)
+    const flat = modelInstruction.replace(/\r\n/g, '\n').split('\n').map((l) => l.trim()).filter(Boolean).join(' | ')
+    captureModelRuntimeContext('claude', { surface: 'mystery', gameId, charId, content: flat }, musicSnapshot)
     const before = await tmuxCapture(tmuxName)
     const beforeCount = before.split('\n').filter((l) => DONE_MARKER_RE.test(l.trim())).length
     const tProcessingStart = Date.now()
@@ -8108,6 +8127,11 @@ Bun.serve<{ authed: true }>({
     if (url.pathname === '/netease/playback' && req.method === 'POST') {
       if (!vpsServiceKey || req.headers.get('X-VPS-Key') !== vpsServiceKey) return jsonResponse({ error: 'unauthorized' }, { status: 401 })
       const body = await req.json().catch(() => ({} as Record<string, unknown>)) as any
+      if (body.active === false) {
+        neteasePlaybackContext = null
+        log('netease_playback_cleared', {})
+        return jsonResponse({ ok: true, active: false })
+      }
       const songId = String(body.songId || '')
       if (!/^\d+$/.test(songId)) return jsonResponse({ ok: false, error: 'invalid song id' }, { status: 400 })
       const positionMs = Math.min(Math.max(Number(body.positionMs) || 0, 0), 24 * 60 * 60 * 1000)
@@ -8247,6 +8271,17 @@ Bun.serve<{ authed: true }>({
         return jsonResponse({ error: 'unauthorized' }, { status: 401, headers: corsHeadersFor(origin) })
       }
       return null
+    }
+
+    // Ordinary API chat reads this same process-local snapshot immediately
+    // before constructing its upstream model request. Authenticated and
+    // read-only; it never creates a history or memory entry.
+    if (url.pathname === '/music/context' && req.method === 'GET') {
+      const gate = authGate()
+      if (gate) return gate
+      return jsonResponse(currentNeteasePlayback(), {
+        headers: { ...corsHeadersFor(origin), 'cache-control': 'no-store' },
+      })
     }
 
     // Diary compose always targets the one resident Claude Code chat. Drive

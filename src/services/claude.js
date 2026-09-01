@@ -1,4 +1,28 @@
+import { appendMusicRuntimeContext } from '../utils/musicRuntimeContext'
+
 const VALID_MEDIA_TYPES = new Set(['image/jpeg', 'image/png', 'image/gif', 'image/webp'])
+
+const COMPANION_MUSIC_CONTEXT_URL = 'https://companion.xiaoman.xyz/music/context'
+
+// Ordinary API sessions do not pass through channel-server's resident
+// Claude/Codex process. Read the authoritative, process-local snapshot just
+// before constructing the model body, and keep it in this request's system
+// context only. Failure/inactive state intentionally adds nothing.
+export async function fetchMusicRuntimeContext(fetchImpl = globalThis.fetch) {
+  try {
+    const response = await fetchImpl(COMPANION_MUSIC_CONTEXT_URL, {
+      method: 'GET',
+      credentials: 'include',
+      cache: 'no-store',
+      headers: { Accept: 'application/json' },
+    })
+    if (!response.ok) return null
+    const snapshot = await response.json()
+    return snapshot?.active === true ? snapshot : null
+  } catch {
+    return null
+  }
+}
 
 function detectMediaType(base64data) {
   try {
@@ -139,6 +163,8 @@ export async function generateSummary({ existingSummary, newMessages, apiKey }) 
 export async function* streamChat({ apiKey, apiBaseUrl = 'https://api.anthropic.com', model, systemPrompt, messages, workerUrl, useWorkerProxy, signal, disableThinking = false, webSearch = false, providerName = '' }) {
   const base = apiBaseUrl.replace(/\/$/, '')
   const proxyBase = (useWorkerProxy && workerUrl) ? workerUrl.replace(/\/$/, '') : null
+  const musicSnapshot = await fetchMusicRuntimeContext()
+  const requestSystemPrompt = appendMusicRuntimeContext(systemPrompt, musicSnapshot)
 
   // Build web search tools based on provider
   // Claude via AiHubMix: web search is triggered by appending :surfing to model name, NOT via tools param
@@ -159,7 +185,7 @@ export async function* streamChat({ apiKey, apiBaseUrl = 'https://api.anthropic.
     const body = JSON.stringify({
       model: MODELS[model] || model,
       max_tokens: 4096,
-      system: systemPrompt,
+      system: requestSystemPrompt,
       stream: true,
       messages: buildAnthropicMessages(messages),
       // Direct Anthropic: web search via built-in tool
@@ -198,7 +224,7 @@ export async function* streamChat({ apiKey, apiBaseUrl = 'https://api.anthropic.
       model: effectiveModel,
       max_tokens: 4096,
       stream: true,
-      messages: buildOpenAIMessages(systemPrompt, messages),
+      messages: buildOpenAIMessages(requestSystemPrompt, messages),
       // disableThinking: GLM official uses { thinking: { type: 'disabled' } }
       ...(disableThinking && providerName === 'glm' ? { thinking: { type: 'disabled' } } : {}),
       // disableThinking: generic OpenAI-compat (SiliconFlow etc.)
