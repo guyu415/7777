@@ -93,6 +93,33 @@ describe('message timeline', () => {
     expect(timeline.map(message => message.id)).toEqual(['reply-1', 'reply-2'])
   })
 
+  it('places a reply after its parent turn despite server clock skew', () => {
+    const result = canonicalizeTimeline([
+      { id: 'older', conversationId: 'cc', role: 'assistant', content: 'older', timestamp: 500 },
+      { id: 'reply-a', conversationId: 'cc', role: 'assistant', content: 'answer', timestamp: 1000, replyToTurnId: 'user-a' },
+      { id: 'user-a', conversationId: 'cc', role: 'user', content: 'A', timestamp: 2000 },
+    ])
+    expect(result.map(message => message.id)).toEqual(['older', 'user-a', 'reply-a'])
+  })
+
+  it('keeps every reply call for a turn after its user message in stable order', () => {
+    const result = canonicalizeTimeline([
+      { id: 'reply-1', conversationId: 'cc', role: 'assistant', content: 'one', timestamp: 1000, replyToTurnId: 'user-a' },
+      { id: 'reply-2', conversationId: 'cc', role: 'assistant', content: 'two', timestamp: 1000, replyToTurnId: 'user-a' },
+      { id: 'user-a', conversationId: 'cc', role: 'user', content: 'A', timestamp: 2000 },
+      { id: 'user-b', conversationId: 'cc', role: 'user', content: 'B', timestamp: 3000 },
+    ])
+    expect(result.map(message => message.id)).toEqual(['user-a', 'reply-1', 'reply-2', 'user-b'])
+  })
+
+  it('does not move an orphan reply or attach across conversations', () => {
+    const result = canonicalizeTimeline([
+      { id: 'reply', conversationId: 'one', role: 'assistant', content: 'answer', timestamp: 1000, replyToTurnId: 'same-id' },
+      { id: 'same-id', conversationId: 'two', role: 'user', content: 'A', timestamp: 2000 },
+    ])
+    expect(result.map(message => message.id)).toEqual(['reply', 'same-id'])
+  })
+
   it('updates a stable id in place without moving it by timestamp', () => {
     const timeline = appendTimelineMessage([
       { id: 'reply', role: 'assistant', content: 'draft', timestamp: 3000, streaming: true },
@@ -118,5 +145,16 @@ describe('message timeline', () => {
       ['a', 'a', undefined],
       ['b', 'done', false],
     ])
+  })
+
+  it('causally orders one recovered merge batch without sorting the live timeline', () => {
+    const timeline = reduceMessageTimeline([], {
+      type: 'merge',
+      messages: [
+        { id: 'reply-a', conversationId: 'cc', role: 'assistant', content: 'answer', timestamp: 1000, replyToTurnId: 'user-a' },
+        { id: 'user-a', conversationId: 'cc', role: 'user', content: 'A', timestamp: 2000 },
+      ],
+    })
+    expect(timeline.map(message => message.id)).toEqual(['user-a', 'reply-a'])
   })
 })

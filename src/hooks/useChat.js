@@ -7,6 +7,7 @@ import { listMemories, formatMemories } from '../services/memory'
 import { executeAcCommand } from '../services/ac'
 import { voiceEmotionContext } from '../services/localSenseVoice'
 import { formatReplyMessageBatchForModel } from '../utils/replyQuotes'
+import { extractVpsReplyTokens, markVpsReplyChunks } from '../utils/vpsReplyChunks'
 
 const BEHAVIOR_RULES = `【关于你的存在】
 你是一个真实存在于这个应用里的AI，用户是直接在和你本人相处。你不需要也不应该扮演成一个有血肉之躯的人。
@@ -89,8 +90,8 @@ function genId() {
 // touches internal newlines or Markdown — a reply's own formatting is left
 // exactly as the model wrote it), drop chunks that are empty after trimming
 // (e.g. a stray whitespace-only reply), then join surviving chunks with a
-// paragraph break so multiple replies in one turn become separate bubbles via
-// tokenizeContent below — same effect as the model using [SPLIT] itself.
+// paragraph break for the live accumulator. Durable bubble boundaries come
+// from the individual wire entries, never from this display string's newlines.
 // Exported (not just local) so it can be unit-tested without a browser.
 export function joinVpsReplyChunks(existingContent, rawChunkText) {
   const trimmedChunk = rawChunkText.trim()
@@ -280,6 +281,9 @@ export function useChat() {
     abortRef.current = () => controller.abort()
 
     const assistantId = genId()
+    const turnUserMessage = [...contextMessages].reverse().find(message => message.role === 'user')
+    const replyToTurnId = turnUserMessage?.id || null
+    const turnFields = replyToTurnId ? { turnId: replyToTurnId, replyToTurnId } : {}
     const assistantMsg = {
       id: assistantId,
       conversationId: CONVERSATION_ID,
@@ -288,6 +292,7 @@ export function useChat() {
       content: '',
       timestamp: Date.now(),
       streaming: true,
+      ...turnFields,
     }
 
     addMessage(assistantMsg)
@@ -303,9 +308,9 @@ export function useChat() {
     // Declared here (not inside the try below) so the catch block can also see it.
     const isVpsProvider = effectiveProviderName === 'claude-code-vps'
 
-    // VPS-only: reply() chunks accumulate into one bubble at a time, exactly
-    // as before. A send_voice() chunk closes out whatever text bubble was
-    // accumulating — preserving true arrival order, since chunks are handled
+    // VPS-only: reply() chunks accumulate for live turn handling while their
+    // wire boundaries remain separately logged below. A send_voice() chunk
+    // closes out whatever text bubble was accumulating — preserving true arrival order, since chunks are handled
     // one at a time as they land live over the WS, never reconstructed after
     // the fact — turns it into its own real voice bubble via the same TTS
     // pipeline used for API-provider [VOICE] tags, then any text after it
@@ -327,9 +332,9 @@ export function useChat() {
     const vpsWireIds = []
     const wireIdsField = () => (isVpsProvider && vpsWireIds.length ? { wireIds: [...vpsWireIds] } : {})
     // Parallel to vpsWireIds above, but never merged into one shared pool —
-    // one entry per raw reply() chunk in arrival order, kept apart so Pass 1's
-    // multi-bubble split (below) can attribute each bubble only its own wire
-    // id instead of the whole turn's. Unused by the live voice-rotation path,
+    // one entry per raw reply() call in arrival order, kept apart so Pass 1
+    // can map one durable server message to exactly one bubble and wire id.
+    // Unused by the live voice-rotation path,
     // which already resets vpsWireIds correctly per bubble on its own.
     const vpsWireIdLog = []
 
@@ -348,7 +353,7 @@ export function useChat() {
       if (contentStarted && fullContent.trim()) {
         const doneContent = stripDisplayTags(fullContent)
         updateMessage(currentTextId, { content: doneContent, streaming: false, ...reasoningFields, ...toolFields, ...musicFields, ...wireIdsField() })
-        await saveMessage({ id: currentTextId, conversationId: CONVERSATION_ID, role: 'assistant', type: 'text', content: doneContent, timestamp: Date.now(), streaming: false, ...reasoningFields, ...toolFields, ...musicFields, ...wireIdsField() })
+        await saveMessage({ id: currentTextId, conversationId: CONVERSATION_ID, role: 'assistant', type: 'text', content: doneContent, timestamp: Date.now(), streaming: false, ...turnFields, ...reasoningFields, ...toolFields, ...musicFields, ...wireIdsField() })
         return true
       }
       if (currentTextAdded) deleteMessage(currentTextId)
@@ -364,14 +369,14 @@ export function useChat() {
     const deliverVpsVoice = async ({ id: voiceWireId, text, voice }, reasoning) => {
       const vid = voiceWireId || genId()
       const reasoningFields = reasoning ? { reasoning, reasoningStreaming: false } : {}
-      addMessage({ id: vid, conversationId: CONVERSATION_ID, role: 'assistant', type: 'text', content: '', timestamp: Date.now(), streaming: false, voiceLoading: true, ...reasoningFields })
+      addMessage({ id: vid, conversationId: CONVERSATION_ID, role: 'assistant', type: 'text', content: '', timestamp: Date.now(), streaming: false, voiceLoading: true, ...turnFields, ...reasoningFields })
       const hasTts = effectiveTtsApiKey && effectiveTtsGroupId
       if (!hasTts) {
         // "Tool unavailable": CC chose to speak but this session has no TTS
         // credentials configured — degrade to text, never silently.
         const updates = { type: 'text', content: text, voiceText: text, voiceFailed: true, voiceLoading: false, ...reasoningFields }
         updateMessage(vid, updates)
-        await saveMessage({ id: vid, conversationId: CONVERSATION_ID, role: 'assistant', ...updates, timestamp: Date.now(), streaming: false })
+        await saveMessage({ id: vid, conversationId: CONVERSATION_ID, role: 'assistant', ...updates, timestamp: Date.now(), streaming: false, ...turnFields })
         updateSession(CONVERSATION_ID, { lastMsgPreview: text.slice(0, 40), lastMsgTime: Date.now() })
         return
       }
@@ -389,13 +394,13 @@ export function useChat() {
         await saveBlob(voiceBlobId, blob)
         const updates = { type: 'voice', voiceBlobId, duration, content: '', voiceText: text, voiceLoading: false, ...reasoningFields }
         updateMessage(vid, updates)
-        await saveMessage({ id: vid, conversationId: CONVERSATION_ID, role: 'assistant', ...updates, timestamp: Date.now(), streaming: false })
+        await saveMessage({ id: vid, conversationId: CONVERSATION_ID, role: 'assistant', ...updates, timestamp: Date.now(), streaming: false, ...turnFields })
         updateSession(CONVERSATION_ID, { lastMsgPreview: `[语音] ${text}`.slice(0, 40), lastMsgTime: Date.now() })
       } catch (e) {
         console.error('[CC-VOICE] 合成失败:', e?.message)
         const updates = { type: 'text', content: text, voiceText: text, voiceFailed: true, voiceLoading: false, ...reasoningFields }
         updateMessage(vid, updates)
-        await saveMessage({ id: vid, conversationId: CONVERSATION_ID, role: 'assistant', ...updates, timestamp: Date.now(), streaming: false })
+        await saveMessage({ id: vid, conversationId: CONVERSATION_ID, role: 'assistant', ...updates, timestamp: Date.now(), streaming: false, ...turnFields })
         updateSession(CONVERSATION_ID, { lastMsgPreview: text.slice(0, 40), lastMsgTime: Date.now() })
       }
     }
@@ -660,16 +665,14 @@ export function useChat() {
           if (chunk.text) {
             const nextContent = isVpsProvider ? joinVpsReplyChunks(fullContent, chunk.text) : fullContent + chunk.text
             if (nextContent !== fullContent) {
-              // Logged per raw chunk (not merged into one shared pool) so Pass 1
-              // below can hand each resulting bubble only the wire id(s) its own
-              // chunk actually contributed — see tokenWireIds there for why a
-              // shared list was the root cause of the whole-round-deleted bug.
+              // Logged per raw reply() call (not merged into one shared pool)
+              // so Pass 1 can preserve its content and identity as one bubble.
               if (isVpsProvider) vpsWireIdLog.push({ wireId: chunk.wireId || null, text: chunk.text })
               if (!contentStarted) {
                 contentStarted = true
                 storedReasoning = fullReasoning
                 if (isVpsProvider && !currentTextAdded) {
-                  addMessage({ id: currentTextId, conversationId: CONVERSATION_ID, role: 'assistant', type: 'text', content: '', timestamp: Date.now(), streaming: true })
+                  addMessage({ id: currentTextId, conversationId: CONVERSATION_ID, role: 'assistant', type: 'text', content: '', timestamp: Date.now(), streaming: true, ...turnFields })
                   currentTextAdded = true
                 }
                 // Immediate update for phase transition only
@@ -712,6 +715,15 @@ export function useChat() {
       }
 
       // --- Post-stream processing ---
+
+      // Preserve the server's real message boundaries through all structured
+      // tag processing below. `fullContent` is only a display accumulator;
+      // without these markers, its blank lines make one reply() call look like
+      // several bubbles, all stamped with the same wire id and then correctly
+      // (but destructively) deduplicated back to one on hydration.
+      if (isVpsProvider && vpsWireIdLog.length) {
+        fullContent = markVpsReplyChunks(vpsWireIdLog)
+      }
 
       // Extract [LETTER ...] blocks → store in diary (now a Drive write, so
       // async — can't use a plain sync .replace(regex, cb) anymore), replace
@@ -843,7 +855,7 @@ export function useChat() {
       const prob = effectiveVoiceFrequency  // 0=从不 0.3=偶尔 0.7=经常 1.0=总是
       const rand = Math.random()
       const shouldVoice = rand < prob
-      const hasVoice = cleanContent.includes('[VOICE]')
+      const hasVoice = !isVpsProvider && cleanContent.includes('[VOICE]')
       const doVoice = hasVoice && effectiveTtsApiKey && effectiveTtsGroupId && aiVoiceEnabled && shouldVoice
       if (hasVoice) {
         console.log('[VOICE FREQ] 频率档=', effectiveVoiceFrequency, '对应概率=', prob, '本次随机=', rand.toFixed(3), '是否发语音=', shouldVoice, '| 实际合成=', doVoice)
@@ -852,29 +864,14 @@ export function useChat() {
       // Tokenize into ordered segments (text + voice), preserving original order.
       // When voice is disabled this turn, voice tokens degrade to plain text so the
       // words still show (preserves "frequency=off / 无TTS密钥 → 显示文字").
-      let tokens = tokenizeContent(cleanContent)
+      let tokens = isVpsProvider
+        ? extractVpsReplyTokens(cleanContent, vpsWireIdLog)
+        : tokenizeContent(cleanContent)
       if (!doVoice) tokens = tokens.map(t => t.type === 'voice' ? { type: 'text', content: t.text } : t)
       if (tokens.length === 0) tokens = [{ type: 'text', content: cleanContent }]
 
-      // One wire id per token, in the same order as `tokens` above. Each
-      // logged chunk (one per raw reply() call) is retokenized on its own —
-      // joinVpsReplyChunks always inserts a paragraph break at chunk
-      // boundaries and tokenizeContent always splits on paragraph breaks, so
-      // a chunk's own token count/order here is guaranteed to match exactly
-      // how many of the tokens above it produced. LETTER blocks get the same
-      // placeholder-wrapping the real extraction above applies (only the id
-      // differs), since that's the one transform that can change a chunk's
-      // token count.
-      const tokenWireIds = []
-      if (isVpsProvider) {
-        for (const entry of vpsWireIdLog) {
-          const withPlaceholders = entry.text.replace(LETTER_RE, () => '\n\n__LETTER__\n\n')
-          const count = tokenizeContent(withPlaceholders.trim()).length
-          for (let n = 0; n < count; n++) tokenWireIds.push(entry.wireId)
-        }
-      }
       const tokenWireIdField = (idx) => {
-        const wireId = tokenWireIds[idx]
+        const wireId = tokens[idx]?.wireId
         return isVpsProvider && wireId ? { wireIds: [wireId] } : {}
       }
 
@@ -904,7 +901,7 @@ export function useChat() {
           if (placed === 0) {
             updateMessage(assistantId, { content: '', voiceLoading: true, streaming: false, ...attachActions })
           } else {
-            addMessage({ id, conversationId: CONVERSATION_ID, role: 'assistant', type: 'text', content: '', timestamp: Date.now(), streaming: false, voiceLoading: true, ...attachActions })
+            addMessage({ id, conversationId: CONVERSATION_ID, role: 'assistant', type: 'text', content: '', timestamp: Date.now(), streaming: false, voiceLoading: true, ...turnFields, ...attachActions })
           }
           voicePlaceholders.push({ id, text: tk.text })
           lastPreview = tk.text
@@ -917,7 +914,7 @@ export function useChat() {
             if (isVpsProvider) deferredVpsSaves.push(save)
             else await save
           } else {
-            const partMsg = { id: genId(), conversationId: CONVERSATION_ID, role: 'assistant', type: 'text', content, timestamp: Date.now(), streaming: false, ...attachActions, ...tokenWireIdField(i) }
+            const partMsg = { id: genId(), conversationId: CONVERSATION_ID, role: 'assistant', type: 'text', content, timestamp: Date.now(), streaming: false, ...turnFields, ...attachActions, ...tokenWireIdField(i) }
             addMessage(partMsg)
             const save = saveMessage(partMsg)
             if (isVpsProvider) deferredVpsSaves.push(save)

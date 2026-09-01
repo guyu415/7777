@@ -51,6 +51,7 @@ export function ccWireToTimelineMessage(wire, conversationId, options = {}) {
   if (wire.from === 'user') {
     return {
       id: wire.id,
+      turnId: wire.turnId || wire.id,
       conversationId,
       role: 'user',
       type: 'text',
@@ -65,6 +66,12 @@ export function ccWireToTimelineMessage(wire, conversationId, options = {}) {
   const reasoningFields = wire.thinking
     ? { reasoning: wire.thinking, reasoningStreaming: false }
     : {}
+  // On the CC wire, turnId is the stable id of the user message that opened
+  // this turn. `replyTo` is a separate semantic quote target and must not be
+  // used for timeline placement.
+  const turnFields = wire.turnId
+    ? { turnId: wire.turnId, replyToTurnId: wire.turnId }
+    : {}
   if (wire.kind === 'voice') {
     return {
       id: wire.id,
@@ -78,6 +85,7 @@ export function ccWireToTimelineMessage(wire, conversationId, options = {}) {
       timestamp,
       streaming: false,
       source: 'cc-proactive',
+      ...turnFields,
       ...reasoningFields,
     }
   }
@@ -90,6 +98,7 @@ export function ccWireToTimelineMessage(wire, conversationId, options = {}) {
     timestamp,
     streaming: false,
     source: 'cc-proactive',
+    ...turnFields,
     ...(wire.musicAction ? { musicAction: wire.musicAction } : {}),
     ...reasoningFields,
   }

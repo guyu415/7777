@@ -189,6 +189,46 @@ function semanticSignature(message) {
   return `${message.conversationId || ''}\u0000assistant\u0000${text}`
 }
 
+function timelineScopeKey(message) {
+  return `${message?.conversationId || ''}\u0000`
+}
+
+// A server reply belongs to a turn, not to a wall-clock slot. Client and VPS
+// clocks can differ, and several events can share one millisecond, so timestamp
+// sorting alone is not a valid causal order. Keep each known reply group
+// directly after the user message that opened its turn while retaining the
+// group's existing arrival order.
+export function enforceTurnReplyOrder(messages) {
+  if (!Array.isArray(messages) || messages.length < 2) return messages || []
+  const parentKeys = new Set()
+  for (const message of messages) {
+    if (message?.role !== 'user' || !message.id) continue
+    parentKeys.add(`${timelineScopeKey(message)}${message.id}`)
+  }
+
+  const repliesByParent = new Map()
+  const attachedReplies = new Set()
+  for (const message of messages) {
+    if (message?.role !== 'assistant' || !message.replyToTurnId) continue
+    const parentKey = `${timelineScopeKey(message)}${message.replyToTurnId}`
+    if (!parentKeys.has(parentKey)) continue
+    repliesByParent.set(parentKey, [...(repliesByParent.get(parentKey) || []), message])
+    attachedReplies.add(message)
+  }
+  if (!attachedReplies.size) return messages
+
+  const ordered = []
+  for (const message of messages) {
+    if (attachedReplies.has(message)) continue
+    ordered.push(message)
+    if (message?.role !== 'user' || !message.id) continue
+    const parentKey = `${timelineScopeKey(message)}${message.id}`
+    const replies = repliesByParent.get(parentKey)
+    if (replies) ordered.push(...replies)
+  }
+  return ordered
+}
+
 export function canonicalizeTimeline(messages, options = {}) {
   if (!Array.isArray(messages) || messages.length === 0) return []
   const now = normalizeMessageTimestamp(options.now, Date.now())
@@ -247,7 +287,7 @@ export function canonicalizeTimeline(messages, options = {}) {
   }
 
   output.sort((a, b) => a.message.timestamp - b.message.timestamp || a.order - b.order)
-  return output.map(item => item.message)
+  return enforceTurnReplyOrder(output.map(item => item.message))
 }
 
 function identityOverlap(a, b) {
@@ -322,8 +362,8 @@ export function reduceMessageTimeline(currentMessages, event, options = {}) {
         finalizeTransient: event.finalizeTransient === true,
       })
     case 'merge':
-      return (Array.isArray(event.messages) ? event.messages : [])
-        .reduce((timeline, message) => appendTimelineMessage(timeline, message, options), current)
+      return enforceTurnReplyOrder((Array.isArray(event.messages) ? event.messages : [])
+        .reduce((timeline, message) => appendTimelineMessage(timeline, message, options), current))
     case 'upsert':
       return appendTimelineMessage(current, event.message, options)
     case 'patch':

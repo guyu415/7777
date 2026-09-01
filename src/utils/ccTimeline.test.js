@@ -28,4 +28,12 @@ describe('CC timeline snapshot recovery', () => {
     const mapped = ccWireToTimelineMessage({ ...msg('voice', 1000), kind: 'voice' }, 'cc-session')
     expect(mapped).toMatchObject({ id: 'voice', type: 'text', voiceLoading: false, voiceFailed: true })
   })
+
+  it('maps CC turn identity to causal parent fields, not semantic replyTo', () => {
+    const user = ccWireToTimelineMessage({ ...msg('turn-a', 2000, 'user', 'A'), turnId: 'turn-a' }, 'cc-session')
+    const reply = ccWireToTimelineMessage({ ...msg('reply-a', 1000), turnId: 'turn-a', replyTo: 'quoted-old-message' }, 'cc-session')
+
+    expect(user).toMatchObject({ id: 'turn-a', turnId: 'turn-a' })
+    expect(reply).toMatchObject({ id: 'reply-a', turnId: 'turn-a', replyToTurnId: 'turn-a' })
+  })
 })

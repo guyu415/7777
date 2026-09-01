@@ -29,6 +29,17 @@ All timeline mutations reduce through `reduceMessageTimeline`. Stable
    anchor are old gaps and are not inserted into an open conversation.
 5. A genuinely empty device may hydrate the complete server snapshot, but it
    enters the store in one batch.
+6. A reply carrying `replyToTurnId` is causally attached immediately after the
+   matching user message. This parent relation outranks client/server clock
+   values; semantic quote targets such as `replyTo` never control placement.
+
+## CC message boundaries
+
+The CC wire protocol is authoritative: one `reply()` call is one durable
+message, one stable wire id and one rendered bubble. Blank lines inside its
+text are formatting and stay inside that bubble. Multiple `reply()` calls are
+multiple bubbles with distinct wire ids. Local paragraph tokenization is only
+used for stateless API-provider text and must never reinterpret CC boundaries.
 
 ## Ephemeral state
 
