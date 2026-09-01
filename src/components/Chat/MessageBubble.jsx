@@ -5,10 +5,10 @@ import ImageViewer from '../ImageViewer'
 import AcCard from './AcCard'
 import LetterCard from './LetterCard'
 import NeteasePlayCard from './NeteasePlayCard'
-import HeartRateCard from './HeartRateCard'
+import HealthDataCard from './HealthDataCard'
 import clsx from 'clsx'
 import { parseReplyQuotes } from '../../utils/replyQuotes'
-import { extractHeartRate, isHeartRateTool } from '../../utils/heartRate'
+import { isHealthTool } from '../../utils/healthData'
 
 // Split content on letter markers — either {{LETTER_CARD:id}} (AI letters, phase 1)
 // or raw [LETTER mood=.. weather=.. date=..]..[/LETTER] (user letters written from diary)
@@ -222,15 +222,10 @@ function MessageBubble({ message, onLongPress, onRegenerate, onRegenerateRound, 
   const [showReasoning, setShowReasoning] = useState(false)
   const isUser = message.role === 'user'
   const allToolUses = Array.isArray(message.toolUses) ? message.toolUses : []
-  const heartToolUses = isUser ? [] : allToolUses.filter((item) => isHeartRateTool(item.tool, item.detail))
-  const heartRate = isUser ? null : extractHeartRate(message.content)
-  // While the current-watch tool is running, the card is the activity
-  // indicator. Once the turn finishes it remains only when a real BPM value
-  // made it into the reply; non-heart health reads fall back to the ordinary
-  // tool row instead of leaving behind a misleading empty heart card.
-  const showHeartRateCard = heartToolUses.length > 0 && (message.streaming || heartRate !== null)
-  const visibleToolUses = showHeartRateCard
-    ? allToolUses.filter((item) => !isHeartRateTool(item.tool, item.detail))
+  const healthToolUses = isUser ? [] : allToolUses.filter((item) => isHealthTool(item.tool))
+  const showHealthDataCard = healthToolUses.length > 0
+  const visibleToolUses = showHealthDataCard
+    ? allToolUses.filter((item) => !isHealthTool(item.tool))
     : allToolUses
   const diceValue = message.type === 'text' ? Number(message.content?.match(DICE_ONE)?.[1] || 0) : 0
   const [displayDiceValue, setDisplayDiceValue] = useState(() => diceValue || 1)
@@ -414,8 +409,8 @@ function MessageBubble({ message, onLongPress, onRegenerate, onRegenerateRound, 
             fold because it happened before the reply it belongs to. Deliberately
             plain text rather than another collapsible: the whole point is being
             visible without a tap, and a turn rarely has more than a few. */}
-        {!isUser && showHeartRateCard && (
-          <HeartRateCard content={message.content} streaming={message.streaming} />
+        {!isUser && showHealthDataCard && (
+          <HealthDataCard toolUses={healthToolUses} content={message.content} streaming={message.streaming} />
         )}
 
         {!isUser && visibleToolUses.length > 0 && (
