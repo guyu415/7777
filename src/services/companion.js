@@ -309,6 +309,35 @@ function maybeAnnounceRemoteUserMessage(message) {
   }
 }
 
+// Reconnect history is a snapshot, never a sequence of live pushes. Expose
+// it once as a batch so the inbox can anchor, dedupe, persist and render it in
+// one deterministic transaction. Keep the latest snapshot for the brief race
+// where the socket opens before React installs its subscriber.
+const ccHistorySnapshotListeners = new Set()
+let lastCcHistorySnapshot = null
+
+export function onCcHistorySnapshot(fn) {
+  ccHistorySnapshotListeners.add(fn)
+  if (lastCcHistorySnapshot) {
+    queueMicrotask(() => {
+      if (ccHistorySnapshotListeners.has(fn)) fn(lastCcHistorySnapshot)
+    })
+  }
+  return () => ccHistorySnapshotListeners.delete(fn)
+}
+
+function announceCcHistorySnapshot(items) {
+  const snapshot = (Array.isArray(items) ? items : []).filter(item => item?.type === 'msg' && item.id)
+  // Let an in-flight stream generator claim its own recovered wires first.
+  setTimeout(() => {
+    const unclaimed = snapshot.filter(item => !alreadyDelivered(item.id))
+    lastCcHistorySnapshot = unclaimed
+    for (const fn of ccHistorySnapshotListeners) {
+      try { fn(unclaimed) } catch { /* isolate subscribers */ }
+    }
+  }, 0)
+}
+
 const ccMessageDeletedListeners = new Set()
 /** A delete is display-history state, shared across tabs/devices. The server
  * sends stable wire ids; callers map those back to local aggregate bubbles. */
@@ -1115,10 +1144,7 @@ listeners.add(evt => {
       boundaryId: evt.resetBoundaryId,
       boundaryTs: evt.resetBoundaryTs,
     })
-    for (const item of evt.items) {
-      if (item.from === 'user') maybeAnnounceRemoteUserMessage(item)
-      if (item.from === 'cc') maybeAnnounceProactive(item)
-    }
+    announceCcHistorySnapshot(evt.items)
     announceCodex({
       type: 'codex_history_snapshot',
       sessionId: evt.codexSessionId || 'main',

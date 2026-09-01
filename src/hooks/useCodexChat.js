@@ -7,6 +7,7 @@ import {
 import { fetchTTSAudio } from '../services/tts'
 import { useStore, saveBlob, getBlob } from '../store'
 import { DEFAULT_CODEX_SESSION_ID } from '../utils/codexProtocol'
+import { reduceMessageTimeline } from '../utils/messageTimeline'
 
 // Codex (codex-vps) — an entirely separate chat runtime from Claude Code.
 // This hook only ever reads/writes Codex's own wire messages (codex_*) and
@@ -155,13 +156,7 @@ export function useCodexChat() {
   ttsConfigRef.current = { effectiveTtsApiKey, effectiveTtsGroupId, effectiveTtsVoiceId, effectiveTtsModel }
 
   const updateMsg = useCallback((id, updates) => {
-    setMessages((prev) => {
-      const idx = prev.findIndex((m) => m.id === id)
-      if (idx === -1) return prev
-      const next = [...prev]
-      next[idx] = { ...next[idx], ...updates }
-      return next
-    })
+    setMessages(prev => reduceMessageTimeline(prev, { type: 'patch', id, updates }))
   }, [])
 
   // Synthesizes (or, for a history-hydration pass, just looks up) the real
@@ -235,7 +230,9 @@ export function useCodexChat() {
       const s = await getCodexState(sessionId)
       const history = s.history || []
       const userVoiceMap = readCodexUserVoiceMap(sessionId)
-      setMessages(history.map(message => toBubble(message, userVoiceMap)))
+      setMessages(prev => reduceMessageTimeline(prev, {
+        type: 'snapshot', messages: history.map(message => toBubble(message, userVoiceMap)),
+      }))
       setStatus(s.status || 'idle')
       setOpenTurnId(s.openTurnId ?? null)
       activeTurnIdRef.current = s.openTurnId ?? null
@@ -266,7 +263,9 @@ export function useCodexChat() {
         // state, not something replayed from local storage.
         case 'codex_history_snapshot': {
           const snapshotUserVoiceMap = readCodexUserVoiceMap(eventSessionId)
-          setMessages(evt.codexHistory.map(message => toBubble(message, snapshotUserVoiceMap)))
+          setMessages(prev => reduceMessageTimeline(prev, {
+            type: 'snapshot', messages: evt.codexHistory.map(message => toBubble(message, snapshotUserVoiceMap)),
+          }))
           setStatus(stopRequestedRef.current ? 'idle' : evt.codexStatus)
           setOpenTurnId(stopRequestedRef.current ? null : evt.codexOpenTurnId)
           activeTurnIdRef.current = evt.codexOpenTurnId ?? null
@@ -314,11 +313,7 @@ export function useCodexChat() {
             const withoutOptimistic = matchedUserVoice
               ? prev.filter(message => message.id !== matchedUserVoice.localId)
               : prev
-            const nextIdx = withoutOptimistic.findIndex((m) => m.id === evt.msg.id)
-            if (nextIdx === -1) return [...withoutOptimistic, bubble]
-            const next = [...withoutOptimistic]
-            next[nextIdx] = bubble
-            return next
+            return reduceMessageTimeline(withoutOptimistic, { type: 'upsert', message: bubble })
           })
           // A voice message always arrives complete (never streamed) — a
           // brand-new live one, so this is the "really synthesize it" path.
@@ -405,7 +400,9 @@ export function useCodexChat() {
         timestamp: Date.now(),
         streaming: false,
       }
-      setMessages(prev => prev.some(message => message.id === clientMessageId) ? prev : [...prev, localVoiceBubble])
+      setMessages(prev => prev.some(message => message.id === clientMessageId)
+        ? prev
+        : reduceMessageTimeline(prev, { type: 'upsert', message: localVoiceBubble }))
       if (!pendingUserVoicesRef.current.some(item => item.localId === clientMessageId)) {
         pendingUserVoicesRef.current.push({
           localId: clientMessageId,

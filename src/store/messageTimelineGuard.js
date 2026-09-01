@@ -1,13 +1,10 @@
 import { useStore } from './index'
 import {
-  appendTimelineMessage,
-  canonicalizeTimeline,
   isRenderableTimelineMessage,
   isSuppressibleAssistantPlaceholder,
   messageIdentityKeys,
   normalizeTimelineMessage,
-  reconcileTimelineSnapshot,
-  updateTimelineMessage,
+  reduceMessageTimeline,
 } from '../utils/messageTimeline'
 import {
   ensureConnected,
@@ -15,10 +12,10 @@ import {
   sendDeleteNotice,
 } from '../services/companion'
 
-// Every message source eventually touches the Zustand timeline except Codex's
-// isolated runtime. Install one guard before React mounts so history loads,
-// proactive history replay and live streaming all obey the same ordering /
-// dedupe rules instead of each call site inventing its own merge semantics.
+// The store itself owns ordering/dedupe through reduceMessageTimeline. This
+// startup guard adds the persistence concerns that must survive reconnects:
+// suppressed empty stream placeholders, delete tombstones and the reliable
+// CC delete outbox. It does not define a second ordering model.
 const INSTALL_KEY = '__eunoiaMessageTimelineGuardV3'
 
 // A local delete must survive reconnect/history replay. Without a tombstone,
@@ -279,7 +276,7 @@ if (!globalThis[INSTALL_KEY]) {
         ? current
         : incoming.length === 0
           ? []
-          : reconcileTimelineSnapshot(current, incoming)
+          : reduceMessageTimeline(current, { type: 'snapshot', messages: incoming, finalizeTransient: true })
       return { messages: next }
     })
   }
@@ -292,7 +289,17 @@ if (!globalThis[INSTALL_KEY]) {
       return
     }
     useStore.setState((state) => ({
-      messages: appendTimelineMessage(state.messages.filter(item => !isTombstoned(item)), normalized),
+      messages: reduceMessageTimeline(state.messages.filter(item => !isTombstoned(item)), { type: 'upsert', message: normalized }),
+    }))
+  }
+
+  const guardedMergeMessages = (messages) => {
+    const incoming = (Array.isArray(messages) ? messages : [])
+      .map(message => normalizeTimelineMessage(message))
+      .filter(message => message && !isTombstoned(message) && isRenderableTimelineMessage(message))
+    if (!incoming.length) return
+    useStore.setState((state) => ({
+      messages: reduceMessageTimeline(state.messages.filter(item => !isTombstoned(item)), { type: 'merge', messages: incoming }),
     }))
   }
 
@@ -311,7 +318,7 @@ if (!globalThis[INSTALL_KEY]) {
       pendingAssistantPlaceholders.delete(id)
       if (!isRenderableTimelineMessage(next)) return
       useStore.setState((state) => ({
-        messages: appendTimelineMessage(state.messages.filter(item => !isTombstoned(item)), next),
+        messages: reduceMessageTimeline(state.messages.filter(item => !isTombstoned(item)), { type: 'upsert', message: next }),
       }))
       return
     }
@@ -319,7 +326,7 @@ if (!globalThis[INSTALL_KEY]) {
     const existing = useStore.getState().messages.find(message => message.id === id)
     if (!existing || isTombstoned(existing)) return
     useStore.setState((state) => ({
-      messages: updateTimelineMessage(state.messages.filter(item => !isTombstoned(item)), id, updates),
+      messages: reduceMessageTimeline(state.messages.filter(item => !isTombstoned(item)), { type: 'patch', id, updates }),
     }))
   }
 
@@ -346,12 +353,13 @@ if (!globalThis[INSTALL_KEY]) {
         addMessageTombstones(message)
         queueReliableServerDelete(message)
       }
-      return { messages: canonicalizeTimeline(state.messages.slice(0, index).filter(message => !isTombstoned(message))) }
+      return { messages: state.messages.slice(0, index).filter(message => !isTombstoned(message)) }
     })
   }
 
   useStore.setState({
     setMessages: guardedSetMessages,
+    mergeMessages: guardedMergeMessages,
     addMessage: guardedAddMessage,
     updateMessage: guardedUpdateMessage,
     deleteMessage: guardedDeleteMessage,

@@ -157,4 +157,26 @@ describe('companion connection recovery', () => {
     socket.message({ type: 'msg_deleted', ids: ['reply-1', 'reply-2'], ts: Date.now() })
     expect(deleted).toEqual([['reply-1', 'reply-2']])
   })
+
+  it('delivers reconnect history as one snapshot instead of replaying live messages', async () => {
+    const companion = await import('../companion.js')
+    const snapshots = []
+    const proactive = []
+    companion.onCcHistorySnapshot(items => snapshots.push(items))
+    companion.onProactiveMessage(message => proactive.push(message))
+    companion.ensureConnected()
+    const socket = MockWebSocket.instances[0]
+    socket.open()
+    socket.message({
+      type: 'history', openTurnId: null, queuedTurnIds: [], resetAt: 0,
+      items: [
+        { type: 'msg', id: 'old-user', from: 'user', text: 'old', ts: 1 },
+        { type: 'msg', id: 'old-ai', from: 'cc', text: 'old reply', ts: 2 },
+      ],
+    })
+    await vi.runOnlyPendingTimersAsync()
+    expect(snapshots).toHaveLength(1)
+    expect(snapshots[0].map(item => item.id)).toEqual(['old-user', 'old-ai'])
+    expect(proactive).toEqual([])
+  })
 })

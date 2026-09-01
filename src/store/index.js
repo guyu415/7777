@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import { openDB } from 'idb'
+import { reduceMessageTimeline } from '../utils/messageTimeline'
 
 let db
 
@@ -284,13 +285,20 @@ export const useStore = create(
       setDiaryTarget: (id) => set({ diaryTarget: id }),
       setIsLoading: (v) => set({ isLoading: v }),
       setStreamingMessageId: (id) => set({ streamingMessageId: id }),
-      setMessages: (messages) => set({ messages }),
-      addMessage: (msg) => set((state) => ({ messages: [...state.messages, msg] })),
+      setMessages: (messages) => set((state) => ({
+        messages: reduceMessageTimeline(state.messages, { type: 'snapshot', messages, finalizeTransient: true }),
+      })),
+      mergeMessages: (messages) => set((state) => ({
+        messages: reduceMessageTimeline(state.messages, { type: 'merge', messages }),
+      })),
+      addMessage: (msg) => set((state) => ({
+        messages: reduceMessageTimeline(state.messages, { type: 'upsert', message: msg }),
+      })),
       updateMessage: (id, updates) => set((state) => ({
-        messages: state.messages.map(m => m.id === id ? { ...m, ...updates } : m)
+        messages: reduceMessageTimeline(state.messages, { type: 'patch', id, updates }),
       })),
       deleteMessage: (id) => set((state) => ({
-        messages: state.messages.filter(m => m.id !== id)
+        messages: reduceMessageTimeline(state.messages, { type: 'remove', id }),
       })),
       deleteMessagesFrom: (id) => set((state) => {
         const idx = state.messages.findIndex(m => m.id === id)

@@ -80,6 +80,26 @@ export function isSuppressibleAssistantPlaceholder(message) {
   )
 }
 
+export function finalizePersistedTransient(message) {
+  const normalized = normalizeTimelineMessage(message)
+  if (!normalized) return null
+  if (normalized.voiceLoading) {
+    return {
+      ...normalized,
+      type: normalized.voiceBlobId ? 'voice' : 'text',
+      content: normalized.voiceBlobId ? '' : (normalized.voiceText || normalized.content || ''),
+      voiceLoading: false,
+      ...(!normalized.voiceBlobId ? { voiceFailed: true } : {}),
+      streaming: false,
+      reasoningStreaming: false,
+    }
+  }
+  if (normalized.streaming || normalized.reasoningStreaming) {
+    return { ...normalized, streaming: false, reasoningStreaming: false }
+  }
+  return normalized
+}
+
 function normalizedComparableText(message) {
   return typeof message?.content === 'string' ? message.content.trim().replace(/\r\n/g, '\n') : ''
 }
@@ -177,7 +197,10 @@ export function canonicalizeTimeline(messages, options = {}) {
   const signatureToIndices = new Map()
 
   for (let inputIndex = 0; inputIndex < messages.length; inputIndex++) {
-    const normalized = normalizeTimelineMessage(messages[inputIndex], now + inputIndex)
+    const rawNormalized = normalizeTimelineMessage(messages[inputIndex], now + inputIndex)
+    const normalized = options.finalizeTransient === true
+      ? finalizePersistedTransient(rawNormalized)
+      : rawNormalized
     if (!normalized || !isRenderableTimelineMessage(normalized)) continue
 
     const keys = messageIdentityKeys(normalized)
@@ -190,7 +213,7 @@ export function canonicalizeTimeline(messages, options = {}) {
     }
 
     let semanticLegacy = false
-    if (matchIndex === -1) {
+    if (matchIndex === -1 && options.healLegacyDuplicates === true) {
       const signature = semanticSignature(normalized)
       const candidates = signature ? (signatureToIndices.get(signature) || []) : []
       for (let i = candidates.length - 1; i >= 0; i--) {
@@ -240,27 +263,38 @@ function sameTimelineScope(a, b) {
 
 export function reconcileTimelineSnapshot(currentMessages, snapshotMessages, options = {}) {
   if (!Array.isArray(snapshotMessages) || snapshotMessages.length === 0) return []
+  // `finalizeTransient` applies only to rows read from persistence. A live
+  // in-memory stream carried alongside a stale snapshot must stay live.
+  const liveOptions = { ...options, finalizeTransient: false }
   const incoming = canonicalizeTimeline(snapshotMessages, options)
-  if (incoming.length === 0) return []
-  const current = canonicalizeTimeline(currentMessages, options)
+  if (incoming.length === 0) return canonicalizeTimeline(currentMessages, liveOptions)
+  const current = canonicalizeTimeline(currentMessages, liveOptions)
   if (current.length === 0) return incoming
 
   const scopeProbe = incoming[0]
   const inScopeCurrent = current.filter(message => sameTimelineScope(message, scopeProbe))
   const latestIncomingTimestamp = incoming.reduce((max, message) => Math.max(max, message.timestamp), 0)
   const carry = inScopeCurrent.filter(message => {
-    if (incoming.some(candidate => identityOverlap(candidate, message) || legacyCcDuplicate(candidate, message))) return false
+    if (incoming.some(candidate => identityOverlap(candidate, message)
+      || (options.healLegacyDuplicates === true && legacyCcDuplicate(candidate, message)))) return false
     // Preserve an in-flight bubble and anything that arrived after the snapshot
     // was taken. This is the stale-load race that otherwise makes a fresh
     // message disappear until the next reconnect.
     return message.streaming || message.voiceLoading || message.timestamp > latestIncomingTimestamp
   })
 
-  return canonicalizeTimeline([...incoming, ...carry], options)
+  return canonicalizeTimeline([...incoming, ...carry], liveOptions)
 }
 
 export function appendTimelineMessage(currentMessages, message, options = {}) {
-  return canonicalizeTimeline([...(Array.isArray(currentMessages) ? currentMessages : []), message], options)
+  const current = Array.isArray(currentMessages) ? currentMessages : []
+  const normalized = normalizeTimelineMessage(message)
+  if (!normalized || !isRenderableTimelineMessage(normalized)) return current
+  const index = current.findIndex(existing => identityOverlap(existing, normalized))
+  if (index === -1) return [...current, normalized]
+  const next = [...current]
+  next[index] = mergeDuplicate(normalizeTimelineMessage(current[index]), normalized, false)
+  return next
 }
 
 export function updateTimelineMessage(currentMessages, id, updates, options = {}) {
@@ -268,6 +302,39 @@ export function updateTimelineMessage(currentMessages, id, updates, options = {}
   const index = currentMessages.findIndex(message => message?.id === id)
   if (index === -1) return currentMessages
   const next = [...currentMessages]
-  next[index] = { ...next[index], ...updates }
-  return canonicalizeTimeline(next, options)
+  const updated = normalizeTimelineMessage({ ...next[index], ...updates }, next[index].timestamp)
+  if (!isRenderableTimelineMessage(updated)) return next.filter((_, itemIndex) => itemIndex !== index)
+  next[index] = updated
+  return next
+}
+
+// The single mutation vocabulary for a rendered one-to-one chat timeline.
+// Transport hooks, history hydration and reconnect recovery all reduce into
+// these events instead of each inventing its own append/sort/replace rules.
+export function reduceMessageTimeline(currentMessages, event, options = {}) {
+  const current = Array.isArray(currentMessages) ? currentMessages : []
+  if (!event || typeof event !== 'object') return current
+
+  switch (event.type) {
+    case 'snapshot':
+      return reconcileTimelineSnapshot(current, event.messages || [], {
+        ...options,
+        finalizeTransient: event.finalizeTransient === true,
+      })
+    case 'merge':
+      return (Array.isArray(event.messages) ? event.messages : [])
+        .reduce((timeline, message) => appendTimelineMessage(timeline, message, options), current)
+    case 'upsert':
+      return appendTimelineMessage(current, event.message, options)
+    case 'patch':
+      return updateTimelineMessage(current, event.id, event.updates || {}, options)
+    case 'remove': {
+      const ids = new Set(Array.isArray(event.ids) ? event.ids : [event.id])
+      return current.filter(message => !ids.has(message?.id))
+    }
+    case 'reset':
+      return []
+    default:
+      return current
+  }
 }

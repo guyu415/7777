@@ -1,5 +1,5 @@
 import { lazy, Suspense, useCallback, useEffect, useState, useRef } from 'react'
-import { useStore, getCustomFont, getBlob, getMessages, saveMessage, saveBlob, deleteMessageFromDB, deleteMessagesForSession } from './store'
+import { useStore, getCustomFont, getBlob, getMessages, saveMessage, deleteMessageFromDB, deleteMessagesForSession } from './store'
 import { THEMES } from './themes'
 import ChatWindow from './components/Chat/ChatWindow'
 import GroupChatWindow from './components/GroupChat/GroupChatWindow'
@@ -17,8 +17,8 @@ import CodexMemory from './components/CodexMemory'
 import DesktopPet from './components/DesktopPet'
 import { getSettings, saveSettings, extractSettings, saveSessionMsgs, deleteSessionMsgs, putAsset, putAssetDataUrl, loadAsset } from './services/sync'
 import { compressImage, slimSettings } from './utils/image'
-import { ensureConnected as ensureCompanionConnected, reconnectCompanion, onProactiveMessage, onProactiveActivity, onProactiveActivityAcknowledged, acknowledgeProactiveActivity, onRemoteUserMessage, onCcMessageDeleted, onCcReset } from './services/companion'
-import { fetchTTSAudio } from './services/tts'
+import { ensureConnected as ensureCompanionConnected, reconnectCompanion, onProactiveActivity, onProactiveActivityAcknowledged, acknowledgeProactiveActivity, onCcMessageDeleted, onCcReset } from './services/companion'
+import { subscribeCcMessageInbox } from './services/ccMessageInbox'
 import { themeWithUserBubbleText } from './utils/bubbleColors'
 import { PUSH_NAVIGATION_EVENT, isPushNavigationUrl } from './utils/notificationNavigation'
 
@@ -481,6 +481,7 @@ export default function App() {
 
   // ── Theme / font / bg ──────────────────────────────────────────
   const currentSession = sessions?.find(s => s.id === currentSessionId)
+  const residentCcSessionId = sessions?.find(s => s.providerName === 'claude-code-vps')?.id || null
 
   const effectiveThemeId = currentSession?.themeId ?? globalThemeId
   const effectiveChatBg = currentSession?.chatBg ?? globalChatBg
@@ -549,6 +550,13 @@ export default function App() {
     document.documentElement.style.fontSize = `${effectiveFontSize}px`
   }, [effectiveFontSize])
 
+  // Install the one CC display-history inbox before opening the shared
+  // socket. Live pushes and reconnect snapshots now share one serial writer.
+  useEffect(() => {
+    if (!residentCcSessionId) return undefined
+    return subscribeCcMessageInbox()
+  }, [residentCcSessionId])
+
   // Keep the companion WS alive whenever a VPS-bound session exists, not
   // just while the user is actively sending — proactive messages can arrive
   // with no user action to lazily trigger a connection otherwise. Connecting
@@ -593,189 +601,6 @@ export default function App() {
       window.removeEventListener('pageshow', restoreFromPageCache)
     }
   }, [sessions])
-
-  // Letters can be delivered while the garden is open, from another device,
-  // or by the VPS scheduler while this tab is closed. Mirror every accepted
-  // server-side user message into the one resident CC chat, idempotently.
-  useEffect(() => {
-    const unsub = onRemoteUserMessage(async ({ id, text, ts }) => {
-      const vpsSession = useStore.getState().sessions?.find(s => s.providerName === 'claude-code-vps')
-      if (!vpsSession) return
-      const existing = await getMessages(vpsSession.id)
-      if (existing.some(m => m.id === id)) return
-      const msg = {
-        id, conversationId: vpsSession.id, role: 'user', type: 'text', content: text,
-        timestamp: ts || Date.now(), source: 'diary-letter',
-      }
-      await saveMessage(msg)
-      const state = useStore.getState()
-      state.updateSession(vpsSession.id, { lastMsgPreview: '寄出了一封信', lastMsgTime: msg.timestamp })
-      if (state.currentSessionId === vpsSession.id) state.addMessage(msg)
-      const password = localStorage.getItem('auth.password')
-      if (password) {
-        const all = [...existing, msg].sort((a, b) => a.timestamp - b.timestamp)
-        saveSessionMsgs(password, vpsSession.id, all.filter(m => !m.streaming))
-          .catch(e => console.warn('[DIARY] 常驻窗消息同步失败:', e.message))
-      }
-    })
-    return unsub
-  }, [])
-
-  // Proactive (VPS-initiated) messages: land only in the single VPS-bound
-  // session's real message store, deduped by Wire.id against what's already
-  // in IndexedDB (survives page reloads, unlike the in-memory dedup cache in
-  // companion.js which resets per page load). Never fabricates a user
-  // bubble or a sendMessage() call — this only ever appends an assistant
-  // (from:'cc') message.
-  //
-  // Gomoku's in-game chat (including a gomoku-triggered CC turn's own
-  // reply/send_voice calls) never reaches this listener at all — it's routed
-  // server-side into the game's own persisted `messages` log (see
-  // GomokuBoard.jsx's onGomokuUpdate subscription), not broadcast as a main
-  // chat wire `msg` in the first place, so there's nothing to skip here.
-  useEffect(() => {
-    // A reconnect replays the complete server transcript. The resident chat
-    // is already a few thousand wires long, so doing two IndexedDB lookups
-    // for every replayed CC item makes opening a push notification appear to
-    // hang. Build one snapshot per local conversation and update it as new
-    // wires arrive instead.
-    const knownMessagesBySession = new Map()
-    const knownMessagesFor = (sessionId) => {
-      if (!knownMessagesBySession.has(sessionId)) {
-        knownMessagesBySession.set(sessionId, getMessages(sessionId).then((messages) => {
-          const ids = new Set()
-          for (const message of messages) {
-            if (message?.id) ids.add(message.id)
-            if (Array.isArray(message?.wireIds)) {
-              for (const wireId of message.wireIds) if (wireId) ids.add(wireId)
-            }
-          }
-          return ids
-        }))
-      }
-      return knownMessagesBySession.get(sessionId)
-    }
-    const pendingVisibleBySession = new Map()
-    let visibleFlushTimer = null
-    const queueVisibleMessage = (sessionId, msg, preview) => {
-      if (!pendingVisibleBySession.has(sessionId)) pendingVisibleBySession.set(sessionId, new Map())
-      pendingVisibleBySession.get(sessionId).set(msg.id, { msg, preview })
-      if (visibleFlushTimer !== null) return
-      // All history callbacks resume together after the shared IndexedDB read.
-      // Flush them as one ordered state update instead of rendering once per
-      // historical bubble in whichever order those callbacks happened to win.
-      visibleFlushTimer = setTimeout(() => {
-        visibleFlushTimer = null
-        const state = useStore.getState()
-        for (const [targetSessionId, pending] of pendingVisibleBySession) {
-          const items = [...pending.values()]
-          if (!items.length) continue
-          if (state.currentSessionId === targetSessionId) {
-            const byId = new Map(state.messages.map(message => [message.id, message]))
-            for (const { msg: pendingMessage } of items) byId.set(pendingMessage.id, pendingMessage)
-            const ordered = [...byId.values()]
-            ordered.sort((a, b) => Number(a.timestamp || 0) - Number(b.timestamp || 0) || String(a.id).localeCompare(String(b.id)))
-            state.setMessages(ordered)
-          }
-          const latest = items.reduce((best, item) => Number(item.msg.timestamp || 0) > Number(best.msg.timestamp || 0) ? item : best)
-          const session = state.sessions?.find(candidate => candidate.id === targetSessionId)
-          if (Number(latest.msg.timestamp || 0) >= Number(session?.lastMsgTime || 0)) {
-            state.updateSession(targetSessionId, { lastMsgPreview: latest.preview, lastMsgTime: latest.msg.timestamp })
-          }
-        }
-        pendingVisibleBySession.clear()
-      }, 0)
-    }
-
-    const unsub = onProactiveMessage(async ({ id, text, ts, kind, voice, thinking, musicAction }) => {
-      const vpsSession = useStore.getState().sessions?.find(s => s.providerName === 'claude-code-vps')
-      if (!vpsSession) return
-      // A live-delivered turn saves its bubbles under local ids but records
-      // the server wire ids it displayed in `wireIds` — check both, otherwise
-      // every reconnect's history snapshot re-appends replies this browser
-      // already showed live. A reconnect may replay a long transcript, so
-      // all replayed items share
-      // the single IndexedDB snapshot above.
-      const live = useStore.getState().messages
-      if (live.some(m => m.id === id || (Array.isArray(m.wireIds) && m.wireIds.includes(id)))) return
-      const knownIds = await knownMessagesFor(vpsSession.id)
-      if (knownIds.has(id)) return
-      const refreshedLive = useStore.getState().messages
-      if (refreshedLive.some(m => m.id === id || (Array.isArray(m.wireIds) && m.wireIds.includes(id)))) return
-      // Claim before writing so a duplicate live wire and history replay
-      // cannot both append it. Failed persistence releases the claim below,
-      // allowing a later reconnect to repair it.
-      knownIds.add(id)
-      const reasoningFields = thinking ? { reasoning: thinking, reasoningStreaming: false } : {}
-
-      // Make the message visible before any slow optional work (notably TTS)
-      // begins. The returned promise keeps later writes ordered: a completed
-      // voice result can never be overwritten by the initial placeholder.
-      const showAndPersist = (msg, preview) => {
-        queueVisibleMessage(vpsSession.id, msg, preview)
-        return saveMessage(msg).catch(error => {
-          knownIds.delete(id)
-          console.error('[PROACTIVE] 消息落库失败:', error?.message)
-        })
-      }
-      const updateVoiceMessage = async (updates, preview) => {
-        const complete = { id, conversationId: vpsSession.id, role: 'assistant', timestamp: ts, streaming: false, source: 'cc-proactive', ...updates }
-        try {
-          await saveMessage(complete)
-        } catch (error) {
-          // The already-visible placeholder must still resolve to readable
-          // text even if a private-mode/full-storage IndexedDB write fails.
-          console.error('[PROACTIVE-VOICE] 消息落库失败:', error?.message)
-        }
-        const state = useStore.getState()
-        state.updateSession(vpsSession.id, { lastMsgPreview: preview, lastMsgTime: ts })
-        if (state.currentSessionId === vpsSession.id) state.updateMessage(id, updates)
-      }
-
-      if (kind === 'voice') {
-        const s = useStore.getState()
-        const ttsApiKey = vpsSession.ttsApiKey || s.ttsApiKey
-        const ttsGroupId = vpsSession.ttsGroupId || s.ttsGroupId
-        const ttsVoiceId = vpsSession.ttsVoiceId || s.ttsVoiceId
-        const ttsModel = vpsSession.ttsModel || s.ttsModel
-        const hasTts = ttsApiKey && ttsGroupId
-        const placeholder = { id, conversationId: vpsSession.id, role: 'assistant', type: 'text', content: text, voiceText: text, voiceLoading: true, timestamp: ts, streaming: false, source: 'cc-proactive', ...reasoningFields }
-        const placeholderSaved = showAndPersist(placeholder, `[语音] ${text}`.slice(0, 40))
-        void (async () => {
-          await placeholderSaved
-          if (!hasTts) {
-            await updateVoiceMessage({ type: 'text', content: text, voiceText: text, voiceFailed: true, voiceLoading: false, ...reasoningFields }, text.slice(0, 40))
-            return
-          }
-          try {
-            const blob = await fetchTTSAudio(text, { apiKey: ttsApiKey, groupId: ttsGroupId, voiceId: voice || ttsVoiceId || 'English_Trustworthy_Man', model: ttsModel })
-            let duration = 0
-            try {
-              const ab = await blob.arrayBuffer()
-              const ac = new AudioContext()
-              const decoded = await ac.decodeAudioData(ab)
-              duration = Math.round(decoded.duration)
-              ac.close()
-            } catch {}
-            const voiceBlobId = id + '-blob'
-            await saveBlob(voiceBlobId, blob)
-            await updateVoiceMessage({ type: 'voice', voiceBlobId, duration, content: '', voiceText: text, voiceLoading: false, ...reasoningFields }, `[语音] ${text}`.slice(0, 40))
-          } catch (e) {
-            console.error('[PROACTIVE-VOICE] 合成失败:', e?.message)
-            await updateVoiceMessage({ type: 'text', content: text, voiceText: text, voiceFailed: true, voiceLoading: false, ...reasoningFields }, text.slice(0, 40))
-          }
-        })()
-        return
-      }
-
-      const msg = { id, conversationId: vpsSession.id, role: 'assistant', type: 'text', content: text, timestamp: ts, streaming: false, source: 'cc-proactive', ...(musicAction ? { musicAction } : {}), ...reasoningFields }
-      await showAndPersist(msg, text.slice(0, 40))
-    })
-    return () => {
-      unsub()
-      if (visibleFlushTimer !== null) clearTimeout(visibleFlushTimer)
-    }
-  }, [])
 
   // A CC bubble may combine several reply() calls and therefore have a local
   // id plus multiple server wireIds. Apply the server's deletion broadcast

@@ -2,6 +2,8 @@ import { memo, forwardRef, useCallback, useEffect, useImperativeHandle, useLayou
 import { useVirtualizer } from '@tanstack/react-virtual'
 import { ChevronUp, ChevronDown } from 'lucide-react'
 import MessageBubble from './MessageBubble'
+import PendingReplyIndicator from './PendingReplyIndicator'
+import { messageListItemCount, shouldShowPendingReply } from './messageListModel'
 
 // How close to the bottom (px) still counts as "at the bottom" for auto-follow
 // purposes — generous enough to survive sub-pixel/rounding jitter, small
@@ -17,15 +19,6 @@ const TOP_THRESHOLD_PX = 96
 // actually measured; @tanstack/react-virtual corrects it via ResizeObserver
 // the moment each item mounts, so total scroll height stays accurate.
 const ESTIMATED_ITEM_HEIGHT = 88
-const LOADING_MESSAGE = Object.freeze({
-  id: '__assistant-loading__',
-  role: 'assistant',
-  type: 'text',
-  content: '',
-  streaming: true,
-  transient: true,
-})
-
 /**
  * Renders only the messages near the viewport (+ overscan buffer), not the
  * full history — this is the actual fix for long-conversation jank. The full
@@ -44,14 +37,12 @@ const MessageList = forwardRef(function MessageList({
   selectionMode, selectedIds, onToggleSelect,
   emptyAiName, emptyHasApiKey, onEmptyConfigureClick,
 }, ref) {
-  // Some transports only create their authoritative assistant bubble after
-  // backend startup work. Keep the UI responsive throughout that gap. Once
-  // a real streaming assistant bubble arrives this synthetic row disappears
-  // without ever entering chat history or model context.
-  const hasStreamingAssistant = sourceMessages.some(message => message.role === 'assistant' && message.streaming)
-  const messages = isLoading && !hasStreamingAssistant
-    ? [...sourceMessages, LOADING_MESSAGE]
-    : sourceMessages
+  const messages = sourceMessages
+  // Pending is presentation state, not a fabricated chat message. It gets a
+  // virtual row so scrolling still works, but never passes through
+  // MessageBubble and therefore has no id/timestamp/menu/delete semantics.
+  const showPendingReply = shouldShowPendingReply(messages, isLoading)
+  const itemCount = messageListItemCount(messages, showPendingReply)
   const scrollRef = useRef(null)
   // Refs, not state — reading/writing them must never itself trigger a
   // re-render of this list on every scroll tick.
@@ -75,11 +66,13 @@ const MessageList = forwardRef(function MessageList({
   const idleTimerRef = useRef(null)
 
   const virtualizer = useVirtualizer({
-    count: messages.length,
+    count: itemCount,
     getScrollElement: () => scrollRef.current,
     estimateSize: () => ESTIMATED_ITEM_HEIGHT,
     overscan: 10,
-    getItemKey: (index) => messages[index]?.id ?? index,
+    getItemKey: (index) => index === messages.length && showPendingReply
+      ? 'pending-reply-indicator'
+      : (messages[index]?.id ?? index),
   })
 
   // Lets the parent (search results, "jump to message") drive this list's
@@ -134,13 +127,13 @@ const MessageList = forwardRef(function MessageList({
       prevMessageCountRef.current = messages.length
       setNewBelowCount(0)
     }
-    if (!hasScrolledInitiallyRef.current && messages.length > 0) {
+    if (!hasScrolledInitiallyRef.current && itemCount > 0) {
       hasScrolledInitiallyRef.current = true
       isNearBottomRef.current = true
-      virtualizer.scrollToIndex(messages.length - 1, { align: 'end' })
+      virtualizer.scrollToIndex(itemCount - 1, { align: 'end' })
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sessionId, messages.length > 0])
+  }, [sessionId, itemCount > 0])
 
   // Count only newly appended bubbles while the reader is away from the
   // bottom. Streaming growth inside the current bubble does not inflate it.
@@ -159,16 +152,16 @@ const MessageList = forwardRef(function MessageList({
   // back down mid-stream.
   const lastMsg = messages[messages.length - 1]
   useLayoutEffect(() => {
-    if (!messages.length) return
+    if (!itemCount) return
     const lastId = lastMsg?.id
     prevLastIdRef.current = lastId
     if (isNearBottomRef.current) {
-      virtualizer.scrollToIndex(messages.length - 1, { align: 'end' })
+      virtualizer.scrollToIndex(itemCount - 1, { align: 'end' })
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [messages.length, lastMsg?.content?.length, lastMsg?.reasoning?.length, lastMsg?.streaming])
+  }, [itemCount, lastMsg?.content?.length, lastMsg?.reasoning?.length, lastMsg?.streaming])
 
-  if (messages.length === 0) {
+  if (messages.length === 0 && !showPendingReply) {
     return (
       <div className="absolute inset-0 overflow-y-auto px-2 py-4" style={{ zIndex: 1 }}>
         <div className="flex flex-col items-center justify-center h-full text-center gap-3">
@@ -213,6 +206,18 @@ const MessageList = forwardRef(function MessageList({
       >
         <div style={{ position: 'relative', height: virtualizer.getTotalSize(), width: '100%' }}>
           {items.map((vi) => {
+            if (showPendingReply && vi.index === messages.length) {
+              return (
+                <div
+                  key={vi.key}
+                  data-index={vi.index}
+                  ref={virtualizer.measureElement}
+                  style={{ position: 'absolute', top: 0, left: 0, width: '100%', transform: `translateY(${vi.start}px)` }}
+                >
+                  <PendingReplyIndicator aiAvatar={aiAvatar} theme={theme} />
+                </div>
+              )
+            }
             const msg = messages[vi.index]
             if (!msg) return null
             const isLastAi = msg.id === lastAiId
