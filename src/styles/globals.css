@@ -169,6 +169,110 @@ body {
 .typing-dot:nth-child(2) { animation-delay: 0.2s; }
 .typing-dot:nth-child(3) { animation-delay: 0.4s; }
 
+/* Apple Watch heart-rate tool card. The beat keyframes themselves live in
+   HeartRateCard so their duration can be driven by the returned BPM. */
+.heart-rate-card {
+  --heart-card-pink: #f44370;
+  position: relative;
+  isolation: isolate;
+  width: min(250px, 100%);
+  min-height: 82px;
+  display: flex;
+  align-items: center;
+  gap: 13px;
+  padding: 12px 15px 12px 12px;
+  overflow: hidden;
+  border-radius: 23px;
+  border: 1px solid rgba(255, 145, 174, .28);
+  background: linear-gradient(135deg, rgba(255,255,255,.78), rgba(255,237,243,.69));
+  box-shadow: 0 10px 28px rgba(219, 78, 118, .12), inset 0 1px 0 rgba(255,255,255,.85);
+  backdrop-filter: blur(18px) saturate(1.15);
+  -webkit-backdrop-filter: blur(18px) saturate(1.15);
+}
+.heart-rate-card__wash {
+  position: absolute;
+  z-index: -2;
+  width: 115px;
+  height: 115px;
+  left: -30px;
+  top: -22px;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(255,111,151,.22), rgba(255,175,196,.06) 62%, transparent 72%);
+}
+.heart-rate-card__scan {
+  position: absolute;
+  z-index: -1;
+  inset: 0;
+  width: 42%;
+  background: linear-gradient(100deg, transparent, rgba(255,255,255,.64), transparent);
+  pointer-events: none;
+}
+.heart-rate-card__visual {
+  position: relative;
+  width: 58px;
+  height: 58px;
+  flex: 0 0 58px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: linear-gradient(145deg, rgba(255,255,255,.91), rgba(255,215,226,.72));
+  box-shadow: inset 0 0 0 1px rgba(255,255,255,.75), 0 5px 15px rgba(232,72,115,.13);
+}
+.heart-rate-card__heart {
+  position: relative;
+  z-index: 2;
+  display: grid;
+  place-items: center;
+  color: #d9295c;
+  filter: drop-shadow(0 4px 6px rgba(211,41,89,.23));
+  will-change: transform;
+}
+.heart-rate-card__aura {
+  position: absolute;
+  z-index: 1;
+  inset: 7px;
+  border-radius: 50%;
+  border: 1.5px solid rgba(244,67,112,.5);
+  background: rgba(255,108,147,.09);
+  will-change: transform, opacity;
+}
+.heart-rate-card__copy { min-width: 0; flex: 1; }
+.heart-rate-card__eyebrow {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  color: rgba(141,74,94,.68);
+  font-size: 9.5px;
+  line-height: 1.25;
+  white-space: nowrap;
+}
+.heart-rate-card__dot {
+  width: 5px;
+  height: 5px;
+  flex: 0 0 5px;
+  border-radius: 50%;
+  background: #ef3f6f;
+  box-shadow: 0 0 0 3px rgba(239,63,111,.1);
+}
+.heart-rate-card__dot.is-reading { animation: pulse-soft 1s ease-in-out infinite; }
+.heart-rate-card__reading {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  margin-top: 2px;
+  color: #c92e59;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -.04em;
+}
+.heart-rate-card__reading > span { font-size: 31px; font-weight: 670; line-height: 1; }
+.heart-rate-card__reading > small { font-size: 10px; font-weight: 700; letter-spacing: .1em; color: rgba(172,62,94,.6); }
+.heart-rate-card__loading {
+  margin-top: 6px;
+  color: rgba(162,70,97,.72);
+  font-size: 13px;
+  font-weight: 560;
+}
+
 /* Pulse cursor */
 @keyframes pulse-soft {
   0%, 100% { opacity: 1; }
