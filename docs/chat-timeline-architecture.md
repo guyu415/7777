@@ -15,7 +15,8 @@ messages plus ephemeral activity state.
 | Transport status | Thinking/working/stopped | never a message |
 
 All timeline mutations reduce through `reduceMessageTimeline`. Stable
-`id`/`wireIds` are the only deduplication keys. Equal text is not identity.
+`id`/`wireIds` are display deduplication keys; `serverWireIds` are transport
+recovery/deletion keys. Equal text is not identity.
 
 ## Ordering rules
 
@@ -36,10 +37,11 @@ All timeline mutations reduce through `reduceMessageTimeline`. Stable
 ## CC message boundaries
 
 The CC wire protocol is authoritative: one `reply()` call is one durable
-message, one stable wire id and one rendered bubble. Blank lines inside its
-text are formatting and stay inside that bubble. Multiple `reply()` calls are
-multiple bubbles with distinct wire ids. Local paragraph tokenization is only
-used for stateless API-provider text and must never reinterpret CC boundaries.
+server message. Its `serverWireIds` identity controls reconnect recovery and
+deletion, while stable paragraph-level `wireIds` control rendered-bubble
+deduplication. Blank-line paragraphs therefore remain separate chat bubbles
+without pretending they are separate server messages or swallowing siblings
+during hydration. Multiple `reply()` calls still retain distinct server ids.
 
 ## Ephemeral state
 

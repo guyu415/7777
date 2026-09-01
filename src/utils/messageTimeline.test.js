@@ -5,6 +5,7 @@ import {
   isSuppressibleAssistantPlaceholder,
   reduceMessageTimeline,
   reconcileTimelineSnapshot,
+  messageServerIdentityKeys,
 } from './messageTimeline'
 
 describe('message timeline', () => {
@@ -48,6 +49,16 @@ describe('message timeline', () => {
     expect(result[0].id).toBe('local')
     expect(result[0].wireIds).toContain('wire-1')
     expect(result[0].reasoning).toBe('r')
+  })
+
+  it('keeps display fragments distinct while sharing one server identity', () => {
+    const result = canonicalizeTimeline([
+      { id: 'local-1', role: 'assistant', content: 'one', timestamp: 1000, wireIds: ['wire::part:0'], serverWireIds: ['wire'] },
+      { id: 'local-2', role: 'assistant', content: 'two', timestamp: 1001, wireIds: ['wire::part:1'], serverWireIds: ['wire'] },
+    ])
+    expect(result.map(message => message.content)).toEqual(['one', 'two'])
+    expect(messageServerIdentityKeys(result[0])).toEqual(['wire'])
+    expect(messageServerIdentityKeys(result[1])).toEqual(['wire'])
   })
 
   it('never guesses that equal text means equal messages', () => {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { ccWireToTimelineMessage, selectCcSnapshotDelta } from './ccTimeline'
+import { ccWireToTimelineMessage, ccWireToTimelineMessages, selectCcSnapshotDelta } from './ccTimeline'
 
 const msg = (id, ts, from = 'cc', text = id) => ({ type: 'msg', id, ts, from, text })
 
@@ -11,6 +11,15 @@ describe('CC timeline snapshot recovery', () => {
     ]
     const snapshot = [msg('wire-a', 1000), msg('old-gap', 2000), msg('wire-c', 3000), msg('missed-new', 4000)]
     expect(selectCcSnapshotDelta(local, snapshot).map(item => item.id)).toEqual(['missed-new'])
+  })
+
+  it('anchors a split display message by its shared server wire id', () => {
+    const local = [
+      { id: 'local-0', wireIds: ['wire-a::part:0'], serverWireIds: ['wire-a'], timestamp: 1000 },
+      { id: 'local-1', wireIds: ['wire-a::part:1'], serverWireIds: ['wire-a'], timestamp: 1000 },
+    ]
+    const snapshot = [msg('wire-a', 1000), msg('wire-b', 2000)]
+    expect(selectCcSnapshotDelta(local, snapshot).map(item => item.id)).toEqual(['wire-b'])
   })
 
   it('uses time as a safe fallback for legacy local rows without wire ids', () => {
@@ -35,5 +44,16 @@ describe('CC timeline snapshot recovery', () => {
 
     expect(user).toMatchObject({ id: 'turn-a', turnId: 'turn-a' })
     expect(reply).toMatchObject({ id: 'reply-a', turnId: 'turn-a', replyToTurnId: 'turn-a' })
+  })
+
+  it('hydrates paragraph bubbles with separate display ids and one server id', () => {
+    const mapped = ccWireToTimelineMessages({
+      ...msg('reply-a', 1000), turnId: 'turn-a', text: '第一段\n\n第二段',
+    }, 'cc-session')
+
+    expect(mapped.map(message => [message.id, message.content, message.serverWireIds[0]])).toEqual([
+      ['reply-a::part:0', '第一段', 'reply-a'],
+      ['reply-a::part:1', '第二段', 'reply-a'],
+    ])
   })
 })

@@ -2,15 +2,14 @@ import { describe, expect, it } from 'vitest'
 import { extractVpsReplyTokens, markVpsReplyChunks } from './vpsReplyChunks'
 
 describe('VPS reply wire boundaries', () => {
-  it('keeps internal blank lines in one reply call as one complete bubble', () => {
+  it('splits internal blank-line paragraphs without losing any content', () => {
     const entries = [{ wireId: 'wire-1', text: '第一段\n\n第二段\n第三行' }]
     const tokens = extractVpsReplyTokens(markVpsReplyChunks(entries), entries)
 
-    expect(tokens).toEqual([{
-      type: 'text',
-      content: '第一段\n\n第二段\n第三行',
-      wireId: 'wire-1',
-    }])
+    expect(tokens.map(token => [token.content, token.wireId, token.serverWireId])).toEqual([
+      ['第一段', 'wire-1::part:0', 'wire-1'],
+      ['第二段\n第三行', 'wire-1::part:1', 'wire-1'],
+    ])
   })
 
   it('keeps multiple reply calls as distinct bubbles with distinct wire ids', () => {
@@ -20,9 +19,10 @@ describe('VPS reply wire boundaries', () => {
     ]
     const tokens = extractVpsReplyTokens(markVpsReplyChunks(entries), entries)
 
-    expect(tokens.map(token => [token.wireId, token.content])).toEqual([
-      ['wire-1', '第一条\n\n仍然属于第一条'],
-      ['wire-2', '第二条'],
+    expect(tokens.map(token => [token.wireId, token.serverWireId, token.content])).toEqual([
+      ['wire-1::part:0', 'wire-1', '第一条'],
+      ['wire-1::part:1', 'wire-1', '仍然属于第一条'],
+      ['wire-2', 'wire-2', '第二条'],
     ])
   })
 

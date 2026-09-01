@@ -1,6 +1,6 @@
 import { getMessages, saveBlob, saveMessage, useStore } from '../store'
-import { ccWireToTimelineMessage, selectCcSnapshotDelta } from '../utils/ccTimeline'
-import { messageIdentityKeys } from '../utils/messageTimeline'
+import { ccWireToTimelineMessages, selectCcSnapshotDelta } from '../utils/ccTimeline'
+import { messageServerIdentityKeys } from '../utils/messageTimeline'
 import {
   onCcHistorySnapshot,
   onProactiveMessage,
@@ -12,7 +12,7 @@ import { fetchTTSAudio } from './tts'
 function identitySet(messages) {
   const ids = new Set()
   for (const message of messages) {
-    for (const id of messageIdentityKeys(message)) ids.add(id)
+    for (const id of messageServerIdentityKeys(message)) ids.add(id)
   }
   return ids
 }
@@ -112,7 +112,7 @@ export function subscribeCcMessageInbox() {
 
     try {
       const messages = candidates
-        .map(wire => ccWireToTimelineMessage(wire, session.id, { live }))
+        .flatMap(wire => ccWireToTimelineMessages(wire, session.id, { live }) || [])
         .filter(Boolean)
       if (!messages.length) return
 
@@ -138,9 +138,10 @@ export function subscribeCcMessageInbox() {
       scheduleCloudSync(session.id)
 
       if (live) {
-        for (let index = 0; index < candidates.length; index++) {
-          if (candidates[index].kind === 'voice' && messages[index]) {
-            void resolveLiveVoice(candidates[index], messages[index], session)
+        for (const wire of candidates) {
+          if (wire.kind === 'voice') {
+            const voiceMessage = messages.find(message => message.id === wire.id)
+            if (voiceMessage) void resolveLiveVoice(wire, voiceMessage, session)
           }
         }
       }

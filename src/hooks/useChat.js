@@ -317,6 +317,7 @@ export function useChat() {
     // starts a fresh bubble. currentTextId starts as the bubble already
     // added above, so a voice-free turn is byte-for-byte unchanged.
     let currentTextId = assistantId
+    let currentTextTimestamp = assistantMsg.timestamp
     let currentTextAdded = true // assistantId was already added() above
     let vpsUsedVoiceThisTurn = false
     let vpsCurrentMusicAction = null
@@ -337,6 +338,15 @@ export function useChat() {
     // Unused by the live voice-rotation path,
     // which already resets vpsWireIds correctly per bubble on its own.
     const vpsWireIdLog = []
+    const vpsTokenFields = (token) => {
+      if (!isVpsProvider || !token?.wireId) return {}
+      return {
+        wireIds: [token.wireId],
+        ...(token.serverWireId ? { serverWireIds: [token.serverWireId] } : {}),
+        wirePartIndex: token.wirePartIndex,
+        wirePartCount: token.wirePartCount,
+      }
+    }
 
     // Finalizes whatever text has accumulated into currentTextId — persists
     // it to IndexedDB if it has real content, or drops the empty typing-
@@ -351,9 +361,33 @@ export function useChat() {
       const toolFields = toolUses.length ? { toolUses: [...toolUses] } : {}
       const musicFields = vpsCurrentMusicAction ? { musicAction: vpsCurrentMusicAction } : {}
       if (contentStarted && fullContent.trim()) {
-        const doneContent = stripDisplayTags(fullContent)
-        updateMessage(currentTextId, { content: doneContent, streaming: false, ...reasoningFields, ...toolFields, ...musicFields, ...wireIdsField() })
-        await saveMessage({ id: currentTextId, conversationId: CONVERSATION_ID, role: 'assistant', type: 'text', content: doneContent, timestamp: Date.now(), streaming: false, ...turnFields, ...reasoningFields, ...toolFields, ...musicFields, ...wireIdsField() })
+        const fragments = isVpsProvider && vpsWireIdLog.length
+          ? extractVpsReplyTokens(markVpsReplyChunks(vpsWireIdLog), vpsWireIdLog)
+          : [{ type: 'text', content: fullContent }]
+        const displayFragments = fragments
+          .map(fragment => ({ ...fragment, content: stripDisplayTags(fragment.content) }))
+          .filter(fragment => fragment.content)
+        if (!displayFragments.length) {
+          if (currentTextAdded) deleteMessage(currentTextId)
+          return false
+        }
+        for (let index = 0; index < displayFragments.length; index++) {
+          const fragment = displayFragments[index]
+          const id = index === 0 ? currentTextId : genId()
+          const fields = {
+            ...(index === 0 ? { ...reasoningFields, ...toolFields } : {}),
+            ...(index === displayFragments.length - 1 ? musicFields : {}),
+            ...vpsTokenFields(fragment),
+          }
+          const message = {
+            id, conversationId: CONVERSATION_ID, role: 'assistant', type: 'text',
+            content: fragment.content, timestamp: currentTextTimestamp + index,
+            streaming: false, ...turnFields, ...fields,
+          }
+          if (index === 0) updateMessage(id, message)
+          else addMessage(message)
+          await saveMessage(message)
+        }
         return true
       }
       if (currentTextAdded) deleteMessage(currentTextId)
@@ -649,6 +683,7 @@ export function useChat() {
             // deliverVpsVoice already uses the wire id as the bubble's own
             // local id.
             currentTextId = genId()
+            currentTextTimestamp = Date.now()
             currentTextAdded = false
             fullContent = ''
             contentStarted = false
@@ -658,6 +693,7 @@ export function useChat() {
             toolUses = []
             storedToolCount = 0
             vpsWireIds.length = 0
+            vpsWireIdLog.length = 0
             vpsCurrentMusicAction = null
             dirty = false
             continue
@@ -672,7 +708,7 @@ export function useChat() {
                 contentStarted = true
                 storedReasoning = fullReasoning
                 if (isVpsProvider && !currentTextAdded) {
-                  addMessage({ id: currentTextId, conversationId: CONVERSATION_ID, role: 'assistant', type: 'text', content: '', timestamp: Date.now(), streaming: true, ...turnFields })
+                  addMessage({ id: currentTextId, conversationId: CONVERSATION_ID, role: 'assistant', type: 'text', content: '', timestamp: currentTextTimestamp, streaming: true, ...turnFields })
                   currentTextAdded = true
                 }
                 // Immediate update for phase transition only
@@ -871,8 +907,7 @@ export function useChat() {
       if (tokens.length === 0) tokens = [{ type: 'text', content: cleanContent }]
 
       const tokenWireIdField = (idx) => {
-        const wireId = tokens[idx]?.wireId
-        return isVpsProvider && wireId ? { wireIds: [wireId] } : {}
+        return vpsTokenFields(tokens[idx])
       }
 
       let lastTextIdx = -1
@@ -914,7 +949,7 @@ export function useChat() {
             if (isVpsProvider) deferredVpsSaves.push(save)
             else await save
           } else {
-            const partMsg = { id: genId(), conversationId: CONVERSATION_ID, role: 'assistant', type: 'text', content, timestamp: Date.now(), streaming: false, ...turnFields, ...attachActions, ...tokenWireIdField(i) }
+            const partMsg = { id: genId(), conversationId: CONVERSATION_ID, role: 'assistant', type: 'text', content, timestamp: assistantMsg.timestamp + i, streaming: false, ...turnFields, ...attachActions, ...tokenWireIdField(i) }
             addMessage(partMsg)
             const save = saveMessage(partMsg)
             if (isVpsProvider) deferredVpsSaves.push(save)
@@ -1338,7 +1373,11 @@ export function useChat() {
     if (effectiveProviderName === 'claude-code-vps') {
       const msg = useStore.getState().messages.find(m => m.id === id)
       const text = msg?.voiceText || msg?.content
-      const serverMessageIds = [...new Set([id, ...(Array.isArray(msg?.wireIds) ? msg.wireIds : [])])]
+      const serverMessageIds = [...new Set(
+        Array.isArray(msg?.serverWireIds) && msg.serverWireIds.length
+          ? msg.serverWireIds
+          : [id, ...(Array.isArray(msg?.wireIds) ? msg.wireIds : [])]
+      )]
       sendDeleteNotice(text || '', serverMessageIds)
       // Deleting the message should also remove the uploaded file it
       // referenced (see uploadImageToCompanion above) — otherwise every

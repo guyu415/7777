@@ -32,10 +32,12 @@ export function normalizeTimelineMessage(message, fallbackTimestamp = Date.now()
   if (!message || typeof message !== 'object') return null
   const id = typeof message.id === 'string' ? message.id : message.id == null ? '' : String(message.id)
   const wireIds = uniqueStrings(message.wireIds)
+  const serverWireIds = uniqueStrings(message.serverWireIds)
   return {
     ...message,
     ...(id ? { id } : {}),
     ...(wireIds.length ? { wireIds } : {}),
+    ...(serverWireIds.length ? { serverWireIds } : {}),
     timestamp: normalizeMessageTimestamp(message.timestamp ?? message.ts, fallbackTimestamp),
   }
 }
@@ -43,6 +45,16 @@ export function normalizeTimelineMessage(message, fallbackTimestamp = Date.now()
 export function messageIdentityKeys(message) {
   if (!message) return []
   return uniqueStrings([message.id, ...(Array.isArray(message.wireIds) ? message.wireIds : [])])
+}
+
+// Transport identity is deliberately separate from display identity. One CC
+// wire message may render as several paragraph bubbles; those fragments must
+// not dedupe each other, while reconnect anchoring and deletion still target
+// their one shared server message.
+export function messageServerIdentityKeys(message) {
+  if (!message) return []
+  const explicit = uniqueStrings(message.serverWireIds)
+  return explicit.length ? explicit : messageIdentityKeys(message)
 }
 
 function hasText(value) {
@@ -177,6 +189,11 @@ function mergeDuplicate(existing, incoming, semanticLegacy = false) {
     ...(incoming.id && incoming.id !== primaryId ? [incoming.id] : []),
   ])
   if (mergedWireIds.length) merged.wireIds = mergedWireIds
+  const mergedServerWireIds = uniqueStrings([
+    ...(Array.isArray(existing.serverWireIds) ? existing.serverWireIds : []),
+    ...(Array.isArray(incoming.serverWireIds) ? incoming.serverWireIds : []),
+  ])
+  if (mergedServerWireIds.length) merged.serverWireIds = mergedServerWireIds
 
   // Prefer the primary record's clock; both were normalized already.
   merged.timestamp = primary.timestamp

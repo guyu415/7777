@@ -1,4 +1,5 @@
-import { messageIdentityKeys, normalizeMessageTimestamp } from './messageTimeline'
+import { messageServerIdentityKeys, normalizeMessageTimestamp } from './messageTimeline'
+import { splitVpsReplyContent, vpsReplyFragmentId } from './vpsReplyChunks'
 
 function wireId(wire) {
   return typeof wire?.id === 'string' && wire.id ? wire.id : null
@@ -7,7 +8,7 @@ function wireId(wire) {
 function localIdentitySet(messages) {
   const ids = new Set()
   for (const message of Array.isArray(messages) ? messages : []) {
-    for (const id of messageIdentityKeys(message)) ids.add(id)
+    for (const id of messageServerIdentityKeys(message)) ids.add(id)
   }
   return ids
 }
@@ -45,11 +46,11 @@ export function selectCcSnapshotDelta(localMessages, snapshotItems) {
   return candidates.filter(item => !known.has(item.id))
 }
 
-export function ccWireToTimelineMessage(wire, conversationId, options = {}) {
+export function ccWireToTimelineMessages(wire, conversationId, options = {}) {
   if (wire?.type !== 'msg' || !wireId(wire)) return null
   const timestamp = normalizeMessageTimestamp(wire.ts)
   if (wire.from === 'user') {
-    return {
+    return [{
       id: wire.id,
       turnId: wire.turnId || wire.id,
       conversationId,
@@ -59,7 +60,7 @@ export function ccWireToTimelineMessage(wire, conversationId, options = {}) {
       timestamp,
       streaming: false,
       source: options.source || 'cc-remote-user',
-    }
+    }]
   }
   if (wire.from !== 'cc') return null
 
@@ -73,7 +74,7 @@ export function ccWireToTimelineMessage(wire, conversationId, options = {}) {
     ? { turnId: wire.turnId, replyToTurnId: wire.turnId }
     : {}
   if (wire.kind === 'voice') {
-    return {
+    return [{
       id: wire.id,
       conversationId,
       role: 'assistant',
@@ -87,19 +88,31 @@ export function ccWireToTimelineMessage(wire, conversationId, options = {}) {
       source: 'cc-proactive',
       ...turnFields,
       ...reasoningFields,
+    }]
+  }
+  const parts = splitVpsReplyContent(wire.text || '')
+  return parts.map((content, partIndex) => {
+    const fragmentId = vpsReplyFragmentId(wire.id, partIndex, parts.length)
+    return {
+      id: fragmentId,
+      wireIds: [fragmentId],
+      serverWireIds: [wire.id],
+      wirePartIndex: partIndex,
+      wirePartCount: parts.length,
+      conversationId,
+      role: 'assistant',
+      type: 'text',
+      content,
+      timestamp,
+      streaming: false,
+      source: 'cc-proactive',
+      ...turnFields,
+      ...(wire.musicAction && partIndex === parts.length - 1 ? { musicAction: wire.musicAction } : {}),
+      ...reasoningFields,
     }
-  }
-  return {
-    id: wire.id,
-    conversationId,
-    role: 'assistant',
-    type: 'text',
-    content: wire.text || '',
-    timestamp,
-    streaming: false,
-    source: 'cc-proactive',
-    ...turnFields,
-    ...(wire.musicAction ? { musicAction: wire.musicAction } : {}),
-    ...reasoningFields,
-  }
+  })
+}
+
+export function ccWireToTimelineMessage(wire, conversationId, options = {}) {
+  return ccWireToTimelineMessages(wire, conversationId, options)?.[0] || null
 }
