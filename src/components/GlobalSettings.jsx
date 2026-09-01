@@ -281,6 +281,7 @@ export default function GlobalSettings({ theme, onLogout, onForceSync }) {
     userBubbleTextColor, setUserBubbleTextColor,
     fontFamily, setFontFamily,
     defaultFontSize, setDefaultFontSize,
+    showFallingParticles, setShowFallingParticles,
     customFonts, addCustomFont, removeCustomFont,
     memoryEnabled, setMemoryEnabled,
     workerUrl, setWorkerUrl,
@@ -577,6 +578,23 @@ export default function GlobalSettings({ theme, onLogout, onForceSync }) {
 
         {showAdvanced && (
           <>
+            {/* Chat display */}
+            <GlassCard icon="🍃" title="聊天显示">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <span className="text-sm" style={{ color: '#2c5282' }}>显示掉落物</span>
+                  <p className="text-[10px] mt-0.5" style={{ color: '#a0b8d0' }}>
+                    关闭后聊天里飘落堆积的小挂件会隐藏，不影响其正常产生
+                  </p>
+                </div>
+                <Toggle
+                  value={showFallingParticles !== false}
+                  onChange={setShowFallingParticles}
+                  primary={primary}
+                />
+              </div>
+            </GlassCard>
+
             {/* Worker Proxy */}
             <GlassCard icon="☁️" title="Worker 配置">
               <input

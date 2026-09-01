@@ -102,13 +102,14 @@ export default function ChatWindow({ theme }) {
     currentView, setCurrentView, apiKey, aiAvatar: globalAiAvatar, aiName: globalAiName,
     userAvatar: globalUserAvatar,
     deleteMessagesFrom, workerUrl, currentSessionId, sessions, providers, selectedProviderId,
-    summaryToast, setSummaryToast,
+    summaryToast, setSummaryToast, showFallingParticles,
   } = useStore(useShallow(s => ({
     currentView: s.currentView, setCurrentView: s.setCurrentView, apiKey: s.apiKey,
     aiAvatar: s.aiAvatar, aiName: s.aiName, userAvatar: s.userAvatar,
     deleteMessagesFrom: s.deleteMessagesFrom, workerUrl: s.workerUrl, currentSessionId: s.currentSessionId,
     sessions: s.sessions, providers: s.providers, selectedProviderId: s.selectedProviderId,
     summaryToast: s.summaryToast, setSummaryToast: s.setSummaryToast,
+    showFallingParticles: s.showFallingParticles,
   })))
 
   const currentSession = sessions?.find(s => s.id === currentSessionId)
@@ -744,8 +745,11 @@ export default function ChatWindow({ theme }) {
         )}
 
         <div className="flex-1 min-h-0 relative overflow-hidden">
-          {/* Falling + stacking accessory particles — clipped to chat only. */}
-          <FallingParticles />
+          {/* Falling + stacking accessory particles — clipped to chat only.
+              Always mounted regardless of the "显示掉落物" setting so its
+              falling/landing state keeps accumulating in the background;
+              the setting only hides the visual layer (see `visible` prop). */}
+          <FallingParticles visible={showFallingParticles !== false} />
           <MessageList
             ref={messageListRef}
             messages={messages}

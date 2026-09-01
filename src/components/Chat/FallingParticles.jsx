@@ -44,7 +44,10 @@ function coverage(parts, width) {
   return covered / width
 }
 
-export default function FallingParticles() {
+// `visible` only toggles the visual layer (opacity) — the component stays
+// mounted and its falling/landing/stacking timers keep running underneath,
+// so toggling it back on resumes exactly where the pile was, nothing reset.
+export default function FallingParticles({ visible = true }) {
   const rootRef = useRef(null)
   const [size, setSize] = useState({ w: 360, h: 500 })
   const [falling, setFalling] = useState(() => Array.from({ length: COUNT }, () => makeFalling(true)))
@@ -117,7 +120,8 @@ export default function FallingParticles() {
     <div
       ref={rootRef}
       className="absolute inset-0 pointer-events-none overflow-hidden"
-      style={{ zIndex: 5 }}
+      style={{ zIndex: 5, opacity: visible ? 1 : 0, transition: 'opacity .2s ease' }}
+      aria-hidden={!visible}
     >
       {/* Falling layer */}
       {falling.map(p => (

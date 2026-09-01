@@ -3,10 +3,12 @@ import { createPortal } from 'react-dom'
 import { CalendarDays, ChevronLeft, ChevronRight, Trash2, X } from 'lucide-react'
 import { getStudySchedule, setStudyScheduleCourse } from '../../services/companion'
 
-const SUBJECTS = ['言语', '判推', '数资', '申论']
-const STAGES = ['基础', '刷题', '强化班', '模考']
+const SUBJECTS = ['职测', '综测', '非法', '法律']
+const STAGES = ['基础', '带背', '背诵', '刷题', '强化班', '冲刺', '模考']
 const SLOT_LABELS = { morning: '上午 9–12', afternoon: '下午 2–6' }
 const SUBJECT_COLORS = {
+  职测: ['#fff0f4', '#b86f86'], 综测: ['#eef3ff', '#7185ad'],
+  非法: ['#edf8f3', '#5f927b'], 法律: ['#fff6e8', '#ad8057'],
   言语: ['#fff0f4', '#b86f86'], 判推: ['#eef3ff', '#7185ad'],
   数资: ['#edf8f3', '#5f927b'], 申论: ['#fff6e8', '#ad8057'],
 }
@@ -140,7 +142,7 @@ export default function StudySchedulePanel({ onClose }) {
               <label>科目</label>
               <div className="study-schedule__choices">{SUBJECTS.map(item => <button className={subject === item ? 'selected' : ''} key={item} onClick={() => setSubject(item)}>{item}</button>)}</div>
               <label>班型</label>
-              <div className="study-schedule__choices">{STAGES.map(item => <button className={stage === item ? 'selected' : ''} key={item} onClick={() => setStage(item)}>{item}</button>)}</div>
+              <div className="study-schedule__choices study-schedule__choices--stages">{STAGES.map(item => <button className={stage === item ? 'selected' : ''} key={item} onClick={() => setStage(item)}>{item}</button>)}</div>
               <div className="study-schedule__picker-actions">
                 <button className="clear" onClick={() => save(null)} disabled={saving}><Trash2 size={15} /> 清空</button>
                 <button className="confirm" onClick={() => save({ subject, stage })} disabled={saving}>{saving ? '保存中…' : `填入 ${subject} · ${stage}`}</button>
@@ -163,7 +165,7 @@ export default function StudySchedulePanel({ onClose }) {
         .study-schedule__cell{min-width:0;height:68%;align-self:center;margin:0 5px;padding:0 4px;display:flex;align-items:center;justify-content:center;border:0;border-radius:11px;background:transparent;color:rgba(169,153,160,.58)}.study-schedule__cell span{display:flex;align-items:center;justify-content:center;max-width:100%;height:100%;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;font:500 clamp(10px,2.8vw,12px)/1 'ZCOOL XiaoWei',serif}.study-schedule__cell.has-course{box-shadow:inset 0 0 0 1px rgba(255,255,255,.62),0 1px 4px rgba(121,103,110,.06)}.study-schedule__cell strong{font-weight:600}
         .study-schedule__loading{position:absolute;left:20%;right:10%;top:48%;text-align:center;color:#aaa3ac;font-size:11px}
         .study-schedule__picker{position:fixed;inset:0;z-index:4;display:flex;align-items:flex-end}.study-schedule__picker-backdrop{position:absolute;inset:0;border:0;background:rgba(62,50,65,.25);backdrop-filter:blur(2px)}.study-schedule__picker-card{position:relative;width:min(100%,480px);margin-inline:auto;padding:25px 18px calc(18px + env(safe-area-inset-bottom));border-radius:26px 26px 0 0;background:#fffdfd;box-shadow:0 -14px 40px rgba(69,53,69,.2);animation:study-picker-rise .28s cubic-bezier(.2,.78,.3,1)}.study-schedule__picker-card:before{content:'';position:absolute;top:9px;left:50%;width:38px;height:4px;border-radius:999px;background:#e6dde1;transform:translateX(-50%)}
-        .study-schedule__picker-title{display:flex;align-items:center;justify-content:space-between;margin-bottom:17px}.study-schedule__picker-title strong{color:#736a75;font:500 18px/1.2 'ZCOOL XiaoWei',serif}.study-schedule__picker-title span{margin-left:9px;color:#aaa0aa;font-size:10px}.study-schedule__picker-card label{display:block;margin:12px 2px 7px;color:#99909a;font-size:10px}.study-schedule__choices{display:flex;gap:8px}.study-schedule__choices button{flex:1;padding:10px 4px;border:1px solid #eee5e9;border-radius:12px;background:#fff;color:#8f858d;font-size:12px}.study-schedule__choices button.selected{border-color:#e5a9be;background:#fff0f5;color:#ad627c;box-shadow:0 3px 10px rgba(205,132,159,.12)}
+        .study-schedule__picker-title{display:flex;align-items:center;justify-content:space-between;margin-bottom:17px}.study-schedule__picker-title strong{color:#736a75;font:500 18px/1.2 'ZCOOL XiaoWei',serif}.study-schedule__picker-title span{margin-left:9px;color:#aaa0aa;font-size:10px}.study-schedule__picker-card label{display:block;margin:12px 2px 7px;color:#99909a;font-size:10px}.study-schedule__choices{display:flex;gap:8px}.study-schedule__choices button{flex:1;padding:10px 4px;border:1px solid #eee5e9;border-radius:12px;background:#fff;color:#8f858d;font-size:12px}.study-schedule__choices--stages{flex-wrap:wrap}.study-schedule__choices--stages button{flex:1 1 calc(33.333% - 8px)}.study-schedule__choices button.selected{border-color:#e5a9be;background:#fff0f5;color:#ad627c;box-shadow:0 3px 10px rgba(205,132,159,.12)}
         .study-schedule__picker-actions{display:flex;gap:9px;margin-top:20px}.study-schedule__picker-actions button{height:43px;border:0;border-radius:14px}.study-schedule__picker-actions .clear{width:82px;display:flex;align-items:center;justify-content:center;gap:5px;background:#f5f1f2;color:#a2999e}.study-schedule__picker-actions .confirm{flex:1;background:linear-gradient(135deg,#ecaac0,#d692ad);color:white;box-shadow:0 7px 17px rgba(197,121,150,.22)}
         @keyframes study-schedule-rise{from{transform:translateY(100%)}to{transform:translateY(0)}}@keyframes study-picker-rise{from{transform:translateY(100%)}to{transform:translateY(0)}}
       `}</style>

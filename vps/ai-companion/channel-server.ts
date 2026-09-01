@@ -107,9 +107,11 @@ import {
   STUDY_SLOTS,
   STUDY_STAGES,
   STUDY_SUBJECTS,
+  ALL_STUDY_SUBJECTS,
   defaultStudySchedule,
   isStudyDate,
   normalizeStudySchedule,
+  seededStudySchedule,
   setStudyCourse,
   studyScheduleRange,
   type StudyScheduleState,
@@ -7809,8 +7811,12 @@ let careAlertNotified = new Set<string>()
 const careAlertQueue = new Map<string, string>()
 
 function loadStudySchedule() {
-  try { studyScheduleState = normalizeStudySchedule(JSON.parse(readFileSync(STUDY_SCHEDULE_FILE, 'utf8'))) }
-  catch { studyScheduleState = defaultStudySchedule() }
+  try {
+    studyScheduleState = normalizeStudySchedule(JSON.parse(readFileSync(STUDY_SCHEDULE_FILE, 'utf8')))
+  } catch {
+    studyScheduleState = seededStudySchedule()
+    saveStudySchedule()
+  }
 }
 function saveStudySchedule() {
   try {
@@ -9629,7 +9635,7 @@ Bun.serve<{ authed: true }>({
       const clear = body?.course === null || body?.clear === true
       const subject = body?.course?.subject
       const stage = body?.course?.stage
-      if (!isStudyDate(date) || !slot || (!clear && (!STUDY_SUBJECTS.includes(subject) || !STUDY_STAGES.includes(stage)))) {
+      if (!isStudyDate(date) || !slot || (!clear && (!ALL_STUDY_SUBJECTS.includes(subject) || !STUDY_STAGES.includes(stage)))) {
         return jsonResponse({ ok: false, error: '日期、时段或课程无效' }, { status: 400, headers: cors })
       }
       studyScheduleState = setStudyCourse(studyScheduleState, date, slot, clear ? null : { subject, stage })

@@ -154,6 +154,11 @@ export const useStore = create(
       chatBg: { type: 'gradient', value: '', opacity: 1.0 },
       fontFamily: 'noto',
       defaultFontSize: 16,
+      // Purely a display toggle for FallingParticles.jsx — hides the falling/
+      // stacked accessory icons without touching their generation, landing,
+      // or stacking logic (that component keeps running in the background;
+      // see its own `visible` prop).
+      showFallingParticles: true,
 
       // Custom fonts (stored in IndexedDB, ids tracked here)
       customFonts: [],
@@ -243,6 +248,7 @@ export const useStore = create(
       setChatBg: (bg) => set({ chatBg: bg }),
       setFontFamily: (f) => set({ fontFamily: f }),
       setDefaultFontSize: (s) => set({ defaultFontSize: s }),
+      setShowFallingParticles: (v) => set({ showFallingParticles: !!v }),
       setTtsApiKey: (v) => set({ ttsApiKey: v }),
       setTtsGroupId: (v) => set({ ttsGroupId: v }),
       setTtsVoiceId: (v) => set({ ttsVoiceId: v }),
@@ -462,7 +468,7 @@ export const useStore = create(
     }),
     {
       name: 'pink-chat-settings',
-      version: 21,
+      version: 22,
       migrate: (persisted, version) => {
         if (version < 2) {
           const providers = [
@@ -649,6 +655,9 @@ export const useStore = create(
         if (version < 21) {
           persisted = { userBubbleTextColor: null, ...persisted }
         }
+        if (version < 22) {
+          persisted = { showFallingParticles: true, ...persisted }
+        }
         return persisted
       },
       partialize: (state) => ({
@@ -668,6 +677,7 @@ export const useStore = create(
         chatBg: state.chatBg,
         fontFamily: state.fontFamily,
         defaultFontSize: state.defaultFontSize,
+        showFallingParticles: state.showFallingParticles,
         customFonts: state.customFonts,
         sessions: state.sessions,
         currentSessionId: state.currentSessionId,
