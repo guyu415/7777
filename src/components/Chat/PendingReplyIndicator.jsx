@@ -24,10 +24,13 @@ function PendingReplyIndicator({ aiAvatar, theme, variant = 'default' }) {
         </div>
       </div>
       {showGoldenRetriever ? (
+        // Keep the whole pending row below MessageList's 88px initial
+        // estimate so scroll-to-bottom cannot leave the puppy clipped.
         <div style={{
-          width: 78, height: 88, marginBottom: -2,
+          width: 46, height: 56, marginBottom: 0,
           display: 'grid', placeItems: 'end center',
-          filter: `drop-shadow(0 4px 7px ${theme?.aiBubbleShadow || 'rgba(120,100,70,0.18)'})`,
+          flexShrink: 0,
+          filter: `drop-shadow(0 2px 4px ${theme?.aiBubbleShadow || 'rgba(120,100,70,0.16)'})`,
         }}>
           <img
             src="/assets/claude-code-golden-loading.gif"
