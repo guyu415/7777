@@ -34,6 +34,7 @@ const MessageList = forwardRef(function MessageList({
   messages: sourceMessages, sessionId,
   onLongPress, lastAiId, onRegenerate, onRegenerateRound, onRetry,
   isLoading, userAvatar, aiAvatar, theme, bubbleSkin,
+  pendingReplyVariant,
   selectionMode, selectedIds, onToggleSelect,
   emptyAiName, emptyHasApiKey, onEmptyConfigureClick,
 }, ref) {
@@ -214,7 +215,7 @@ const MessageList = forwardRef(function MessageList({
                   ref={virtualizer.measureElement}
                   style={{ position: 'absolute', top: 0, left: 0, width: '100%', transform: `translateY(${vi.start}px)` }}
                 >
-                  <PendingReplyIndicator aiAvatar={aiAvatar} theme={theme} />
+                  <PendingReplyIndicator aiAvatar={aiAvatar} theme={theme} variant={pendingReplyVariant} />
                 </div>
               )
             }

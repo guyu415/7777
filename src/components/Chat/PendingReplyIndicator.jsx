@@ -1,6 +1,8 @@
 import { memo } from 'react'
 
-function PendingReplyIndicator({ aiAvatar, theme }) {
+function PendingReplyIndicator({ aiAvatar, theme, variant = 'default' }) {
+  const showGoldenRetriever = variant === 'golden-retriever'
+
   return (
     <div
       className="flex w-full min-w-0 items-end gap-2 mb-4 animate-fade-up"
@@ -21,26 +23,41 @@ function PendingReplyIndicator({ aiAvatar, theme }) {
             : '🌸'}
         </div>
       </div>
-      <div style={{
-        display: 'flex', alignItems: 'center', gap: 5,
-        marginBottom: 4, padding: '10px 14px', borderRadius: 18,
-        background: 'rgba(255,255,255,0.58)',
-        border: '1px solid rgba(255,255,255,0.72)',
-        boxShadow: `0 3px 12px ${theme?.aiBubbleShadow || 'rgba(120,160,140,0.16)'}`,
-        backdropFilter: 'blur(10px)', WebkitBackdropFilter: 'blur(10px)',
-      }}>
-        {[0, 1, 2].map(index => (
-          <span
-            key={index}
-            className="typing-dot"
-            style={{
-              width: 7, height: 7, borderRadius: '50%', display: 'block',
-              background: theme?.primary || '#c47a8a', opacity: 0.58,
-              animationDelay: `${index * 0.2}s`,
-            }}
+      {showGoldenRetriever ? (
+        <div style={{
+          width: 78, height: 88, marginBottom: -2,
+          display: 'grid', placeItems: 'end center',
+          filter: `drop-shadow(0 4px 7px ${theme?.aiBubbleShadow || 'rgba(120,100,70,0.18)'})`,
+        }}>
+          <img
+            src="/assets/claude-code-golden-loading.gif"
+            alt=""
+            draggable={false}
+            style={{ width: '100%', height: '100%', objectFit: 'contain', objectPosition: 'center bottom' }}
           />
-        ))}
-      </div>
+        </div>
+      ) : (
+        <div style={{
+          display: 'flex', alignItems: 'center', gap: 5,
+          marginBottom: 4, padding: '10px 14px', borderRadius: 18,
+          background: 'rgba(255,255,255,0.58)',
+          border: '1px solid rgba(255,255,255,0.72)',
+          boxShadow: `0 3px 12px ${theme?.aiBubbleShadow || 'rgba(120,160,140,0.16)'}`,
+          backdropFilter: 'blur(10px)', WebkitBackdropFilter: 'blur(10px)',
+        }}>
+          {[0, 1, 2].map(index => (
+            <span
+              key={index}
+              className="typing-dot"
+              style={{
+                width: 7, height: 7, borderRadius: '50%', display: 'block',
+                background: theme?.primary || '#c47a8a', opacity: 0.58,
+                animationDelay: `${index * 0.2}s`,
+              }}
+            />
+          ))}
+        </div>
+      )}
     </div>
   )
 }
