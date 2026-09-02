@@ -763,6 +763,7 @@ export default function ChatWindow({ theme }) {
             userAvatar={effectiveUserAvatar}
             aiAvatar={effectiveAiAvatar}
             theme={theme}
+            translateThinking={isVpsSession}
             selectionMode={selectedMessageIds.size > 0}
             selectedIds={selectedMessageIds}
             onToggleSelect={toggleMessageSelection}

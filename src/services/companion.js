@@ -1595,6 +1595,20 @@ async function companionJson(path, init) {
   return body
 }
 
+// Translation is a best-effort presentation request. It is deliberately a
+// separate endpoint from chat and memory APIs: the raw Claude thinking never
+// leaves the browser's normal display path for persistence or model context.
+export async function translateThinking({ text, context = '', signal } = {}) {
+  const body = await companionJson('/thinking/translate', {
+    method: 'POST',
+    signal,
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ text, context }),
+  })
+  if (typeof body?.text !== 'string' || !body.text.trim()) throw new Error('thinking translation returned no text')
+  return body.text
+}
+
 export async function sendVpsDesktopPetAction({ runtime, sessionId, action }) {
   return companionJson('/pet/action', {
     method: 'POST',
