@@ -1,9 +1,16 @@
 import { useEffect, useMemo, useState } from 'react'
 import { BookOpen, Check, Clock3, X } from 'lucide-react'
 import { useShallow } from 'zustand/react/shallow'
-import { useStore } from '../../store'
+import { getReadingBooks, saveReadingBook, useStore } from '../../store'
 import { READING_BOOKS, flattenBook } from '../../data/readingBooks'
-import { approveReadingSession, clampApprovedPages, createReadingSession, getPageCount } from '../../services/readingSessions'
+import { clampApprovedPages, getPageCount } from '../../services/readingSessions'
+import {
+  approveCompanionReadingRequest,
+  getCompanionReadingBook,
+  getCompanionReadingRequests,
+  onCompanionReadingRequest,
+  rejectCompanionReadingRequest,
+} from '../../services/companion'
 
 function openReaderRoute() {
   const params = new URLSearchParams(window.location.search)
@@ -29,14 +36,41 @@ export default function ReadingRequestCard({ theme }) {
   })))
   const [editing, setEditing] = useState(false)
   const [pages, setPages] = useState(5)
+  const [importedBooks, setImportedBooks] = useState([])
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+
+  useEffect(() => {
+    let cancelled = false
+    getReadingBooks().then(items => { if (!cancelled) setImportedBooks(items || []) }).catch(() => {})
+    const acceptRequest = async request => {
+      if (!request || cancelled) return
+      setPendingReadingRequest({ ...request, requestId: request.id })
+      if (READING_BOOKS.some(book => book.id === request.bookId)) return
+      try {
+        const { book } = await getCompanionReadingBook(request.bookId)
+        if (cancelled || !book) return
+        await saveReadingBook(book)
+        setImportedBooks(current => [book, ...current.filter(item => item.id !== book.id)])
+      } catch { /* card stays pending and retries on the next reload */ }
+    }
+    getCompanionReadingRequests('pending').then(({ requests }) => {
+      void acceptRequest(requests?.[0])
+    }).catch(() => {})
+    const unsubscribe = onCompanionReadingRequest(request => {
+      void acceptRequest(request)
+    })
+    return () => { cancelled = true; unsubscribe() }
+  }, [setPendingReadingRequest])
 
   useEffect(() => {
     if (pendingReadingRequest) setPages(clampApprovedPages(pendingReadingRequest.requestedPages))
   }, [pendingReadingRequest?.requestId, pendingReadingRequest?.requestedPages])
 
   const book = useMemo(() => (
-    READING_BOOKS.find(item => item.id === pendingReadingRequest?.bookId) || READING_BOOKS[0]
-  ), [pendingReadingRequest?.bookId])
+    [...importedBooks, ...READING_BOOKS].find(item => item.id === pendingReadingRequest?.bookId)
+      || (!pendingReadingRequest?.bookId ? READING_BOOKS[0] : null)
+  ), [importedBooks, pendingReadingRequest?.bookId])
   const blocks = useMemo(() => flattenBook(book), [book])
   const start = blocks.find(block => block.id === pendingReadingRequest?.startParagraphId) || blocks[0]
   if (!pendingReadingRequest || !start) return null
@@ -49,42 +83,69 @@ export default function ReadingRequestCard({ theme }) {
   const primary = theme?.primary || '#ff85b3'
   const primaryDark = theme?.primaryDark || '#756ea8'
 
-  const allowReading = () => {
-    const now = Date.now()
-    const pendingSession = useStore.getState().readingSessions?.find(item => (
-      item.sessionId === pendingReadingRequest.sessionId || item.requestId === pendingReadingRequest.requestId
-    )) || createReadingSession({
-      triggerType: 'chat_request',
-      bookId: book.id,
-      startParagraph: start,
-      approvedPages: selectedPages,
-      requestedPages,
-      requestId: pendingReadingRequest.requestId,
-      now,
-    })
-    const session = approveReadingSession(pendingSession, selectedPages, now)
-    upsertReadingSession(session)
-    updateReadingState({
-      bookId: book.id,
-      status: 'idle',
-      activeSessionId: session.sessionId,
-      currentChapterId: start.chapterId,
-      currentParagraphId: start.id,
-      currentPageId: start.pageId,
-      currentPage: start.pageNumber,
-      nextParagraphId: null,
-      completionReason: '',
-      pauseReason: '',
-      error: '',
-    })
-    setPendingReadingRequest(null)
-    setCurrentView('aiReading')
-    openReaderRoute()
+  const allowReading = async () => {
+    if (busy) return
+    setBusy(true)
+    setError('')
+    try {
+      const response = await approveCompanionReadingRequest(pendingReadingRequest.requestId || pendingReadingRequest.id, selectedPages)
+      const remote = response.session
+      upsertReadingSession({
+        sessionId: remote.id,
+        triggerType: 'chat_request',
+        requestId: pendingReadingRequest.requestId || pendingReadingRequest.id,
+        bookId: remote.bookId,
+        startPage: remote.startPage,
+        endPage: remote.startPage + remote.approvedPages - 1,
+        requestedPages,
+        approvedPages: remote.approvedPages,
+        pagesRead: remote.pagesRead,
+        startParagraphId: remote.startParagraphId,
+        currentParagraphId: remote.currentParagraphId,
+        nextParagraphId: remote.nextParagraphId,
+        status: 'approved',
+        requestedAt: pendingReadingRequest.createdAt,
+        approvedAt: Date.now(),
+        startedAt: null,
+        completedAt: null,
+        durationMs: 0,
+        newAnnotations: 0,
+        batchCount: 0,
+      })
+      updateReadingState({
+        bookId: book.id,
+        status: 'idle',
+        activeSessionId: remote.id,
+        currentChapterId: start.chapterId,
+        currentParagraphId: response.state?.currentParagraphId || start.id,
+        currentPageId: start.pageId,
+        currentPage: response.state?.currentPage || start.pageNumber,
+        nextParagraphId: response.state?.nextParagraphId || null,
+        completionReason: '', pauseReason: '', error: '',
+      })
+      setPendingReadingRequest(null)
+      setCurrentView('aiReading')
+      openReaderRoute()
+    } catch (requestError) {
+      setError(requestError?.message || '批准没有保存成功，请重试。')
+    } finally {
+      setBusy(false)
+    }
   }
 
-  const decline = () => {
-    rejectReadingRequest(pendingReadingRequest.requestId)
-    setEditing(false)
+  const decline = async () => {
+    if (busy) return
+    setBusy(true)
+    setError('')
+    try {
+      await rejectCompanionReadingRequest(pendingReadingRequest.requestId || pendingReadingRequest.id)
+      rejectReadingRequest(pendingReadingRequest.requestId || pendingReadingRequest.id)
+      setEditing(false)
+    } catch (requestError) {
+      setError(requestError?.message || '暂时无法保存拒绝状态。')
+    } finally {
+      setBusy(false)
+    }
   }
 
   return (
@@ -125,10 +186,11 @@ export default function ReadingRequestCard({ theme }) {
         <div className="reading-request-card__requested">申请阅读：<b>{requestedPages} 页</b></div>
       )}
       <div className="reading-request-card__actions">
-        <button type="button" className="reading-request-card__allow" onClick={allowReading}><Check size={15} />允许阅读</button>
+        <button type="button" className="reading-request-card__allow" onClick={allowReading} disabled={busy}><Check size={15} />{busy ? '正在保存…' : '允许阅读'}</button>
         <button type="button" className="reading-request-card__edit" onClick={() => setEditing(value => !value)}>{editing ? '收起修改' : '修改页数'}</button>
         <button type="button" className="reading-request-card__decline" onClick={decline}>暂时不读</button>
       </div>
+      {error && <small role="alert">{error}</small>}
       <style>{`
         .reading-request-card { position: fixed; z-index: 70; left: 50%; bottom: calc(var(--safe-bottom) + 72px); width: min(calc(100vw - 24px), 390px); transform: translateX(-50%); padding: 13px 14px 12px; border: 1px solid rgba(255,255,255,.72); border-radius: 19px; color: #69717b; background: rgba(255,252,254,.94); box-shadow: 0 12px 36px rgba(90,65,85,.19), 0 2px 7px rgba(90,65,85,.08); backdrop-filter: blur(18px); -webkit-backdrop-filter: blur(18px); animation: reading-request-in 220ms ease-out both; }
         .reading-request-card__head { display: flex; align-items: center; gap: 8px; }

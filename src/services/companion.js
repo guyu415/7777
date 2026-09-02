@@ -282,6 +282,15 @@ export function onProactiveActivityAcknowledged(fn) {
   return () => proactiveActivityAckListeners.delete(fn)
 }
 
+/** Durable reading-permission requests created by the resident Claude Code. */
+export function onCompanionReadingRequest(fn) {
+  const listener = evt => {
+    if (evt.kind === 'wire' && evt.wire?.type === 'reading_request' && evt.wire.request) fn(evt.wire.request)
+  }
+  listeners.add(listener)
+  return () => listeners.delete(listener)
+}
+
 function announceProactiveActivityAcknowledged(id) {
   for (const fn of proactiveActivityAckListeners) {
     try { fn(id) } catch { /* isolate subscribers */ }
@@ -1616,6 +1625,147 @@ export async function* streamChatViaCompanion({ text, imagePath, file, signal, m
     // claimed by this generator could be wrongly re-announced as proactive.
     setTimeout(() => forgetDelivered(thisTurnDeliveredIds), 0)
   }
+}
+
+// ---------- durable AI reading (resident Claude Code) ----------
+
+export function syncReadingBookToCompanion(book) {
+  return companionJson('/reading/books/import', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ book }),
+  })
+}
+
+export function listCompanionReadingBooks() {
+  return companionJson('/reading/books')
+}
+
+export function getCompanionReadingBook(bookId) {
+  return companionJson(`/reading/book?bookId=${encodeURIComponent(bookId)}`)
+}
+
+export function deleteCompanionReadingBook(bookId) {
+  return companionJson(`/reading/books?bookId=${encodeURIComponent(bookId)}`, { method: 'DELETE' })
+}
+
+export function getCompanionReadingState(bookId) {
+  return companionJson(`/reading/state?bookId=${encodeURIComponent(bookId)}`, { cache: 'no-store' })
+}
+
+export function getCompanionReadingRequests(status = 'pending') {
+  return companionJson(`/reading/requests?status=${encodeURIComponent(status)}`, { cache: 'no-store' })
+}
+
+export function approveCompanionReadingRequest(requestId, approvedPages) {
+  return companionJson('/reading/request/approve', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ requestId, approvedPages }),
+  })
+}
+
+export function rejectCompanionReadingRequest(requestId) {
+  return companionJson('/reading/request/reject', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ requestId }),
+  })
+}
+
+export function startCompanionReadingSession({ bookId, approvedPages, sessionId }) {
+  return companionJson('/reading/session/start', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ bookId, approvedPages, ...(sessionId ? { sessionId } : {}) }),
+  })
+}
+
+export function getCompanionReadingAnnotations(bookId, pageStart, pageEnd) {
+  const params = new URLSearchParams({ bookId })
+  if (Number.isFinite(pageStart)) params.set('pageStart', String(pageStart))
+  if (Number.isFinite(pageEnd)) params.set('pageEnd', String(pageEnd))
+  return companionJson(`/reading/annotations?${params}`)
+}
+
+export function getCompanionReadingSessions(bookId, limit = 20) {
+  return companionJson(`/reading/sessions?bookId=${encodeURIComponent(bookId)}&limit=${encodeURIComponent(limit)}`)
+}
+
+/**
+ * Runs exactly one server-sized batch (at most three pages / bounded chars)
+ * on the same resident Claude Code session used by the ordinary companion
+ * chat. The turn is silent: the only useful payload is the Reading Store
+ * commit broadcast. The caller schedules the next batch after this resolves.
+ */
+export async function runResidentReadingBatch({ sessionId, signal }) {
+  if (!sessionId) throw new Error('缺少阅读 session')
+  if (signal?.aborted) throw Object.assign(new Error('aborted'), { name: 'AbortError' })
+  await ensureFreshConnectionBeforeSend()
+
+  const turnId = genId()
+  return new Promise((resolve, reject) => {
+    let result = null
+    let settled = false
+    let timeout = null
+
+    const finish = (error, value) => {
+      if (settled) return
+      settled = true
+      clearTimeout(timeout)
+      listeners.delete(onEvent)
+      signal?.removeEventListener('abort', onAbort)
+      if (error) reject(error)
+      else resolve(value)
+    }
+
+    const onAbort = () => {
+      sendRaw({ type: 'stop_turn', turnId })
+      finish(Object.assign(new Error('aborted'), { name: 'AbortError' }))
+    }
+
+    const onEvent = evt => {
+      if (evt.kind === 'auth_required') {
+        finish(Object.assign(new Error('未登录 companion，请先登录'), { code: 'auth_required' }))
+        return
+      }
+      if (evt.kind === 'close') {
+        if (result) finish(null, result)
+        else finish(Object.assign(new Error('连接中断；已提交的阅读位置仍会保存在服务器，可重新进入继续。'), { code: 'reading_connection_lost' }))
+        return
+      }
+      if (evt.kind !== 'wire') return
+      const message = evt.wire
+      if (message.type === 'turn_busy') {
+        finish(Object.assign(new Error('常驻 Claude Code 正在处理另一件事，请稍后继续。'), { code: 'turn_busy' }))
+        return
+      }
+      if (message.turnId !== turnId) return
+      if (message.type === 'reading_update') {
+        result = message.result
+        return
+      }
+      if (message.type === 'reading_error' || message.type === 'turn_error') {
+        finish(Object.assign(new Error(message.error || '阅读批次失败'), { code: 'reading_error' }))
+        return
+      }
+      if (message.type === 'turn_end') {
+        if (result) finish(null, result)
+        else finish(Object.assign(new Error('常驻 Claude Code 没有提交这一批阅读结果。'), { code: 'reading_not_committed' }))
+      }
+    }
+
+    listeners.add(onEvent)
+    signal?.addEventListener('abort', onAbort, { once: true })
+    timeout = setTimeout(() => {
+      sendRaw({ type: 'stop_turn', turnId })
+      finish(Object.assign(new Error('这一批阅读超时了，书签仍停在上一次成功位置。'), { code: 'reading_timeout' }))
+    }, 8 * 60_000)
+
+    if (!sendRaw({ type: 'reading_task', id: turnId, readingSessionId: sessionId, clientTime: clientTimeContext() })) {
+      finish(Object.assign(new Error('companion 未连接'), { code: 'not_connected' }))
+    }
+  })
 }
 
 // ---------- auth status (for SessionSettings.jsx) ----------

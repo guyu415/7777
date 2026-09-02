@@ -1,44 +1,7 @@
 const CORS = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Methods': 'GET, POST, DELETE, OPTIONS',
-  'Access-Control-Allow-Headers': 'Content-Type, X-Api-Key, X-Target-Url, X-VPS-Key, X-Eunoia-Password, X-Reading-Session-Id, X-Reading-Approved-Pages, X-Reading-Pages-Read, X-Reading-Page-Number, X-Reading-Start-Page',
-}
-
-export const MAX_READING_SESSION_PAGES = 20
-
-function integerHeader(headers, name) {
-  const value = Number(headers.get(name))
-  return Number.isFinite(value) ? Math.floor(value) : null
-}
-
-export function validateReadingQuotaHeaders(headers) {
-  const sessionId = headers.get('X-Reading-Session-Id')
-  if (!sessionId) return { ok: true }
-  return validateReadingQuotaValues({
-    sessionId,
-    approvedPages: integerHeader(headers, 'X-Reading-Approved-Pages'),
-    pagesRead: integerHeader(headers, 'X-Reading-Pages-Read'),
-    pageNumber: integerHeader(headers, 'X-Reading-Page-Number'),
-    startPage: integerHeader(headers, 'X-Reading-Start-Page'),
-  })
-}
-
-export function validateReadingQuotaValues(quota) {
-  if (!quota?.sessionId) return { ok: true }
-  const approvedPages = Math.floor(Number(quota.approvedPages))
-  const pagesRead = Math.floor(Number(quota.pagesRead))
-  const pageNumber = Math.floor(Number(quota.pageNumber))
-  const startPage = Math.floor(Number(quota.startPage))
-  if (!approvedPages || approvedPages < 1 || approvedPages > MAX_READING_SESSION_PAGES) {
-    return { ok: false, status: 400, code: 'invalid_approved_pages', message: 'approved_pages must be between 1 and 20.' }
-  }
-  if (!Number.isFinite(pagesRead) || pagesRead < 0 || !pageNumber || !startPage) {
-    return { ok: false, status: 400, code: 'invalid_reading_cursor', message: 'reading cursor is invalid.' }
-  }
-  if (pagesRead >= approvedPages || pageNumber > startPage + approvedPages - 1) {
-    return { ok: false, status: 409, code: 'reading_quota_exhausted', message: 'reading session quota has been exhausted.' }
-  }
-  return { ok: true, sessionId: quota.sessionId, approvedPages, pagesRead, pageNumber, startPage }
+  'Access-Control-Allow-Headers': 'Content-Type, X-Api-Key, X-Target-Url, X-VPS-Key, X-Eunoia-Password',
 }
 
 export default {
@@ -134,7 +97,7 @@ export default {
     }
 
     if (pathname === '/chat' && request.method === 'POST') {
-      return handleChatProxy(request, env)
+      return handleChatProxy(request)
     }
 
     if (pathname === '/stt' && request.method === 'POST') {
@@ -485,34 +448,7 @@ export async function handleSpeechTranscription(request, env) {
   }
 }
 
-async function bindReadingQuota(env, quota) {
-  if (!quota?.ok || !quota.sessionId || !env?.CHAT_KV) return { ok: true }
-  const key = `reading-session:${quota.sessionId}`
-  const raw = await env.CHAT_KV.get(key)
-  const saved = raw ? JSON.parse(raw) : null
-  if (saved && (saved.approvedPages !== quota.approvedPages || saved.startPage !== quota.startPage)) {
-    return { ok: false, status: 409, code: 'reading_session_mismatch', message: 'reading session allowance cannot be changed.' }
-  }
-  const savedPagesRead = Number(saved?.pagesRead || 0)
-  const savedPageNumber = Number(saved?.pageNumber || quota.startPage)
-  if (saved && (quota.pagesRead < savedPagesRead || quota.pageNumber < savedPageNumber)) {
-    return { ok: false, status: 409, code: 'reading_cursor_regressed', message: 'reading session cursor cannot move backwards.' }
-  }
-  await env.CHAT_KV.put(key, JSON.stringify({
-    approvedPages: quota.approvedPages,
-    startPage: quota.startPage,
-    pagesRead: Math.max(savedPagesRead, quota.pagesRead),
-    pageNumber: Math.max(savedPageNumber, quota.pageNumber),
-    updatedAt: Date.now(),
-  }), { expirationTtl: 60 * 60 * 24 * 30 })
-  return { ok: true }
-}
-
-async function handleChatProxy(request, env) {
-  const quota = validateReadingQuotaHeaders(request.headers)
-  if (!quota.ok) return Response.json({ error: quota.message, code: quota.code }, { status: quota.status, headers: CORS })
-  const bound = await bindReadingQuota(env, quota)
-  if (!bound.ok) return Response.json({ error: bound.message, code: bound.code }, { status: bound.status, headers: CORS })
+async function handleChatProxy(request) {
   const targetUrl = request.headers.get('X-Target-Url')
   const apiKey = request.headers.get('X-Api-Key')
   if (!targetUrl || !apiKey) {

@@ -50,6 +50,7 @@ import {
   isCodexAlreadyInitializedError,
   codexReconnectDelayMs,
 } from './codex-session.ts'
+import { ReadingStore } from './reading-store.ts'
 import {
   DEFAULT_TIDAL_CONFIG,
   appendOnly,
@@ -382,6 +383,8 @@ const UPLOAD_DATA_URL_RE = /^data:(image\/(?:jpeg|png|webp|gif));base64,([A-Za-z
 const UPLOAD_FILE_MAX_BYTES = 10 * 1024 * 1024
 const UPLOAD_FILE_NAME_MAX_CHARS = 180
 const UPLOAD_FILE_DATA_URL_RE = /^data:([^;,]{1,200});base64,([A-Za-z0-9+/]+=*)$/
+const READING_STORE_ROOT = process.env.AI_COMPANION_READING_DIR ?? join(ROOT, 'state', 'reading')
+const readingStore = new ReadingStore(READING_STORE_ROOT)
 
 // ---------- upload cleanup (tiered retention for UPLOAD_DIR) ----------
 // Three independent policies, run together on one hourly sweep:
@@ -953,6 +956,9 @@ type ThinkingWire = { type: 'thinking'; turnId: string; delta: string }
 // is open. `detail` is one already-truncated representative argument (a
 // basename, a command, a pattern) — never the full tool input.
 type ToolUseWire = { type: 'tool_use'; turnId: string; tool: string; detail: string; ts: number }
+type ReadingUpdateWire = { type: 'reading_update'; turnId: string; result: Record<string, unknown>; ts: number }
+type ReadingErrorWire = { type: 'reading_error'; turnId: string; error: string; ts: number }
+type ReadingRequestWire = { type: 'reading_request'; request: Record<string, unknown>; ts: number }
 // Gomoku: 0=empty, 1=black (user, always moves first), 2=white (AI, via the
 // gomoku_move MCP tool). Broadcast in full on every change — the board is
 // tiny (15x15 ints) so there's no reason to diff it.
@@ -1185,7 +1191,7 @@ type GroupListWire = { type: 'group_list'; chats: Array<{ id: string; name: stri
 type CareUpdateWire = { type: 'care_update'; state: CareHubState }
 type MsgDeletedWire = { type: 'msg_deleted'; ids: string[]; ts: number }
 
-type LiveWire = MsgWire | MsgDeletedWire | TurnStartWire | TurnEndWire | TurnErrorWire | ResetBusyWire | ResetWire | ThinkingWire | GomokuWire | GomokuTurnEndWire | DiceDuelWire | XinchaoUpdateWire
+type LiveWire = MsgWire | MsgDeletedWire | TurnStartWire | TurnEndWire | TurnErrorWire | ResetBusyWire | ResetWire | ThinkingWire | ReadingUpdateWire | ReadingErrorWire | ReadingRequestWire | GomokuWire | GomokuTurnEndWire | DiceDuelWire | XinchaoUpdateWire
   | CodexMsgWire | CodexMsgDeletedWire | CodexStatusWire | CodexNoticeWire | CodexTurnEndWire | CodexTurnBusyWire | CodexResetBusyWire | CodexResetWire
   | FocusUpdateWire | FocusFinishedWire | GroupUpdateWire | GroupListWire | CareUpdateWire
 // resetAt lets a client that reconnects (or opens a brand new tab) long
@@ -1432,8 +1438,9 @@ setInterval(scheduleImageSweep, IMAGE_SWEEP_INTERVAL_MS)
 // Single-flight turn state. This process backs exactly one interactive claude
 // session, which can only run one turn at a time — so "one open turn" is a
 // correct model, not a simplification we'll regret later.
-type CcTurnSurface = 'main' | 'tidal_recovery' | 'other'
+type CcTurnSurface = 'main' | 'reading' | 'tidal_recovery' | 'other'
 let currentTurn: { turnId: string; startedAt: number; surface: CcTurnSurface; broadcastLifecycle: boolean } | null = null
+let readingTurn: { turnId: string; sessionId: string; batchId: string; bookId: string; batchPath: string; committed: boolean } | null = null
 
 function nextId() {
   return `m${Date.now()}-${++seq}`
@@ -2050,6 +2057,13 @@ function endTurn(): string | null {
   const turnId = finished.turnId
   currentTurn = null
   stopThinkingTail(turnId)
+  if (finished.surface === 'reading' && readingTurn?.turnId === turnId) {
+    if (!readingTurn.committed) {
+      readingStore.failBatch(readingTurn.sessionId, 'reading_turn_ended_without_commit')
+      sendRaw({ type: 'reading_error', turnId, error: '常驻 Claude Code 没有提交本批阅读结果。', ts: Date.now() })
+    }
+    readingTurn = null
+  }
   clearGomokuTurnScope(turnId)
   // Mark the tide active before the visible turn_end is broadcast. The
   // frontend can immediately submit a queued message on turn_end; doing this
@@ -2071,6 +2085,11 @@ function failTurn(error: string): string | null {
   const turnId = finished.turnId
   currentTurn = null
   stopThinkingTail(turnId)
+  if (finished.surface === 'reading' && readingTurn?.turnId === turnId) {
+    readingStore.failBatch(readingTurn.sessionId, error)
+    sendRaw({ type: 'reading_error', turnId, error, ts: Date.now() })
+    readingTurn = null
+  }
   clearGomokuTurnScope(turnId)
   if (finished.broadcastLifecycle) sendRaw({ type: 'turn_error', turnId, error, ts: Date.now() })
   // Recovery content is already durably present in the same transcript once
@@ -2209,6 +2228,17 @@ const mcp = new Server(
       `xinchao_event, or xinchao_handoff_note. The channel server classifies the completed visible turn and reports ` +
       `its bounded semantic event asynchronously, outside your context, so a tool call here would double-count it. ` +
       `Never ask the user to state their mood or perform an emotion for this layer.\n\n` +
+      `AI Reading: durable book progress lives in the external Reading Store, never in chat history. A ` +
+      `kind:"reading_batch" notification is a silent, dedicated task: use Agent/Task to create a temporary ` +
+      `subagent that reads only the supplied 1–3 page batch file, then call commit_reading_batch exactly once. ` +
+      `The main resident context must not Read the batch file itself, quote the book, call reply/send_voice, or ` +
+      `append old summaries. Replace the bounded rolling_state with an updated compact state. After /clear, or ` +
+      `when a chat genuinely concerns the book, use get_reading_state; query get_annotations/get_annotation only ` +
+      `for the specific detail needed. Never inject complete logs, all annotations, session summaries, or book text ` +
+      `into ordinary chat. For unrelated chat, do not query reading state at all. If you independently want to read, ` +
+      `first ask the user naturally in a normal reply, choose a concrete 1–20 page amount, then call ` +
+      `request_reading_pages to create the approval card. That tool only requests permission; never begin reading ` +
+      `until the user approves the durable request. Use list_reading_books only if you need the current book id.\n\n` +
       `Gomoku (五子棋): notifications tagged surface:"gomoku" all relate to a standalone game screen, separate from ` +
       `the main chat. If kind:"gomoku_move", the user just placed a black stone and it's your turn as white. ` +
       `Decide your move for real — there is no engine or algorithm choosing it for you, it's genuinely your call, ` +
@@ -2319,6 +2349,88 @@ mcp.setRequestHandler(ListToolsRequestSchema, async () => ({
         'when it is clearly your turn in a casual dice exchange. Never choose/invent the result and never send a ' +
         'fake [DICE:n] with reply. The dice bubble is already user-visible; an extra reply is optional.',
       inputSchema: { type: 'object', properties: {} },
+    },
+    {
+      name: 'list_reading_books',
+      description: 'List the lightweight AI-reading bookshelf (ids, titles, page counts only; never正文). Use only when the conversation is actually about reading or when you want to ask permission to read.',
+      inputSchema: { type: 'object', properties: {} },
+    },
+    {
+      name: 'request_reading_pages',
+      description: 'Create a durable user-approval card before reading. Call only from a normal main-chat turn after naturally asking in reply why/how much you want to read. This does not read any正文 and never grants permission by itself.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          book_id: { type: 'string' },
+          pages: { type: 'number', minimum: 1, maximum: 20 },
+          reason: { type: 'string', maxLength: 500 },
+        },
+        required: ['book_id', 'pages'],
+      },
+    },
+    {
+      name: 'get_reading_state',
+      description: 'Get the compact durable Reading Store state for one book after /clear or when chat specifically needs reading context. Returns only cursor, progress, bounded rolling state, and recent annotation ids; never book text or the full log.',
+      inputSchema: {
+        type: 'object',
+        properties: { book_id: { type: 'string' } },
+        required: ['book_id'],
+      },
+    },
+    {
+      name: 'get_annotations',
+      description: 'Query durable reading highlights/annotations only when needed. Results are filtered by book and optional page range instead of injecting all historical notes.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          book_id: { type: 'string' },
+          page_start: { type: 'number' },
+          page_end: { type: 'number' },
+        },
+        required: ['book_id'],
+      },
+    },
+    {
+      name: 'get_annotation',
+      description: 'Get one durable reading annotation by id.',
+      inputSchema: {
+        type: 'object',
+        properties: { annotation_id: { type: 'string' } },
+        required: ['annotation_id'],
+      },
+    },
+    {
+      name: 'commit_reading_batch',
+      description: 'Commit one AI-reading batch to the durable Reading Store. Only valid during a dedicated reading_batch turn. This advances the bookmark, replaces the bounded rolling book state, and stores precisely located highlights/annotations and the optional completed-session summary.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          session_id: { type: 'string' },
+          batch_id: { type: 'string' },
+          end_paragraph_id: { type: 'string' },
+          rolling_state: {
+            type: 'object',
+            properties: {
+              plot_state: { type: 'string' },
+              important_people: { type: 'array', items: { type: 'string' } },
+              important_events: { type: 'array', items: { type: 'string' } },
+              open_questions: { type: 'array', items: { type: 'string' } },
+              themes_or_thoughts: { type: 'array', items: { type: 'string' } },
+              recent_context: { type: 'string' },
+            },
+          },
+          highlights: {
+            type: 'array',
+            items: { type: 'object', properties: { paragraph_id: { type: 'string' }, quote: { type: 'string' } }, required: ['paragraph_id', 'quote'] },
+          },
+          annotations: {
+            type: 'array',
+            items: { type: 'object', properties: { paragraph_id: { type: 'string' }, quote: { type: 'string' }, annotation: { type: 'string' } }, required: ['paragraph_id', 'quote', 'annotation'] },
+          },
+          session_summary: { type: 'string' },
+        },
+        required: ['session_id', 'batch_id', 'end_paragraph_id', 'rolling_state'],
+      },
     },
     {
       name: 'schedule_next_proactive',
@@ -2581,6 +2693,45 @@ mcp.setRequestHandler(CallToolRequestSchema, async req => {
   const args = (req.params.arguments ?? {}) as Record<string, unknown>
   try {
     switch (req.params.name) {
+      case 'list_reading_books':
+        return { content: [{ type: 'text', text: JSON.stringify(readingStore.listBooks()) }] }
+      case 'request_reading_pages': {
+        if (currentTurn?.surface !== 'main') {
+          return { content: [{ type: 'text', text: 'reading permission can only be requested during a normal main-chat turn' }], isError: true }
+        }
+        const request = readingStore.createReadingRequest(String(args.book_id ?? ''), Number(args.pages), String(args.reason ?? ''))
+        sendRaw({ type: 'reading_request', request: request as unknown as Record<string, unknown>, ts: Date.now() })
+        log('reading_permission_requested', { requestId: request.id, bookId: request.bookId, pages: request.requestedPages })
+        return { content: [{ type: 'text', text: JSON.stringify({ ok: true, request }) }] }
+      }
+      case 'get_reading_state': {
+        const state = readingStore.getReadingState(String(args.book_id ?? ''))
+        return { content: [{ type: 'text', text: JSON.stringify(state || { error: 'reading_book_not_found' }) }], isError: !state }
+      }
+      case 'get_annotations': {
+        const start = Number.isFinite(Number(args.page_start)) ? Number(args.page_start) : undefined
+        const end = Number.isFinite(Number(args.page_end)) ? Number(args.page_end) : undefined
+        const annotations = readingStore.getAnnotations(String(args.book_id ?? ''), start, end)
+        return { content: [{ type: 'text', text: JSON.stringify(annotations) }] }
+      }
+      case 'get_annotation': {
+        const annotation = readingStore.getAnnotation(String(args.annotation_id ?? ''))
+        return { content: [{ type: 'text', text: JSON.stringify(annotation || { error: 'reading_annotation_not_found' }) }], isError: !annotation }
+      }
+      case 'commit_reading_batch': {
+        const turnId = currentTurn?.turnId
+        if (!turnId || currentTurn?.surface !== 'reading' || !readingTurn || readingTurn.turnId !== turnId) {
+          return { content: [{ type: 'text', text: 'no active reading_batch turn' }], isError: true }
+        }
+        if (String(args.session_id ?? '') !== readingTurn.sessionId || String(args.batch_id ?? '') !== readingTurn.batchId) {
+          return { content: [{ type: 'text', text: 'reading session/batch does not match the active turn' }], isError: true }
+        }
+        const result = readingStore.commitBatch(args)
+        readingTurn.committed = true
+        sendRaw({ type: 'reading_update', turnId, result: result as unknown as Record<string, unknown>, ts: Date.now() })
+        log('reading_batch_committed', { turnId, sessionId: readingTurn.sessionId, batchId: readingTurn.batchId, completed: result.completed, page: result.state?.currentPage, annotations: result.annotations.length })
+        return { content: [{ type: 'text', text: JSON.stringify({ ok: true, completed: result.completed, state: result.state, next: result.completed ? 'session complete; end this turn' : 'batch committed; end this turn so the reader can schedule the next small batch' }) }] }
+      }
       case 'reply': {
         const text = String(args.text ?? '')
         const replyTo = typeof args.reply_to === 'string' ? args.reply_to : undefined
@@ -2593,6 +2744,10 @@ mcp.setRequestHandler(CallToolRequestSchema, async req => {
         if (isTidalRecovery) {
           tidalLog('recovery_reply_discarded')
           return { content: [{ type: 'text', text: 'discarded — tidal recovery is silent; do not reply to the user' }] }
+        }
+        if (currentTurn?.surface === 'reading') {
+          log('reading_reply_discarded', { turnId, chars: text.length })
+          return { content: [{ type: 'text', text: 'discarded — dedicated reading turns are persisted with commit_reading_batch, never sent into main chat' }] }
         }
         // Automatic move/undo decisions never show reply text — analysis,
         // coordinates, and move reasoning must never reach game.messages
@@ -2673,6 +2828,10 @@ mcp.setRequestHandler(CallToolRequestSchema, async req => {
         if (isTidalRecovery) {
           tidalLog('recovery_voice_discarded')
           return { content: [{ type: 'text', text: 'discarded — tidal recovery is silent; do not reply to the user' }] }
+        }
+        if (currentTurn?.surface === 'reading') {
+          log('reading_voice_discarded', { turnId, chars: text.length })
+          return { content: [{ type: 'text', text: 'discarded — dedicated reading turns never send voice/chat messages; use commit_reading_batch' }] }
         }
         const isSilentGomokuTurn = isGomokuTurn && (gomokuTurnKind === 'move' || gomokuTurnKind === 'undo')
         if (isSilentGomokuTurn) {
@@ -4151,6 +4310,34 @@ function beginMainCcTurn(input: QueuedCcMessage) {
   deliver(id, deliverText, { clientTime, contextPrefix: contextPrefix || undefined })
   xinchaoHeartbeat(id, XINCHAO_CC_SESSION_ID)
   log('inbound', { id, chars: text.length, turnId: id, hasImage: !!imagePath, hasFile: !!filePath, queued: input.queuedAt < Date.now() - 50 })
+}
+
+function beginReadingTurn(turnId: string, sessionId: string, clientTime?: unknown) {
+  const batch = readingStore.prepareBatch(sessionId)
+  const batchPath = readingStore.writeBatchFile(batch)
+  readingTurn = { turnId, sessionId, batchId: batch.id, bookId: batch.bookId, batchPath, committed: false }
+  startTurn(turnId, 'reading')
+  deliver(turnId, JSON.stringify({
+    kind: 'reading_batch',
+    surface: 'ai_reading',
+    task: '这是独立阅读任务，不是用户聊天。必须使用 Agent/Task 工具启动一个临时子代理，让子代理用 Read 工具读取 batch_file；主常驻上下文不要直接读取正文。子代理只返回结构化阅读结果。你随后必须调用 commit_reading_batch 写入持久 Reading Store。不要调用 reply、send_voice，也不要把正文或完整批注写进聊天。',
+    batch_file: batchPath,
+    book_id: batch.bookId,
+    book_title: batch.bookTitle,
+    session_id: batch.sessionId,
+    batch_id: batch.id,
+    page_range: [batch.startPage, batch.endPage],
+    remaining_approved_pages: batch.remainingApprovedPages,
+    rolling_book_state: batch.rolling,
+    commit_contract: {
+      end_paragraph_id: '必须是本批实际读到的最后一个 paragraph id',
+      rolling_state: '覆盖更新后的精简认知，不是把旧摘要继续追加；控制在约 1000 tokens 内',
+      highlights: '只放真正值得高亮的原文，quote 必须逐字来自本批正文',
+      annotations: '短批注，必须定位到本批 paragraph id',
+      session_summary: '仅在本轮批准页数读完时提供较详细的小结',
+    },
+  }), { clientTime })
+  log('reading_batch_started', { turnId, sessionId, batchId: batch.id, bookId: batch.bookId, pageStart: batch.startPage, pageEnd: batch.endPage })
 }
 
 type ScheduledDiaryLetter = {
@@ -8825,6 +9012,134 @@ Bun.serve<{ authed: true }>({
       return jsonResponse({ ok: true, enabled }, { headers: cors })
     }
 
+    // ---- AI Reading Store -------------------------------------------------
+    // Reading is deliberately a separate durable subsystem. These endpoints
+    // never touch `history` or Auto Memory, so refreshes, restarts and tidal
+    // /clear only discard transient batch text — not bookmarks or notes.
+    if (url.pathname === '/reading/books' && req.method === 'GET') {
+      const gate = authGate()
+      if (gate) return gate
+      return jsonResponse({ books: readingStore.listBooks() }, { headers: corsHeadersFor(origin) })
+    }
+
+    if (url.pathname === '/reading/book' && req.method === 'GET') {
+      const gate = authGate()
+      if (gate) return gate
+      const cors = corsHeadersFor(origin)
+      const book = readingStore.getBook(url.searchParams.get('bookId') ?? '')
+      return book
+        ? jsonResponse({ book }, { headers: cors })
+        : jsonResponse({ error: 'reading_book_not_found' }, { status: 404, headers: cors })
+    }
+
+    if (url.pathname === '/reading/books/import' && req.method === 'POST') {
+      const gate = authGate()
+      if (gate) return gate
+      const cors = corsHeadersFor(origin)
+      try {
+        const body = await req.json()
+        const book = readingStore.importBook((body as any)?.book ?? body)
+        const state = readingStore.getReadingState(book.id)
+        log('reading_book_imported', { bookId: book.id, chapters: book.chapters.length })
+        return jsonResponse({ ok: true, book: readingStore.listBooks().find(item => item.id === book.id), state }, { headers: cors })
+      } catch (err) {
+        log('reading_book_import_error', { error: String(err) })
+        return jsonResponse({ error: String(err instanceof Error ? err.message : err) }, { status: 400, headers: cors })
+      }
+    }
+
+    if (url.pathname === '/reading/books' && req.method === 'DELETE') {
+      const gate = authGate()
+      if (gate) return gate
+      const cors = corsHeadersFor(origin)
+      const bookId = url.searchParams.get('bookId') ?? ''
+      if (!bookId) return jsonResponse({ error: 'missing bookId' }, { status: 400, headers: cors })
+      const deleted = readingStore.deleteBook(bookId)
+      return jsonResponse({ ok: deleted }, { status: deleted ? 200 : 404, headers: cors })
+    }
+
+    if (url.pathname === '/reading/state' && req.method === 'GET') {
+      const gate = authGate()
+      if (gate) return gate
+      const cors = corsHeadersFor(origin)
+      const state = readingStore.getReadingState(url.searchParams.get('bookId') ?? '')
+      return state
+        ? jsonResponse(state, { headers: cors })
+        : jsonResponse({ error: 'reading_book_not_found' }, { status: 404, headers: cors })
+    }
+
+    if (url.pathname === '/reading/requests' && req.method === 'GET') {
+      const gate = authGate()
+      if (gate) return gate
+      const status = url.searchParams.get('status')
+      const filter = status === 'pending' || status === 'approved' || status === 'rejected' ? status : undefined
+      return jsonResponse({ requests: readingStore.listReadingRequests(filter) }, { headers: corsHeadersFor(origin) })
+    }
+
+    if (url.pathname === '/reading/request/approve' && req.method === 'POST') {
+      const gate = authGate()
+      if (gate) return gate
+      const cors = corsHeadersFor(origin)
+      try {
+        const body = await req.json() as Record<string, unknown>
+        const result = readingStore.approveReadingRequest(String(body.requestId ?? ''), Number.isFinite(Number(body.approvedPages)) ? Number(body.approvedPages) : undefined)
+        return jsonResponse({ ok: true, ...result, state: readingStore.getReadingState(result.request.bookId) }, { headers: cors })
+      } catch (err) {
+        return jsonResponse({ error: String(err instanceof Error ? err.message : err) }, { status: 400, headers: cors })
+      }
+    }
+
+    if (url.pathname === '/reading/request/reject' && req.method === 'POST') {
+      const gate = authGate()
+      if (gate) return gate
+      const cors = corsHeadersFor(origin)
+      try {
+        const body = await req.json() as Record<string, unknown>
+        return jsonResponse({ ok: true, request: readingStore.rejectReadingRequest(String(body.requestId ?? '')) }, { headers: cors })
+      } catch (err) {
+        return jsonResponse({ error: String(err instanceof Error ? err.message : err) }, { status: 400, headers: cors })
+      }
+    }
+
+    if (url.pathname === '/reading/session/start' && req.method === 'POST') {
+      const gate = authGate()
+      if (gate) return gate
+      const cors = corsHeadersFor(origin)
+      try {
+        const body = await req.json() as Record<string, unknown>
+        const session = readingStore.startSession(String(body.bookId ?? ''), Number(body.approvedPages), typeof body.sessionId === 'string' ? body.sessionId : undefined)
+        return jsonResponse({ ok: true, session, state: readingStore.getReadingState(session.bookId) }, { headers: cors })
+      } catch (err) {
+        return jsonResponse({ error: String(err instanceof Error ? err.message : err) }, { status: 400, headers: cors })
+      }
+    }
+
+    if (url.pathname === '/reading/annotations' && req.method === 'GET') {
+      const gate = authGate()
+      if (gate) return gate
+      const parseOptionalNumber = (key: string) => {
+        const raw = url.searchParams.get(key)
+        return raw != null && raw !== '' && Number.isFinite(Number(raw)) ? Number(raw) : undefined
+      }
+      return jsonResponse({ annotations: readingStore.getAnnotations(url.searchParams.get('bookId') ?? '', parseOptionalNumber('pageStart'), parseOptionalNumber('pageEnd')) }, { headers: corsHeadersFor(origin) })
+    }
+
+    if (url.pathname === '/reading/annotation' && req.method === 'GET') {
+      const gate = authGate()
+      if (gate) return gate
+      const cors = corsHeadersFor(origin)
+      const annotation = readingStore.getAnnotation(url.searchParams.get('id') ?? '')
+      return annotation
+        ? jsonResponse(annotation, { headers: cors })
+        : jsonResponse({ error: 'reading_annotation_not_found' }, { status: 404, headers: cors })
+    }
+
+    if (url.pathname === '/reading/sessions' && req.method === 'GET') {
+      const gate = authGate()
+      if (gate) return gate
+      return jsonResponse({ sessions: readingStore.getSessionSummaries(url.searchParams.get('bookId') ?? '', Number(url.searchParams.get('limit') || 20)) }, { headers: corsHeadersFor(origin) })
+    }
+
     // ---- Auto Memory management (real files under MEMORY_DIR) ----
     if (url.pathname === '/memory/list' && req.method === 'GET') {
       const gate = authGate()
@@ -10222,7 +10537,7 @@ Bun.serve<{ authed: true }>({
     },
     message(ws, raw) {
       try {
-        const parsed = JSON.parse(String(raw)) as { id?: string; text?: string; messageIds?: string[]; segments?: string[]; type?: string; turnId?: string; runtime?: string; imageUrl?: string; imageSeparate?: boolean; imagePath?: string; filePath?: string; fileName?: string; fileSize?: number; fileType?: string; clientTime?: unknown; sessionId?: string; prompt?: string; voiceEmotion?: string; voiceAcoustics?: unknown }
+        const parsed = JSON.parse(String(raw)) as { id?: string; text?: string; messageIds?: string[]; segments?: string[]; type?: string; turnId?: string; runtime?: string; imageUrl?: string; imageSeparate?: boolean; imagePath?: string; filePath?: string; fileName?: string; fileSize?: number; fileType?: string; clientTime?: unknown; sessionId?: string; readingSessionId?: string; prompt?: string; voiceEmotion?: string; voiceAcoustics?: unknown }
 
         // App-level heartbeat — a WS can look "open" to the browser for a
         // long time after the underlying network path has actually died
@@ -10275,6 +10590,35 @@ Bun.serve<{ authed: true }>({
           if (stopTurnId && currentTurn && stopTurnId === currentTurn.turnId) {
             log('stop_turn_requested', { turnId: stopTurnId })
             withTmuxLock(() => tmuxSendKeys('Escape')).catch((err) => log('stop_turn_error', { turnId: stopTurnId, error: String(err) }))
+          }
+          return
+        }
+
+        // One silent, resumable AI-reading batch on the SAME resident
+        // Claude Code session. The frontend asks for another batch only
+        // after this turn ends. No user message/history row is created.
+        if (parsed.type === 'reading_task') {
+          const id = parsed.id || nextId()
+          const sessionId = typeof parsed.readingSessionId === 'string' ? parsed.readingSessionId : ''
+          try { ws.send(JSON.stringify({ type: 'inbound_ack', id })) } catch {}
+          if (!sessionId) {
+            try { ws.send(JSON.stringify({ type: 'reading_error', turnId: id, error: 'missing readingSessionId', ts: Date.now() })) } catch {}
+            return
+          }
+          if (resetInFlight || tidalIsActive()) {
+            try { ws.send(JSON.stringify({ type: 'reading_error', turnId: id, error: '常驻对话正在整理潮汐记忆，请稍后继续阅读。', ts: Date.now() })) } catch {}
+            return
+          }
+          if (currentTurn) {
+            try { ws.send(JSON.stringify({ type: 'turn_busy', turnId: currentTurn.turnId, ts: Date.now() })) } catch {}
+            return
+          }
+          try {
+            beginReadingTurn(id, sessionId, parsed.clientTime)
+          } catch (err) {
+            const error = String(err instanceof Error ? err.message : err)
+            log('reading_batch_start_error', { id, sessionId, error })
+            try { ws.send(JSON.stringify({ type: 'reading_error', turnId: id, error, ts: Date.now() })) } catch {}
           }
           return
         }

@@ -25,17 +25,22 @@ import {
   createInitialReadingState,
   flattenBook,
 } from '../data/readingBooks'
-import { readOneParagraph } from '../services/aiReading'
 import { stopProactiveReading } from '../services/proactiveReading'
 import { parseReadingBookFile } from '../services/readingLibrary'
 import {
-  addReadingUsage,
+  deleteCompanionReadingBook,
+  getCompanionReadingAnnotations,
+  getCompanionReadingState,
+  runResidentReadingBatch,
+  startCompanionReadingSession,
+  syncReadingBookToCompanion,
+} from '../services/companion'
+import {
   approveReadingSession,
   clampApprovedPages,
   createReadingSession,
   getPageNumber,
   READING_SPEEDS,
-  validateReadingQuota,
 } from '../services/readingSessions'
 
 const SPEED_OPTIONS = [READING_SPEEDS.slow, READING_SPEEDS.normal, READING_SPEEDS.fast]
@@ -85,24 +90,6 @@ function formatLocator(item) {
     return `${Number.isFinite(item?.pageNumber) ? `第 ${item.pageNumber} 页 · ` : ''}第 ${item.chapterIndex + 1} 章 · 第 ${item.paragraphIndex + 1} 段`
   }
   return item?.chapterTitle || item?.paragraphId || '正文'
-}
-
-function waitWithAbort(ms, signal) {
-  return new Promise((resolve, reject) => {
-    if (signal?.aborted) {
-      const error = new Error('Aborted')
-      error.name = 'AbortError'
-      reject(error)
-      return
-    }
-    const timer = setTimeout(resolve, ms)
-    signal?.addEventListener('abort', () => {
-      clearTimeout(timer)
-      const error = new Error('Aborted')
-      error.name = 'AbortError'
-      reject(error)
-    }, { once: true })
-  })
 }
 
 function allAnnotations(readingState) {
@@ -263,7 +250,7 @@ function BookLibraryOverlay({ books, activeBookId, onSelect, onDelete, onImport,
       <section className="ai-reading__sheet ai-reading__library-sheet">
         <div className="ai-reading__sheet-handle" aria-hidden="true" />
         <header className="ai-reading__sheet-header">
-          <div><strong>我的书架</strong><span>{books.length} 本图书 · 内容只保存在本机</span></div>
+          <div><strong>我的书架</strong><span>{books.length} 本图书 · 独立保存，不进入聊天上下文</span></div>
           <button type="button" onClick={onClose} aria-label="关闭"><X size={18} /></button>
         </header>
         <div className="ai-reading__library-actions">
@@ -296,16 +283,6 @@ export default function AIReading({ theme, onBack }) {
     upsertReadingSession,
     updateReadingSession,
     switchReadingBook,
-    sessions,
-    currentSessionId,
-    providers,
-    selectedProviderId,
-    selectedModelId,
-    apiKey,
-    apiBaseUrl,
-    model,
-    workerUrl,
-    useWorkerProxy,
   } = useStore(useShallow(state => ({
     readingState: state.readingState,
     updateReadingState: state.updateReadingState,
@@ -313,16 +290,6 @@ export default function AIReading({ theme, onBack }) {
     upsertReadingSession: state.upsertReadingSession,
     updateReadingSession: state.updateReadingSession,
     switchReadingBook: state.switchReadingBook,
-    sessions: state.sessions,
-    currentSessionId: state.currentSessionId,
-    providers: state.providers,
-    selectedProviderId: state.selectedProviderId,
-    selectedModelId: state.selectedModelId,
-    apiKey: state.apiKey,
-    apiBaseUrl: state.apiBaseUrl,
-    model: state.model,
-    workerUrl: state.workerUrl,
-    useWorkerProxy: state.useWorkerProxy,
   })))
 
   const [importedBooks, setImportedBooks] = useState([])
@@ -375,17 +342,6 @@ export default function AIReading({ theme, onBack }) {
   const chapter = book.chapters.find(item => item.id === currentBlock?.chapterId) || book.chapters[0]
   const chapterNumber = Math.max(1, book.chapters.findIndex(item => item.id === chapter?.id) + 1)
 
-  const session = sessions?.find(item => item.id === currentSessionId) || sessions?.[0]
-  const provider = providers?.find(item => item.id === selectedProviderId)
-  const readingConfig = useMemo(() => ({
-    apiKey: session?.apiKey || provider?.apiKey || apiKey,
-    apiBaseUrl: session?.baseUrl || provider?.baseUrl || apiBaseUrl,
-    model: session?.model || selectedModelId || provider?.models?.[0] || model,
-    providerName: provider?.id || '',
-    workerUrl,
-    useWorkerProxy,
-  }), [session, provider, selectedModelId, apiKey, apiBaseUrl, model, workerUrl, useWorkerProxy])
-
   const [panel, setPanel] = useState(null)
   const [selectedNoteId, setSelectedNoteId] = useState(null)
   const [followAi, setFollowAi] = useState(true)
@@ -396,18 +352,11 @@ export default function AIReading({ theme, onBack }) {
   const abortRef = useRef(null)
   const runningRef = useRef(false)
   const programmaticScrollRef = useRef(false)
-  const pageParagraphCountRef = useRef(new Map())
   const sessionRunStartedAtRef = useRef(null)
 
   useEffect(() => {
     readingStateRef.current = state
   }, [state])
-
-  useEffect(() => {
-    const counts = new Map()
-    blocks.forEach(block => counts.set(block.pageNumber, (counts.get(block.pageNumber) || 0) + 1))
-    pageParagraphCountRef.current = counts
-  }, [blocks])
 
   // A refresh cannot keep an in-flight request alive. Turn a persisted
   // transient status into a safe pause while keeping the exact cursor.
@@ -484,18 +433,20 @@ export default function AIReading({ theme, onBack }) {
     setImportNotice('正在导入……')
     try {
       const imported = await parseReadingBookFile(file)
+      await syncReadingBookToCompanion(imported)
       await saveReadingBook(imported)
       setImportedBooks(current => [imported, ...current.filter(item => item.id !== imported.id)])
       selectBook(imported)
-      setImportNotice(`《${imported.title}》已导入`)
+      setImportNotice(`《${imported.title}》已交给常驻 Claude Code 的书架`)
     } catch (error) {
       setImportNotice(error?.message || '图书导入失败。')
     }
   }, [selectBook])
 
   const removeImportedBook = useCallback(async (targetBook) => {
-    if (!window.confirm(`删除本机书架中的《${targetBook.title}》？`)) return
+    if (!window.confirm(`从独立书架删除《${targetBook.title}》及其阅读记录？`)) return
     try {
+      await deleteCompanionReadingBook(targetBook.id)
       await deleteReadingBook(targetBook.id)
       setImportedBooks(current => current.filter(item => item.id !== targetBook.id))
       if (readingStateRef.current.bookId === targetBook.id) selectBook(READING_BOOKS[0])
@@ -534,35 +485,139 @@ export default function AIReading({ theme, onBack }) {
     return next
   }, [upsertReadingSession])
 
-  const ensureReadingSession = useCallback((liveState) => {
-    const store = useStore.getState()
-    const existing = store.readingSessions?.find(item => item.sessionId === liveState.activeSessionId)
-    if (existing && ['pending', 'approved', 'reading', 'paused'].includes(existing.status)) return existing
+  const applyResidentState = useCallback((remoteState, remoteNotes, statusOverride) => {
+    if (!remoteState || remoteState.bookId !== book.id) return
+    const currentIndex = blocks.findIndex(block => block.id === remoteState.currentParagraphId)
+    const current = blocks[Math.max(0, currentIndex)] || blocks[0]
+    const progressValue = Math.max(0, Math.min(1, Number(remoteState.progress) || 0))
+    const readParagraphIds = progressValue > 0 && currentIndex >= 0
+      ? blocks.slice(0, currentIndex + 1).map(block => block.id)
+      : []
+    const locatedNotes = Array.isArray(remoteNotes) ? remoteNotes.map(note => {
+      const block = blocks.find(item => item.id === note.paragraphId)
+      return {
+        ...note,
+        chapterId: block?.chapterId || null,
+        chapterTitle: block?.chapterTitle || '',
+        chapterIndex: block?.chapterIndex,
+        paragraphIndex: block?.paragraphIndex,
+      }
+    }) : null
+    const updates = {
+      currentParagraphId: current?.id || remoteState.currentParagraphId,
+      currentChapterId: current?.chapterId || null,
+      currentPageId: current?.pageId || null,
+      currentPage: remoteState.currentPage || current?.pageNumber || 1,
+      nextParagraphId: remoteState.nextParagraphId || null,
+      activeSessionId: remoteState.activeSessionId || remoteState.session?.id || null,
+      readParagraphIds,
+      progressChars: Math.round(totalChars * progressValue),
+      lastReadAt: remoteState.updatedAt || Date.now(),
+      ...(statusOverride ? { status: statusOverride } : {}),
+    }
+    if (locatedNotes) {
+      updates.highlights = locatedNotes.filter(note => note.kind === 'highlight')
+      updates.annotations = locatedNotes.filter(note => note.kind === 'annotate')
+    }
+    patchReading(updates)
+  }, [blocks, book.id, patchReading, totalChars])
 
-    const startId = liveState.nextParagraphId || liveState.currentParagraphId || blocks[0]?.id
-    const startParagraph = blocks.find(block => block.id === startId) || blocks[0]
-    if (!startParagraph) return null
-    const lastPage = getPageNumber(blocks[blocks.length - 1])
-    const pagesAvailable = Math.max(1, lastPage - getPageNumber(startParagraph) + 1)
-    const session = approveReadingSession(createReadingSession({
-      triggerType: 'manual',
+  // VPS Reading Store is authoritative. On refresh or after /clear we load
+  // only the compact cursor/rolling state and explicitly query annotations;
+  // no previous正文 or chat transcript is needed to restore the reader.
+  useEffect(() => {
+    let cancelled = false
+    const hydrate = async () => {
+      try {
+        let remoteState
+        try {
+          remoteState = await getCompanionReadingState(book.id)
+        } catch (error) {
+          if (error?.status !== 404) throw error
+          const imported = await syncReadingBookToCompanion(book)
+          remoteState = imported.state
+        }
+        const { annotations: remoteNotes = [] } = await getCompanionReadingAnnotations(book.id)
+        if (cancelled || runningRef.current || readingStateRef.current.bookId !== book.id) return
+        const restoredStatus = remoteState.progress >= 1
+          ? 'complete'
+          : remoteState.progress > 0 ? 'pause' : 'idle'
+        applyResidentState(remoteState, remoteNotes, restoredStatus)
+        if (remoteState.session) {
+          const existing = useStore.getState().readingSessions?.find(item => item.sessionId === remoteState.session.id) || {}
+          upsertReadingSession({
+            ...existing,
+            sessionId: remoteState.session.id,
+            bookId: book.id,
+            approvedPages: remoteState.session.approvedPages,
+            pagesRead: remoteState.session.pagesRead,
+            startPage: remoteState.session.startPage,
+            endPage: remoteState.session.startPage + remoteState.session.approvedPages - 1,
+            status: remoteState.session.status,
+            completedAt: remoteState.session.completedAt,
+            lastUpdatedAt: remoteState.session.updatedAt,
+          })
+        }
+        patchReading({
+          completionReason: remoteState.progress >= 1 ? 'book' : '',
+          activity: remoteState.progress > 0 ? '已从独立书签恢复' : '等常驻 Claude Code 翻开这一页',
+          pauseReason: remoteState.progress > 0 ? '页码、批注和阅读认知已从 Reading Store 恢复。' : '',
+          error: '',
+        })
+      } catch (error) {
+        if (!cancelled) setImportNotice(`阅读状态恢复失败：${error?.message || '无法连接常驻 Claude Code'}`)
+      }
+    }
+    void hydrate()
+    return () => { cancelled = true }
+  }, [applyResidentState, book, patchReading, upsertReadingSession])
+
+  const ensureResidentSession = useCallback(async (liveState) => {
+    const store = useStore.getState()
+    let localSession = store.readingSessions?.find(item => item.sessionId === liveState.activeSessionId)
+    if (!localSession || !['pending', 'approved', 'reading', 'paused'].includes(localSession.status)) {
+      const startId = liveState.nextParagraphId || liveState.currentParagraphId || blocks[0]?.id
+      const startParagraph = blocks.find(block => block.id === startId) || blocks[0]
+      if (!startParagraph) return null
+      const pagesAvailable = Math.max(1, getPageNumber(blocks.at(-1)) - getPageNumber(startParagraph) + 1)
+      const approvedPages = Math.min(5, pagesAvailable)
+      localSession = approveReadingSession(createReadingSession({
+        triggerType: 'manual', bookId: book.id, startParagraph,
+        approvedPages, requestedPages: approvedPages,
+      }), approvedPages)
+      upsertReadingSession(localSession)
+    }
+
+    await syncReadingBookToCompanion(book)
+    const response = await startCompanionReadingSession({
       bookId: book.id,
-      startParagraph,
-      approvedPages: Math.min(20, pagesAvailable),
-      requestedPages: Math.min(20, pagesAvailable),
-    }), Math.min(20, pagesAvailable))
-    upsertReadingSession(session)
-    patchReading({
-      activeSessionId: session.sessionId,
-      currentParagraphId: startParagraph.id,
-      currentChapterId: startParagraph.chapterId,
-      currentPageId: startParagraph.pageId,
-      currentPage: startParagraph.pageNumber,
-      nextParagraphId: null,
-      completionReason: '',
+      approvedPages: clampApprovedPages(localSession.approvedPages, 5),
+      sessionId: localSession.sessionId,
     })
-    return session
-  }, [blocks, book.id, patchReading, upsertReadingSession])
+    const remote = response.session
+    const mirrored = {
+      ...localSession,
+      sessionId: remote.id,
+      bookId: remote.bookId,
+      approvedPages: remote.approvedPages,
+      pagesRead: remote.pagesRead,
+      startPage: remote.startPage,
+      endPage: remote.startPage + remote.approvedPages - 1,
+      startParagraphId: remote.startParagraphId,
+      currentParagraphId: remote.currentParagraphId,
+      nextParagraphId: remote.nextParagraphId,
+      status: remote.status,
+      startedAt: remote.startedAt,
+      completedAt: remote.completedAt,
+      summary: remote.summary,
+      batchCount: remote.batchCount,
+      lastUpdatedAt: remote.updatedAt,
+    }
+    upsertReadingSession(mirrored)
+    applyResidentState(response.state, undefined, remote.status === 'completed' ? 'complete' : 'reading')
+    patchReading({ activeSessionId: remote.status === 'completed' ? null : remote.id, error: '', completionReason: '' })
+    return mirrored
+  }, [applyResidentState, blocks, book, patchReading, upsertReadingSession])
 
   const runReading = useCallback(async () => {
     if (runningRef.current || !blocks.length) return
@@ -570,376 +625,99 @@ export default function AIReading({ theme, onBack }) {
     const controller = new AbortController()
     abortRef.current = controller
     runningRef.current = true
-    const started = readingStateRef.current
-    if (started.status === 'complete' && started.completionReason !== 'quota') {
-      runningRef.current = false
-      abortRef.current = null
-      return
-    }
-    const session = ensureReadingSession(started)
-    if (!session) {
-      runningRef.current = false
-      abortRef.current = null
-      return
-    }
     const runStartedAt = Date.now()
     sessionRunStartedAtRef.current = runStartedAt
-    const sessionStartTime = session.startedAt || runStartedAt
-    writeReadingSession(session.sessionId, {
-      status: 'reading',
-      startedAt: sessionStartTime,
-      currentParagraphId: started.currentParagraphId,
-      currentPageId: blocks.find(block => block.id === started.currentParagraphId)?.pageId || session.currentPageId,
-    })
-    patchReading({
-      status: 'reading',
-      activity: '正在阅读……',
-      pauseReason: '',
-      error: '',
-      lastReadAt: Date.now(),
-      activeSessionId: session.sessionId,
-    })
-
     try {
+      const session = await ensureResidentSession(readingStateRef.current)
+      if (!session || token !== runRef.current || controller.signal.aborted) return
+      if (session.status === 'completed') {
+        const recovered = await getCompanionReadingState(book.id)
+        const isBookComplete = !recovered.nextParagraphId
+        applyResidentState(recovered, undefined, 'complete')
+        patchReading({
+          completionReason: isBookComplete ? 'book' : 'quota',
+          activity: isBookComplete ? ACTIVITY_LABELS.complete : ACTIVITY_LABELS.quota,
+          pauseReason: isBookComplete ? '' : `本轮已读 ${session.approvedPages} 页，下一轮会从保存的位置继续。`,
+        })
+        return
+      }
+
+      patchReading({
+        status: 'reading', activity: '常驻 Claude Code 正在阅读……',
+        pauseReason: '', error: '', activeSessionId: session.sessionId,
+      })
+      writeReadingSession(session.sessionId, { status: 'reading', startedAt: session.startedAt || runStartedAt })
+
       while (token === runRef.current && !controller.signal.aborted) {
-        const live = readingStateRef.current
-        if (live.status === 'pause' || live.status === 'error' || live.status === 'complete') break
-        const liveSession = useStore.getState().readingSessions?.find(item => item.sessionId === session.sessionId)
-        if (!liveSession) break
-        const index = Math.max(0, blocks.findIndex(block => block.id === live.currentParagraphId))
-        const paragraph = blocks[index] || blocks[0]
-        if (!paragraph) break
-        const previousParagraph = blocks[index - 1]
-        const nextParagraph = blocks[index + 1]
-        const quota = validateReadingQuota({
-          sessionId: liveSession.sessionId,
-          approvedPages: liveSession.approvedPages,
-          pagesRead: liveSession.pagesRead,
-          pageNumber: getPageNumber(paragraph),
-          startPage: liveSession.startPage,
-        })
-        if (!quota.ok) {
-          const completedAt = Date.now()
-          const elapsed = Math.max(0, completedAt - runStartedAt)
-          sessionRunStartedAtRef.current = null
-          writeReadingSession(liveSession.sessionId, {
-            status: 'completed',
-            pagesRead: clampApprovedPages(liveSession.approvedPages, 1),
-            currentParagraphId: live.currentParagraphId,
-            currentPageId: blocks.find(block => block.id === live.currentParagraphId)?.pageId || liveSession.currentPageId,
-            completedAt,
-            durationMs: (Number(liveSession.durationMs) || 0) + elapsed,
-            nextParagraphId: live.nextParagraphId || live.currentParagraphId,
-          })
-          patchReading({
-            status: 'complete',
-            completionReason: 'quota',
-            activity: ACTIVITY_LABELS.quota,
-            pauseReason: `本轮已读 ${liveSession.approvedPages} 页，下一轮会从保存的位置继续。`,
-            lastReadAt: completedAt,
-          })
-          addLog({ id: makeId('log'), action: 'quota', label: ACTIVITY_LABELS.quota, paragraphId: live.currentParagraphId, createdAt: completedAt })
-          break
-        }
-        patchReading({
-          status: 'reading',
-          currentParagraphId: paragraph.id,
-          currentChapterId: paragraph.chapterId,
-          currentPageId: paragraph.pageId,
-          currentPage: paragraph.pageNumber,
-          activity: '正在阅读……',
-          lastReadAt: Date.now(),
-          error: '',
-        })
-
-        const cachedAction = readingStateRef.current.actionCache?.[paragraph.id]
-        const action = cachedAction || await readOneParagraph({
-          paragraph,
-          previousParagraph,
-          index,
-          config: {
-            ...readingConfig,
-            readingQuota: {
-              sessionId: liveSession.sessionId,
-              approvedPages: liveSession.approvedPages,
-              pagesRead: liveSession.pagesRead,
-              pageNumber: getPageNumber(paragraph),
-              startPage: liveSession.startPage,
-            },
-          },
-          signal: controller.signal,
-        })
+        const result = await runResidentReadingBatch({ sessionId: session.sessionId, signal: controller.signal })
         if (token !== runRef.current || controller.signal.aborted) break
-        if (readingStateRef.current.status === 'pause') break
-
-        if (!cachedAction) {
-          // A model pause is a transient decision. Do not cache it forever or
-          // the next explicit Continue would immediately pause on the same
-          // paragraph again.
-          if (action.action !== 'pause') {
-            patchReading({ actionCache: { ...(readingStateRef.current.actionCache || {}), [paragraph.id]: action } })
-          }
-          const nextSession = addReadingUsage(liveSession, action.usage)
-          upsertReadingSession(nextSession)
-        }
-
-        const now = Date.now()
-        const logBase = {
-          id: makeId('log'),
-          paragraphId: paragraph.id,
-          chapterId: paragraph.chapterId,
-          chapterIndex: paragraph.chapterIndex,
-          paragraphIndex: paragraph.paragraphIndex,
-          pageId: paragraph.pageId,
-          pageNumber: paragraph.pageNumber,
-          chapterTitle: paragraph.chapterTitle,
-          quote: action.quote || '',
-          createdAt: now,
-        }
-
-        if (action.action === 'pause') {
-          addLog({ ...logBase, action: 'pause', label: ACTIVITY_LABELS.pause })
-          patchReading({
-            status: 'pause',
-            activity: ACTIVITY_LABELS.pause,
-            pauseReason: 'AI 选择在这一段停留一会儿。',
-            lastReadAt: now,
-          })
-          sessionRunStartedAtRef.current = null
-          writeReadingSession(liveSession.sessionId, { status: 'paused', currentParagraphId: paragraph.id, currentPageId: paragraph.pageId, durationMs: (Number(liveSession.durationMs) || 0) + Math.max(0, now - runStartedAt) })
-          break
-        }
-
-        if (action.action === 'highlight' || action.action === 'annotate') {
-          patchReading({
-            status: 'pause',
-            activity: ACTIVITY_LABELS.pause,
-            pauseReason: 'AI 正在决定要不要留下这一笔。',
-            lastReadAt: now,
-          })
-          await waitWithAbort(320, controller.signal)
-          if (token !== runRef.current || controller.signal.aborted) break
-          const kind = action.action === 'annotate' && action.annotation ? 'annotate' : 'highlight'
-          const note = {
-            id: makeId('note'),
-            kind,
-            paragraphId: paragraph.id,
-            chapterId: paragraph.chapterId,
-            chapterIndex: paragraph.chapterIndex,
-            paragraphIndex: paragraph.paragraphIndex,
-            pageId: paragraph.pageId,
-            pageNumber: paragraph.pageNumber,
-            chapterTitle: paragraph.chapterTitle,
-            quote: action.quote || paragraph.text.slice(0, 70),
-            annotation: kind === 'annotate' ? action.annotation : '',
-            interest: action.interest,
-            createdAt: now,
-          }
-          const previousNote = allAnnotations(readingStateRef.current).find(existing => (
-            existing.paragraphId === note.paragraphId
-            && existing.kind === note.kind
-            && existing.quote === note.quote
-          ))
-          const key = kind === 'highlight' ? 'highlights' : 'annotations'
-          patchReading({
-            ...(previousNote ? {} : { [key]: [...(readingStateRef.current[key] || []), note] }),
-            status: kind,
-            activity: ACTIVITY_LABELS[kind],
-            pauseReason: '',
-            lastReadAt: now,
-          })
-          writeReadingSession(liveSession.sessionId, {
-            status: kind === 'annotate' || kind === 'highlight' ? 'reading' : liveSession.status,
-            currentParagraphId: paragraph.id,
-            currentPageId: paragraph.pageId,
-            newAnnotations: (Number(liveSession.newAnnotations) || 0) + (previousNote ? 0 : 1),
-          })
-          addLog({
-            ...logBase,
-            action: kind,
-            label: ACTIVITY_LABELS[kind],
-            quote: note.quote,
-            annotation: note.annotation,
-          })
-          setSelectedNoteId(previousNote?.id || note.id)
-          await waitWithAbort(900, controller.signal)
-          if (token !== runRef.current || controller.signal.aborted) break
-        } else {
-          addLog({ ...logBase, action: 'continue', label: ACTIVITY_LABELS.continue })
-          patchReading({ status: 'reading', activity: ACTIVITY_LABELS.continue, lastReadAt: now })
-        }
-
-        const nextReadIds = Array.from(new Set([...(readingStateRef.current.readParagraphIds || []), paragraph.id]))
-        const nextProgress = charsReadForIds(blocks, nextReadIds)
-        const pageComplete = !nextParagraph || getPageNumber(nextParagraph) !== getPageNumber(paragraph)
-        const pagesRead = pageComplete
-          ? Math.max(Number(liveSession.pagesRead) || 0, getPageNumber(paragraph) - getPageNumber({ pageNumber: liveSession.startPage }) + 1)
-          : Number(liveSession.pagesRead) || 0
-        if (!nextParagraph) {
-          const completedAt = Date.now()
-          sessionRunStartedAtRef.current = null
-          writeReadingSession(liveSession.sessionId, {
-            status: 'completed',
-            pagesRead: Math.min(liveSession.approvedPages, pagesRead),
-            currentParagraphId: paragraph.id,
-            currentPageId: paragraph.pageId,
-            nextParagraphId: null,
-            completedAt,
-            durationMs: (Number(liveSession.durationMs) || 0) + Math.max(0, completedAt - runStartedAt),
-          })
-          patchReading({
-            status: 'complete',
-            currentParagraphId: paragraph.id,
-            currentPageId: paragraph.pageId,
-            currentChapterId: paragraph.chapterId,
-            readParagraphIds: nextReadIds,
-            progressChars: totalChars,
-            activity: ACTIVITY_LABELS.complete,
-            completionReason: 'book',
-            nextParagraphId: null,
-            pauseReason: '',
-            lastReadAt: Date.now(),
-          })
-          addLog({
-            id: makeId('log'),
-            action: 'complete',
-            label: ACTIVITY_LABELS.complete,
-            paragraphId: paragraph.id,
-            chapterId: paragraph.chapterId,
-            chapterIndex: paragraph.chapterIndex,
-            paragraphIndex: paragraph.paragraphIndex,
-            pageId: paragraph.pageId,
-            pageNumber: paragraph.pageNumber,
-            chapterTitle: paragraph.chapterTitle,
-            createdAt: Date.now(),
-          })
-          break
-        }
-
-        if (pageComplete && pagesRead >= clampApprovedPages(liveSession.approvedPages, 1)) {
-          const completedAt = Date.now()
-          sessionRunStartedAtRef.current = null
-          writeReadingSession(liveSession.sessionId, {
-            status: 'completed',
-            pagesRead: clampApprovedPages(liveSession.approvedPages, 1),
-            currentParagraphId: paragraph.id,
-            currentPageId: paragraph.pageId,
-            nextParagraphId: nextParagraph.id,
-            completedAt,
-            durationMs: (Number(liveSession.durationMs) || 0) + Math.max(0, completedAt - runStartedAt),
-          })
-          patchReading({
-            status: 'complete',
-            currentParagraphId: paragraph.id,
-            currentChapterId: paragraph.chapterId,
-            currentPageId: paragraph.pageId,
-            currentPage: paragraph.pageNumber,
-            readParagraphIds: nextReadIds,
-            progressChars: nextProgress,
-            nextParagraphId: nextParagraph.id,
-            completionReason: 'quota',
-            activity: ACTIVITY_LABELS.quota,
-            pauseReason: `本轮已读 ${liveSession.approvedPages} 页，下一轮会从第 ${nextParagraph.pageNumber} 页继续。`,
-            lastReadAt: completedAt,
-          })
-          addLog({
-            id: makeId('log'),
-            action: 'quota',
-            label: ACTIVITY_LABELS.quota,
-            paragraphId: paragraph.id,
-            pageNumber: paragraph.pageNumber,
-            createdAt: completedAt,
-          })
-          break
-        }
-
+        const remoteSession = result.session
+        const existingNotes = allAnnotations(readingStateRef.current)
+        const notesById = new Map(existingNotes.map(note => [note.id, note]))
+        for (const note of result.annotations || []) notesById.set(note.id, note)
+        const allNotes = [...notesById.values()]
+        const isBookComplete = result.completed && !result.state?.nextParagraphId
+        applyResidentState(result.state, allNotes, result.completed ? 'complete' : 'reading')
+        const completedAt = result.completed ? (remoteSession.completedAt || Date.now()) : null
+        upsertReadingSession({
+          ...session,
+          sessionId: remoteSession.id,
+          approvedPages: remoteSession.approvedPages,
+          pagesRead: remoteSession.pagesRead,
+          startPage: remoteSession.startPage,
+          endPage: remoteSession.startPage + remoteSession.approvedPages - 1,
+          currentParagraphId: remoteSession.currentParagraphId,
+          nextParagraphId: remoteSession.nextParagraphId,
+          status: result.completed ? 'completed' : 'reading',
+          completedAt,
+          summary: remoteSession.summary,
+          batchCount: remoteSession.batchCount,
+          modelCalls: remoteSession.batchCount,
+          newAnnotations: allNotes.filter(note => note.sessionId === remoteSession.id).length,
+          durationMs: result.completed ? Math.max(0, completedAt - runStartedAt) : Math.max(0, Date.now() - runStartedAt),
+          lastUpdatedAt: remoteSession.updatedAt,
+        })
+        if (result.log) addLog({
+          ...result.log,
+          action: result.completed ? (isBookComplete ? 'complete' : 'quota') : 'continue',
+          label: result.completed ? (isBookComplete ? ACTIVITY_LABELS.complete : ACTIVITY_LABELS.quota) : `读完第 ${result.log.pageStart}–${result.log.pageEnd} 页`,
+        })
         patchReading({
-          status: 'reading',
-          currentParagraphId: nextParagraph.id,
-          currentPageId: nextParagraph.pageId,
-          currentChapterId: nextParagraph.chapterId,
-          currentPage: nextParagraph.pageNumber,
-          readParagraphIds: nextReadIds,
-          progressChars: nextProgress,
-          activity: ACTIVITY_LABELS.continue,
+          activity: result.completed
+            ? (isBookComplete ? ACTIVITY_LABELS.complete : ACTIVITY_LABELS.quota)
+            : `已持久化第 ${result.log?.pageStart || result.state.currentPage}–${result.log?.pageEnd || result.state.currentPage} 页，继续下一批`,
+          completionReason: result.completed ? (isBookComplete ? 'book' : 'quota') : '',
+          pauseReason: result.completed && !isBookComplete
+            ? `本轮已读 ${remoteSession.approvedPages} 页，下一轮会从第 ${result.state.currentPage + 1} 页附近继续。`
+            : '',
+          activeSessionId: remoteSession.id,
           lastReadAt: Date.now(),
         })
-        writeReadingSession(liveSession.sessionId, {
-          status: 'reading',
-          currentParagraphId: nextParagraph.id,
-          currentPageId: nextParagraph.pageId,
-          pagesRead,
-          nextParagraphId: null,
-        })
-        const speed = SPEED_OPTIONS.find(option => option.id === readingStateRef.current.speed) || SPEED_OPTIONS[1]
-        const paragraphCountOnPage = pageParagraphCountRef.current.get(getPageNumber(paragraph)) || 1
-        await waitWithAbort(Math.max(1000, Math.round(speed.pageDurationMs / paragraphCountOnPage)), controller.signal)
+        if (result.completed) break
       }
     } catch (error) {
       if (error?.name !== 'AbortError' && token === runRef.current) {
-        // The Worker is authoritative when a request races the page-boundary
-        // update. Treat its hard-stop response as a normal completed session,
-        // never as a retryable model error.
-        if (['reading_quota_exhausted', 'reading_page_limit'].includes(error?.code)) {
-          const quotaAt = Date.now()
-          const live = readingStateRef.current
-          const liveSession = useStore.getState().readingSessions?.find(item => item.sessionId === live.activeSessionId)
-          const index = Math.max(0, blocks.findIndex(block => block.id === live.currentParagraphId))
-          const nextParagraph = blocks[index + 1]
-          sessionRunStartedAtRef.current = null
-          if (liveSession) {
-            writeReadingSession(liveSession.sessionId, {
-              status: 'completed',
-              pagesRead: clampApprovedPages(liveSession.approvedPages, 1),
-              currentParagraphId: live.currentParagraphId,
-              currentPageId: blocks[index]?.pageId || liveSession.currentPageId,
-              nextParagraphId: live.nextParagraphId || nextParagraph?.id || null,
-              completedAt: quotaAt,
-              durationMs: (Number(liveSession.durationMs) || 0) + Math.max(0, quotaAt - runStartedAt),
-            })
-          }
-          patchReading({
-            status: 'complete',
-            completionReason: 'quota',
-            activity: ACTIVITY_LABELS.quota,
-            pauseReason: liveSession ? `本轮已读 ${liveSession.approvedPages} 页，下一轮会从保存的位置继续。` : '本轮阅读额度已用完。',
-            lastReadAt: quotaAt,
-          })
-          addLog({ id: makeId('log'), action: 'quota', label: ACTIVITY_LABELS.quota, paragraphId: live.currentParagraphId, createdAt: quotaAt })
-          return
-        }
-        const message = error?.message || '模型没有返回可用的阅读动作。'
-        const errorAt = Date.now()
-        const runStartedAt = sessionRunStartedAtRef.current
-        sessionRunStartedAtRef.current = null
-        addLog({
-          id: makeId('log'),
-          action: 'error',
-          label: '阅读遇到一点阻塞',
-          paragraphId: readingStateRef.current.currentParagraphId,
-          chapterId: readingStateRef.current.currentChapterId,
-          createdAt: Date.now(),
-        })
+        try {
+          const [remoteState, noteResult] = await Promise.all([
+            getCompanionReadingState(book.id),
+            getCompanionReadingAnnotations(book.id),
+          ])
+          applyResidentState(remoteState, noteResult.annotations || [], 'error')
+        } catch { /* the last local snapshot remains usable */ }
         patchReading({
-          status: 'error',
-          activity: ACTIVITY_LABELS.error,
-          error: message,
-          pauseReason: '可以重试，AI 会从当前段落继续。',
-        })
-        const liveSession = useStore.getState().readingSessions?.find(item => item.sessionId === readingStateRef.current.activeSessionId)
-        if (liveSession) writeReadingSession(liveSession.sessionId, {
-          status: 'paused',
-          currentParagraphId: readingStateRef.current.currentParagraphId,
-          ...(runStartedAt ? { durationMs: (Number(liveSession.durationMs) || 0) + Math.max(0, errorAt - runStartedAt) } : {}),
+          status: 'error', activity: ACTIVITY_LABELS.error,
+          error: error?.message || '常驻 Claude Code 暂时无法继续阅读。',
+          pauseReason: '书签停在上一批成功提交的位置，可以直接重试。',
         })
       }
     } finally {
       if (token === runRef.current) {
         runningRef.current = false
         abortRef.current = null
+        sessionRunStartedAtRef.current = null
       }
     }
-  }, [addLog, blocks, ensureReadingSession, patchReading, readingConfig, totalChars, upsertReadingSession, writeReadingSession])
+  }, [addLog, applyResidentState, blocks.length, book.id, ensureResidentSession, patchReading, upsertReadingSession, writeReadingSession])
 
   const pauseReading = useCallback(() => {
     if (!runningRef.current && readingStateRef.current.status !== 'reading' && readingStateRef.current.status !== 'highlight' && readingStateRef.current.status !== 'annotate') return
@@ -1082,8 +860,8 @@ export default function AIReading({ theme, onBack }) {
         )}
         <div className="ai-reading__model-line">
           <span className="ai-reading__model-pulse" />
-          {readingConfig.apiKey ? '使用当前模型逐段阅读' : '未配置模型，使用本地逐段阅读引擎'}
-          {readingSession && <small> · 本轮 {readingSession.modelCalls || 0} 次调用 · 约 {formatNumber(readingSession.totalTokens || 0)} tokens</small>}
+          常驻对话里的 Claude Code · 每批 1–3 页 · 阅读事实独立保存
+          {readingSession && <small> · 本轮已提交 {readingSession.batchCount || readingSession.modelCalls || 0} 批</small>}
         </div>
         {readingSession && (
           <div className="ai-reading__session-line" aria-label="本轮阅读统计">

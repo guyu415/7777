@@ -1,5 +1,4 @@
 import { appendMusicRuntimeContext } from '../utils/musicRuntimeContext'
-import { buildReadingQuotaHeaders } from './readingSessions'
 
 const VALID_MEDIA_TYPES = new Set(['image/jpeg', 'image/png', 'image/gif', 'image/webp'])
 
@@ -161,12 +160,11 @@ export async function generateSummary({ existingSummary, newMessages, apiKey }) 
   return data.choices?.[0]?.message?.content?.trim() || ''
 }
 
-export async function* streamChat({ apiKey, apiBaseUrl = 'https://api.anthropic.com', model, systemPrompt, messages, workerUrl, useWorkerProxy, signal, disableThinking = false, webSearch = false, providerName = '', readingQuota = null, maxTokens = 4096 }) {
+export async function* streamChat({ apiKey, apiBaseUrl = 'https://api.anthropic.com', model, systemPrompt, messages, workerUrl, useWorkerProxy, signal, disableThinking = false, webSearch = false, providerName = '', maxTokens = 4096 }) {
   const base = apiBaseUrl.replace(/\/$/, '')
   const proxyBase = (useWorkerProxy && workerUrl) ? workerUrl.replace(/\/$/, '') : null
   const musicSnapshot = await fetchMusicRuntimeContext()
   const requestSystemPrompt = appendMusicRuntimeContext(systemPrompt, musicSnapshot)
-  const readingHeaders = buildReadingQuotaHeaders(readingQuota)
 
   // Build web search tools based on provider
   // Claude via AiHubMix: web search is triggered by appending :surfing to model name, NOT via tools param
@@ -198,7 +196,7 @@ export async function* streamChat({ apiKey, apiBaseUrl = 'https://api.anthropic.
       console.log('[API] 发起fetch (Anthropic via Worker):', actualUrl)
       response = await fetch(actualUrl, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'X-Api-Key': apiKey, 'X-Target-Url': targetUrl, ...readingHeaders },
+        headers: { 'Content-Type': 'application/json', 'X-Api-Key': apiKey, 'X-Target-Url': targetUrl },
         body, signal,
       })
     } else {
@@ -246,7 +244,7 @@ export async function* streamChat({ apiKey, apiBaseUrl = 'https://api.anthropic.
       console.log('[API] 发起fetch (OpenAI-compat via Worker):', actualUrl)
       response = await fetch(actualUrl, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'X-Api-Key': apiKey, 'X-Target-Url': chatUrl, ...readingHeaders },
+        headers: { 'Content-Type': 'application/json', 'X-Api-Key': apiKey, 'X-Target-Url': chatUrl },
         body, signal,
       })
     } else {
