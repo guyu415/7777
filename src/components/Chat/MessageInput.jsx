@@ -274,9 +274,11 @@ const MessageInput = forwardRef(function MessageInput({ onSend, onSendBatch, onS
   const resizeTextarea = useCallback((forceExpanded = inputExpanded) => {
     const el = textareaRef.current
     if (!el) return
-    const viewportHeight = window.visualViewport?.height || window.innerHeight || 800
+    const viewportHeight = window.innerHeight || window.visualViewport?.height || 800
+    // 展开态按整屏高度的 60% 计算，减去输入框自身上下内边距后，
+    // 外层面板最终约占 60dvh；不再被旧的 360px 上限卡住。
     const maxHeight = forceExpanded
-      ? Math.min(Math.max(viewportHeight * 0.38, 180), 360)
+      ? Math.max(viewportHeight * 0.60 - 18, 180)
       : 96
     el.style.height = 'auto'
     const needsExpand = el.scrollHeight > 97
@@ -728,19 +730,21 @@ const MessageInput = forwardRef(function MessageInput({ onSend, onSendBatch, onS
         <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={handleImage} />
         <input ref={attachmentFileRef} type="file" className="hidden" onChange={handleFile} />
 
-        {/* 展开菜单固定在输入框左侧；旋转后的加号即为收起按钮。 */}
-        <button
-          ref={plusBtnRef}
-          onClick={() => setMenuOpen(v => !v)}
-          title="更多"
-          style={{
-            ...btnBase,
-            transform: menuOpen ? 'rotate(45deg)' : 'rotate(0deg)',
-            background: menuOpen ? `${primaryColor}30` : 'rgba(255,182,209,0.25)',
-          }}
-        >
-          <PlusIcon />
-        </button>
+        {/* 收起态显示加号；展开态隐藏并释放左侧空间，让编辑区铺满。 */}
+        {!inputExpanded && (
+          <button
+            ref={plusBtnRef}
+            onClick={() => setMenuOpen(v => !v)}
+            title="更多"
+            style={{
+              ...btnBase,
+              transform: menuOpen ? 'rotate(45deg)' : 'rotate(0deg)',
+              background: menuOpen ? `${primaryColor}30` : 'rgba(255,182,209,0.25)',
+            }}
+          >
+            <PlusIcon />
+          </button>
+        )}
 
         <div style={{
           flex: 1, minWidth: 0, display: 'flex', alignItems: 'flex-end', position: 'relative',
@@ -750,13 +754,16 @@ const MessageInput = forwardRef(function MessageInput({ onSend, onSendBatch, onS
           borderRadius: 20,
           padding: '8px 14px',
           minHeight: 40,
-          maxHeight: inputExpanded ? 'min(42dvh, 384px)' : 120,
+          maxHeight: inputExpanded ? '60dvh' : 120,
           border: '1px solid rgba(255,182,209,0.3)',
           boxShadow: 'inset 0 1px 4px rgba(255,133,179,0.08)',
         }}>
           {inputCanExpand && <button
             type="button"
-            onClick={() => setInputExpanded(value => !value)}
+            onClick={() => {
+               setInputExpanded(value => !value)
+               setMenuOpen(false)
+             }}
             title={inputExpanded ? '收起输入框' : '展开输入框'}
             aria-label={inputExpanded ? '收起输入框' : '展开输入框'}
             aria-pressed={inputExpanded}
@@ -781,7 +788,7 @@ const MessageInput = forwardRef(function MessageInput({ onSend, onSendBatch, onS
               flex: 1, background: 'transparent', border: 'none', outline: 'none',
               fontSize: 18, lineHeight: '1.5',
               color: '#8b5060', resize: 'none', overflow: 'auto',
-              maxHeight: inputExpanded ? 'min(38dvh, 360px)' : 96,
+              maxHeight: inputExpanded ? 'calc(60dvh - 18px)' : 96,
               paddingRight: inputCanExpand ? 30 : 0, fontFamily: 'inherit',
             }}
             className="placeholder-[#e8b4c4]"
