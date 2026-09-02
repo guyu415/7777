@@ -6,16 +6,19 @@ import {
   Clock3,
   Gauge,
   Highlighter,
+  Library,
   Pause,
   PenLine,
   Play,
   RotateCcw,
   ScrollText,
   Sparkles,
+  Trash2,
+  Upload,
   X,
 } from 'lucide-react'
 import { useShallow } from 'zustand/react/shallow'
-import { useStore } from '../store'
+import { deleteReadingBook, getReadingBooks, saveReadingBook, useStore } from '../store'
 import {
   READING_BOOKS,
   countBookCharacters,
@@ -24,6 +27,7 @@ import {
 } from '../data/readingBooks'
 import { readOneParagraph } from '../services/aiReading'
 import { stopProactiveReading } from '../services/proactiveReading'
+import { parseReadingBookFile } from '../services/readingLibrary'
 import {
   addReadingUsage,
   approveReadingSession,
@@ -252,6 +256,38 @@ function EmptyPanel({ text }) {
   return <div className="ai-reading__empty-panel"><Sparkles size={17} /><p>{text}</p></div>
 }
 
+function BookLibraryOverlay({ books, activeBookId, onSelect, onDelete, onImport, onClose }) {
+  return (
+    <div className="ai-reading__overlay" role="dialog" aria-modal="true" aria-label="我的书架">
+      <button className="ai-reading__overlay-backdrop" type="button" onClick={onClose} aria-label="关闭" />
+      <section className="ai-reading__sheet ai-reading__library-sheet">
+        <div className="ai-reading__sheet-handle" aria-hidden="true" />
+        <header className="ai-reading__sheet-header">
+          <div><strong>我的书架</strong><span>{books.length} 本图书 · 内容只保存在本机</span></div>
+          <button type="button" onClick={onClose} aria-label="关闭"><X size={18} /></button>
+        </header>
+        <div className="ai-reading__library-actions">
+          <button type="button" onClick={onImport}><Upload size={15} />导入图书</button>
+          <small>支持 TXT、Markdown、JSON、EPUB，单本不超过 20 MB</small>
+        </div>
+        <div className="ai-reading__sheet-body">
+          {books.map(book => (
+            <div key={book.id} className={`ai-reading__library-book ${book.id === activeBookId ? 'is-active' : ''}`}>
+              <button type="button" className="ai-reading__library-select" onClick={() => onSelect(book)}>
+                <span><BookOpen size={16} /></span>
+                <span><strong>《{book.title}》</strong><small>{book.author || '未知作者'} · {book.chapters.length} 章</small></span>
+              </button>
+              {book.importedAt && (
+                <button type="button" className="ai-reading__library-delete" onClick={() => onDelete(book)} aria-label={`删除《${book.title}》`}><Trash2 size={15} /></button>
+              )}
+            </div>
+          ))}
+        </div>
+      </section>
+    </div>
+  )
+}
+
 export default function AIReading({ theme, onBack }) {
   const {
     readingState,
@@ -259,6 +295,7 @@ export default function AIReading({ theme, onBack }) {
     readingSessions,
     upsertReadingSession,
     updateReadingSession,
+    switchReadingBook,
     sessions,
     currentSessionId,
     providers,
@@ -275,6 +312,7 @@ export default function AIReading({ theme, onBack }) {
     readingSessions: state.readingSessions,
     upsertReadingSession: state.upsertReadingSession,
     updateReadingSession: state.updateReadingSession,
+    switchReadingBook: state.switchReadingBook,
     sessions: state.sessions,
     currentSessionId: state.currentSessionId,
     providers: state.providers,
@@ -287,8 +325,21 @@ export default function AIReading({ theme, onBack }) {
     useWorkerProxy: state.useWorkerProxy,
   })))
 
+  const [importedBooks, setImportedBooks] = useState([])
+  const [libraryOpen, setLibraryOpen] = useState(false)
+  const [importNotice, setImportNotice] = useState('')
+  const fileInputRef = useRef(null)
+  useEffect(() => {
+    let cancelled = false
+    getReadingBooks().then(items => {
+      if (!cancelled) setImportedBooks((items || []).sort((a, b) => (b.importedAt || 0) - (a.importedAt || 0)))
+    }).catch(error => { if (!cancelled) setImportNotice(`书架读取失败：${error.message}`) })
+    return () => { cancelled = true }
+  }, [])
+
+  const allBooks = useMemo(() => [...importedBooks, ...READING_BOOKS], [importedBooks])
   const state = readingState || createInitialReadingState()
-  const book = READING_BOOKS.find(item => item.id === state.bookId) || READING_BOOKS[0]
+  const book = allBooks.find(item => item.id === state.bookId) || READING_BOOKS[0]
   const blocks = useMemo(() => flattenBook(book), [book])
   const totalChars = useMemo(() => countBookCharacters(book), [book])
   const currentIndex = Math.max(0, blocks.findIndex(block => block.id === state.currentParagraphId))
@@ -412,6 +463,46 @@ export default function AIReading({ theme, onBack }) {
     readingStateRef.current = next
     updateReadingState(updates)
   }, [updateReadingState])
+
+  const selectBook = useCallback((nextBook) => {
+    runRef.current += 1
+    abortRef.current?.abort()
+    runningRef.current = false
+    const saved = useStore.getState().readingBookStates?.[nextBook.id] || createInitialReadingState(nextBook)
+    readingStateRef.current = saved
+    switchReadingBook(nextBook)
+    setSelectedNoteId(null)
+    setFollowAi(true)
+    setLibraryOpen(false)
+    setImportNotice('')
+  }, [switchReadingBook])
+
+  const importBook = useCallback(async (event) => {
+    const file = event.target.files?.[0]
+    event.target.value = ''
+    if (!file) return
+    setImportNotice('正在导入……')
+    try {
+      const imported = await parseReadingBookFile(file)
+      await saveReadingBook(imported)
+      setImportedBooks(current => [imported, ...current.filter(item => item.id !== imported.id)])
+      selectBook(imported)
+      setImportNotice(`《${imported.title}》已导入`)
+    } catch (error) {
+      setImportNotice(error?.message || '图书导入失败。')
+    }
+  }, [selectBook])
+
+  const removeImportedBook = useCallback(async (targetBook) => {
+    if (!window.confirm(`删除本机书架中的《${targetBook.title}》？`)) return
+    try {
+      await deleteReadingBook(targetBook.id)
+      setImportedBooks(current => current.filter(item => item.id !== targetBook.id))
+      if (readingStateRef.current.bookId === targetBook.id) selectBook(READING_BOOKS[0])
+    } catch (error) {
+      setImportNotice(`删除失败：${error.message}`)
+    }
+  }, [selectBook])
 
   const addLog = useCallback((entry) => {
     const nextLog = [...(readingStateRef.current.readingLog || []), entry].slice(-200)
@@ -953,10 +1044,14 @@ export default function AIReading({ theme, onBack }) {
           <span><BookOpen size={14} /> AI 自主阅读</span>
           <small>你可以旁观，也可以随时翻页</small>
         </div>
-        <button type="button" className="ai-reading__locate" onClick={() => scrollToCurrent(true)} aria-label="回到 AI 当前阅读位置" title="回到 AI 当前阅读位置">
-          <ArrowDownToLine size={17} />
-        </button>
+        <div className="ai-reading__topbar-actions">
+          <button type="button" className="ai-reading__library-open" onClick={() => setLibraryOpen(true)} aria-label="打开书架"><Library size={16} /><span>书架</span></button>
+          <button type="button" className="ai-reading__import" onClick={() => fileInputRef.current?.click()} aria-label="导入图书"><Upload size={16} /><span>导入</span></button>
+        </div>
+        <input ref={fileInputRef} className="ai-reading__file-input" type="file" accept=".txt,.md,.markdown,.json,.epub,text/plain,text/markdown,application/json,application/epub+zip" onChange={importBook} />
       </header>
+
+      {importNotice && <div className="ai-reading__import-notice" role="status">{importNotice}</div>}
 
       <section className="ai-reading__progress-card" aria-label="阅读进度">
         <div className="ai-reading__book-line">
@@ -1074,6 +1169,16 @@ export default function AIReading({ theme, onBack }) {
           onSelectNote={selectNote}
         />
       )}
+      {libraryOpen && (
+        <BookLibraryOverlay
+          books={allBooks}
+          activeBookId={book.id}
+          onSelect={selectBook}
+          onDelete={removeImportedBook}
+          onImport={() => fileInputRef.current?.click()}
+          onClose={() => setLibraryOpen(false)}
+        />
+      )}
 
       <style>{`
         .ai-reading {
@@ -1099,10 +1204,15 @@ export default function AIReading({ theme, onBack }) {
           background: radial-gradient(circle at 84% 12%, color-mix(in srgb, var(--reading-primary) 10%, transparent), transparent 29%), radial-gradient(circle at 7% 76%, rgba(193,224,214,.16), transparent 32%);
         }
         .ai-reading button { font: inherit; }
-        .ai-reading__topbar { flex: 0 0 auto; display: grid; grid-template-columns: 38px 1fr 38px; align-items: center; gap: 5px; padding: calc(var(--safe-top) + 8px) 14px 5px; }
+        .ai-reading__topbar { flex: 0 0 auto; display: grid; grid-template-columns: 38px 1fr auto; align-items: center; gap: 5px; padding: calc(var(--safe-top) + 8px) 14px 5px; }
         .ai-reading__back, .ai-reading__locate { width: 34px; height: 34px; display: grid; place-items: center; border: 0; border-radius: 50%; color: var(--reading-muted); background: rgba(255,255,255,.42); cursor: pointer; }
         .ai-reading__back:active, .ai-reading__locate:active { transform: scale(.94); }
         .ai-reading__locate { justify-self: end; color: var(--reading-primary-dark); background: color-mix(in srgb, var(--reading-primary) 10%, rgba(255,255,255,.55)); }
+        .ai-reading__topbar-actions { display: flex; align-items: center; gap: 5px; }
+        .ai-reading__topbar-actions button { height: 32px; display: inline-flex; align-items: center; gap: 4px; padding: 0 8px; border: 0; border-radius: 11px; color: var(--reading-primary-dark); font-size: 9px; background: rgba(255,255,255,.48); cursor: pointer; }
+        .ai-reading__topbar-actions button:active { transform: scale(.95); }
+        .ai-reading__file-input { position: fixed; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
+        .ai-reading__import-notice { flex: 0 0 auto; margin: 0 16px 4px; overflow: hidden; color: var(--reading-primary-dark); font-size: 9px; text-align: right; text-overflow: ellipsis; white-space: nowrap; }
         .ai-reading__topbar-title { min-width: 0; text-align: center; }
         .ai-reading__topbar-title span { display: flex; justify-content: center; align-items: center; gap: 5px; color: var(--reading-primary-dark); font-size: 13px; font-weight: 650; letter-spacing: .08em; }
         .ai-reading__topbar-title small { display: block; margin-top: 3px; color: var(--reading-muted); font-size: 9px; }
@@ -1187,6 +1297,18 @@ export default function AIReading({ theme, onBack }) {
         .ai-reading__sheet-header span { display: block; margin-top: 3px; color: #a7adb1; font-size: 10px; }
         .ai-reading__sheet-header button { width: 32px; height: 32px; display: grid; place-items: center; border: 0; border-radius: 50%; color: #8c969b; background: #f2eff4; cursor: pointer; }
         .ai-reading__sheet-body { flex: 1; min-height: 0; overflow-y: auto; padding: 9px 14px max(22px, var(--safe-bottom)); -webkit-overflow-scrolling: touch; }
+        .ai-reading__library-actions { display: flex; align-items: center; gap: 9px; padding: 10px 15px; border-bottom: 1px solid rgba(130,140,150,.1); }
+        .ai-reading__library-actions button { display: inline-flex; align-items: center; gap: 5px; height: 34px; padding: 0 12px; border: 0; border-radius: 11px; color: white; font-size: 11px; background: linear-gradient(135deg, color-mix(in srgb, var(--reading-primary) 88%, white), var(--reading-primary-dark)); }
+        .ai-reading__library-actions small { color: #a8afb2; font-size: 8px; line-height: 1.4; }
+        .ai-reading__library-book { display: flex; align-items: center; gap: 6px; border-bottom: 1px solid rgba(130,140,150,.1); border-radius: 12px; }
+        .ai-reading__library-book.is-active { background: color-mix(in srgb, var(--reading-primary) 7%, transparent); }
+        .ai-reading__library-select { min-width: 0; flex: 1; display: flex; align-items: center; gap: 10px; padding: 11px 7px; border: 0; color: #66727a; text-align: left; background: transparent; }
+        .ai-reading__library-select > span:first-child { width: 31px; height: 31px; flex: 0 0 auto; display: grid; place-items: center; border-radius: 10px; color: var(--reading-primary-dark); background: rgba(255,255,255,.62); }
+        .ai-reading__library-select > span:last-child { min-width: 0; }
+        .ai-reading__library-select strong, .ai-reading__library-select small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .ai-reading__library-select strong { font-size: 12px; font-weight: 600; }
+        .ai-reading__library-select small { margin-top: 4px; color: #a3aaae; font-size: 9px; }
+        .ai-reading__library-delete { width: 32px; height: 32px; flex: 0 0 auto; display: grid; place-items: center; margin-right: 6px; border: 0; border-radius: 10px; color: #b99a9a; background: rgba(255,255,255,.46); }
         .ai-reading__sheet-note, .ai-reading__log-entry { width: 100%; display: flex; align-items: flex-start; gap: 9px; padding: 12px 7px; border: 0; border-bottom: 1px solid rgba(130,140,150,.1); color: #69747b; text-align: left; background: transparent; cursor: pointer; }
         .ai-reading__sheet-note-mark { display: grid; place-items: center; width: 27px; height: 27px; flex: 0 0 auto; color: #bd985e; border-radius: 9px; background: #fff5d9; }
         .ai-reading__sheet-note > span:last-child { min-width: 0; display: grid; gap: 5px; }

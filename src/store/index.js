@@ -8,7 +8,7 @@ let db
 
 async function getDB() {
   if (!db) {
-    db = await openDB('pink-chat', 3, {
+    db = await openDB('pink-chat', 4, {
       upgrade(database, oldVersion, _newVersion, transaction) {
         let messagesStore
         if (!database.objectStoreNames.contains('messages')) {
@@ -26,6 +26,9 @@ async function getDB() {
         }
         if (!database.objectStoreNames.contains('blobs')) {
           database.createObjectStore('blobs', { keyPath: 'id' })
+        }
+        if (!database.objectStoreNames.contains('readingBooks')) {
+          database.createObjectStore('readingBooks', { keyPath: 'id' })
         }
       },
     })
@@ -116,6 +119,21 @@ export async function deleteMessagesForSession(conversationId) {
 export async function getAllMessages() {
   const database = await getDB()
   return database.getAll('messages')
+}
+
+export async function saveReadingBook(book) {
+  const database = await getDB()
+  await database.put('readingBooks', book)
+}
+
+export async function getReadingBooks() {
+  const database = await getDB()
+  return database.getAll('readingBooks')
+}
+
+export async function deleteReadingBook(bookId) {
+  const database = await getDB()
+  await database.delete('readingBooks', bookId)
 }
 
 const DEFAULT_SESSIONS = [{
@@ -214,6 +232,7 @@ export const useStore = create(
       readingState: createInitialReadingState(),
       readingSessions: [],
       pendingReadingRequest: null,
+      readingBookStates: {},
       // Which group chat (多AI群聊) is currently open, when currentView is
       // 'groupChat' — a real server-side id (see channel-server.ts's Group
       // chat section), never persisted alongside currentView itself (that
@@ -290,7 +309,20 @@ export const useStore = create(
       setDiaryTarget: (id) => set({ diaryTarget: id }),
       updateReadingState: (updates) => set((state) => ({
         readingState: { ...state.readingState, ...updates },
+        readingBookStates: {
+          ...(state.readingBookStates || {}),
+          [state.readingState?.bookId || 'lily-garden-notes']: { ...state.readingState, ...updates },
+        },
       })),
+      switchReadingBook: (book) => set((state) => {
+        const current = state.readingState || createInitialReadingState()
+        const savedStates = {
+          ...(state.readingBookStates || {}),
+          [current.bookId]: current,
+        }
+        const next = savedStates[book?.id] || createInitialReadingState(book)
+        return { readingState: next, readingBookStates: savedStates, pendingReadingRequest: null }
+      }),
       setPendingReadingRequest: (request) => set({ pendingReadingRequest: request || null }),
       clearPendingReadingRequest: () => set({ pendingReadingRequest: null }),
       upsertReadingSession: (session) => set((state) => {
@@ -530,6 +562,7 @@ export const useStore = create(
         cleaned.readingState = { ...createInitialReadingState(), ...(cleaned.readingState || {}) }
         cleaned.readingSessions = Array.isArray(cleaned.readingSessions) ? cleaned.readingSessions : []
         cleaned.pendingReadingRequest = cleaned.pendingReadingRequest || null
+        cleaned.readingBookStates = cleaned.readingBookStates || {}
         return cleaned
       }),
 
@@ -549,7 +582,7 @@ export const useStore = create(
     }),
     {
       name: 'pink-chat-settings',
-      version: 24,
+      version: 25,
       migrate: (persisted, version) => {
         if (version < 2) {
           const providers = [
@@ -750,6 +783,7 @@ export const useStore = create(
             pendingReadingRequest: persisted.pendingReadingRequest || null,
           }
         }
+        if (version < 25) persisted = { readingBookStates: {}, ...persisted }
         return persisted
       },
       partialize: (state) => ({
@@ -786,6 +820,7 @@ export const useStore = create(
         readingState: state.readingState,
         readingSessions: state.readingSessions,
         pendingReadingRequest: state.pendingReadingRequest,
+        readingBookStates: state.readingBookStates,
         groupUserAvatars: state.groupUserAvatars,
         groupChatBg: state.groupChatBg,
         mysteryGames: state.mysteryGames,

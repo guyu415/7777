@@ -849,7 +849,6 @@ export default function App() {
           {currentView === 'sessions' && (
             <UniverseHome
               theme={theme}
-              onOpenChat={() => setCurrentView('chat')}
               onOpenReading={openAiReading}
               onOpenLedger={() => setCurrentView('ledger')}
               onOpenAnniversary={() => setCurrentView('anniversary')}
