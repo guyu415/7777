@@ -76,10 +76,14 @@ describe('companion connection recovery', () => {
     freshSocket.open()
     freshSocket.message({
       type: 'history', openTurnId: null, queuedTurnIds: [], resetAt: 0,
-      items: [{ type: 'msg', id: 'reply-1', from: 'cc', text: '我在', ts: Date.now(), turnId: 'turn-1' }],
+      items: [{
+        type: 'msg', id: 'reply-1', from: 'cc', text: '我在', ts: Date.now(),
+        turnId: 'turn-1', thinking: '先确认她是不是在叫我。',
+      }],
     })
 
-    await expect(firstChunk).resolves.toEqual({ value: { text: '我在', wireId: 'reply-1' }, done: false })
+    await expect(firstChunk).resolves.toEqual({ value: { reasoningReplace: '先确认她是不是在叫我。' }, done: false })
+    await expect(stream.next()).resolves.toEqual({ value: { text: '我在', wireId: 'reply-1' }, done: false })
     await expect(stream.next()).resolves.toEqual({ value: undefined, done: true })
   })
 

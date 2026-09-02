@@ -1,5 +1,5 @@
 // 思维链只保留近 N 轮（一轮 = 一条用户消息起、到下一条用户消息前的区间）。
-// 更早的 assistant 消息上挂着的 reasoning/reasoningStreaming 字段被整体移除
+// 更早的 assistant 消息上挂着的 reasoning 与配套计时字段被整体移除
 // —— 清的是持久化在本地 IndexedDB / 云端 KV 里的展示副本；发给模型的请求
 // 本来就只带 role+content（见 services/claude.js buildMessages），CC/Anthropic
 // 也自动丢弃历史轮的 thinking，所以模型上下文里从来不会积累旧思维链。
@@ -20,7 +20,10 @@ export function pruneReasoningBeyondTurns(messages, keepTurns = 5) {
   const out = messages.map((m, i) => {
     if (i >= cutoffIdx) return m
     if (m.role === 'assistant' && (m.reasoning !== undefined || m.reasoningStreaming !== undefined)) {
-      const { reasoning, reasoningStreaming, ...rest } = m
+      const {
+        reasoning, reasoningStreaming, reasoningStartedAt,
+        reasoningCompletedAt, reasoningDurationMs, ...rest
+      } = m
       changed.push(rest)
       return rest
     }

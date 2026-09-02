@@ -59,8 +59,14 @@ describe('pruneReasoningBeyondTurns', () => {
 
   it('保留 wireIds 等其他字段', () => {
     const msgs = makeRounds(6)
-    msgs[1] = { ...msgs[1], wireIds: ['m1', 'm2'] }
+    msgs[1] = {
+      ...msgs[1], wireIds: ['m1', 'm2'], reasoningStartedAt: 100,
+      reasoningCompletedAt: 2200, reasoningDurationMs: 2100,
+    }
     const { changed } = pruneReasoningBeyondTurns(msgs)
     expect(changed[0].wireIds).toEqual(['m1', 'm2'])
+    expect(changed[0].reasoningStartedAt).toBeUndefined()
+    expect(changed[0].reasoningCompletedAt).toBeUndefined()
+    expect(changed[0].reasoningDurationMs).toBeUndefined()
   })
 })

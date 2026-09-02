@@ -302,6 +302,8 @@ export function useChat() {
     let fullContent = ''
     let fullReasoning = ''
     let contentStarted = false
+    let reasoningStartedAt = null
+    let reasoningCompletedAt = null
     // Declared up here with fullReasoning (not down by the stream loop) so
     // finalizeCurrentTextBubble, defined below, closes over it safely.
     let toolUses = []
@@ -348,13 +350,36 @@ export function useChat() {
       }
     }
 
+    const beginReasoning = () => {
+      if (!reasoningStartedAt) reasoningStartedAt = currentTextTimestamp || Date.now()
+      return reasoningStartedAt
+    }
+    const reasoningFields = () => {
+      if (!fullReasoning) return {}
+      const fields = { reasoning: fullReasoning, reasoningStartedAt }
+      if (reasoningCompletedAt) {
+        fields.reasoningCompletedAt = reasoningCompletedAt
+        fields.reasoningDurationMs = Math.max(1, reasoningCompletedAt - reasoningStartedAt)
+        fields.reasoningStreaming = false
+      } else {
+        fields.reasoningStreaming = true
+      }
+      return fields
+    }
+    const finishReasoning = (finishedAt = Date.now()) => {
+      if (!fullReasoning) return {}
+      beginReasoning()
+      if (!reasoningCompletedAt) reasoningCompletedAt = Math.max(reasoningStartedAt, finishedAt)
+      return reasoningFields()
+    }
+
     // Finalizes whatever text has accumulated into currentTextId — persists
     // it to IndexedDB if it has real content, or drops the empty typing-
     // indicator placeholder if a voice chunk arrived before any text did.
     // Shared by the mid-stream voice-interruption point and end-of-turn
     // cleanup so both leave IndexedDB and the store in the same state.
     const finalizeCurrentTextBubble = async () => {
-      const reasoningFields = fullReasoning ? { reasoning: fullReasoning, reasoningStreaming: false } : {}
+      const finishedReasoningFields = finishReasoning()
       // Persisted alongside reasoning for the same reason: without this the
       // activity list is live-only and vanishes on the next page load, which
       // reads as a bug rather than as intended transience.
@@ -375,7 +400,7 @@ export function useChat() {
           const fragment = displayFragments[index]
           const id = index === 0 ? currentTextId : genId()
           const fields = {
-            ...(index === 0 ? { ...reasoningFields, ...toolFields } : {}),
+            ...(index === 0 ? { ...finishedReasoningFields, ...toolFields } : {}),
             ...(index === displayFragments.length - 1 ? musicFields : {}),
             ...vpsTokenFields(fragment),
           }
@@ -402,13 +427,13 @@ export function useChat() {
     // directly, same end as wireIdsField() achieves for text bubbles.
     const deliverVpsVoice = async ({ id: voiceWireId, text, voice }, reasoning) => {
       const vid = voiceWireId || genId()
-      const reasoningFields = reasoning ? { reasoning, reasoningStreaming: false } : {}
-      addMessage({ id: vid, conversationId: CONVERSATION_ID, role: 'assistant', type: 'text', content: '', timestamp: Date.now(), streaming: false, voiceLoading: true, ...turnFields, ...reasoningFields })
+      const finishedReasoningFields = reasoning ? finishReasoning() : {}
+      addMessage({ id: vid, conversationId: CONVERSATION_ID, role: 'assistant', type: 'text', content: '', timestamp: Date.now(), streaming: false, voiceLoading: true, ...turnFields, ...finishedReasoningFields })
       const hasTts = effectiveTtsApiKey && effectiveTtsGroupId
       if (!hasTts) {
         // "Tool unavailable": CC chose to speak but this session has no TTS
         // credentials configured — degrade to text, never silently.
-        const updates = { type: 'text', content: text, voiceText: text, voiceFailed: true, voiceLoading: false, ...reasoningFields }
+        const updates = { type: 'text', content: text, voiceText: text, voiceFailed: true, voiceLoading: false, ...finishedReasoningFields }
         updateMessage(vid, updates)
         await saveMessage({ id: vid, conversationId: CONVERSATION_ID, role: 'assistant', ...updates, timestamp: Date.now(), streaming: false, ...turnFields })
         updateSession(CONVERSATION_ID, { lastMsgPreview: text.slice(0, 40), lastMsgTime: Date.now() })
@@ -426,13 +451,13 @@ export function useChat() {
         } catch {}
         const voiceBlobId = genId()
         await saveBlob(voiceBlobId, blob)
-        const updates = { type: 'voice', voiceBlobId, duration, content: '', voiceText: text, voiceLoading: false, ...reasoningFields }
+        const updates = { type: 'voice', voiceBlobId, duration, content: '', voiceText: text, voiceLoading: false, ...finishedReasoningFields }
         updateMessage(vid, updates)
         await saveMessage({ id: vid, conversationId: CONVERSATION_ID, role: 'assistant', ...updates, timestamp: Date.now(), streaming: false, ...turnFields })
         updateSession(CONVERSATION_ID, { lastMsgPreview: `[语音] ${text}`.slice(0, 40), lastMsgTime: Date.now() })
       } catch (e) {
         console.error('[CC-VOICE] 合成失败:', e?.message)
-        const updates = { type: 'text', content: text, voiceText: text, voiceFailed: true, voiceLoading: false, ...reasoningFields }
+        const updates = { type: 'text', content: text, voiceText: text, voiceFailed: true, voiceLoading: false, ...finishedReasoningFields }
         updateMessage(vid, updates)
         await saveMessage({ id: vid, conversationId: CONVERSATION_ID, role: 'assistant', ...updates, timestamp: Date.now(), streaming: false, ...turnFields })
         updateSession(CONVERSATION_ID, { lastMsgPreview: text.slice(0, 40), lastMsgTime: Date.now() })
@@ -556,9 +581,8 @@ export function useChat() {
         if (!dirty) return
         dirty = false
         const updates = {}
-        if (!contentStarted && fullReasoning !== storedReasoning) {
-          updates.reasoning = fullReasoning
-          updates.reasoningStreaming = true
+        if (fullReasoning !== storedReasoning) {
+          Object.assign(updates, reasoningFields())
           storedReasoning = fullReasoning
         }
         if (contentStarted && fullContent !== storedContent) {
@@ -580,6 +604,14 @@ export function useChat() {
       }
 
       const flushTimer = setInterval(flushUpdate, 80)
+      // iOS can suspend interval callbacks while this tab is in the app
+      // switcher. Catch up synchronously on foreground before rendering the
+      // answer; otherwise queued text can overtake the reasoning flush.
+      const flushWhenVisible = () => {
+        if (document.visibilityState === 'visible') flushUpdate()
+      }
+      document.addEventListener('visibilitychange', flushWhenVisible)
+      window.addEventListener('pageshow', flushWhenVisible)
 
       // Claude Code (VPS) talks to an already-running, already-persona'd Claude
       // Code session on the VPS over a single persistent WebSocket — it is NOT
@@ -647,8 +679,11 @@ export function useChat() {
       try {
         for await (const chunk of chunkSource) {
           if (chunk.reasoning) {
+            const firstReasoningChunk = !fullReasoning
             fullReasoning += chunk.reasoning
+            beginReasoning()
             dirty = true
+            if (firstReasoningChunk) flushUpdate()
           }
           if (chunk.toolUse) {
             toolUses.push(chunk.toolUse)
@@ -660,7 +695,9 @@ export function useChat() {
           // can't get duplicated.
           if (chunk.reasoningReplace !== undefined) {
             fullReasoning = chunk.reasoningReplace
+            if (fullReasoning) beginReasoning()
             dirty = true
+            flushUpdate()
           }
           if (isVpsProvider && chunk.wireId) vpsWireIds.push(chunk.wireId)
           if (isVpsProvider && chunk.musicAction) vpsCurrentMusicAction = chunk.musicAction
@@ -690,6 +727,8 @@ export function useChat() {
             storedContent = ''
             fullReasoning = ''
             storedReasoning = ''
+            reasoningStartedAt = null
+            reasoningCompletedAt = null
             toolUses = []
             storedToolCount = 0
             vpsWireIds.length = 0
@@ -705,6 +744,10 @@ export function useChat() {
               // so Pass 1 can preserve its content and identity as one bubble.
               if (isVpsProvider) vpsWireIdLog.push({ wireId: chunk.wireId || null, text: chunk.text })
               if (!contentStarted) {
+                // Foreground recovery may deliver thinking + reply in one
+                // burst. Persist/paint thinking before changing phases.
+                flushUpdate()
+                const completedFields = finishReasoning()
                 contentStarted = true
                 storedReasoning = fullReasoning
                 if (isVpsProvider && !currentTextAdded) {
@@ -712,7 +755,7 @@ export function useChat() {
                   currentTextAdded = true
                 }
                 // Immediate update for phase transition only
-                updateMessage(currentTextId, { reasoningStreaming: false })
+                updateMessage(currentTextId, completedFields)
               }
               fullContent = nextContent
               dirty = true
@@ -721,6 +764,8 @@ export function useChat() {
         }
       } finally {
         clearInterval(flushTimer)
+        document.removeEventListener('visibilitychange', flushWhenVisible)
+        window.removeEventListener('pageshow', flushWhenVisible)
         flushUpdate()  // flush any remaining buffered content
       }
 
@@ -729,8 +774,9 @@ export function useChat() {
       // already attached the correct (bubble-scoped, reset-on-rotation) reasoning to
       // whichever bubble it actually belongs to; assistantId may not even be that bubble.
       if (fullReasoning && !(isVpsProvider && vpsUsedVoiceThisTurn)) {
-        assistantMsg.reasoning = fullReasoning
-        updateMessage(assistantId, { reasoning: fullReasoning, reasoningStreaming: false })
+        const completedFields = finishReasoning()
+        Object.assign(assistantMsg, completedFields)
+        updateMessage(assistantId, completedFields)
       }
       // Same bubble-scoping rule as reasoning above, for the same reason.
       if (toolUses.length && !(isVpsProvider && vpsUsedVoiceThisTurn)) {
@@ -1010,14 +1056,17 @@ export function useChat() {
         // honestly rather than implying the VPS turn was actually interrupted.
         const stopNote = isVpsProvider ? '\n\n_（已停止接收，本轮服务器可能仍在完成）_' : ''
         const savedContent = stripDisplayTags(fullContent) + stopNote
+        const stoppedReasoningFields = finishReasoning()
+        Object.assign(assistantMsg, stoppedReasoningFields)
         if (savedContent.trim()) {
-          updateMessage(assistantId, { content: savedContent, streaming: false, ...wireIdsField() })
-          await saveMessage({ ...assistantMsg, content: savedContent, streaming: false, ...wireIdsField() })
+          updateMessage(assistantId, { content: savedContent, streaming: false, ...stoppedReasoningFields, ...wireIdsField() })
+          await saveMessage({ ...assistantMsg, content: savedContent, streaming: false, ...stoppedReasoningFields, ...wireIdsField() })
           updateSession(CONVERSATION_ID, { lastMsgPreview: savedContent.slice(0, 40), lastMsgTime: Date.now() })
         } else {
           deleteMessage(assistantId)
         }
       } else {
+        const failedReasoningFields = finishReasoning()
         const companionHint = {
           auth_required: '（companion 未登录或登录已过期，请在设置中重新登录）',
           turn_busy: '（他上一轮还没回完，稍等一下再试）',
@@ -1027,7 +1076,7 @@ export function useChat() {
           reset_in_progress: '（正在清空对话，请稍候再试）',
         }[err.code]
         const displayMsg = companionHint ? `${err.message} ${companionHint}` : err.message
-        updateMessage(assistantId, { content: `❌ ${displayMsg}`, streaming: false, error: true, errorCode: err.code || 'unknown' })
+        updateMessage(assistantId, { content: `❌ ${displayMsg}`, streaming: false, error: true, errorCode: err.code || 'unknown', ...failedReasoningFields })
       }
     } finally {
       abortRef.current = null
@@ -1040,7 +1089,13 @@ export function useChat() {
         const allMsgs = useStore.getState().messages.filter(m => m.conversationId === CONVERSATION_ID)
         const prunedNow = pruneReasoningBeyondTurns(allMsgs)
         for (const m of prunedNow.changed) {
-          updateMessage(m.id, { reasoning: undefined, reasoningStreaming: undefined })
+          updateMessage(m.id, {
+            reasoning: undefined,
+            reasoningStreaming: undefined,
+            reasoningStartedAt: undefined,
+            reasoningCompletedAt: undefined,
+            reasoningDurationMs: undefined,
+          })
           await saveMessage(m)
         }
       } catch (e) {
