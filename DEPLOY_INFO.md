@@ -15,7 +15,7 @@
 - **id**: ee2f737d334c4af7b56a89f83b61092c
 
 ## 前端
-- **Cloudflare Pages 项目**: pink-chat-blt
+- **Cloudflare Pages 项目**: pink-chat（Pages 默认域名为 pink-chat-blt.pages.dev）
 - **生产 URL**: https://pink-chat-blt.pages.dev
 - **GitHub 仓库**: guyu415/7777
 - **main 分支** → 生产环境自动部署
