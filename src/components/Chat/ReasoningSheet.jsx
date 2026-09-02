@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { X } from 'lucide-react'
+import { Languages, X } from 'lucide-react'
 import { formatReasoningSeconds, getReasoningDurationMs } from '../../utils/reasoningTiming'
+import { useReasoningTranslation } from '../../hooks/useReasoningTranslation'
 
 const MIN_SHEET_HEIGHT = 230
 const CLOSE_SHEET_HEIGHT = 165
@@ -16,13 +17,69 @@ function initialSheetHeight() {
   return Math.min(viewportHeight, Math.max(minimum, Math.round(viewportHeight * 0.58)))
 }
 
-export default function ReasoningSheet({ message, open, onClose }) {
+function TranslationSegment({ segment }) {
+  const status = segment.status || 'open'
+  const source = Array.from(segment.raw || '')
+  const translated = Array.from(segment.translation || '')
+  const animating = status === 'animating'
+  const finished = status === 'done'
+  const visibleCount = finished
+    ? translated.length
+    : animating
+      ? Math.min(segment.revealedChars || 0, translated.length)
+      : 0
+
+  if (!animating && !finished) {
+    return (
+      <span className="reasoning-translation-grid" data-translation-status={status}>
+        <span className="reasoning-translation-layer reasoning-translation-layer--original">{segment.raw}</span>
+      </span>
+    )
+  }
+
+  return (
+    <span className="reasoning-translation-grid" data-translation-status={status}>
+      <span className={'reasoning-translation-layer reasoning-translation-layer--original ' + (finished ? 'reasoning-translation-layer--hidden' : '')}>
+        {source.map((char, index) => {
+          const fading = animating && index < (segment.revealedChars || 0)
+          return (
+            <span
+              key={'source-' + index}
+              className="reasoning-translation-original-char"
+              style={fading ? { opacity: 0, filter: 'blur(3px)', transform: 'translateX(-3px)' } : undefined}
+            >
+              {char}
+            </span>
+          )
+        })}
+      </span>
+      <span className={'reasoning-translation-layer reasoning-translation-layer--cn ' + (finished ? '' : 'reasoning-translation-layer--overlay')}>
+        {translated.slice(0, visibleCount).map((char, index) => (
+          <span key={'translated-' + index} className="reasoning-translation-cn-char">{char}</span>
+        ))}
+      </span>
+    </span>
+  )
+}
+
+function ReasoningTranslationView({ snapshot, raw }) {
+  if (!raw) return null
+  if (snapshot.raw !== raw || !snapshot.segments.length) return <span>{raw}</span>
+  return snapshot.segments.map((segment) => <TranslationSegment key={segment.id} segment={segment} />)
+}
+
+export default function ReasoningSheet({ message, open, onClose, translateThinking = false }) {
   const [sheetHeight, setSheetHeight] = useState(null)
   const [dragging, setDragging] = useState(false)
   const [now, setNow] = useState(Date.now())
+  const [showOriginal, setShowOriginal] = useState(false)
   const dragRef = useRef(null)
   const sheetHeightRef = useRef(0)
   const contentRef = useRef(null)
+  const rawReasoning = typeof message?.reasoning === 'string' ? message.reasoning : ''
+  const translation = useReasoningTranslation(message, translateThinking)
+
+  useEffect(() => setShowOriginal(false), [message?.id])
 
   useEffect(() => {
     if (!open) return
@@ -74,7 +131,7 @@ export default function ReasoningSheet({ message, open, onClose }) {
 
   const duration = formatReasoningSeconds(getReasoningDurationMs(message, now))
   const title = duration
-    ? (message.reasoningStreaming ? `正在思考 · ${duration}` : `思考了 ${duration}`)
+    ? (message.reasoningStreaming ? '正在思考 · ' + duration : '思考了 ' + duration)
     : (message.reasoningStreaming ? '正在思考' : '思考过程')
   const beginDrag = (event) => {
     if (event.button !== undefined && event.button !== 0) return
@@ -149,11 +206,11 @@ export default function ReasoningSheet({ message, open, onClose }) {
     <div className="reasoning-sheet-layer" role="presentation">
       <button className="reasoning-sheet-backdrop" aria-label="关闭思考过程" onClick={onClose} />
       <section
-        className={`reasoning-sheet ${reachesTop ? 'reasoning-sheet--at-top' : ''} ${dragging ? 'reasoning-sheet--dragging' : ''}`}
+        className={'reasoning-sheet ' + (reachesTop ? 'reasoning-sheet--at-top ' : '') + (dragging ? 'reasoning-sheet--dragging' : '')}
         role="dialog"
         aria-modal="true"
         aria-label={title}
-        style={sheetHeight == null ? undefined : { height: `${sheetHeight}px` }}
+        style={sheetHeight == null ? undefined : { height: sheetHeight + 'px' }}
         onPointerDown={beginDrag}
         onPointerMove={moveDrag}
         onPointerUp={finishDrag}
@@ -179,12 +236,28 @@ export default function ReasoningSheet({ message, open, onClose }) {
               </div>
               <div className="reasoning-sheet-hint">上下自由拖动 · 可拉至顶部</div>
             </div>
-            <span className="reasoning-sheet-header-spacer" aria-hidden="true" />
+            {translateThinking ? (
+              <button
+                type="button"
+                className="reasoning-sheet-original-toggle"
+                aria-label={showOriginal ? '切换为中文译文' : '查看英文原文'}
+                aria-pressed={showOriginal}
+                data-reasoning-no-drag
+                onClick={() => setShowOriginal((value) => !value)}
+              >
+                <Languages size={14} strokeWidth={1.7} aria-hidden="true" />
+                <span>{showOriginal ? '译文' : '原文'}</span>
+              </button>
+            ) : <span className="reasoning-sheet-header-spacer" aria-hidden="true" />}
           </header>
         </div>
 
         <div ref={contentRef} className="reasoning-sheet-content">
-          {message.reasoning || '思考内容正在生成…'}
+          {rawReasoning
+            ? (showOriginal || !translateThinking
+              ? rawReasoning
+              : <ReasoningTranslationView snapshot={translation} raw={rawReasoning} />)
+            : '思考内容正在生成…'}
           {message.reasoningStreaming && <span className="reasoning-sheet-caret" aria-hidden="true" />}
         </div>
       </section>

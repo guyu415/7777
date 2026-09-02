@@ -220,7 +220,7 @@ function formatFileBytes(bytes) {
   return `${Math.max(1, Math.round(bytes / 1024))}KB`
 }
 
-function MessageBubble({ message, onLongPress, onRegenerate, onRegenerateRound, onRetry, isLoading, userAvatar, aiAvatar, theme, bubbleSkin = 'puppy', pendingReplyVariant = 'default', sameSenderAsPrev, sameSenderAsNext }) {
+function MessageBubble({ message, onLongPress, onRegenerate, onRegenerateRound, onRetry, isLoading, userAvatar, aiAvatar, theme, bubbleSkin = 'puppy', pendingReplyVariant = 'default', sameSenderAsPrev, sameSenderAsNext, translateThinking = false }) {
   const [viewerSrc, setViewerSrc] = useState(null)
   const [pressed, setPressed] = useState(false)
   const [showVoiceText, setShowVoiceText] = useState(false)
@@ -495,7 +495,7 @@ function MessageBubble({ message, onLongPress, onRegenerate, onRegenerateRound, 
               <span>看看它在想什么（{reasoningStatus}）</span>
               <ChevronRight size={15} strokeWidth={1.8} aria-hidden="true" />
             </button>
-            <ReasoningSheet message={message} open={showReasoning} onClose={closeReasoning} />
+            <ReasoningSheet message={message} open={showReasoning} onClose={closeReasoning} translateThinking={translateThinking} />
           </div>
         )}
         {diceValue > 0 && !message.voiceLoading && (

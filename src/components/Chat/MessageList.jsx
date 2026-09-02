@@ -14,7 +14,7 @@ const BOTTOM_THRESHOLD_PX = 96
 const TOP_THRESHOLD_PX = 96
 
 // A long conversation's messages vary wildly in real height (one-line text,
-// multi-paragraph text, images, voice players, expanded thinking folds,
+// multi-paragraph text, images, voice players, reasoning triggers,
 // letter/AC cards) — this is only the *initial guess* used before an item is
 // actually measured; @tanstack/react-virtual corrects it via ResizeObserver
 // the moment each item mounts, so total scroll height stays accurate.
@@ -35,6 +35,7 @@ const MessageList = forwardRef(function MessageList({
   onLongPress, lastAiId, onRegenerate, onRegenerateRound, onRetry,
   isLoading, userAvatar, aiAvatar, theme, bubbleSkin,
   pendingReplyVariant,
+  translateThinking = false,
   selectionMode, selectedIds, onToggleSelect,
   emptyAiName, emptyHasApiKey, onEmptyConfigureClick,
 }, ref) {
@@ -256,6 +257,7 @@ const MessageList = forwardRef(function MessageList({
                   pendingReplyVariant={pendingReplyVariant}
                   sameSenderAsPrev={sameSenderAsPrev}
                   sameSenderAsNext={sameSenderAsNext}
+                  translateThinking={translateThinking}
                 />
                 </div>
               </div>

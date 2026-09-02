@@ -1,4 +1,5 @@
 import { DEFAULT_CODEX_SESSION_ID, normalizeCodexSessionId, buildCodexMessagePayload } from '../utils/codexProtocol'
+export { translateThinking } from './reasoningTranslation'
 
 // Claude Code (VPS) transport — talks to the companion channel server over a
 // single persistent WebSocket, cookie-authenticated. This module never reads,
