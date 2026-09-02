@@ -1,5 +1,5 @@
-import { useState, useRef, useEffect, useCallback, memo } from 'react'
-import { CheckCheck, ChevronRight, Clock3, FileText } from 'lucide-react'
+import { useState, useRef, useEffect, memo } from 'react'
+import { CheckCheck, FileText } from 'lucide-react'
 import VoicePlayer from '../Voice/VoicePlayer'
 import ImageViewer from '../ImageViewer'
 import AcCard from './AcCard'
@@ -7,12 +7,11 @@ import LetterCard from './LetterCard'
 import NeteasePlayCard from './NeteasePlayCard'
 import HealthDataCard from './HealthDataCard'
 import HeartRateCard from './HeartRateCard'
-import ReasoningSheet from './ReasoningSheet'
+import { GoldenRetrieverThinking } from './PendingReplyIndicator'
 import clsx from 'clsx'
 import { parseReplyQuotes } from '../../utils/replyQuotes'
 import { healthDataCategories, isHealthTool } from '../../utils/healthData'
 import { extractHeartRate, isHeartRateTool } from '../../utils/heartRate'
-import { formatReasoningSeconds, getReasoningDurationMs } from '../../utils/reasoningTiming'
 
 // Split content on letter markers — either {{LETTER_CARD:id}} (AI letters, phase 1)
 // or raw [LETTER mood=.. weather=.. date=..]..[/LETTER] (user letters written from diary)
@@ -219,13 +218,16 @@ function formatFileBytes(bytes) {
   return `${Math.max(1, Math.round(bytes / 1024))}KB`
 }
 
-function MessageBubble({ message, onLongPress, onRegenerate, onRegenerateRound, onRetry, isLoading, userAvatar, aiAvatar, theme, bubbleSkin = 'puppy', sameSenderAsPrev, sameSenderAsNext }) {
+function MessageBubble({ message, onLongPress, onRegenerate, onRegenerateRound, onRetry, isLoading, userAvatar, aiAvatar, theme, bubbleSkin = 'puppy', pendingReplyVariant = 'default', sameSenderAsPrev, sameSenderAsNext }) {
   const [viewerSrc, setViewerSrc] = useState(null)
   const [pressed, setPressed] = useState(false)
   const [showVoiceText, setShowVoiceText] = useState(false)
   const [showReasoning, setShowReasoning] = useState(false)
-  const [reasoningNow, setReasoningNow] = useState(Date.now())
   const isUser = message.role === 'user'
+  const showGoldenPending = !isUser
+    && pendingReplyVariant === 'golden-retriever'
+    && message.streaming
+    && !message.content
   const allToolUses = Array.isArray(message.toolUses) ? message.toolUses : []
   const heartToolUses = isUser ? [] : allToolUses.filter((item) => isHeartRateTool(item.tool, item.detail))
   const heartRate = isUser ? null : extractHeartRate(message.content)
@@ -251,26 +253,6 @@ function MessageBubble({ message, onLongPress, onRegenerate, onRegenerateRound, 
   // new. Track the 0 -> dice transition as another authoritative "new roll"
   // signal; a history bubble mounts with dice already present and stays still.
   const hadDiceRef = useRef(diceValue > 0)
-  const closeReasoning = useCallback(() => setShowReasoning(false), [])
-
-  useEffect(() => {
-    if (!message.reasoningStreaming) return
-    const tick = () => setReasoningNow(Date.now())
-    const timer = window.setInterval(tick, 500)
-    const catchUp = () => { if (document.visibilityState === 'visible') tick() }
-    document.addEventListener('visibilitychange', catchUp)
-    window.addEventListener('pageshow', catchUp)
-    return () => {
-      window.clearInterval(timer)
-      document.removeEventListener('visibilitychange', catchUp)
-      window.removeEventListener('pageshow', catchUp)
-    }
-  }, [message.reasoningStreaming])
-
-  const reasoningDuration = formatReasoningSeconds(getReasoningDurationMs(message, reasoningNow))
-  const reasoningStatus = reasoningDuration
-    ? `${message.reasoningStreaming ? '已思考' : '思考了'} ${reasoningDuration}`
-    : (message.reasoningStreaming ? '正在思考' : '已思考')
 
   useEffect(() => {
     if (!diceValue) {
@@ -469,8 +451,9 @@ function MessageBubble({ message, onLongPress, onRegenerate, onRegenerateRound, 
             ))}
           </div>
         )}
-        {/* Reasoning opens as a draggable glass bottom sheet so long summaries
-            never squeeze the message column or fight the chat scroller. */}
+        {/* Collapsible reasoning / thinking chain (AI only) — a small pill
+            tag sitting right on top of the bubble, not a block that claims
+            its own row height; collapsed it's just the button's own size. */}
         {!isUser && (message.reasoning || message.reasoningStreaming) && (
           // The dog-head decoration (zIndex 5) pokes ~25px above the
           // bubble's own top edge, right where this row sits — shift the
@@ -478,18 +461,49 @@ function MessageBubble({ message, onLongPress, onRegenerate, onRegenerateRound, 
           // on top of it and covering it.
           <div className="mb-1 w-full" style={{ position: 'relative', zIndex: 6 }}>
             <button
-              onClick={() => setShowReasoning(true)}
+              onClick={() => setShowReasoning(v => !v)}
               disabled={!message.reasoning}
-              className="reasoning-trigger"
-              style={{ marginLeft: 46 }}
-              aria-haspopup="dialog"
-              aria-expanded={showReasoning}
+              className="flex items-center gap-1"
+              style={{
+                marginLeft: 46,
+                fontSize: 10.5,
+                lineHeight: 1.4,
+                color: 'rgba(120,140,160,0.85)',
+                background: 'rgba(255,255,255,0.35)',
+                border: '1px solid rgba(160,180,200,0.3)',
+                borderRadius: 999,
+                padding: '2px 8px',
+                cursor: message.reasoning ? 'pointer' : 'default',
+                fontFamily: 'inherit',
+              }}
             >
-              <Clock3 size={15} strokeWidth={1.7} aria-hidden="true" />
-              <span>看看它在想什么（{reasoningStatus}）</span>
-              <ChevronRight size={15} strokeWidth={1.8} aria-hidden="true" />
+              {message.reasoningStreaming && !message.content ? (
+                <span>💭 思考中…</span>
+              ) : (
+                <>
+                  <span>💭 思考过程</span>
+                  <span style={{ fontSize: 9, opacity: 0.7 }}>{showReasoning ? '▲' : '▼'}</span>
+                </>
+              )}
             </button>
-            <ReasoningSheet message={message} open={showReasoning} onClose={closeReasoning} />
+            {showReasoning && message.reasoning && (
+              <div
+                className="mt-1 whitespace-pre-wrap break-words"
+                style={{
+                  fontSize: 12,
+                  lineHeight: 1.6,
+                  color: 'rgba(110,130,150,0.9)',
+                  background: 'rgba(245,248,251,0.7)',
+                  border: '1px solid rgba(160,180,200,0.25)',
+                  borderRadius: 12,
+                  padding: '8px 11px',
+                }}
+              >
+                {message.reasoningStreaming
+                  ? message.reasoning.split('\n').slice(-4).join('\n')
+                  : message.reasoning}
+              </div>
+            )}
           </div>
         )}
         {diceValue > 0 && !message.voiceLoading && (
@@ -520,7 +534,9 @@ function MessageBubble({ message, onLongPress, onRegenerate, onRegenerateRound, 
         {message.type === 'text' && !diceValue && !message.voiceLoading && (
           <div
             className={clsx('relative leading-relaxed select-none cursor-default', pressed ? 'bubble-press' : '')}
-            style={{
+            style={showGoldenPending ? {
+              minWidth: 0, padding: 0, overflow: 'visible',
+            } : {
               ...activeTextFrameStyle,
               // A one-word bubble still reads as part of a full conversation
               // flow rather than a stray dot near the avatar; long messages
@@ -530,9 +546,9 @@ function MessageBubble({ message, onLongPress, onRegenerate, onRegenerateRound, 
             }}
             {...pressProps}
           >
-            {isApplePixel ? <ApplePixelBubbleBackdrop isUser={isUser} /> : <PuppyBubbleBackdrop />}
-            {isApplePixel ? <ApplePixelBubbleDecorations isUser={isUser} /> : <PuppyBubbleDecorations />}
-            {!isApplePixel && <img
+            {!showGoldenPending && (isApplePixel ? <ApplePixelBubbleBackdrop isUser={isUser} /> : <PuppyBubbleBackdrop />)}
+            {!showGoldenPending && (isApplePixel ? <ApplePixelBubbleDecorations isUser={isUser} /> : <PuppyBubbleDecorations />)}
+            {!showGoldenPending && !isApplePixel && <img
               src={isUser ? '/assets/shy-puppy-tail-v5.png' : '/assets/shy-puppy-head-v5.png'}
               alt=""
               aria-hidden="true"
@@ -557,7 +573,7 @@ function MessageBubble({ message, onLongPress, onRegenerate, onRegenerateRound, 
               }}
             />}
             {message.streaming && !message.content ? (
-              <TypingIndicator />
+              showGoldenPending ? <GoldenRetrieverThinking theme={theme} /> : <TypingIndicator />
             ) : (
               <span className="whitespace-pre-wrap break-words" style={{ position: 'relative', zIndex: 1, display: 'block', minWidth: 0, maxWidth: '100%' }}>
                 {replyQuote && (

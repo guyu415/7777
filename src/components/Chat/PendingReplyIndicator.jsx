@@ -1,5 +1,34 @@
 import { memo } from 'react'
 
+export function GoldenRetrieverThinking({ theme }) {
+  return (
+    <div style={{ display: 'flex', alignItems: 'flex-end', gap: 6, minWidth: 0 }}>
+      <div style={{
+        // Keep the whole pending row below MessageList's 88px initial
+        // estimate so scroll-to-bottom cannot leave the puppy clipped.
+        width: 46, height: 56,
+        display: 'grid', placeItems: 'end center', flexShrink: 0,
+        filter: `drop-shadow(0 2px 4px ${theme?.aiBubbleShadow || 'rgba(120,100,70,0.16)'})`,
+      }}>
+        <img
+          src="/assets/claude-code-golden-loading.gif"
+          alt=""
+          draggable={false}
+          style={{ width: '100%', height: '100%', objectFit: 'contain', objectPosition: 'center bottom' }}
+        />
+      </div>
+      <span style={{
+        marginBottom: 5, whiteSpace: 'nowrap',
+        fontSize: 10.5, lineHeight: 1.3,
+        color: theme?.aiBubbleText || '#6f8068', opacity: 0.72,
+        textShadow: '0 1px 2px rgba(255,255,255,0.75)',
+      }}>
+        小鸡毛正在想要怎么回你……
+      </span>
+    </div>
+  )
+}
+
 function PendingReplyIndicator({ aiAvatar, theme, variant = 'default' }) {
   const showGoldenRetriever = variant === 'golden-retriever'
 
@@ -24,21 +53,7 @@ function PendingReplyIndicator({ aiAvatar, theme, variant = 'default' }) {
         </div>
       </div>
       {showGoldenRetriever ? (
-        // Keep the whole pending row below MessageList's 88px initial
-        // estimate so scroll-to-bottom cannot leave the puppy clipped.
-        <div style={{
-          width: 46, height: 56, marginBottom: 0,
-          display: 'grid', placeItems: 'end center',
-          flexShrink: 0,
-          filter: `drop-shadow(0 2px 4px ${theme?.aiBubbleShadow || 'rgba(120,100,70,0.16)'})`,
-        }}>
-          <img
-            src="/assets/claude-code-golden-loading.gif"
-            alt=""
-            draggable={false}
-            style={{ width: '100%', height: '100%', objectFit: 'contain', objectPosition: 'center bottom' }}
-          />
-        </div>
+        <GoldenRetrieverThinking theme={theme} />
       ) : (
         <div style={{
           display: 'flex', alignItems: 'center', gap: 5,
