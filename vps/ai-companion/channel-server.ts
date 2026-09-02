@@ -1440,7 +1440,15 @@ setInterval(scheduleImageSweep, IMAGE_SWEEP_INTERVAL_MS)
 // correct model, not a simplification we'll regret later.
 type CcTurnSurface = 'main' | 'reading' | 'tidal_recovery' | 'other'
 let currentTurn: { turnId: string; startedAt: number; surface: CcTurnSurface; broadcastLifecycle: boolean } | null = null
-let readingTurn: { turnId: string; sessionId: string; batchId: string; bookId: string; batchPath: string; committed: boolean } | null = null
+let readingTurn: {
+  turnId: string
+  sessionId: string
+  batchId: string
+  bookId: string
+  batchPath: string
+  committed: boolean
+  stopGraceTimer?: ReturnType<typeof setTimeout>
+} | null = null
 
 function nextId() {
   return `m${Date.now()}-${++seq}`
@@ -2055,9 +2063,24 @@ function endTurn(): string | null {
   if (!currentTurn) return null
   const finished = currentTurn
   const turnId = finished.turnId
+  // Temporary reading subagents inherit the Stop hook. Their Stop arrives
+  // before the resident agent receives the result and commits the batch.
+  if (finished.surface === 'reading' && readingTurn?.turnId === turnId && !readingTurn.committed) {
+    if (!readingTurn.stopGraceTimer) {
+      readingTurn.stopGraceTimer = setTimeout(() => {
+        if (currentTurn?.turnId === turnId && readingTurn?.turnId === turnId && !readingTurn.committed) {
+          readingTurn.stopGraceTimer = undefined
+          failTurn('reading_turn_ended_without_commit')
+        }
+      }, 45_000)
+      log('reading_stop_deferred', { turnId, sessionId: readingTurn.sessionId })
+    }
+    return turnId
+  }
   currentTurn = null
   stopThinkingTail(turnId)
   if (finished.surface === 'reading' && readingTurn?.turnId === turnId) {
+    if (readingTurn.stopGraceTimer) clearTimeout(readingTurn.stopGraceTimer)
     if (!readingTurn.committed) {
       readingStore.failBatch(readingTurn.sessionId, 'reading_turn_ended_without_commit')
       sendRaw({ type: 'reading_error', turnId, error: '常驻 Claude Code 没有提交本批阅读结果。', ts: Date.now() })
@@ -2086,6 +2109,7 @@ function failTurn(error: string): string | null {
   currentTurn = null
   stopThinkingTail(turnId)
   if (finished.surface === 'reading' && readingTurn?.turnId === turnId) {
+    if (readingTurn.stopGraceTimer) clearTimeout(readingTurn.stopGraceTimer)
     readingStore.failBatch(readingTurn.sessionId, error)
     sendRaw({ type: 'reading_error', turnId, error, ts: Date.now() })
     readingTurn = null
@@ -2728,6 +2752,10 @@ mcp.setRequestHandler(CallToolRequestSchema, async req => {
         }
         const result = readingStore.commitBatch(args)
         readingTurn.committed = true
+        if (readingTurn.stopGraceTimer) {
+          clearTimeout(readingTurn.stopGraceTimer)
+          readingTurn.stopGraceTimer = undefined
+        }
         sendRaw({ type: 'reading_update', turnId, result: result as unknown as Record<string, unknown>, ts: Date.now() })
         log('reading_batch_committed', { turnId, sessionId: readingTurn.sessionId, batchId: readingTurn.batchId, completed: result.completed, page: result.state?.currentPage, annotations: result.annotations.length })
         return { content: [{ type: 'text', text: JSON.stringify({ ok: true, completed: result.completed, state: result.state, next: result.completed ? 'session complete; end this turn' : 'batch committed; end this turn so the reader can schedule the next small batch' }) }] }
