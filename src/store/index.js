@@ -2,6 +2,7 @@ import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import { openDB } from 'idb'
 import { reduceMessageTimeline } from '../utils/messageTimeline'
+import { createInitialReadingState } from '../data/readingBooks'
 
 let db
 
@@ -209,6 +210,10 @@ export const useStore = create(
       summaryToast: null,
       diaryTarget: null,
       messages: [],
+      // AI 自主阅读拥有独立的持久游标与执行额度，不混进聊天消息。
+      readingState: createInitialReadingState(),
+      readingSessions: [],
+      pendingReadingRequest: null,
       // Which group chat (多AI群聊) is currently open, when currentView is
       // 'groupChat' — a real server-side id (see channel-server.ts's Group
       // chat section), never persisted alongside currentView itself (that
@@ -283,6 +288,47 @@ export const useStore = create(
       setCurrentView: (view) => set({ currentView: view }),
       setCurrentGroupChatId: (id) => set({ currentGroupChatId: id }),
       setDiaryTarget: (id) => set({ diaryTarget: id }),
+      updateReadingState: (updates) => set((state) => ({
+        readingState: { ...state.readingState, ...updates },
+      })),
+      setPendingReadingRequest: (request) => set({ pendingReadingRequest: request || null }),
+      clearPendingReadingRequest: () => set({ pendingReadingRequest: null }),
+      upsertReadingSession: (session) => set((state) => {
+        const current = state.readingSessions || []
+        const index = current.findIndex(item => item.sessionId === session?.sessionId)
+        if (index < 0) return { readingSessions: [...current, session].slice(-100) }
+        const next = [...current]
+        next[index] = { ...next[index], ...session }
+        return { readingSessions: next }
+      }),
+      updateReadingSession: (sessionId, updates) => set((state) => ({
+        readingSessions: (state.readingSessions || []).map(item => (
+          item.sessionId === sessionId ? { ...item, ...updates, lastUpdatedAt: Date.now() } : item
+        )),
+      })),
+      rejectReadingRequest: (requestId) => set((state) => ({
+        pendingReadingRequest: state.pendingReadingRequest?.requestId === requestId ? null : state.pendingReadingRequest,
+        readingSessions: (state.readingSessions || []).map(item => (
+          item.requestId === requestId ? { ...item, status: 'rejected', completedAt: Date.now(), lastUpdatedAt: Date.now() } : item
+        )),
+      })),
+      addReadingAnnotation: (annotation) => set((state) => ({
+        readingState: {
+          ...state.readingState,
+          highlights: annotation.kind === 'highlight'
+            ? [...(state.readingState.highlights || []), annotation]
+            : state.readingState.highlights || [],
+          annotations: annotation.kind === 'annotate'
+            ? [...(state.readingState.annotations || []), annotation]
+            : state.readingState.annotations || [],
+        },
+      })),
+      addReadingLog: (entry) => set((state) => ({
+        readingState: {
+          ...state.readingState,
+          readingLog: [...(state.readingState.readingLog || []), entry].slice(-200),
+        },
+      })),
       setIsLoading: (v) => set({ isLoading: v }),
       setStreamingMessageId: (id) => set({ streamingMessageId: id }),
       setMessages: (messages) => set((state) => ({
@@ -481,6 +527,9 @@ export const useStore = create(
             sceneAwareness: pet.sceneAwareness !== false,
           }
         }
+        cleaned.readingState = { ...createInitialReadingState(), ...(cleaned.readingState || {}) }
+        cleaned.readingSessions = Array.isArray(cleaned.readingSessions) ? cleaned.readingSessions : []
+        cleaned.pendingReadingRequest = cleaned.pendingReadingRequest || null
         return cleaned
       }),
 
@@ -500,7 +549,7 @@ export const useStore = create(
     }),
     {
       name: 'pink-chat-settings',
-      version: 23,
+      version: 24,
       migrate: (persisted, version) => {
         if (version < 2) {
           const providers = [
@@ -693,6 +742,14 @@ export const useStore = create(
         if (version < 23) {
           persisted = { bubbleSkin: 'puppy', ...persisted }
         }
+        if (version < 24) {
+          persisted = {
+            ...persisted,
+            readingState: { ...createInitialReadingState(), ...(persisted.readingState || {}) },
+            readingSessions: Array.isArray(persisted.readingSessions) ? persisted.readingSessions : [],
+            pendingReadingRequest: persisted.pendingReadingRequest || null,
+          }
+        }
         return persisted
       },
       partialize: (state) => ({
@@ -726,6 +783,9 @@ export const useStore = create(
         aiVoiceEnabled: state.aiVoiceEnabled,
         aiVoiceFrequency: state.aiVoiceFrequency,
         acWorkerUrl: state.acWorkerUrl,
+        readingState: state.readingState,
+        readingSessions: state.readingSessions,
+        pendingReadingRequest: state.pendingReadingRequest,
         groupUserAvatars: state.groupUserAvatars,
         groupChatBg: state.groupChatBg,
         mysteryGames: state.mysteryGames,

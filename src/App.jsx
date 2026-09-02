@@ -8,6 +8,7 @@ import AnniversaryWindow from './components/CareHub/AnniversaryWindow'
 import GlobalSettings from './components/GlobalSettings'
 import SessionSettings from './components/SessionSettings'
 import UniverseHome from './components/UniverseHome'
+import AIReading from './components/AIReading'
 import BottomNav from './components/BottomNav'
 import LoginPage from './components/LoginPage'
 import VoiceFavorites from './components/VoiceFavorites'
@@ -76,6 +77,24 @@ export default function App() {
     customFonts,
     sessions, currentSessionId,
   } = useStore()
+
+  const openAiReading = useCallback(() => {
+    setCurrentView('aiReading')
+    const url = new URL(window.location.href)
+    url.searchParams.set('view', 'aiReading')
+    window.history.pushState({}, '', `${url.pathname}${url.search}${url.hash}`)
+  }, [setCurrentView])
+
+  const closeAiReading = useCallback(() => {
+    setCurrentView('sessions')
+    const url = new URL(window.location.href)
+    url.searchParams.delete('view')
+    window.history.replaceState({}, '', `${url.pathname}${url.search}${url.hash}`)
+  }, [setCurrentView])
+
+  useEffect(() => {
+    if (new URL(window.location.href).searchParams.get('view') === 'aiReading') setCurrentView('aiReading')
+  }, [setCurrentView])
 
   // Web Push notifications carry the session that generated the message.
   // Existing tabs receive the target from the service worker without a page
@@ -806,7 +825,7 @@ export default function App() {
         className="relative h-full w-full max-w-md mx-auto flex flex-col overflow-hidden"
         style={{
           boxShadow: `0 0 60px ${theme.primary}26`, zIndex: 2,
-          background: ['sessions', 'globalSettings'].includes(currentView)
+          background: ['sessions', 'globalSettings', 'aiReading'].includes(currentView)
             ? `linear-gradient(180deg,rgba(255,249,251,.16),rgba(248,245,250,.06)), url('/backgrounds/fa048-garden-v1.webp') center top / cover no-repeat`
             : 'transparent',
         }}
@@ -821,6 +840,7 @@ export default function App() {
           )}
           {currentView === 'ledger' && <LedgerWindow theme={theme} onClose={() => setCurrentView('sessions')} />}
           {currentView === 'anniversary' && <AnniversaryWindow theme={theme} onClose={() => setCurrentView('sessions')} />}
+          {currentView === 'aiReading' && <AIReading theme={theme} onBack={closeAiReading} />}
           {currentView === 'xinchao' && (
             <Suspense fallback={<div className="h-full grid place-items-center text-sm text-gray-500">正在打开心潮…</div>}>
               <XinchaoDashboard onClose={() => setCurrentView('sessions')} />
@@ -830,6 +850,7 @@ export default function App() {
             <UniverseHome
               theme={theme}
               onOpenChat={() => setCurrentView('chat')}
+              onOpenReading={openAiReading}
               onOpenLedger={() => setCurrentView('ledger')}
               onOpenAnniversary={() => setCurrentView('anniversary')}
               onOpenXinchao={() => setCurrentView('xinchao')}

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { BookHeart, CalendarDays, CircleDollarSign, Heart, HeartHandshake, MessageCircleHeart, Sparkles, X } from 'lucide-react'
+import { BookHeart, BookOpen, CalendarDays, CircleDollarSign, Heart, HeartHandshake, MessageCircleHeart, Sparkles, X } from 'lucide-react'
 import { useStore } from '../store'
 import DiarySection from './DiarySection'
 import StudySchedulePanel from './StudySchedule/StudySchedulePanel'
@@ -18,7 +18,7 @@ function formatDate(timestamp) {
   return `${date.getFullYear()}.${String(date.getMonth() + 1).padStart(2, '0')}.${String(date.getDate()).padStart(2, '0')}`
 }
 
-export default function UniverseHome({ theme, onOpenChat, onOpenLedger, onOpenAnniversary, onOpenXinchao }) {
+export default function UniverseHome({ theme, onOpenChat, onOpenReading, onOpenLedger, onOpenAnniversary, onOpenXinchao }) {
   const {
     sessions, currentSessionId, setCurrentSessionId, setMessages,
     userAvatar: globalUserAvatar, aiAvatar: globalAiAvatar, aiName: globalAiName,
@@ -128,6 +128,10 @@ export default function UniverseHome({ theme, onOpenChat, onOpenLedger, onOpenAn
           <button onClick={openCcChat}>
             <span className="universe-home__shortcut-icon"><MessageCircleHeart size={23} /></span>
             <span><strong>一起聊天</strong><small>回到 {aiName} 身边</small></span>
+          </button>
+          <button onClick={() => onOpenReading?.()}>
+            <span className="universe-home__shortcut-icon universe-home__shortcut-icon--blue"><BookOpen size={23} /></span>
+            <span><strong>AI 自主阅读</strong><small>旁观 AI 一段段读书</small></span>
           </button>
           <button onClick={() => setScheduleOpen(true)}>
             <span className="universe-home__shortcut-icon universe-home__shortcut-icon--violet"><CalendarDays size={22} /></span>

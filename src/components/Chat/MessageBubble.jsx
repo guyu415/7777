@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useCallback, memo } from 'react'
-import { CheckCheck, ChevronRight, Clock3, FileText } from 'lucide-react'
+import { CheckCheck, ChevronRight, FileText } from 'lucide-react'
 import VoicePlayer from '../Voice/VoicePlayer'
 import ImageViewer from '../ImageViewer'
 import AcCard from './AcCard'
@@ -491,8 +491,7 @@ function MessageBubble({ message, onLongPress, onRegenerate, onRegenerateRound, 
               aria-haspopup="dialog"
               aria-expanded={showReasoning}
             >
-              <Clock3 size={15} strokeWidth={1.7} aria-hidden="true" />
-              <span>看看它在想什么（{reasoningStatus}）</span>
+              <span>看看它在想什么 · {reasoningStatus}</span>
               <ChevronRight size={15} strokeWidth={1.8} aria-hidden="true" />
             </button>
             <ReasoningSheet message={message} open={showReasoning} onClose={closeReasoning} translateThinking={translateThinking} />

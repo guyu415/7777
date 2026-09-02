@@ -37,6 +37,7 @@ const SYNC_KEYS = [
   'sessions', 'currentSessionId', 'providers', 'selectedProviderId', 'selectedModelId',
   'ttsApiKey', 'ttsGroupId', 'ttsVoiceId', 'aiVoiceEnabled', 'aiVoiceFrequency',
   'acWorkerUrl',
+  'readingState', 'readingSessions', 'pendingReadingRequest',
   'desktopPet',
 ]
 

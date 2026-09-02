@@ -1,4 +1,5 @@
 import { appendMusicRuntimeContext } from '../utils/musicRuntimeContext'
+import { buildReadingQuotaHeaders } from './readingSessions'
 
 const VALID_MEDIA_TYPES = new Set(['image/jpeg', 'image/png', 'image/gif', 'image/webp'])
 
@@ -160,11 +161,12 @@ export async function generateSummary({ existingSummary, newMessages, apiKey }) 
   return data.choices?.[0]?.message?.content?.trim() || ''
 }
 
-export async function* streamChat({ apiKey, apiBaseUrl = 'https://api.anthropic.com', model, systemPrompt, messages, workerUrl, useWorkerProxy, signal, disableThinking = false, webSearch = false, providerName = '' }) {
+export async function* streamChat({ apiKey, apiBaseUrl = 'https://api.anthropic.com', model, systemPrompt, messages, workerUrl, useWorkerProxy, signal, disableThinking = false, webSearch = false, providerName = '', readingQuota = null, maxTokens = 4096 }) {
   const base = apiBaseUrl.replace(/\/$/, '')
   const proxyBase = (useWorkerProxy && workerUrl) ? workerUrl.replace(/\/$/, '') : null
   const musicSnapshot = await fetchMusicRuntimeContext()
   const requestSystemPrompt = appendMusicRuntimeContext(systemPrompt, musicSnapshot)
+  const readingHeaders = buildReadingQuotaHeaders(readingQuota)
 
   // Build web search tools based on provider
   // Claude via AiHubMix: web search is triggered by appending :surfing to model name, NOT via tools param
@@ -184,7 +186,7 @@ export async function* streamChat({ apiKey, apiBaseUrl = 'https://api.anthropic.
     const targetUrl = `${base}/v1/messages`
     const body = JSON.stringify({
       model: MODELS[model] || model,
-      max_tokens: 4096,
+      max_tokens: maxTokens,
       system: requestSystemPrompt,
       stream: true,
       messages: buildAnthropicMessages(messages),
@@ -196,7 +198,7 @@ export async function* streamChat({ apiKey, apiBaseUrl = 'https://api.anthropic.
       console.log('[API] 发起fetch (Anthropic via Worker):', actualUrl)
       response = await fetch(actualUrl, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'X-Api-Key': apiKey, 'X-Target-Url': targetUrl },
+        headers: { 'Content-Type': 'application/json', 'X-Api-Key': apiKey, 'X-Target-Url': targetUrl, ...readingHeaders },
         body, signal,
       })
     } else {
@@ -222,7 +224,7 @@ export async function* streamChat({ apiKey, apiBaseUrl = 'https://api.anthropic.
     }
     const body = JSON.stringify({
       model: effectiveModel,
-      max_tokens: 4096,
+      max_tokens: maxTokens,
       stream: true,
       messages: buildOpenAIMessages(requestSystemPrompt, messages),
       // disableThinking: GLM official uses { thinking: { type: 'disabled' } }
@@ -244,7 +246,7 @@ export async function* streamChat({ apiKey, apiBaseUrl = 'https://api.anthropic.
       console.log('[API] 发起fetch (OpenAI-compat via Worker):', actualUrl)
       response = await fetch(actualUrl, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'X-Api-Key': apiKey, 'X-Target-Url': chatUrl },
+        headers: { 'Content-Type': 'application/json', 'X-Api-Key': apiKey, 'X-Target-Url': chatUrl, ...readingHeaders },
         body, signal,
       })
     } else {
@@ -266,7 +268,10 @@ export async function* streamChat({ apiKey, apiBaseUrl = 'https://api.anthropic.
   if (!response.ok) {
     const err = await response.json().catch(() => ({}))
     console.log('[WEB-RESP] 上游错误 HTTP', response.status, '| error=', JSON.stringify(err))
-    throw new Error(`请求失败: POST ${actualUrl}\n${err?.error?.message || `HTTP ${response.status}`}`)
+    const error = new Error(`请求失败: POST ${actualUrl}\n${err?.error?.message || err?.error || err?.message || `HTTP ${response.status}`}`)
+    error.code = err?.code || err?.error?.code || null
+    error.status = response.status
+    throw error
   }
 
   const reader = response.body.getReader()

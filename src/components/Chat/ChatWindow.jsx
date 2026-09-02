@@ -18,6 +18,7 @@ import XinchaoPanel from './XinchaoPanel'
 import FocusPomodoroSheet from '../Focus/FocusPomodoroSheet'
 import FocusSession from '../Focus/FocusSession'
 import DivinationRoom from '../Divination/DivinationRoom'
+import ReadingRequestCard from './ReadingRequestCard'
 import { useChat } from '../../hooks/useChat'
 import { useCodexChat } from '../../hooks/useCodexChat'
 import { useScheduledMessages } from '../../hooks/useScheduledMessages'
@@ -643,6 +644,7 @@ export default function ChatWindow({ theme }) {
 
   return (
     <div className="chat-window-shell flex flex-col h-full" style={{ background: 'transparent' }}>
+      <ReadingRequestCard theme={theme} />
       {/* Header */}
       <div className="safe-top"
         style={{
