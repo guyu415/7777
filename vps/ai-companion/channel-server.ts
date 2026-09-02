@@ -429,7 +429,10 @@ const TIDAL_GEMINI_KEY_FILE = process.env.AI_COMPANION_TIDAL_GEMINI_KEY_FILE ?? 
 const TIDAL_GEMINI_MODEL = process.env.AI_COMPANION_TIDAL_GEMINI_MODEL ?? 'gemini-3.5-flash-lite'
 // Visible-thinking translation is display-only and reuses the same Gemini
 // credential/model used by the tidal-memory fallback above.
-const THINKING_TRANSLATION_TIMEOUT_MS = 9_000
+// A cold free-tier request can take a few seconds, but it still runs wholly
+// off the Claude stream. Give it enough room to finish instead of silently
+// turning every translation into the English fallback.
+const THINKING_TRANSLATION_TIMEOUT_MS = 15_000
 const THINKING_TRANSLATION_RATE_WINDOW_MS = 10_000
 const THINKING_TRANSLATION_RATE_LIMIT = 24
 const thinkingTranslationRate = new Map<string, { startedAt: number; count: number }>()
