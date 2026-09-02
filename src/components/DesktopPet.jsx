@@ -19,13 +19,13 @@ const RAPID_TAP_MS = 420
 const PINCH_CLOSE_PX = 18
 const DEFAULT_PET_IMAGE = '/pets/black-haired-pet.png'
 const DEFAULT_EXPRESSION_IMAGES = {
-  excited: '/pets/black-haired-expressions/excited.png',
-  awake: '/pets/black-haired-expressions/awake.png',
-  resting: '/pets/black-haired-expressions/resting.png',
-  sleeping: '/pets/black-haired-expressions/sleeping.png',
-  flustered: '/pets/black-haired-expressions/excited.png',
-  angry: '/pets/black-haired-expressions/angry.png',
-  teased: '/pets/black-haired-expressions/teased.png',
+  excited: '/pets/black-haired-excited.gif',
+  awake: '/pets/black-haired-awake.gif',
+  resting: '/pets/black-haired-resting.gif',
+  sleeping: '/pets/black-haired-sleeping.gif',
+  flustered: '/pets/black-haired-flustered.gif',
+  angry: '/pets/black-haired-angry.gif',
+  teased: '/pets/black-haired-teased.gif',
 }
 const EXCITED_MS = 8_000
 const RESTING_AFTER_MS = 45_000
@@ -911,7 +911,7 @@ function DesktopPetWindow({ theme }) {
 
       {/* 身体手势区只做互动；移动只能按住上面的角标，避免滑动彩蛋被抢成拖拽。 */}
       <div
-        className={`desktop-pet ${motion || `idle-${idleState}`}`}
+        className={`desktop-pet ${motion || (usesDefaultPet ? '' : `idle-${idleState}`)}`}
         style={{ position: 'fixed', left: position.x, top: position.y, width: PET_W, height: PET_H, zIndex: 120, touchAction: 'none', cursor: 'pointer', transformOrigin: '50% 25%', userSelect: 'none', WebkitUserSelect: 'none', WebkitTouchCallout: 'none' }}
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
@@ -927,10 +927,10 @@ function DesktopPetWindow({ theme }) {
       >
         <img src={displayedPetImage} alt={identity} draggable="false" onContextMenu={(event) => event.preventDefault()} style={{ width: '100%', height: '100%', objectFit: 'contain', transform: `scale(${scale})`, transformOrigin: 'bottom center', filter: 'drop-shadow(0 5px 5px rgba(35,25,31,.22))', userSelect: 'none', WebkitUserDrag: 'none', WebkitTouchCallout: 'none', pointerEvents: 'none' }} />
         {secretActive && usesDefaultPet && <div className="pet-secret-bulge" style={{ position: 'absolute', left: '50%', top: '65%', width: '12px', height: '18px', borderRadius: '55% 55% 48% 48%', background: 'radial-gradient(ellipse at 38% 28%, rgba(94,90,99,.96), rgba(24,22,27,.98) 58%, rgba(8,8,10,.98))', boxShadow: '0 1px 3px rgba(0,0,0,.42)', pointerEvents: 'none' }} />}
-        {expression === 'flustered' && usesDefaultPet && <><span style={{ position: 'absolute', left: '32%', top: '31%', width: 8, height: 4, borderRadius: '50%', background: 'rgba(234,120,145,.35)', filter: 'blur(1px)', pointerEvents: 'none' }} /><span style={{ position: 'absolute', right: '30%', top: '31%', width: 8, height: 4, borderRadius: '50%', background: 'rgba(234,120,145,.35)', filter: 'blur(1px)', pointerEvents: 'none' }} /></>}
-        {!motion && idleState === 'excited' && <span className="pet-idle-cue" style={{ position: 'absolute', right: 5, top: 24, fontSize: 13, color: theme.primary, textShadow: '0 1px 4px white', pointerEvents: 'none' }}>✦</span>}
-        {!motion && idleState === 'resting' && <span className="pet-idle-cue" style={{ position: 'absolute', right: 7, top: 18, fontSize: 13, color: theme.primary, textShadow: '0 1px 4px white', pointerEvents: 'none' }}>…</span>}
-        {!motion && idleState === 'sleeping' && <span className="pet-idle-cue" style={{ position: 'absolute', right: 2, top: 10, fontSize: 11, fontWeight: 800, color: theme.primary, textShadow: '0 1px 4px white', pointerEvents: 'none' }}>Zz</span>}
+        {expression === 'flustered' && !usesDefaultPet && <><span style={{ position: 'absolute', left: '32%', top: '31%', width: 8, height: 4, borderRadius: '50%', background: 'rgba(234,120,145,.35)', filter: 'blur(1px)', pointerEvents: 'none' }} /><span style={{ position: 'absolute', right: '30%', top: '31%', width: 8, height: 4, borderRadius: '50%', background: 'rgba(234,120,145,.35)', filter: 'blur(1px)', pointerEvents: 'none' }} /></>}
+        {!motion && !usesDefaultPet && idleState === 'excited' && <span className="pet-idle-cue" style={{ position: 'absolute', right: 5, top: 24, fontSize: 13, color: theme.primary, textShadow: '0 1px 4px white', pointerEvents: 'none' }}>✦</span>}
+        {!motion && !usesDefaultPet && idleState === 'resting' && <span className="pet-idle-cue" style={{ position: 'absolute', right: 7, top: 18, fontSize: 13, color: theme.primary, textShadow: '0 1px 4px white', pointerEvents: 'none' }}>…</span>}
+        {!motion && !usesDefaultPet && idleState === 'sleeping' && <span className="pet-idle-cue" style={{ position: 'absolute', right: 2, top: 10, fontSize: 11, fontWeight: 800, color: theme.primary, textShadow: '0 1px 4px white', pointerEvents: 'none' }}>Zz</span>}
       </div>
 
       <input ref={screenshotInputRef} type="file" accept="image/*" hidden onChange={handleScreenshotFile} />
