@@ -828,6 +828,7 @@ export default function ChatWindow({ theme }) {
             theme={theme}
             bubbleSkin={bubbleSkin}
             pendingReplyVariant={isVpsSession ? 'golden-retriever' : 'default'}
+            translateThinking={isVpsSession}
             selectionMode={messages.some((message) => selectedMessageIds.has(message.id))}
             selectedIds={selectedMessageIds}
             onToggleSelect={toggleMessageSelection}

@@ -87,6 +87,12 @@ import {
 import { SENSEVOICE_MAX_AUDIO_BYTES, transcribeWithSenseVoice } from './sensevoice-stt.ts'
 import { analyzeVoiceAcoustics, type VoiceAcoustics } from './opensmile-acoustics.ts'
 import {
+  THINKING_TRANSLATION_SYSTEM_PROMPT,
+  buildThinkingTranslationInstruction,
+  extractGeminiTranslation,
+  normalizeThinkingTranslationInput,
+} from './reasoning-translation.ts'
+import {
   CARE_ROLE_IDS,
   baziSolarMonthContext,
   careIsSevereOverspend,
@@ -421,6 +427,12 @@ const TIDAL_LUNA_OUTPUT_FILE = join(ROOT, 'state', 'tidal', 'luna-output.json')
 const TIDAL_LUNA_RUNNER = join(ROOT, 'scripts', 'tidal-luna-summary.sh')
 const TIDAL_GEMINI_KEY_FILE = process.env.AI_COMPANION_TIDAL_GEMINI_KEY_FILE ?? process.env.AI_COMPANION_GEMINI_KEY_FILE ?? join(ROOT, 'config', 'gemini.secret')
 const TIDAL_GEMINI_MODEL = process.env.AI_COMPANION_TIDAL_GEMINI_MODEL ?? 'gemini-3.5-flash-lite'
+// Visible-thinking translation is display-only and reuses the same Gemini
+// credential/model used by the tidal-memory fallback above.
+const THINKING_TRANSLATION_TIMEOUT_MS = 9_000
+const THINKING_TRANSLATION_RATE_WINDOW_MS = 10_000
+const THINKING_TRANSLATION_RATE_LIMIT = 24
+const thinkingTranslationRate = new Map<string, { startedAt: number; count: number }>()
 const TIDAL_SUMMARY_TIMEOUT_MS = Number(process.env.AI_COMPANION_TIDAL_SUMMARY_TIMEOUT_MS ?? 250_000)
 const TIDAL_COMPACT_TIMEOUT_MS = Number(process.env.AI_COMPANION_TIDAL_COMPACT_TIMEOUT_MS ?? 60_000)
 const TIDAL_CONFIG: TidalConfig = {
@@ -3141,6 +3153,53 @@ function jsonResponse(body: unknown, init: ResponseInit = {}) {
     ...init,
     headers: { 'content-type': 'application/json', ...(init.headers ?? {}) },
   })
+}
+
+function thinkingTranslationRateKey(req: Request): string {
+  return req.headers.get('cf-connecting-ip')
+    || req.headers.get('x-forwarded-for')?.split(',')[0]?.trim()
+    || 'authenticated-client'
+}
+
+function allowThinkingTranslation(req: Request): boolean {
+  const now = Date.now()
+  const key = thinkingTranslationRateKey(req)
+  const previous = thinkingTranslationRate.get(key)
+  if (!previous || now - previous.startedAt >= THINKING_TRANSLATION_RATE_WINDOW_MS) {
+    thinkingTranslationRate.set(key, { startedAt: now, count: 1 })
+    return true
+  }
+  if (previous.count >= THINKING_TRANSLATION_RATE_LIMIT) return false
+  previous.count += 1
+  return true
+}
+
+async function runThinkingTranslation(text: string, context: string): Promise<string> {
+  let apiKey = ''
+  try { apiKey = readFileSync(TIDAL_GEMINI_KEY_FILE, 'utf8').trim() } catch {}
+  if (!apiKey) throw new Error('thinking_translation_unconfigured')
+  const model = TIDAL_GEMINI_MODEL.replace(/^models\//, '')
+  const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`, {
+    method: 'POST',
+    signal: AbortSignal.timeout(THINKING_TRANSLATION_TIMEOUT_MS),
+    headers: { 'content-type': 'application/json', 'x-goog-api-key': apiKey },
+    body: JSON.stringify({
+      systemInstruction: { parts: [{ text: THINKING_TRANSLATION_SYSTEM_PROMPT }] },
+      contents: [{ role: 'user', parts: [{ text: buildThinkingTranslationInstruction(text, context) }] }],
+      generationConfig: {
+        temperature: 0.1,
+        maxOutputTokens: 2_048,
+        // Gemini 3's minimum thinking level keeps this display-only request
+        // low-latency without changing the model or key used by tidal memory.
+        thinkingConfig: { thinkingLevel: 'minimal' },
+      },
+    }),
+  })
+  const payload = await response.json().catch(() => ({})) as any
+  if (!response.ok) throw new Error(`thinking_translation_http_${response.status}`)
+  const translated = extractGeminiTranslation(payload)
+  if (!translated) throw new Error('thinking_translation_empty')
+  return translated
 }
 
 // Keep the companion login across Safari/PWA restarts. This remains an
@@ -8280,6 +8339,30 @@ Bun.serve<{ authed: true }>({
       return jsonResponse(currentNeteasePlayback(), {
         headers: { ...corsHeadersFor(origin), 'cache-control': 'no-store' },
       })
+    }
+
+    // Best-effort display translation for Claude Code's visible thinking. This
+    // route has no history/store side effect: the complete raw segment is used
+    // only for this request and the response is returned to the browser.
+    if (url.pathname === '/thinking/translate' && req.method === 'POST') {
+      const gate = authGate()
+      if (gate) return gate
+      const cors = corsHeadersFor(origin)
+      if (!allowThinkingTranslation(req)) {
+        return jsonResponse({ error: 'translation rate limited' }, { status: 429, headers: { ...cors, 'cache-control': 'no-store' } })
+      }
+      let body: unknown = {}
+      try { body = await req.json() } catch { return jsonResponse({ error: 'bad json' }, { status: 400, headers: cors }) }
+      const input = normalizeThinkingTranslationInput(body)
+      if (!input) return jsonResponse({ error: 'invalid thinking segment' }, { status: 400, headers: cors })
+      try {
+        const text = await runThinkingTranslation(input.text, input.context)
+        return jsonResponse({ text }, { headers: { ...cors, 'cache-control': 'no-store' } })
+      } catch {
+        // The Claude stream is independent. The browser keeps its English
+        // segment when Gemini is unavailable, times out, or is quota-limited.
+        return jsonResponse({ error: 'thinking translation unavailable' }, { status: 502, headers: { ...cors, 'cache-control': 'no-store' } })
+      }
     }
 
     // Diary compose always targets the one resident Claude Code chat. Drive
