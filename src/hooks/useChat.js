@@ -678,6 +678,12 @@ export function useChat() {
 
       try {
         for await (const chunk of chunkSource) {
+          if (Number.isFinite(Number(chunk.reasoningStartedAt)) && Number(chunk.reasoningStartedAt) > 0) {
+            reasoningStartedAt = Number(chunk.reasoningStartedAt)
+          }
+          if (Number.isFinite(Number(chunk.reasoningCompletedAt)) && Number(chunk.reasoningCompletedAt) > 0) {
+            reasoningCompletedAt = Number(chunk.reasoningCompletedAt)
+          }
           if (chunk.reasoning) {
             const firstReasoningChunk = !fullReasoning
             fullReasoning += chunk.reasoning

@@ -268,6 +268,9 @@ function MessageBubble({ message, onLongPress, onRegenerate, onRegenerateRound, 
   }, [message.reasoningStreaming])
 
   const reasoningDuration = formatReasoningSeconds(getReasoningDurationMs(message, reasoningNow))
+  const reasoningStatus = reasoningDuration
+    ? `${message.reasoningStreaming ? '已思考' : '思考了'} ${reasoningDuration}`
+    : (message.reasoningStreaming ? '正在思考' : '已思考')
 
   useEffect(() => {
     if (!diceValue) {
@@ -483,9 +486,7 @@ function MessageBubble({ message, onLongPress, onRegenerate, onRegenerateRound, 
               aria-expanded={showReasoning}
             >
               <Clock3 size={15} strokeWidth={1.7} aria-hidden="true" />
-              <span>
-                看看它在想什么（{message.reasoningStreaming ? '已思考 ' : '思考了 '}{reasoningDuration}）
-              </span>
+              <span>看看它在想什么（{reasoningStatus}）</span>
               <ChevronRight size={15} strokeWidth={1.8} aria-hidden="true" />
             </button>
             <ReasoningSheet message={message} open={showReasoning} onClose={closeReasoning} />

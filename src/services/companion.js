@@ -1349,6 +1349,9 @@ export function sendDeleteNotice(text, messageIds = []) {
  * mid-turn) arrives as { reasoningReplace } instead of { reasoning } — a
  * full authoritative value to assign, not a delta to append, since we can't
  * know how much of it a live delta already delivered before the disconnect.
+ * The server's turn/message timestamps are forwarded with those chunks so
+ * the UI reports the real elapsed turn time instead of guessing from paint
+ * timing (which iOS may suspend in the app switcher).
  *
  * One call = one turn. Multiple `reply` calls from the same Claude turn are
  * delivered as multiple { text } yields before the generator returns (on
@@ -1452,7 +1455,7 @@ export async function* streamChatViaCompanion({ text, imagePath, file, signal, m
           // Full authoritative replace, not a delta — we can't know how much
           // of this message's thinking a live 'thinking' wire event already
           // delivered before the disconnect, so appending would duplicate it.
-          if (r.thinking) push({ reasoningReplace: r.thinking })
+          if (r.thinking) push({ reasoningReplace: r.thinking, reasoningCompletedAt: r.ts })
           if (r.kind === 'voice') push({ voice: { id: r.id, text: r.text, voice: r.voice, style: r.style } })
           else push({ text: r.text, wireId: r.id, ...(r.musicAction ? { musicAction: r.musicAction } : {}) })
         }
@@ -1497,6 +1500,10 @@ export async function* streamChatViaCompanion({ text, imagePath, file, signal, m
       return
     }
     if (m.turnId !== turnId) return
+    if (m.type === 'turn_start') {
+      if (m.ts) push({ reasoningStartedAt: m.ts })
+      return
+    }
     if (m.type === 'thinking') {
       if (m.delta) push({ reasoning: m.delta })
       return
@@ -1513,8 +1520,9 @@ export async function* streamChatViaCompanion({ text, imagePath, file, signal, m
       if (alreadyDelivered(m.id)) return // e.g. already delivered via an earlier history recovery
       markDelivered(m.id)
       thisTurnDeliveredIds.push(m.id)
-      if (m.kind === 'voice') push({ voice: { id: m.id, text: m.text, voice: m.voice, style: m.style } })
-      else push({ text: m.text, wireId: m.id, ...(m.musicAction ? { musicAction: m.musicAction } : {}) })
+      const timing = m.thinking && m.ts ? { reasoningCompletedAt: m.ts } : {}
+      if (m.kind === 'voice') push({ voice: { id: m.id, text: m.text, voice: m.voice, style: m.style }, ...timing })
+      else push({ text: m.text, wireId: m.id, ...(m.musicAction ? { musicAction: m.musicAction } : {}), ...timing })
     } else if (m.type === 'turn_end') {
       push({ done: true })
     } else if (m.type === 'turn_error') {
@@ -1567,8 +1575,13 @@ export async function* streamChatViaCompanion({ text, imagePath, file, signal, m
         if (finishError) throw finishError
         return
       }
-      if (item.reasoningReplace !== undefined) yield { reasoningReplace: item.reasoningReplace }
-      else if (item.reasoning) yield { reasoning: item.reasoning }
+      if (item.reasoningReplace !== undefined) {
+        yield {
+          reasoningReplace: item.reasoningReplace,
+          ...(item.reasoningCompletedAt ? { reasoningCompletedAt: item.reasoningCompletedAt } : {}),
+        }
+      } else if (item.reasoning) yield { reasoning: item.reasoning }
+      else if (item.reasoningStartedAt) yield { reasoningStartedAt: item.reasoningStartedAt }
       // The onEvent handler above already builds this into a proper
       // { toolUse: {...} } queue item — this branch just has to actually let
       // it out. Without it, a toolUse item fell through to the final `else`
@@ -1580,8 +1593,13 @@ export async function* streamChatViaCompanion({ text, imagePath, file, signal, m
       // history-snapshot dedup in App.jsx matches against them (voice chunks
       // already carry their wire id inside `voice.id`).
       else yield item.voice
-        ? { voice: item.voice }
-        : { text: item.text, wireId: item.wireId, ...(item.musicAction ? { musicAction: item.musicAction } : {}) }
+        ? { voice: item.voice, ...(item.reasoningCompletedAt ? { reasoningCompletedAt: item.reasoningCompletedAt } : {}) }
+        : {
+            text: item.text,
+            wireId: item.wireId,
+            ...(item.musicAction ? { musicAction: item.musicAction } : {}),
+            ...(item.reasoningCompletedAt ? { reasoningCompletedAt: item.reasoningCompletedAt } : {}),
+          }
     }
   } finally {
     listeners.delete(onEvent)

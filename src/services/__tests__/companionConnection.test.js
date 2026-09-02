@@ -82,8 +82,40 @@ describe('companion connection recovery', () => {
       }],
     })
 
-    await expect(firstChunk).resolves.toEqual({ value: { reasoningReplace: '先确认她是不是在叫我。' }, done: false })
+    await expect(firstChunk).resolves.toEqual({
+      value: { reasoningReplace: '先确认她是不是在叫我。', reasoningCompletedAt: Date.now() },
+      done: false,
+    })
     await expect(stream.next()).resolves.toEqual({ value: { text: '我在', wireId: 'reply-1' }, done: false })
+    await expect(stream.next()).resolves.toEqual({ value: undefined, done: true })
+  })
+
+  it('forwards server turn timestamps for an honest reasoning duration', async () => {
+    const companion = await import('../companion.js')
+    const stream = companion.streamChatViaCompanion({ text: '想一想', messageId: 'timed-turn' })
+    const firstChunk = stream.next()
+    await flush()
+    const socket = MockWebSocket.instances[0]
+    socket.open()
+    await flush()
+
+    socket.message({ type: 'turn_start', turnId: 'timed-turn', ts: 1000 })
+    await expect(firstChunk).resolves.toEqual({ value: { reasoningStartedAt: 1000 }, done: false })
+
+    const thinkingChunk = stream.next()
+    socket.message({ type: 'thinking', turnId: 'timed-turn', delta: '认真想想。' })
+    await expect(thinkingChunk).resolves.toEqual({ value: { reasoning: '认真想想。' }, done: false })
+
+    const replyChunk = stream.next()
+    socket.message({
+      type: 'msg', id: 'timed-reply', from: 'cc', text: '想好了', thinking: '认真想想。',
+      ts: 7400, turnId: 'timed-turn',
+    })
+    await expect(replyChunk).resolves.toEqual({
+      value: { text: '想好了', wireId: 'timed-reply', reasoningCompletedAt: 7400 },
+      done: false,
+    })
+    socket.message({ type: 'turn_end', turnId: 'timed-turn' })
     await expect(stream.next()).resolves.toEqual({ value: undefined, done: true })
   })
 

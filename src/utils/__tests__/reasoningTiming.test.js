@@ -11,7 +11,8 @@ describe('reasoning timing', () => {
     expect(getReasoningDurationMs({ reasoningStreaming: true, reasoningStartedAt: 1000 }, 7600)).toBe(6600)
   })
 
-  it('gives legacy reasoning a stable minimum label', () => {
-    expect(getReasoningDurationMs({ reasoning: '旧摘要' })).toBe(1000)
+  it('does not invent a one-second duration for legacy reasoning', () => {
+    expect(getReasoningDurationMs({ reasoning: '旧摘要' })).toBeNull()
+    expect(formatReasoningSeconds(null)).toBeNull()
   })
 })
