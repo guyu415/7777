@@ -3374,9 +3374,14 @@ async function runThinkingTranslation(text: string, context: string): Promise<st
   let apiKey = ''
   try { apiKey = readFileSync(TIDAL_GEMINI_KEY_FILE, 'utf8').trim() } catch {}
   if (!apiKey) throw new Error('thinking_translation_unconfigured')
-  const model = TIDAL_GEMINI_MODEL.replace(/^models\//, '')
+  const models = [...new Set([
+    TIDAL_GEMINI_MODEL.replace(/^models\//, ''),
+    'gemini-3.1-flash-lite',
+    'gemini-3-flash-preview',
+  ])]
   let lastError = 'thinking_translation_unavailable'
-  for (let attempt = 0; attempt < 3; attempt += 1) {
+  for (let attempt = 0; attempt < models.length; attempt += 1) {
+    const model = models[attempt]
     try {
       const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`, {
         method: 'POST',
@@ -3402,7 +3407,7 @@ async function runThinkingTranslation(text: string, context: string): Promise<st
     } catch (error) {
       lastError = error instanceof Error ? error.message : String(error)
     }
-    if (attempt < 2) await new Promise(resolve => setTimeout(resolve, 350 * (attempt + 1)))
+    if (attempt < models.length - 1) await new Promise(resolve => setTimeout(resolve, 250 * (attempt + 1)))
   }
   throw new Error(lastError)
 }
