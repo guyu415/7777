@@ -53,6 +53,8 @@ export type ReadingAnnotation = {
   paragraphId: string
   quote: string
   annotation: string
+  liked?: boolean
+  replies?: Array<{ id: string; text: string; createdAt: number }>
   createdAt: number
 }
 
@@ -571,6 +573,8 @@ export class ReadingStore {
         paragraphId: paragraph.id,
         quote,
         annotation: annotationText,
+        liked: false,
+        replies: [],
         createdAt: now,
       }
       this.data.annotations[annotation.id] = annotation
@@ -646,6 +650,28 @@ export class ReadingStore {
 
   getAnnotation(annotationId: string): ReadingAnnotation | null {
     return this.data.annotations[annotationId] || null
+  }
+
+  toggleAnnotationLike(annotationId: string, liked?: boolean): ReadingAnnotation {
+    const annotation = this.data.annotations[annotationId]
+    if (!annotation) throw new Error('reading_annotation_not_found')
+    annotation.liked = typeof liked === 'boolean' ? liked : !annotation.liked
+    annotation.replies = Array.isArray(annotation.replies) ? annotation.replies : []
+    this.save()
+    return annotation
+  }
+
+  addAnnotationReply(annotationId: string, text: string): ReadingAnnotation {
+    const annotation = this.data.annotations[annotationId]
+    if (!annotation) throw new Error('reading_annotation_not_found')
+    const content = boundedText(text, 500)
+    if (!content) throw new Error('reading_annotation_reply_empty')
+    const replies = Array.isArray(annotation.replies) ? annotation.replies : []
+    replies.push({ id: nextId('reading-reply'), text: content, createdAt: Date.now() })
+    annotation.replies = replies.slice(-50)
+    annotation.liked = !!annotation.liked
+    this.save()
+    return annotation
   }
 
   getSessionSummaries(bookId: string, limit = 20) {

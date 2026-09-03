@@ -2,16 +2,21 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   ArrowDownToLine,
   BookOpen,
+  ChevronDown,
   ChevronLeft,
+  ChevronUp,
   Clock3,
   Gauge,
   Highlighter,
+  Heart,
   Library,
   Pause,
   PenLine,
   Play,
+  MessageCircle,
   RotateCcw,
   ScrollText,
+  Send,
   Sparkles,
   Trash2,
   Upload,
@@ -31,6 +36,8 @@ import {
   deleteCompanionReadingBook,
   getCompanionReadingAnnotations,
   getCompanionReadingState,
+  likeCompanionReadingAnnotation,
+  replyToCompanionReadingAnnotation,
   runResidentReadingBatch,
   startCompanionReadingSession,
   syncReadingBookToCompanion,
@@ -146,9 +153,69 @@ function renderMarkedText(text, notes, selectedId, onSelect) {
   return parts
 }
 
-function ParagraphBlock({ block, status, notes, selectedId, onSelect, onOpenNote }) {
-  const selectedNote = notes.find(note => note.id === selectedId)
+function InlineReadingNote({ note, expanded, onToggle, onLike, onReply }) {
+  const [reply, setReply] = useState('')
+  const [saving, setSaving] = useState(false)
+  const isAnnotation = note.kind === 'annotate'
+
+  const submitReply = async event => {
+    event.preventDefault()
+    const text = reply.trim()
+    if (!text || saving) return
+    setSaving(true)
+    try {
+      const saved = await onReply(note, text)
+      if (saved !== false) setReply('')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <div className={`ai-reading__inline-note ${expanded ? 'is-expanded' : ''}`}>
+      <button type="button" className="ai-reading__inline-note-main" onClick={onToggle}>
+        <span className="ai-reading__inline-note-icon">
+          {isAnnotation ? <PenLine size={13} /> : <Highlighter size={13} />}
+        </span>
+        <span className="ai-reading__inline-note-body">
+          <span className="ai-reading__inline-note-meta">
+            {isAnnotation ? 'AI 批注' : '值得留意'} · {formatTime(note.createdAt)}
+          </span>
+          {isAnnotation && note.annotation && (
+            <span className={`ai-reading__inline-note-text ${expanded ? '' : 'is-folded'}`}>{note.annotation}</span>
+          )}
+        </span>
+        <span className="ai-reading__inline-note-chevron">{expanded ? '收起' : '展开'}</span>
+      </button>
+      {expanded && (
+        <div className="ai-reading__note-interactions">
+          <div className="ai-reading__note-actions">
+            <button type="button" className={note.liked ? 'is-liked' : ''} onClick={() => onLike(note)}>
+              <Heart size={13} fill={note.liked ? 'currentColor' : 'none'} />{note.liked ? '已喜欢' : '喜欢'}
+            </button>
+            <span><MessageCircle size={13} />回复 {note.replies?.length || 0}</span>
+          </div>
+          {!!note.replies?.length && (
+            <div className="ai-reading__note-replies">
+              {note.replies.map(item => <p key={item.id}><small>你 · {formatTime(item.createdAt)}</small>{item.text}</p>)}
+            </div>
+          )}
+          <form className="ai-reading__reply-form" onSubmit={submitReply}>
+            <input value={reply} onChange={event => setReply(event.target.value)} maxLength={500} placeholder={isAnnotation ? '回复这条批注…' : '回复这处高亮…'} />
+            <button type="submit" disabled={!reply.trim() || saving} aria-label="发送回复"><Send size={13} /></button>
+          </form>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function ParagraphBlock({ block, status, notes, selectedId, onSelect, onOpenNote, onLikeNote, onReplyNote }) {
   const hasNotes = notes.length > 0
+  // A highlight is already visible in the正文 itself. Do not repeat a blank
+  // "值得留意" card under every paragraph; only reveal its interaction card
+  // when the user taps the highlighted words. Written annotations stay below.
+  const visibleNotes = notes.filter(note => note.kind === 'annotate' || note.id === selectedId)
   return (
     <article
       className={`ai-reading__paragraph ${status ? `is-${status}` : ''} ${hasNotes ? 'has-note' : ''}`}
@@ -162,30 +229,19 @@ function ParagraphBlock({ block, status, notes, selectedId, onSelect, onOpenNote
         {status === 'reading' && (
           <span className="ai-reading__reading-caret" aria-label="AI 正在阅读" />
         )}
-        {hasNotes && (
+        {!!visibleNotes.length && (
           <div className="ai-reading__note-stack">
-            {notes.map(note => {
+            {visibleNotes.map(note => {
               const expanded = selectedId === note.id
               return (
-                <button
+                <InlineReadingNote
                   key={note.id}
-                  type="button"
-                  className={`ai-reading__inline-note ${expanded ? 'is-expanded' : ''}`}
-                  onClick={() => onOpenNote(note.id)}
-                >
-                  <span className="ai-reading__inline-note-icon">
-                    {note.kind === 'annotate' ? <PenLine size={13} /> : <Highlighter size={13} />}
-                  </span>
-                  <span className="ai-reading__inline-note-body">
-                    <span className="ai-reading__inline-note-meta">
-                      {note.kind === 'annotate' ? 'AI 批注' : 'AI 高亮'} · {formatTime(note.createdAt)}
-                    </span>
-                    <span className={`ai-reading__inline-note-text ${expanded ? '' : 'is-folded'}`}>
-                      {note.annotation || '这一处值得留意。'}
-                    </span>
-                  </span>
-                  <span className="ai-reading__inline-note-chevron">{expanded ? '收起' : '展开'}</span>
-                </button>
+                  note={note}
+                  expanded={expanded}
+                  onToggle={() => onOpenNote(expanded ? null : note.id)}
+                  onLike={onLikeNote}
+                  onReply={onReplyNote}
+                />
               )
             })}
           </div>
@@ -215,7 +271,7 @@ function ReadingOverlay({ type, notes, logs, onClose, onSelectNote }) {
               <button key={note.id} type="button" className="ai-reading__sheet-note" onClick={() => onSelectNote(note.id)}>
                 <span className="ai-reading__sheet-note-mark"><Highlighter size={14} /></span>
                 <span>
-                  <small>{note.kind === 'annotate' ? '批注' : '高亮'} · {formatLocator(note)} · {formatTime(note.createdAt)}</small>
+                  <small>{note.kind === 'annotate' ? '批注' : '值得留意'} · {formatLocator(note)} · {formatTime(note.createdAt)}</small>
                   <q>{note.quote}</q>
                   {note.annotation && <em>{note.annotation}</em>}
                 </span>
@@ -352,6 +408,7 @@ export default function AIReading({ theme, onBack }) {
 
   const [panel, setPanel] = useState(null)
   const [selectedNoteId, setSelectedNoteId] = useState(null)
+  const [progressCollapsed, setProgressCollapsed] = useState(false)
   const [followAi, setFollowAi] = useState(true)
   const rootRef = useRef(null)
   const paragraphRefs = useRef({})
@@ -399,6 +456,38 @@ export default function AIReading({ theme, onBack }) {
     readingStateRef.current = next
     updateReadingState(updates)
   }, [updateReadingState])
+
+  const replaceResidentNote = useCallback(updated => {
+    if (!updated?.id) return
+    const live = readingStateRef.current
+    patchReading({
+      highlights: (live.highlights || []).map(note => note.id === updated.id ? { ...note, ...updated } : note),
+      annotations: (live.annotations || []).map(note => note.id === updated.id ? { ...note, ...updated } : note),
+    })
+  }, [patchReading])
+
+  const likeReadingNote = useCallback(async note => {
+    const nextLiked = !note.liked
+    replaceResidentNote({ ...note, liked: nextLiked })
+    try {
+      const result = await likeCompanionReadingAnnotation(note.id, nextLiked)
+      replaceResidentNote(result.annotation)
+    } catch (error) {
+      replaceResidentNote(note)
+      setImportNotice(`点赞没有保存：${error?.message || '连接失败'}`)
+    }
+  }, [replaceResidentNote])
+
+  const replyToReadingNote = useCallback(async (note, text) => {
+    try {
+      const result = await replyToCompanionReadingAnnotation(note.id, text)
+      replaceResidentNote(result.annotation)
+      return true
+    } catch (error) {
+      setImportNotice(`回复没有保存：${error?.message || '连接失败'}`)
+      return false
+    }
+  }, [replaceResidentNote])
 
   const selectBook = useCallback((nextBook) => {
     runRef.current += 1
@@ -870,46 +959,30 @@ export default function AIReading({ theme, onBack }) {
 
       {importNotice && <div className="ai-reading__import-notice" role="status">{importNotice}</div>}
 
-      <section className="ai-reading__progress-card" aria-label="阅读进度">
-        <div className="ai-reading__book-line">
-          <div>
-            <span className="ai-reading__eyebrow">AI 正在读</span>
-            <h1>《{book.title}》</h1>
-          </div>
+      <section className={`ai-reading__progress-card ${progressCollapsed ? 'is-collapsed' : ''}`} aria-label="阅读进度">
+        <button type="button" className="ai-reading__progress-toggle" onClick={() => setProgressCollapsed(value => !value)} aria-expanded={!progressCollapsed}>
+          <span className="ai-reading__progress-title">
+            {!progressCollapsed && <small>AI 正在读</small>}
+            <strong>《{book.title}》</strong>
+          </span>
           <span className={`ai-reading__status-dot is-${status}`} aria-label={ACTIVITY_LABELS[status] || status} />
-        </div>
-        <div className="ai-reading__progress-copy">
-          <span>第 {chapterNumber} 章 · 第 {currentPage} / {totalPages} 页 · {progressLabel}</span>
-          <span>{formatNumber(readChars)} / {formatNumber(totalChars)} 字</span>
-        </div>
-        <div className="ai-reading__progress-track" aria-label={`已读 ${progressLabel}`}>
-          <span style={{ width: `${progressWidth}%` }} />
-        </div>
-        <div className="ai-reading__meta-line">
-          <span><Highlighter size={12} /> 批注 {annotations.length} 条</span>
-          <span><Clock3 size={12} /> 最近 {formatTime(state.lastReadAt)}</span>
-          {readingSession && <span className="ai-reading__quota">本轮 {Math.min(readingSession.pagesRead || 0, readingSession.approvedPages || 0)} / {readingSession.approvedPages} 页</span>}
-          <span className="ai-reading__activity"><i /> {state.activity || '等 AI 翻开这一页'}</span>
-        </div>
-        {(state.pauseReason || state.error) && (
-          <div className={`ai-reading__pause-note ${state.error ? 'is-error' : ''}`}>
-            <span>{state.error ? '阅读遇到一点阻塞' : state.pauseReason}</span>
-            {state.error && <small>{state.error}</small>}
+          {progressCollapsed ? <ChevronDown size={14} /> : <ChevronUp size={14} />}
+        </button>
+        {!progressCollapsed && <>
+          <div className="ai-reading__progress-copy">
+            <span>第 {chapterNumber} 章 · 第 {currentPage} / {totalPages} 页 · {progressLabel}</span>
+            <span>{formatNumber(readChars)} / {formatNumber(totalChars)} 字</span>
           </div>
-        )}
-        <div className="ai-reading__model-line">
-          <span className="ai-reading__model-pulse" />
-          常驻对话里的 Claude Code · 每批 1–3 页 · 阅读事实独立保存
-          {readingSession && <small> · 本轮已提交 {readingSession.batchCount || readingSession.modelCalls || 0} 批</small>}
-        </div>
-        {readingSession && (
-          <div className="ai-reading__session-line" aria-label="本轮阅读统计">
-            <span>本轮第 {readingSession.startPage}–{readingSession.endPage} 页</span>
-            <span>已读 {Math.min(readingSession.pagesRead || 0, readingSession.approvedPages || 0)} / {readingSession.approvedPages} 页</span>
-            <span>时长 {formatDuration(readingSession.durationMs)}</span>
-            <span>新增批注 {readingSession.newAnnotations || 0}</span>
+          <div className="ai-reading__progress-track" aria-label={`已读 ${progressLabel}`}>
+            <span style={{ width: `${progressWidth}%` }} />
           </div>
-        )}
+          <div className="ai-reading__meta-line">
+            <span><Highlighter size={12} /> 批注 {annotations.length} 条</span>
+            <span><Clock3 size={12} /> 最近 {formatTime(state.lastReadAt)}</span>
+            {readingSession && <span className="ai-reading__quota">本轮 {Math.min(readingSession.pagesRead || 0, readingSession.approvedPages || 0)} / {readingSession.approvedPages} 页</span>}
+            <span className="ai-reading__activity" title={state.error || state.pauseReason || ''}><i /> {state.activity || '等 AI 翻开这一页'}</span>
+          </div>
+        </>}
       </section>
 
       <div className="ai-reading__body" ref={rootRef} onScroll={handleScroll}>
@@ -936,6 +1009,8 @@ export default function AIReading({ theme, onBack }) {
                     selectedId={selectedNoteId}
                     onSelect={setSelectedNoteId}
                     onOpenNote={setSelectedNoteId}
+                    onLikeNote={likeReadingNote}
+                    onReplyNote={replyToReadingNote}
                   />
                 </div>
               )
@@ -946,8 +1021,8 @@ export default function AIReading({ theme, onBack }) {
       </div>
 
       {!followAi && (
-        <button type="button" className="ai-reading__floating-locate" onClick={() => scrollToCurrent(true)}>
-          <ArrowDownToLine size={15} /> 回到 AI 当前阅读位置
+        <button type="button" className="ai-reading__floating-locate" onClick={() => scrollToCurrent(true)} aria-label="回到 AI 当前阅读位置" title="回到 AI 当前阅读位置">
+          <ArrowDownToLine size={16} />
         </button>
       )}
 
@@ -1033,10 +1108,16 @@ export default function AIReading({ theme, onBack }) {
         .ai-reading__topbar-title { min-width: 0; text-align: center; }
         .ai-reading__topbar-title span { display: flex; justify-content: center; align-items: center; gap: 5px; color: var(--reading-primary-dark); font-size: 13px; font-weight: 650; letter-spacing: .08em; }
         .ai-reading__topbar-title small { display: block; margin-top: 3px; color: var(--reading-muted); font-size: 9px; }
-        .ai-reading__progress-card { flex: 0 0 auto; margin: 4px 15px 0; padding: 13px 15px 12px; border: 1px solid rgba(255,255,255,.58); border-radius: 22px 20px 24px 19px; background: rgba(255,255,255,.37); box-shadow: 0 9px 24px rgba(90,91,120,.055), inset 0 1px 0 rgba(255,255,255,.68); backdrop-filter: blur(13px); -webkit-backdrop-filter: blur(13px); }
-        .ai-reading__book-line { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
-        .ai-reading__eyebrow { display: block; color: var(--reading-muted); font-size: 9px; letter-spacing: .13em; }
-        .ai-reading__book-line h1 { margin: 3px 0 0; color: #505d67; font: 500 20px/1.25 'ZCOOL XiaoWei', serif; letter-spacing: .035em; }
+        .ai-reading__progress-card { flex: 0 0 auto; align-self: stretch; margin: 4px 15px 0; padding: 12px 15px 11px; border: 1px solid rgba(255,255,255,.58); border-radius: 22px 20px 24px 19px; background: rgba(255,255,255,.37); box-shadow: 0 9px 24px rgba(90,91,120,.055), inset 0 1px 0 rgba(255,255,255,.68); backdrop-filter: blur(13px); -webkit-backdrop-filter: blur(13px); transition: width 180ms ease, padding 180ms ease, border-radius 180ms ease; }
+        .ai-reading__progress-card.is-collapsed { width: fit-content; max-width: calc(100% - 68px); align-self: center; padding: 7px 11px; border-radius: 999px; }
+        .ai-reading__progress-toggle { width: 100%; display: flex; align-items: center; gap: 9px; padding: 0; border: 0; color: #505d67; text-align: left; background: transparent; cursor: pointer; }
+        .ai-reading__progress-title { min-width: 0; flex: 1; }
+        .ai-reading__progress-title small { display: block; margin-bottom: 3px; color: var(--reading-muted); font-size: 9px; font-weight: 400; letter-spacing: .13em; }
+        .ai-reading__progress-title strong { display: block; overflow: hidden; font: 500 20px/1.25 'ZCOOL XiaoWei', serif; letter-spacing: .035em; text-overflow: ellipsis; white-space: nowrap; }
+        .ai-reading__progress-card.is-collapsed .ai-reading__progress-toggle { width: auto; }
+        .ai-reading__progress-card.is-collapsed .ai-reading__progress-title { flex: 0 1 auto; }
+        .ai-reading__progress-card.is-collapsed .ai-reading__progress-title strong { font-size: 14px; }
+        .ai-reading__progress-toggle > svg { flex: 0 0 auto; color: #9aa3a9; }
         .ai-reading__status-dot { width: 10px; height: 10px; flex: 0 0 auto; margin: 5px 2px 0 0; border-radius: 50%; background: #c7cdd0; box-shadow: 0 0 0 4px rgba(199,205,208,.12); }
         .ai-reading__status-dot.is-reading, .ai-reading__status-dot.is-highlight, .ai-reading__status-dot.is-annotate { background: var(--reading-primary); box-shadow: 0 0 0 4px color-mix(in srgb, var(--reading-primary) 15%, transparent); animation: ai-reading-breathe 1.8s ease-in-out infinite; }
         .ai-reading__status-dot.is-pause { background: #c5a7a1; }
@@ -1050,14 +1131,6 @@ export default function AIReading({ theme, onBack }) {
         .ai-reading__quota { color: var(--reading-primary-dark); opacity: .78; }
         .ai-reading__activity { min-width: 0; max-width: 100%; overflow: hidden; text-overflow: ellipsis; margin-left: auto; }
         .ai-reading__activity i { width: 5px; height: 5px; flex: 0 0 auto; border-radius: 50%; background: var(--reading-primary); opacity: .75; }
-        .ai-reading__pause-note { display: grid; gap: 2px; margin-top: 9px; padding: 7px 9px; border-left: 2px solid rgba(190,160,151,.55); color: #9d8f8c; font-size: 10px; line-height: 1.45; background: rgba(255,247,243,.45); }
-        .ai-reading__pause-note small { overflow: hidden; color: #b09e9a; font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
-        .ai-reading__pause-note.is-error { border-left-color: rgba(204,125,125,.65); color: #a77777; }
-        .ai-reading__model-line { display: flex; align-items: center; gap: 5px; min-width: 0; margin-top: 8px; color: #b1b5b5; font-size: 9px; }
-        .ai-reading__model-line small { overflow: hidden; color: #b4b7b7; font-size: 8px; text-overflow: ellipsis; white-space: nowrap; }
-        .ai-reading__model-pulse { width: 5px; height: 5px; border-radius: 50%; background: #a8c5b4; opacity: .72; }
-        .ai-reading__session-line { display: flex; flex-wrap: wrap; gap: 3px 9px; margin-top: 7px; color: #a6abad; font-size: 8px; line-height: 1.35; }
-        .ai-reading__session-line span { white-space: nowrap; }
         .ai-reading__body { flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain; -webkit-overflow-scrolling: touch; padding: 18px 20px 34px; scroll-behavior: smooth; background: linear-gradient(180deg, rgba(255,253,254,.16), rgba(255,253,254,.29)); }
         .ai-reading__body-intro { padding: 3px 4px 19px; border-bottom: 1px solid rgba(130,145,150,.12); }
         .ai-reading__body-intro span { color: var(--reading-primary-dark); font-size: 9px; letter-spacing: .15em; }
@@ -1081,18 +1154,32 @@ export default function AIReading({ theme, onBack }) {
         .ai-reading__mark--annotate { background: rgba(242,184,205,.25); text-decoration: underline; text-decoration-color: color-mix(in srgb, var(--reading-primary) 65%, #ae8797); text-decoration-thickness: 1px; text-underline-offset: 4px; }
         .ai-reading__mark.is-selected { background-color: rgba(255,218,133,.39); box-shadow: 0 0 0 3px rgba(255,218,133,.16); }
         .ai-reading__note-stack { display: grid; gap: 6px; margin: 8px 0 0; }
-        .ai-reading__inline-note { display: flex; align-items: flex-start; gap: 7px; width: 100%; padding: 7px 8px; border: 0; border-left: 2px solid color-mix(in srgb, var(--reading-primary) 52%, transparent); border-radius: 0 9px 9px 0; color: #7b7e87; text-align: left; background: rgba(255,246,218,.33); cursor: pointer; }
-        .ai-reading__inline-note:active { background: rgba(255,246,218,.52); }
+        .ai-reading__inline-note { width: 100%; overflow: hidden; border-left: 2px solid color-mix(in srgb, var(--reading-primary) 52%, transparent); border-radius: 0 9px 9px 0; color: #7b7e87; background: rgba(255,246,218,.33); }
         .ai-reading__inline-note.is-expanded { background: rgba(255,246,218,.53); }
+        .ai-reading__inline-note-main { display: flex; align-items: flex-start; gap: 7px; width: 100%; padding: 7px 8px; border: 0; color: inherit; text-align: left; background: transparent; cursor: pointer; }
+        .ai-reading__inline-note-main:active { background: rgba(255,255,255,.24); }
         .ai-reading__inline-note-icon { display: grid; place-items: center; flex: 0 0 auto; width: 22px; height: 22px; color: #c49c57; border-radius: 50%; background: rgba(255,255,255,.54); }
         .ai-reading__inline-note-body { min-width: 0; flex: 1; }
         .ai-reading__inline-note-meta { display: block; color: #b29a75; font-size: 9px; letter-spacing: .03em; }
         .ai-reading__inline-note-text { display: block; margin-top: 3px; color: #77746f; font-size: 11px; line-height: 1.6; }
         .ai-reading__inline-note-text.is-folded { display: -webkit-box; overflow: hidden; -webkit-line-clamp: 1; -webkit-box-orient: vertical; }
         .ai-reading__inline-note-chevron { flex: 0 0 auto; padding-top: 12px; color: #baa891; font-size: 9px; }
+        .ai-reading__note-interactions { display: grid; gap: 7px; padding: 0 8px 8px 37px; }
+        .ai-reading__note-actions { display: flex; align-items: center; gap: 12px; color: #a8957d; font-size: 9px; }
+        .ai-reading__note-actions button, .ai-reading__note-actions span { display: inline-flex; align-items: center; gap: 4px; padding: 0; border: 0; color: inherit; font-size: inherit; background: transparent; }
+        .ai-reading__note-actions button { cursor: pointer; }
+        .ai-reading__note-actions button.is-liked { color: #d17f94; }
+        .ai-reading__note-replies { display: grid; gap: 5px; }
+        .ai-reading__note-replies p { display: grid; gap: 2px; margin: 0; padding: 5px 7px; border-radius: 8px; color: #747276; font-size: 10px; line-height: 1.45; background: rgba(255,255,255,.4); }
+        .ai-reading__note-replies small { color: #b1a28f; font-size: 8px; }
+        .ai-reading__reply-form { display: flex; align-items: center; gap: 5px; }
+        .ai-reading__reply-form input { min-width: 0; height: 29px; flex: 1; padding: 0 9px; border: 1px solid rgba(173,153,124,.17); border-radius: 10px; outline: none; color: #6f7075; font-size: 10px; background: rgba(255,255,255,.53); }
+        .ai-reading__reply-form input:focus { border-color: color-mix(in srgb, var(--reading-primary) 42%, transparent); }
+        .ai-reading__reply-form button { width: 29px; height: 29px; display: grid; place-items: center; flex: 0 0 auto; border: 0; border-radius: 9px; color: white; background: var(--reading-primary-dark); cursor: pointer; }
+        .ai-reading__reply-form button:disabled { opacity: .35; }
         .ai-reading__end-mark { display: flex; align-items: center; gap: 8px; justify-content: center; margin: 31px 0 8px; color: #b4bab9; font-size: 9px; letter-spacing: .07em; }
         .ai-reading__end-mark span { width: 22px; height: 1px; background: rgba(131,156,148,.32); }
-        .ai-reading__floating-locate { position: absolute; z-index: 4; right: 17px; bottom: 127px; display: inline-flex; align-items: center; gap: 5px; padding: 8px 10px; border: 1px solid rgba(255,255,255,.65); border-radius: 99px; color: var(--reading-primary-dark); font-size: 10px; background: rgba(255,255,255,.78); box-shadow: 0 7px 17px rgba(73,85,97,.13); backdrop-filter: blur(9px); -webkit-backdrop-filter: blur(9px); animation: ai-reading-float-in 180ms ease-out both; }
+        .ai-reading__floating-locate { position: absolute; z-index: 4; right: 7px; bottom: 127px; width: 31px; height: 36px; display: grid; place-items: center; padding: 0; border: 1px solid rgba(255,255,255,.58); border-radius: 12px 0 0 12px; color: var(--reading-primary-dark); background: rgba(255,255,255,.69); box-shadow: 0 6px 15px rgba(73,85,97,.11); backdrop-filter: blur(9px); -webkit-backdrop-filter: blur(9px); animation: ai-reading-float-in 180ms ease-out both; }
         .ai-reading__controls { flex: 0 0 auto; padding: 8px 14px max(10px, var(--safe-bottom)); border-top: 1px solid rgba(255,255,255,.38); background: rgba(255,250,252,.46); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px); }
         .ai-reading__control-row { display: flex; align-items: center; gap: 9px; }
         .ai-reading__main-control { min-width: 102px; height: 37px; display: inline-flex; align-items: center; justify-content: center; gap: 7px; padding: 0 14px; border: 0; border-radius: 13px; color: white; font-size: 12px; font-weight: 650; background: linear-gradient(135deg, color-mix(in srgb, var(--reading-primary) 88%, white), var(--reading-primary-dark)); box-shadow: 0 6px 13px color-mix(in srgb, var(--reading-primary) 21%, transparent); cursor: pointer; }

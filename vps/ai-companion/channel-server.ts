@@ -9169,6 +9169,34 @@ Bun.serve<{ authed: true }>({
         : jsonResponse({ error: 'reading_annotation_not_found' }, { status: 404, headers: cors })
     }
 
+    if (url.pathname === '/reading/annotation/like' && req.method === 'POST') {
+      const gate = authGate()
+      if (gate) return gate
+      const cors = corsHeadersFor(origin)
+      try {
+        const body = await req.json() as Record<string, unknown>
+        const annotation = readingStore.toggleAnnotationLike(String(body.id ?? ''), typeof body.liked === 'boolean' ? body.liked : undefined)
+        sendRaw({ type: 'reading_annotation_update', annotation, ts: Date.now() })
+        return jsonResponse({ ok: true, annotation }, { headers: cors })
+      } catch (err) {
+        return jsonResponse({ error: String(err instanceof Error ? err.message : err) }, { status: 400, headers: cors })
+      }
+    }
+
+    if (url.pathname === '/reading/annotation/reply' && req.method === 'POST') {
+      const gate = authGate()
+      if (gate) return gate
+      const cors = corsHeadersFor(origin)
+      try {
+        const body = await req.json() as Record<string, unknown>
+        const annotation = readingStore.addAnnotationReply(String(body.id ?? ''), String(body.text ?? ''))
+        sendRaw({ type: 'reading_annotation_update', annotation, ts: Date.now() })
+        return jsonResponse({ ok: true, annotation }, { headers: cors })
+      } catch (err) {
+        return jsonResponse({ error: String(err instanceof Error ? err.message : err) }, { status: 400, headers: cors })
+      }
+    }
+
     if (url.pathname === '/reading/sessions' && req.method === 'GET') {
       const gate = authGate()
       if (gate) return gate

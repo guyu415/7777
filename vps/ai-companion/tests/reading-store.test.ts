@@ -70,12 +70,17 @@ describe('persistent reading store', () => {
     })
     expect(existsSync(batchPath)).toBe(false)
     expect(result.state.recentAnnotationIds).toHaveLength(1)
+    const annotationId = result.annotations[0].id
+    store.toggleAnnotationLike(annotationId, true)
+    store.addAnnotationReply(annotationId, '我也留意到了这里。')
     // The durable state file contains reading facts, never copied正文.
     expect(readFileSync(join(root, 'store.json'), 'utf8')).not.toContain('第 2 段正文。')
 
     const restarted = new ReadingStore(root)
     expect(restarted.getReadingState('long-book')?.nextParagraphId).toBe(result.state.nextParagraphId)
     expect(restarted.getAnnotations('long-book', 1, 2)).toHaveLength(1)
+    expect(restarted.getAnnotation(annotationId)?.liked).toBe(true)
+    expect(restarted.getAnnotation(annotationId)?.replies?.[0]?.text).toBe('我也留意到了这里。')
   })
 
   test('continues past 100 pages without linearly growing recovery context', () => {

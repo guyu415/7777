@@ -1688,6 +1688,22 @@ export function getCompanionReadingAnnotations(bookId, pageStart, pageEnd) {
   return companionJson(`/reading/annotations?${params}`)
 }
 
+export function likeCompanionReadingAnnotation(id, liked) {
+  return companionJson('/reading/annotation/like', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ id, liked }),
+  })
+}
+
+export function replyToCompanionReadingAnnotation(id, text) {
+  return companionJson('/reading/annotation/reply', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ id, text }),
+  })
+}
+
 export function getCompanionReadingSessions(bookId, limit = 20) {
   return companionJson(`/reading/sessions?bookId=${encodeURIComponent(bookId)}&limit=${encodeURIComponent(limit)}`)
 }
