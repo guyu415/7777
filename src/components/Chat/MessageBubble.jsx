@@ -9,7 +9,6 @@ import HealthDataCard from './HealthDataCard'
 import HeartRateCard from './HeartRateCard'
 import FocusSummaryCard from './FocusSummaryCard'
 import { GoldenRetrieverThinking } from './PendingReplyIndicator'
-import ReasoningSheet from './ReasoningSheet'
 import clsx from 'clsx'
 import { parseReplyQuotes } from '../../utils/replyQuotes'
 import { healthDataCategories, isHealthTool } from '../../utils/healthData'
@@ -221,11 +220,10 @@ function formatFileBytes(bytes) {
   return `${Math.max(1, Math.round(bytes / 1024))}KB`
 }
 
-function MessageBubble({ message, onLongPress, onRegenerate, onRegenerateRound, onRetry, isLoading, userAvatar, aiAvatar, theme, bubbleSkin = 'puppy', pendingReplyVariant = 'default', sameSenderAsPrev, sameSenderAsNext, translateThinking = false }) {
+function MessageBubble({ message, onLongPress, onRegenerate, onRegenerateRound, onRetry, isLoading, userAvatar, aiAvatar, theme, bubbleSkin = 'puppy', pendingReplyVariant = 'default', sameSenderAsPrev, sameSenderAsNext, onOpenReasoning, reasoningOpen = false }) {
   const [viewerSrc, setViewerSrc] = useState(null)
   const [pressed, setPressed] = useState(false)
   const [showVoiceText, setShowVoiceText] = useState(false)
-  const [showReasoning, setShowReasoning] = useState(false)
   const [reasoningNow, setReasoningNow] = useState(Date.now())
   const isUser = message.role === 'user'
   const showGoldenPending = !isUser
@@ -258,7 +256,6 @@ function MessageBubble({ message, onLongPress, onRegenerate, onRegenerateRound, 
   // new. Track the 0 -> dice transition as another authoritative "new roll"
   // signal; a history bubble mounts with dice already present and stays still.
   const hadDiceRef = useRef(diceValue > 0)
-  const closeReasoning = useCallback(() => setShowReasoning(false), [])
 
   useEffect(() => {
     if (!message.reasoningStreaming) return
@@ -486,17 +483,16 @@ function MessageBubble({ message, onLongPress, onRegenerate, onRegenerateRound, 
           // on top of it and covering it.
           <div className="mb-1 w-full" style={{ position: 'relative', zIndex: 6 }}>
             <button
-              onClick={() => setShowReasoning(true)}
+              onClick={() => onOpenReasoning?.(message)}
               disabled={!message.reasoning}
               className="reasoning-trigger"
               style={{ marginLeft: 46 }}
               aria-haspopup="dialog"
-              aria-expanded={showReasoning}
+              aria-expanded={reasoningOpen}
             >
               <span>看看它在想什么 · {reasoningStatus}</span>
               <ChevronRight size={15} strokeWidth={1.8} aria-hidden="true" />
             </button>
-            <ReasoningSheet message={message} open={showReasoning} onClose={closeReasoning} translateThinking={translateThinking} />
           </div>
         )}
         {diceValue > 0 && !message.voiceLoading && (

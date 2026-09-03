@@ -3,6 +3,7 @@ import { useVirtualizer } from '@tanstack/react-virtual'
 import { ChevronUp, ChevronDown } from 'lucide-react'
 import MessageBubble from './MessageBubble'
 import PendingReplyIndicator from './PendingReplyIndicator'
+import ReasoningSheet from './ReasoningSheet'
 import { messageListItemCount, shouldShowPendingReply } from './messageListModel'
 
 // How close to the bottom (px) still counts as "at the bottom" for auto-follow
@@ -59,6 +60,12 @@ const MessageList = forwardRef(function MessageList({
   const [nearTop, setNearTop] = useState(true)
   const [nearBottom, setNearBottom] = useState(true)
   const [newBelowCount, setNewBelowCount] = useState(0)
+  // The sheet must not live inside a virtualized bubble: that row may be
+  // unmounted when a streaming reply is split/re-measured, which previously
+  // destroyed the open translation panel and made its text "jump away".
+  const [reasoningTarget, setReasoningTarget] = useState(null)
+  const openReasoning = useCallback((message) => setReasoningTarget({ id: message.id, fallback: message }), [])
+  const closeReasoning = useCallback(() => setReasoningTarget(null), [])
   // Which single jump arrow (if any) is currently shown. Driven by scroll
   // *direction*, not just edge-proximity, so only ever one of the two is
   // visible — and it auto-hides shortly after scrolling stops (see
@@ -188,6 +195,9 @@ const MessageList = forwardRef(function MessageList({
 
   const items = virtualizer.getVirtualItems()
   const primaryColor = theme?.primary || '#4aacf0'
+  const reasoningMessage = reasoningTarget
+    ? messages.find(message => message.id === reasoningTarget.id) || reasoningTarget.fallback
+    : null
   const jumpButtonStyle = {
     position: 'absolute', left: 12, zIndex: 5,
     width: 34, height: 34, borderRadius: '50%',
@@ -257,7 +267,8 @@ const MessageList = forwardRef(function MessageList({
                   pendingReplyVariant={pendingReplyVariant}
                   sameSenderAsPrev={sameSenderAsPrev}
                   sameSenderAsNext={sameSenderAsNext}
-                  translateThinking={translateThinking}
+                  onOpenReasoning={openReasoning}
+                  reasoningOpen={reasoningTarget?.id === msg.id}
                 />
                 </div>
               </div>
@@ -307,6 +318,12 @@ const MessageList = forwardRef(function MessageList({
           )}
         </button>
       )}
+      <ReasoningSheet
+        message={reasoningMessage}
+        open={!!reasoningMessage}
+        onClose={closeReasoning}
+        translateThinking={translateThinking}
+      />
     </>
   )
 })

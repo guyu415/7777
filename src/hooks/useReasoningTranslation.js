@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useState } from 'react'
-import { getMessage, getMessages, saveMessage, useStore } from '../store'
+import { getMessage, getMessages, getReasoningTranslation, saveMessage, saveReasoningTranslation, useStore } from '../store'
 import { translateThinking } from '../services/reasoningTranslation'
 import { saveSessionMsgs } from '../services/sync'
-import { getReasoningTranslationController, hashReasoningText, shouldTranslateReasoningSegment } from '../utils/reasoningTranslation'
+import { getReasoningTranslationController, hashReasoningText } from '../utils/reasoningTranslation'
 
 const EMPTY_SNAPSHOT = { raw: '', streaming: false, segments: [] }
 
@@ -15,12 +15,15 @@ export function useReasoningTranslation(message, enabled) {
   const raw = typeof message?.reasoning === 'string' ? message.reasoning : ''
   const streaming = Boolean(message?.reasoningStreaming)
   const sourceHash = raw ? hashReasoningText(raw) : ''
-  const persistedTranslation = enabled
-    && sourceHash
+  const durableMessageId = (Array.isArray(message?.serverWireIds) && message.serverWireIds[0]) || message?.id || ''
+  const [durableTranslation, setDurableTranslation] = useState(null)
+  const messageTranslation = sourceHash
     && message?.reasoningTranslationSourceHash === sourceHash
     && typeof message?.reasoningTranslation === 'string'
     && message.reasoningTranslation
-    && !shouldTranslateReasoningSegment(message.reasoningTranslation)
+  const persistedTranslation = enabled
+    && sourceHash
+    && (messageTranslation || (durableTranslation?.sourceHash === sourceHash ? durableTranslation.text : ''))
   const messageId = enabled && !persistedTranslation ? String(message?.id || '') : ''
   const controller = useMemo(
     () => messageId ? getReasoningTranslationController(messageId, translateThinking) : null,
@@ -36,6 +39,20 @@ export function useReasoningTranslation(message, enabled) {
   useEffect(() => {
     controller?.update(raw, streaming)
   }, [controller, raw, streaming])
+
+  useEffect(() => {
+    let cancelled = false
+    if (!enabled || !durableMessageId || !sourceHash || messageTranslation) {
+      setDurableTranslation(null)
+      return () => { cancelled = true }
+    }
+    getReasoningTranslation(durableMessageId, sourceHash)
+      .then(record => {
+        if (!cancelled && record?.text) setDurableTranslation({ sourceHash, text: record.text })
+      })
+      .catch(() => {})
+    return () => { cancelled = true }
+  }, [durableMessageId, enabled, messageTranslation, sourceHash])
 
   useEffect(() => {
     if (!controller || streaming || !raw || !message?.id) return
@@ -54,6 +71,12 @@ export function useReasoningTranslation(message, enabled) {
       reasoningTranslationSourceHash: sourceHash,
       reasoningTranslationUpdatedAt: Date.now(),
     }
+    // Store the display translation in its own object store before touching
+    // the frequently-replayed chat row. Even a future transport snapshot
+    // that replaces the whole message cannot erase this keyed copy.
+    setDurableTranslation({ sourceHash, text: translated })
+    void saveReasoningTranslation(durableMessageId, sourceHash, translated)
+      .catch(error => console.warn('[REASONING-TRANSLATION] 独立持久化失败:', error?.message))
     useStore.getState().updateMessage(message.id, fields)
     void (async () => {
       const persisted = await getMessage(message.id).catch(() => null)
@@ -63,7 +86,7 @@ export function useReasoningTranslation(message, enabled) {
       const messages = (await getMessages(message.conversationId)).filter(item => !item.streaming)
       await saveSessionMsgs(password, message.conversationId, messages)
     })().catch(error => console.warn('[REASONING-TRANSLATION] 持久化失败:', error?.message))
-  }, [controller, message, raw, revision, sourceHash, streaming])
+  }, [controller, durableMessageId, message, raw, revision, sourceHash, streaming])
 
   if (persistedTranslation) {
     return {

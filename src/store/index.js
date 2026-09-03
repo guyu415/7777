@@ -8,7 +8,7 @@ let db
 
 async function getDB() {
   if (!db) {
-    db = await openDB('pink-chat', 4, {
+    db = await openDB('pink-chat', 5, {
       upgrade(database, oldVersion, _newVersion, transaction) {
         let messagesStore
         if (!database.objectStoreNames.contains('messages')) {
@@ -29,6 +29,9 @@ async function getDB() {
         }
         if (!database.objectStoreNames.contains('readingBooks')) {
           database.createObjectStore('readingBooks', { keyPath: 'id' })
+        }
+        if (!database.objectStoreNames.contains('reasoningTranslations')) {
+          database.createObjectStore('reasoningTranslations', { keyPath: 'key' })
         }
       },
     })
@@ -62,6 +65,19 @@ export async function getMessages(conversationId) {
 export async function getMessage(id) {
   const database = await getDB()
   return database.get('messages', id)
+}
+
+export async function saveReasoningTranslation(messageId, sourceHash, text) {
+  if (!messageId || !sourceHash || !text) return
+  const database = await getDB()
+  const key = `${messageId}:${sourceHash}`
+  await database.put('reasoningTranslations', { key, messageId, sourceHash, text, updatedAt: Date.now() })
+}
+
+export async function getReasoningTranslation(messageId, sourceHash) {
+  if (!messageId || !sourceHash) return null
+  const database = await getDB()
+  return database.get('reasoningTranslations', `${messageId}:${sourceHash}`)
 }
 
 export async function hasMessageWithWireId(wireId) {
@@ -119,6 +135,7 @@ export async function clearAllData() {
   const database = await getDB()
   await database.clear('messages')
   await database.clear('blobs')
+  await database.clear('reasoningTranslations')
 }
 
 export async function deleteMessagesForSession(conversationId) {
