@@ -6,6 +6,7 @@ import {
   MAX_READING_BATCH_PAGES,
   MAX_ROLLING_STATE_CHARS,
   ReadingStore,
+  flattenReadingBook,
 } from '../reading-store.ts'
 
 const roots: string[] = []
@@ -19,7 +20,7 @@ function makeStore() {
   return { root, store: new ReadingStore(root) }
 }
 
-function makeBook(paragraphs = 220) {
+function makeBook(paragraphs = 1_300) {
   return {
     id: 'long-book', title: '长书', author: '测试作者',
     chapters: [{
@@ -51,6 +52,22 @@ describe('persistent reading store', () => {
     const restarted = new ReadingStore(root)
     expect(restarted.listReadingRequests('approved')[0]?.sessionId).toBe(approved.session.id)
     expect(restarted.getSession(approved.session.id)?.approvedPages).toBe(7)
+  })
+
+  test('uses readable character-sized pages and keeps unfinished approval resumable', () => {
+    const { root, store } = makeStore()
+    store.importBook(makeBook(40))
+    const blocks = flattenReadingBook(store.getBook('long-book')!)
+    expect(blocks[0].pageNumber).toBe(1)
+    expect(blocks[1].pageNumber).toBe(1)
+    expect(blocks.find(block => block.pageNumber === 2)?.globalIndex).toBeGreaterThan(1)
+
+    const session = store.startSession('long-book', 2)
+    const batch = store.prepareBatch(session.id)
+    store.failBatch(session.id, 'temporary')
+    expect(() => store.createReadingRequest('long-book', 2)).toThrow('reading_session_has_remaining_approval')
+    const resumed = new ReadingStore(root).prepareBatch(session.id)
+    expect(resumed.blocks[0].id).toBe(batch.blocks[0].id)
   })
 
   test('batches at most three pages and restores after a process restart', () => {

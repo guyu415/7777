@@ -2387,7 +2387,7 @@ mcp.setRequestHandler(ListToolsRequestSchema, async () => ({
     },
     {
       name: 'request_reading_pages',
-      description: 'Create a durable user-approval card before reading. Call only from a normal main-chat turn after naturally asking in reply why/how much you want to read. This does not read any正文 and never grants permission by itself.',
+      description: 'Create a durable user-approval card before reading. First call get_reading_state: if its latest session still has approved pages remaining, do not request again—the user can resume that allowance in the reader. Call only from a normal main-chat turn after naturally asking why/how much you want to read. This does not read any正文 and never grants permission by itself.',
       inputSchema: {
         type: 'object',
         properties: {

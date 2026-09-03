@@ -5,6 +5,7 @@ export const READING_STORE_VERSION = 1
 export const MAX_READING_SESSION_PAGES = 20
 export const MAX_READING_BATCH_PAGES = 3
 export const READING_BATCH_CHAR_BUDGET = 7000
+export const READING_CHARS_PER_PAGE = 800
 export const MAX_ROLLING_STATE_CHARS = 5200
 
 export type ReadingParagraph = { id: string; text: string }
@@ -201,10 +202,16 @@ function normalizeBook(input: any): ReadingBook {
 
 export function flattenReadingBook(book: ReadingBook): ReadingBlock[] {
   const blocks: ReadingBlock[] = []
+  let pageNumber = 1
+  let pageChars = 0
   book.chapters.forEach((chapter, chapterIndex) => {
     chapter.paragraphs.forEach((paragraph, paragraphIndex) => {
       const globalIndex = blocks.length
-      const pageNumber = Math.floor(globalIndex / 2) + 1
+      const paragraphChars = Math.max(1, paragraph.text.replace(/\s/g, '').length)
+      if (pageChars > 0 && pageChars + paragraphChars > READING_CHARS_PER_PAGE) {
+        pageNumber += 1
+        pageChars = 0
+      }
       blocks.push({
         ...paragraph,
         bookId: book.id,
@@ -216,6 +223,7 @@ export function flattenReadingBook(book: ReadingBook): ReadingBlock[] {
         pageNumber,
         pageId: `${book.id}-page-${pageNumber}`,
       })
+      pageChars += paragraphChars
     })
   })
   return blocks
@@ -343,13 +351,16 @@ export class ReadingStore {
     const state = this.data.states[bookId]
     const book = this.data.books[bookId]
     if (!state || !book) return null
+    const fullBook = this.getBook(bookId)
+    const blocks = fullBook ? flattenReadingBook(fullBook) : []
+    const current = blocks.find(block => block.id === state.currentParagraphId)
     const latestSession = Object.values(this.data.sessions)
       .filter(session => session.bookId === bookId)
       .sort((a, b) => b.updatedAt - a.updatedAt)[0] || null
     return {
       bookId,
       title: book.title,
-      currentPage: state.currentPage,
+      currentPage: current?.pageNumber || state.currentPage,
       currentParagraphId: state.currentParagraphId,
       nextParagraphId: state.nextParagraphId,
       progress: state.progress,
@@ -377,6 +388,12 @@ export class ReadingStore {
     const book = this.data.books[bookId]
     const state = this.data.states[bookId]
     if (!book || !state) throw new Error('reading_book_not_found')
+    const unfinished = Object.values(this.data.sessions)
+      .filter(session => session.bookId === bookId
+        && session.status !== 'completed'
+        && session.pagesRead < session.approvedPages)
+      .sort((a, b) => b.updatedAt - a.updatedAt)[0]
+    if (unfinished) throw new Error(`reading_session_has_remaining_approval:${unfinished.id}`)
     const duplicate = Object.values(this.data.requests).find(request => request.bookId === bookId && request.status === 'pending')
     if (duplicate) return duplicate
     const cursorId = state.nextParagraphId || state.currentParagraphId
@@ -643,9 +660,13 @@ export class ReadingStore {
   }
 
   getAnnotations(bookId: string, pageStart?: number, pageEnd?: number): ReadingAnnotation[] {
-    return Object.values(this.data.annotations).filter(item => (
-      item.bookId === bookId
-      && (pageStart == null || item.pageNumber >= pageStart)
+    const book = this.getBook(bookId)
+    const locations = new Map((book ? flattenReadingBook(book) : []).map(block => [block.id, block]))
+    return Object.values(this.data.annotations).filter(item => item.bookId === bookId).map(item => {
+      const location = locations.get(item.paragraphId)
+      return location ? { ...item, pageId: location.pageId, pageNumber: location.pageNumber } : item
+    }).filter(item => (
+      (pageStart == null || item.pageNumber >= pageStart)
       && (pageEnd == null || item.pageNumber <= pageEnd)
     )).sort((a, b) => a.createdAt - b.createdAt)
   }

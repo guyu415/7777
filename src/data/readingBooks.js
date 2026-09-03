@@ -103,15 +103,21 @@ export const READING_BOOKS = [
 ]
 
 export const DEFAULT_READING_BOOK_ID = READING_BOOKS[0].id
-export const READING_PARAGRAPHS_PER_PAGE = 2
+export const READING_CHARS_PER_PAGE = 800
 
 export function flattenBook(book) {
   if (!book) return []
   const blocks = []
+  let pageNumber = 1
+  let pageChars = 0
   book.chapters.forEach((chapter, chapterIndex) => {
     chapter.paragraphs.forEach((paragraph, paragraphIndex) => {
       const globalIndex = blocks.length
-      const pageNumber = Math.floor(globalIndex / READING_PARAGRAPHS_PER_PAGE) + 1
+      const paragraphChars = Math.max(1, String(paragraph.text || '').replace(/\s/g, '').length)
+      if (pageChars > 0 && pageChars + paragraphChars > READING_CHARS_PER_PAGE) {
+        pageNumber += 1
+        pageChars = 0
+      }
       blocks.push({
         ...paragraph,
         chapterId: chapter.id,
@@ -123,6 +129,7 @@ export function flattenBook(book) {
         pageId: `${book.id}-page-${pageNumber}`,
         order: chapterIndex * 10000 + paragraphIndex,
       })
+      pageChars += paragraphChars
     })
   })
   return blocks

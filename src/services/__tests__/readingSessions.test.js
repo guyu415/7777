@@ -13,7 +13,8 @@ describe('reading session quota', () => {
 
   it('assigns stable page metadata to ordered paragraphs', () => {
     expect(blocks[0]).toMatchObject({ pageNumber: 1, pageId: 'lily-garden-notes-page-1', globalIndex: 0 })
-    expect(blocks[2]).toMatchObject({ pageNumber: 2, globalIndex: 2 })
+    expect(blocks[2]).toMatchObject({ pageNumber: 1, globalIndex: 2 })
+    expect(blocks.find(block => block.pageNumber === 2)?.globalIndex).toBeGreaterThan(2)
   })
 
   it('hard clamps every approved page value to 20', () => {
@@ -37,7 +38,7 @@ describe('reading session quota', () => {
   it('turns a chat marker into a concrete request without approving it', () => {
     const marker = parseReadingRequestMarker('[READING_REQUEST bookId=lily-garden-notes pages=7]')
     const request = makeChatReadingRequest({ book: READING_BOOKS[0], readingState: { currentParagraphId: blocks[2].id }, marker, now: 100 })
-    expect(request).toMatchObject({ triggerType: 'chat_request', startPage: 2, requestedPages: 7 })
+    expect(request).toMatchObject({ triggerType: 'chat_request', startPage: 1, requestedPages: 7 })
     expect(request.approvedPages).toBeUndefined()
   })
 })

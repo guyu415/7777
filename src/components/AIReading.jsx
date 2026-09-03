@@ -376,6 +376,9 @@ export default function AIReading({ theme, onBack }) {
   const readingSession = readingSessions?.find(item => item.sessionId === state.activeSessionId) || null
   const currentPage = getPageNumber(currentBlock)
   const totalPages = Math.max(currentPage, getPageNumber(blocks.at(-1)))
+  const nextRoundBlock = blocks.find(block => block.id === (state.nextParagraphId || state.currentParagraphId)) || currentBlock
+  const nextRoundStartPage = getPageNumber(nextRoundBlock)
+  const maxRoundPages = Math.max(1, Math.min(20, totalPages - nextRoundStartPage + 1))
 
   // If a proactive task was already running while the user was away, the
   // visible reader takes over its single session. Aborting the background
@@ -415,6 +418,8 @@ export default function AIReading({ theme, onBack }) {
   const [selectionMode, setSelectionMode] = useState('actions')
   const [annotationDraft, setAnnotationDraft] = useState('')
   const [savingUserMark, setSavingUserMark] = useState(false)
+  const [roundPickerOpen, setRoundPickerOpen] = useState(false)
+  const [roundPages, setRoundPages] = useState(5)
   const [followAi, setFollowAi] = useState(true)
   const rootRef = useRef(null)
   const paragraphRefs = useRef({})
@@ -763,7 +768,7 @@ export default function AIReading({ theme, onBack }) {
   const ensureResidentSession = useCallback(async (liveState) => {
     const store = useStore.getState()
     let localSession = store.readingSessions?.find(item => item.sessionId === liveState.activeSessionId)
-    if (!localSession || !['pending', 'approved', 'reading', 'paused'].includes(localSession.status)) {
+    if (!localSession || !['pending', 'approved', 'reading', 'paused', 'error'].includes(localSession.status)) {
       const startId = liveState.nextParagraphId || liveState.currentParagraphId || blocks[0]?.id
       const startParagraph = blocks.find(block => block.id === startId) || blocks[0]
       if (!startParagraph) return null
@@ -922,6 +927,32 @@ export default function AIReading({ theme, onBack }) {
     }
   }, [addLog, applyResidentState, blocks.length, book.id, ensureResidentSession, patchReading, upsertReadingSession, writeReadingSession])
 
+  const startManualRound = useCallback(() => {
+    const liveState = readingStateRef.current
+    const startId = liveState.nextParagraphId || liveState.currentParagraphId || blocks[0]?.id
+    const startParagraph = blocks.find(block => block.id === startId) || blocks[0]
+    if (!startParagraph) return
+    const approvedPages = Math.min(maxRoundPages, clampApprovedPages(roundPages, 5))
+    const session = approveReadingSession(createReadingSession({
+      triggerType: 'manual',
+      bookId: book.id,
+      startParagraph,
+      approvedPages,
+      requestedPages: approvedPages,
+    }), approvedPages)
+    upsertReadingSession(session)
+    patchReading({
+      status: 'idle',
+      activeSessionId: session.sessionId,
+      completionReason: '',
+      pauseReason: '',
+      error: '',
+      activity: `准备从第 ${getPageNumber(startParagraph)} 页开始新一轮`,
+    })
+    setRoundPickerOpen(false)
+    window.setTimeout(() => { void runReading() }, 0)
+  }, [blocks, book.id, maxRoundPages, patchReading, roundPages, runReading, upsertReadingSession])
+
   const pauseReading = useCallback(() => {
     if (!runningRef.current && readingStateRef.current.status !== 'reading' && readingStateRef.current.status !== 'highlight' && readingStateRef.current.status !== 'annotate') return
     runRef.current += 1
@@ -963,8 +994,8 @@ export default function AIReading({ theme, onBack }) {
   const handleMainControl = () => {
     if (state.status === 'complete') {
       if (state.completionReason === 'quota') {
-        if (readingSession?.triggerType === 'chat_request') return
-        void runReading()
+        setRoundPages(Math.min(5, maxRoundPages))
+        setRoundPickerOpen(true)
       } else {
         resetReading()
       }
@@ -1010,6 +1041,10 @@ export default function AIReading({ theme, onBack }) {
 
   const status = state.status || 'idle'
   const isActive = runningRef.current || ['reading', 'highlight', 'annotate'].includes(status)
+  const approvedPagesRemaining = readingSession
+    ? Math.max(0, Number(readingSession.approvedPages || 0) - Number(readingSession.pagesRead || 0))
+    : 0
+  const canContinueApproved = approvedPagesRemaining > 0 && readingSession?.status !== 'completed'
   const speed = SPEED_OPTIONS.find(option => option.id === state.speed) || SPEED_OPTIONS[1]
   const primary = theme?.primary || '#ff85b3'
   const primaryDark = theme?.primaryDark || '#756ea8'
@@ -1121,15 +1156,29 @@ export default function AIReading({ theme, onBack }) {
         </div>
       )}
 
+      {roundPickerOpen && state.nextParagraphId && (
+        <aside className="ai-reading__round-picker" aria-label="发起新一轮阅读">
+          <button type="button" className="ai-reading__round-close" onClick={() => setRoundPickerOpen(false)} aria-label="关闭"><X size={13} /></button>
+          <strong>发起新一轮阅读</strong>
+          <small>从第 {nextRoundStartPage} 页继续 · 你的点击就是本轮授权</small>
+          <label>
+            <span>阅读页数</span>
+            <input type="number" inputMode="numeric" min="1" max={maxRoundPages} value={roundPages} onChange={event => setRoundPages(event.target.value)} />
+            <em>第 {nextRoundStartPage}–{Math.min(totalPages, nextRoundStartPage + Math.min(maxRoundPages, clampApprovedPages(roundPages, 5)) - 1)} 页</em>
+          </label>
+          <button type="button" className="ai-reading__round-start" onClick={startManualRound}><Play size={14} />开始这一轮</button>
+        </aside>
+      )}
+
       <footer className="ai-reading__controls">
         <div className="ai-reading__control-row">
           <button type="button" className={`ai-reading__main-control ${isActive ? 'is-pause' : ''}`} onClick={handleMainControl}>
             {status === 'complete' && state.completionReason !== 'quota' ? <RotateCcw size={16} /> : isActive ? <Pause size={16} /> : <Play size={16} />}
             <span>{status === 'complete'
               ? state.completionReason === 'quota'
-                ? readingSession?.triggerType === 'chat_request' ? '等待新申请' : '下一轮阅读'
+                ? '我主动发起一轮'
                 : '再读一遍'
-              : isActive ? '暂停' : status === 'pause' || status === 'error' ? '继续' : '开始阅读'}</span>
+              : isActive ? '暂停' : canContinueApproved ? '继续已批准内容' : status === 'pause' || status === 'error' ? '继续' : '开始阅读'}</span>
           </button>
           <div className="ai-reading__speed-control">
             <Gauge size={14} />
@@ -1285,6 +1334,14 @@ export default function AIReading({ theme, onBack }) {
         .ai-reading__selection-tools form input { min-width: 0; height: 32px; flex: 1; padding: 0 10px; border: 1px solid color-mix(in srgb, var(--reading-primary) 22%, transparent); border-radius: 10px; outline: none; color: #686b70; font-size: 11px; background: rgba(255,255,255,.72); }
         .ai-reading__selection-tools form button { width: 32px; height: 32px; display: grid; place-items: center; flex: 0 0 auto; border: 0; border-radius: 10px; color: white; background: var(--reading-primary-dark); }
         .ai-reading__selection-tools button:disabled { opacity: .42; }
+        .ai-reading__round-picker { position: absolute; z-index: 8; right: 14px; bottom: calc(82px + var(--safe-bottom)); left: 14px; box-sizing: border-box; max-width: 360px; margin-inline: auto; padding: 12px; border: 1px solid rgba(255,255,255,.72); border-radius: 17px; color: #70777d; background: rgba(255,253,251,.92); box-shadow: 0 12px 30px rgba(74,66,78,.17); backdrop-filter: blur(18px); -webkit-backdrop-filter: blur(18px); animation: ai-reading-selection-in 160ms ease-out both; }
+        .ai-reading__round-picker > strong { display: block; color: #626d75; font-size: 12px; }
+        .ai-reading__round-picker > small { display: block; margin-top: 3px; padding-right: 22px; color: #9ba2a6; font-size: 9px; }
+        .ai-reading__round-close { position: absolute; top: 7px; right: 7px; width: 25px; height: 25px; display: grid; place-items: center; padding: 0; border: 0; border-radius: 50%; color: #a39da1; background: rgba(120,130,140,.07); }
+        .ai-reading__round-picker label { display: grid; grid-template-columns: auto 54px 1fr; align-items: center; gap: 7px; margin-top: 10px; color: #8d9499; font-size: 10px; }
+        .ai-reading__round-picker input { width: 54px; height: 30px; box-sizing: border-box; padding: 0 6px; border: 1px solid color-mix(in srgb, var(--reading-primary) 28%, white); border-radius: 9px; outline: none; color: #606b72; text-align: center; background: rgba(255,255,255,.75); }
+        .ai-reading__round-picker em { overflow: hidden; color: var(--reading-primary-dark); font-style: normal; text-overflow: ellipsis; white-space: nowrap; }
+        .ai-reading__round-start { width: 100%; height: 34px; display: inline-flex; align-items: center; justify-content: center; gap: 6px; margin-top: 9px; border: 0; border-radius: 11px; color: white; font-size: 11px; background: linear-gradient(135deg, color-mix(in srgb, var(--reading-primary) 88%, white), var(--reading-primary-dark)); }
         .ai-reading__controls { flex: 0 0 auto; padding: 8px 14px max(10px, var(--safe-bottom)); border-top: 1px solid rgba(255,255,255,.38); background: rgba(255,250,252,.46); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px); }
         .ai-reading__control-row { display: flex; align-items: center; gap: 9px; }
         .ai-reading__main-control { min-width: 102px; height: 37px; display: inline-flex; align-items: center; justify-content: center; gap: 7px; padding: 0 14px; border: 0; border-radius: 13px; color: white; font-size: 12px; font-weight: 650; background: linear-gradient(135deg, color-mix(in srgb, var(--reading-primary) 88%, white), var(--reading-primary-dark)); box-shadow: 0 6px 13px color-mix(in srgb, var(--reading-primary) 21%, transparent); cursor: pointer; }
