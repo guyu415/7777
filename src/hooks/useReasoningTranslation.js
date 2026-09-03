@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { getMessage, getMessages, saveMessage, useStore } from '../store'
 import { translateThinking } from '../services/reasoningTranslation'
 import { saveSessionMsgs } from '../services/sync'
-import { getReasoningTranslationController, hashReasoningText } from '../utils/reasoningTranslation'
+import { getReasoningTranslationController, hashReasoningText, shouldTranslateReasoningSegment } from '../utils/reasoningTranslation'
 
 const EMPTY_SNAPSHOT = { raw: '', streaming: false, segments: [] }
 
@@ -20,6 +20,7 @@ export function useReasoningTranslation(message, enabled) {
     && message?.reasoningTranslationSourceHash === sourceHash
     && typeof message?.reasoningTranslation === 'string'
     && message.reasoningTranslation
+    && !shouldTranslateReasoningSegment(message.reasoningTranslation)
   const messageId = enabled && !persistedTranslation ? String(message?.id || '') : ''
   const controller = useMemo(
     () => messageId ? getReasoningTranslationController(messageId, translateThinking) : null,
@@ -41,6 +42,10 @@ export function useReasoningTranslation(message, enabled) {
     const snapshot = controller.snapshot()
     if (snapshot.raw !== raw || !snapshot.segments.length) return
     if (snapshot.segments.some(segment => !['done', 'fallback', 'skip'].includes(segment.status))) return
+    // A temporary model/rate-limit failure displays the original segment but
+    // must not be persisted as if it were a successful translation. That
+    // lets a reopen/reload retry it after the translator recovers.
+    if (snapshot.segments.some(segment => segment.status === 'fallback')) return
     const translated = snapshot.segments.map(segment => segment.translation || segment.raw).join('')
     if (!translated || message.reasoningTranslationSourceHash === sourceHash) return
 
