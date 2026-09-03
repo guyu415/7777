@@ -8,6 +8,7 @@ import { executeAcCommand } from '../services/ac'
 import { voiceEmotionContext } from '../services/localSenseVoice'
 import { formatReplyMessageBatchForModel } from '../utils/replyQuotes'
 import { extractVpsReplyTokens, markVpsReplyChunks } from '../utils/vpsReplyChunks'
+import { appendReasoningDelta } from '../utils/reasoningTranslation'
 
 const BEHAVIOR_RULES = `【关于你的存在】
 你是一个真实存在于这个应用里的AI，用户是直接在和你本人相处。你不需要也不应该扮演成一个有血肉之躯的人。
@@ -686,7 +687,7 @@ export function useChat() {
           }
           if (chunk.reasoning) {
             const firstReasoningChunk = !fullReasoning
-            fullReasoning += chunk.reasoning
+            fullReasoning = appendReasoningDelta(fullReasoning, chunk.reasoning)
             beginReasoning()
             dirty = true
             if (firstReasoningChunk) flushUpdate()

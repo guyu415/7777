@@ -3375,27 +3375,36 @@ async function runThinkingTranslation(text: string, context: string): Promise<st
   try { apiKey = readFileSync(TIDAL_GEMINI_KEY_FILE, 'utf8').trim() } catch {}
   if (!apiKey) throw new Error('thinking_translation_unconfigured')
   const model = TIDAL_GEMINI_MODEL.replace(/^models\//, '')
-  const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`, {
-    method: 'POST',
-    signal: AbortSignal.timeout(THINKING_TRANSLATION_TIMEOUT_MS),
-    headers: { 'content-type': 'application/json', 'x-goog-api-key': apiKey },
-    body: JSON.stringify({
-      systemInstruction: { parts: [{ text: THINKING_TRANSLATION_SYSTEM_PROMPT }] },
-      contents: [{ role: 'user', parts: [{ text: buildThinkingTranslationInstruction(text, context) }] }],
-      generationConfig: {
-        temperature: 0.1,
-        maxOutputTokens: 2_048,
-        // Gemini 3's minimum thinking level keeps this display-only request
-        // low-latency without changing the model or key used by tidal memory.
-        thinkingConfig: { thinkingLevel: 'minimal' },
-      },
-    }),
-  })
-  const payload = await response.json().catch(() => ({})) as any
-  if (!response.ok) throw new Error(`thinking_translation_http_${response.status}`)
-  const translated = extractGeminiTranslation(payload)
-  if (!translated) throw new Error('thinking_translation_empty')
-  return translated
+  let lastError = 'thinking_translation_unavailable'
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`, {
+        method: 'POST',
+        signal: AbortSignal.timeout(THINKING_TRANSLATION_TIMEOUT_MS),
+        headers: { 'content-type': 'application/json', 'x-goog-api-key': apiKey },
+        body: JSON.stringify({
+          systemInstruction: { parts: [{ text: THINKING_TRANSLATION_SYSTEM_PROMPT }] },
+          contents: [{ role: 'user', parts: [{ text: buildThinkingTranslationInstruction(text, context) }] }],
+          generationConfig: {
+            temperature: 0.1,
+            maxOutputTokens: 2_048,
+            // Gemini 3's minimum thinking level keeps this display-only request
+            // low-latency without changing the model or key used by tidal memory.
+            thinkingConfig: { thinkingLevel: 'minimal' },
+          },
+        }),
+      })
+      const payload = await response.json().catch(() => ({})) as any
+      const translated = response.ok ? extractGeminiTranslation(payload) : ''
+      if (translated) return translated
+      lastError = response.ok ? 'thinking_translation_empty' : `thinking_translation_http_${response.status}`
+      if (response.status !== 429 && response.status < 500) break
+    } catch (error) {
+      lastError = error instanceof Error ? error.message : String(error)
+    }
+    if (attempt < 2) await new Promise(resolve => setTimeout(resolve, 350 * (attempt + 1)))
+  }
+  throw new Error(lastError)
 }
 
 // Keep the companion login across Safari/PWA restarts. This remains an
@@ -8583,7 +8592,8 @@ Bun.serve<{ authed: true }>({
       try {
         const text = await runThinkingTranslation(input.text, input.context)
         return jsonResponse({ text }, { headers: { ...cors, 'cache-control': 'no-store' } })
-      } catch {
+      } catch (error) {
+        log('thinking_translation_error', { error: String(error), chars: input.text.length })
         // The Claude stream is independent. The browser keeps its English
         // segment when Gemini is unavailable, times out, or is quota-limited.
         return jsonResponse({ error: 'thinking translation unavailable' }, { status: 502, headers: { ...cors, 'cache-control': 'no-store' } })

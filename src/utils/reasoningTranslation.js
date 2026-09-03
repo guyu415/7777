@@ -2,7 +2,7 @@
 // the chat store, IndexedDB, the companion history, or a model context.
 
 export const REASONING_TRANSLATION_IDLE_MS = 600
-export const REASONING_TRANSLATION_CHARS_PER_SECOND = 32
+export const REASONING_TRANSLATION_CHARS_PER_SECOND = 220
 export const REASONING_TRANSLATION_MAX_CONCURRENT = 3
 
 const CACHE_TTL_MS = 10 * 60 * 1000
@@ -100,6 +100,26 @@ export function shouldTranslateReasoningSegment(text) {
   return protectedLength < value.length
 }
 
+// Thinking wire events are intended to be deltas, but a reconnect or a
+// duplicated transport delivery can occasionally resend the last complete
+// block (or send the cumulative value). Merge only substantial overlaps so
+// natural short repetitions such as “好，好” remain untouched.
+export function appendReasoningDelta(currentValue, deltaValue) {
+  const current = String(currentValue || '')
+  const delta = String(deltaValue || '')
+  if (!delta) return current
+  if (!current) return delta
+  if (current.endsWith(delta)) return current
+  if (delta.startsWith(current)) return delta
+
+  const minimumOverlap = 8
+  const maximumOverlap = Math.min(current.length, delta.length)
+  for (let size = maximumOverlap; size >= minimumOverlap; size -= 1) {
+    if (current.slice(-size) === delta.slice(0, size)) return current + delta.slice(size)
+  }
+  return current + delta
+}
+
 function rangeAt(ranges, index, from = 0) {
   for (let i = from; i < ranges.length; i += 1) {
     if (index < ranges[i].start) return { range: null, index: i }
@@ -124,7 +144,9 @@ export function findReasoningBoundary(text, start = 0, providedRanges = null) {
   if (start >= value.length) return null
   const ranges = providedRanges || getProtectedReasoningSpans(value)
   let rangeIndex = 0
-  for (let index = start; index < value.length; index += 1) {
+  let lastNaturalBoundary = null
+  const hardLimit = Math.min(value.length, start + HARD_SEGMENT_MAX)
+  for (let index = start; index < hardLimit; index += 1) {
     const located = rangeAt(ranges, index, rangeIndex)
     rangeIndex = located.index
     if (located.range) {
@@ -132,16 +154,19 @@ export function findReasoningBoundary(text, start = 0, providedRanges = null) {
       continue
     }
     const char = value[index]
-    if (char === '\n') return index + 1
-    if (/[.!?。！？；;]/.test(char)) {
-      const boundary = boundaryAfterPunctuation(value, index)
-      if (boundary) return boundary
+    let boundary = null
+    if (char === '\n') boundary = index + 1
+    else if (/[.!?。！？；;]/.test(char)) boundary = boundaryAfterPunctuation(value, index)
+    if (boundary && boundary - start >= SOFT_SEGMENT_MIN) {
+      lastNaturalBoundary = boundary
+      if (boundary - start >= SOFT_SEGMENT_TARGET) return boundary
     }
   }
 
   const length = value.length - start
   if (length < HARD_SEGMENT_MAX) return null
-  const limit = Math.min(value.length, start + HARD_SEGMENT_MAX)
+  if (lastNaturalBoundary) return lastNaturalBoundary
+  const limit = hardLimit
   const preferred = Math.min(limit, start + SOFT_SEGMENT_TARGET)
   const safeWhitespace = (index) => {
     if (!/\s/.test(value[index])) return false
