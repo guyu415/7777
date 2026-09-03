@@ -34,6 +34,7 @@ import { stopProactiveReading } from '../services/proactiveReading'
 import { parseReadingBookFile } from '../services/readingLibrary'
 import {
   deleteCompanionReadingBook,
+  createCompanionReadingAnnotation,
   getCompanionReadingAnnotations,
   getCompanionReadingState,
   likeCompanionReadingAnnotation,
@@ -140,7 +141,7 @@ function renderMarkedText(text, notes, selectedId, onSelect) {
       <button
         key={`${note.id}-${start}`}
         type="button"
-        className={`ai-reading__mark ai-reading__mark--${note.kind || 'highlight'} ${selectedId === note.id ? 'is-selected' : ''}`}
+        className={`ai-reading__mark ai-reading__mark--${note.kind || 'highlight'} ${note.author === 'user' ? 'is-user' : ''} ${selectedId === note.id ? 'is-selected' : ''}`}
         onClick={() => onSelect(note.id)}
         aria-label={note.annotation ? `查看批注：${note.annotation}` : '查看 AI 高亮'}
       >
@@ -157,6 +158,7 @@ function InlineReadingNote({ note, expanded, onToggle, onLike, onReply }) {
   const [reply, setReply] = useState('')
   const [saving, setSaving] = useState(false)
   const isAnnotation = note.kind === 'annotate'
+  const isMine = note.author === 'user'
 
   const submitReply = async event => {
     event.preventDefault()
@@ -179,7 +181,7 @@ function InlineReadingNote({ note, expanded, onToggle, onLike, onReply }) {
         </span>
         <span className="ai-reading__inline-note-body">
           <span className="ai-reading__inline-note-meta">
-            {isAnnotation ? 'AI 批注' : '值得留意'} · {formatTime(note.createdAt)}
+            {isMine ? (isAnnotation ? '我的批注' : '我的高亮') : (isAnnotation ? 'AI 批注' : '值得留意')} · {formatTime(note.createdAt)}
           </span>
           {isAnnotation && note.annotation && (
             <span className={`ai-reading__inline-note-text ${expanded ? '' : 'is-folded'}`}>{note.annotation}</span>
@@ -187,7 +189,7 @@ function InlineReadingNote({ note, expanded, onToggle, onLike, onReply }) {
         </span>
         <span className="ai-reading__inline-note-chevron">{expanded ? '收起' : '展开'}</span>
       </button>
-      {expanded && (
+      {expanded && !isMine && (
         <div className="ai-reading__note-interactions">
           <div className="ai-reading__note-actions">
             <button type="button" className={note.liked ? 'is-liked' : ''} onClick={() => onLike(note)}>
@@ -271,7 +273,7 @@ function ReadingOverlay({ type, notes, logs, onClose, onSelectNote }) {
               <button key={note.id} type="button" className="ai-reading__sheet-note" onClick={() => onSelectNote(note.id)}>
                 <span className="ai-reading__sheet-note-mark"><Highlighter size={14} /></span>
                 <span>
-                  <small>{note.kind === 'annotate' ? '批注' : '值得留意'} · {formatLocator(note)} · {formatTime(note.createdAt)}</small>
+                  <small>{note.author === 'user' ? (note.kind === 'annotate' ? '我的批注' : '我的高亮') : (note.kind === 'annotate' ? 'AI 批注' : '值得留意')} · {formatLocator(note)} · {formatTime(note.createdAt)}</small>
                   <q>{note.quote}</q>
                   {note.annotation && <em>{note.annotation}</em>}
                 </span>
@@ -409,6 +411,10 @@ export default function AIReading({ theme, onBack }) {
   const [panel, setPanel] = useState(null)
   const [selectedNoteId, setSelectedNoteId] = useState(null)
   const [progressCollapsed, setProgressCollapsed] = useState(false)
+  const [textSelection, setTextSelection] = useState(null)
+  const [selectionMode, setSelectionMode] = useState('actions')
+  const [annotationDraft, setAnnotationDraft] = useState('')
+  const [savingUserMark, setSavingUserMark] = useState(false)
   const [followAi, setFollowAi] = useState(true)
   const rootRef = useRef(null)
   const paragraphRefs = useRef({})
@@ -422,6 +428,34 @@ export default function AIReading({ theme, onBack }) {
   useEffect(() => {
     readingStateRef.current = state
   }, [state])
+
+  // Native long-press selection stays intact; we only capture its exact text
+  // and owning paragraph for a compact action bar above the reading controls.
+  useEffect(() => {
+    let timer = null
+    const capture = () => {
+      clearTimeout(timer)
+      timer = window.setTimeout(() => {
+        const selection = window.getSelection?.()
+        if (!selection || selection.isCollapsed || !selection.rangeCount) return
+        const anchor = selection.anchorNode?.nodeType === Node.ELEMENT_NODE ? selection.anchorNode : selection.anchorNode?.parentElement
+        const focus = selection.focusNode?.nodeType === Node.ELEMENT_NODE ? selection.focusNode : selection.focusNode?.parentElement
+        const start = anchor?.closest?.('[data-paragraph-id]')
+        const end = focus?.closest?.('[data-paragraph-id]')
+        if (!start || start !== end || !rootRef.current?.contains(start)) return
+        const quote = selection.toString().trim().slice(0, 1200)
+        if (!quote) return
+        setTextSelection({ paragraphId: start.dataset.paragraphId, quote })
+        setSelectionMode('actions')
+        setAnnotationDraft('')
+      }, 120)
+    }
+    document.addEventListener('selectionchange', capture)
+    return () => {
+      clearTimeout(timer)
+      document.removeEventListener('selectionchange', capture)
+    }
+  }, [book.id])
 
   // A full browser restart cannot retain a JavaScript promise, but it must
   // never erase the server-owned session or cursor. The authoritative state
@@ -488,6 +522,49 @@ export default function AIReading({ theme, onBack }) {
       return false
     }
   }, [replaceResidentNote])
+
+  const addResidentNote = useCallback(note => {
+    if (!note?.id) return
+    const block = blocks.find(item => item.id === note.paragraphId)
+    const located = {
+      ...note,
+      chapterId: block?.chapterId || null,
+      chapterTitle: block?.chapterTitle || '',
+      chapterIndex: block?.chapterIndex,
+      paragraphIndex: block?.paragraphIndex,
+    }
+    const live = readingStateRef.current
+    const key = note.kind === 'annotate' ? 'annotations' : 'highlights'
+    patchReading({ [key]: [...(live[key] || []).filter(item => item.id !== note.id), located] })
+  }, [blocks, patchReading])
+
+  const clearTextSelection = useCallback(() => {
+    try { window.getSelection?.()?.removeAllRanges() } catch { /* iOS can revoke selection during scroll. */ }
+    setTextSelection(null)
+    setSelectionMode('actions')
+    setAnnotationDraft('')
+  }, [])
+
+  const saveSelectedText = useCallback(async (kind, annotation = '') => {
+    if (!textSelection || savingUserMark) return
+    setSavingUserMark(true)
+    try {
+      const result = await createCompanionReadingAnnotation({
+        bookId: book.id,
+        paragraphId: textSelection.paragraphId,
+        quote: textSelection.quote,
+        kind,
+        annotation,
+      })
+      addResidentNote(result.annotation)
+      setSelectedNoteId(result.annotation.id)
+      clearTextSelection()
+    } catch (error) {
+      setImportNotice(`标记没有保存：${error?.message || '连接失败'}`)
+    } finally {
+      setSavingUserMark(false)
+    }
+  }, [addResidentNote, book.id, clearTextSelection, savingUserMark, textSelection])
 
   const selectBook = useCallback((nextBook) => {
     runRef.current += 1
@@ -1026,6 +1103,24 @@ export default function AIReading({ theme, onBack }) {
         </button>
       )}
 
+      {textSelection && (
+        <div className="ai-reading__selection-tools" role="toolbar" aria-label="标记选中的文字">
+          <button type="button" className="ai-reading__selection-close" onClick={clearTextSelection} aria-label="取消选择"><X size={13} /></button>
+          <q>{textSelection.quote}</q>
+          {selectionMode === 'actions' ? (
+            <div className="ai-reading__selection-actions">
+              <button type="button" disabled={savingUserMark} onClick={() => void saveSelectedText('highlight')}><Highlighter size={14} />高亮</button>
+              <button type="button" onClick={() => setSelectionMode('annotate')}><PenLine size={14} />写批注</button>
+            </div>
+          ) : (
+            <form onSubmit={event => { event.preventDefault(); if (annotationDraft.trim()) void saveSelectedText('annotate', annotationDraft.trim()) }}>
+              <input autoFocus value={annotationDraft} maxLength={500} onChange={event => setAnnotationDraft(event.target.value)} placeholder="写下你的批注…" />
+              <button type="submit" disabled={!annotationDraft.trim() || savingUserMark} aria-label="保存批注"><Send size={14} /></button>
+            </form>
+          )}
+        </div>
+      )}
+
       <footer className="ai-reading__controls">
         <div className="ai-reading__control-row">
           <button type="button" className={`ai-reading__main-control ${isActive ? 'is-pause' : ''}`} onClick={handleMainControl}>
@@ -1142,7 +1237,7 @@ export default function AIReading({ theme, onBack }) {
         .ai-reading__paragraph { position: relative; display: flex; gap: 9px; margin: 0 -3px; padding: 10px 8px 11px 4px; border-radius: 16px; transition: background 300ms ease, opacity 300ms ease, transform 300ms ease; }
         .ai-reading__paragraph-index { flex: 0 0 18px; padding-top: 5px; color: #bcc3c5; font: italic 10px/1 'Ma Shan Zheng', cursive; text-align: center; opacity: .7; }
         .ai-reading__paragraph-copy { min-width: 0; flex: 1; }
-        .ai-reading__paragraph p { margin: 0; color: #5f6b73; font: 15px/2 'Noto Sans SC', 'PingFang SC', sans-serif; letter-spacing: .015em; text-align: justify; text-wrap: pretty; text-shadow: 0 1px 0 rgba(255,255,255,.27); }
+        .ai-reading__paragraph p { margin: 0; color: #5f6b73; font: 15px/2 'Noto Sans SC', 'PingFang SC', sans-serif; letter-spacing: .015em; text-align: justify; text-wrap: pretty; text-shadow: 0 1px 0 rgba(255,255,255,.27); user-select: text; -webkit-user-select: text; }
         .ai-reading__paragraph.is-unread { opacity: .78; }
         .ai-reading__paragraph.is-read { opacity: .91; }
         .ai-reading__paragraph.is-current { background: rgba(255,255,255,.29); box-shadow: inset 2px 0 0 color-mix(in srgb, var(--reading-primary) 37%, transparent); }
@@ -1152,6 +1247,7 @@ export default function AIReading({ theme, onBack }) {
         .ai-reading__reading-caret { display: inline-block; width: 6px; height: 6px; margin: 0 0 2px 5px; border-radius: 50%; background: var(--reading-primary); opacity: .6; animation: ai-reading-caret 1.3s ease-in-out infinite; }
         .ai-reading__mark { padding: 0 2px; border: 0; border-radius: 4px; color: inherit; font: inherit; line-height: inherit; text-align: inherit; cursor: pointer; background: linear-gradient(transparent 58%, rgba(255,213,123,.42) 58%, rgba(255,213,123,.42) 91%, transparent 91%); }
         .ai-reading__mark--annotate { background: rgba(242,184,205,.25); text-decoration: underline; text-decoration-color: color-mix(in srgb, var(--reading-primary) 65%, #ae8797); text-decoration-thickness: 1px; text-underline-offset: 4px; }
+        .ai-reading__mark--highlight.is-user { background: linear-gradient(transparent 58%, color-mix(in srgb, var(--reading-primary) 24%, #ffe6a8) 58%, color-mix(in srgb, var(--reading-primary) 24%, #ffe6a8) 91%, transparent 91%); }
         .ai-reading__mark.is-selected { background-color: rgba(255,218,133,.39); box-shadow: 0 0 0 3px rgba(255,218,133,.16); }
         .ai-reading__note-stack { display: grid; gap: 6px; margin: 8px 0 0; }
         .ai-reading__inline-note { width: 100%; overflow: hidden; border-left: 2px solid color-mix(in srgb, var(--reading-primary) 52%, transparent); border-radius: 0 9px 9px 0; color: #7b7e87; background: rgba(255,246,218,.33); }
@@ -1180,6 +1276,15 @@ export default function AIReading({ theme, onBack }) {
         .ai-reading__end-mark { display: flex; align-items: center; gap: 8px; justify-content: center; margin: 31px 0 8px; color: #b4bab9; font-size: 9px; letter-spacing: .07em; }
         .ai-reading__end-mark span { width: 22px; height: 1px; background: rgba(131,156,148,.32); }
         .ai-reading__floating-locate { position: absolute; z-index: 4; right: 7px; bottom: 127px; width: 31px; height: 36px; display: grid; place-items: center; padding: 0; border: 1px solid rgba(255,255,255,.58); border-radius: 12px 0 0 12px; color: var(--reading-primary-dark); background: rgba(255,255,255,.69); box-shadow: 0 6px 15px rgba(73,85,97,.11); backdrop-filter: blur(9px); -webkit-backdrop-filter: blur(9px); animation: ai-reading-float-in 180ms ease-out both; }
+        .ai-reading__selection-tools { position: absolute; z-index: 7; left: 50%; bottom: calc(104px + var(--safe-bottom)); width: min(330px, calc(100% - 32px)); display: grid; gap: 7px; padding: 9px 10px; border: 1px solid rgba(255,255,255,.67); border-radius: 16px; color: #706f75; background: rgba(255,253,251,.89); box-shadow: 0 10px 28px rgba(74,66,78,.16); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px); transform: translateX(-50%); animation: ai-reading-float-in 160ms ease-out both; }
+        .ai-reading__selection-close { position: absolute; top: 5px; right: 5px; width: 24px; height: 24px; display: grid; place-items: center; padding: 0; border: 0; border-radius: 50%; color: #a49da0; background: transparent; }
+        .ai-reading__selection-tools > q { display: block; overflow: hidden; padding-right: 24px; color: #8a7d76; font-size: 10px; line-height: 1.45; text-overflow: ellipsis; white-space: nowrap; }
+        .ai-reading__selection-actions { display: flex; gap: 7px; }
+        .ai-reading__selection-actions button { height: 31px; display: inline-flex; align-items: center; justify-content: center; gap: 5px; flex: 1; border: 0; border-radius: 10px; color: var(--reading-primary-dark); font-size: 10px; background: color-mix(in srgb, var(--reading-primary) 10%, rgba(255,255,255,.74)); }
+        .ai-reading__selection-tools form { display: flex; align-items: center; gap: 6px; }
+        .ai-reading__selection-tools form input { min-width: 0; height: 32px; flex: 1; padding: 0 10px; border: 1px solid color-mix(in srgb, var(--reading-primary) 22%, transparent); border-radius: 10px; outline: none; color: #686b70; font-size: 11px; background: rgba(255,255,255,.72); }
+        .ai-reading__selection-tools form button { width: 32px; height: 32px; display: grid; place-items: center; flex: 0 0 auto; border: 0; border-radius: 10px; color: white; background: var(--reading-primary-dark); }
+        .ai-reading__selection-tools button:disabled { opacity: .42; }
         .ai-reading__controls { flex: 0 0 auto; padding: 8px 14px max(10px, var(--safe-bottom)); border-top: 1px solid rgba(255,255,255,.38); background: rgba(255,250,252,.46); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px); }
         .ai-reading__control-row { display: flex; align-items: center; gap: 9px; }
         .ai-reading__main-control { min-width: 102px; height: 37px; display: inline-flex; align-items: center; justify-content: center; gap: 7px; padding: 0 14px; border: 0; border-radius: 13px; color: white; font-size: 12px; font-weight: 650; background: linear-gradient(135deg, color-mix(in srgb, var(--reading-primary) 88%, white), var(--reading-primary-dark)); box-shadow: 0 6px 13px color-mix(in srgb, var(--reading-primary) 21%, transparent); cursor: pointer; }

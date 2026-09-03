@@ -47,6 +47,7 @@ export type ReadingAnnotation = {
   id: string
   bookId: string
   sessionId: string
+  author?: 'ai' | 'user'
   kind: 'highlight' | 'annotate'
   pageId: string
   pageNumber: number
@@ -567,6 +568,7 @@ export class ReadingStore {
         id: nextId('annotation'),
         bookId: book.id,
         sessionId,
+        author: 'ai',
         kind: note.kind,
         pageId: paragraph.pageId,
         pageNumber: paragraph.pageNumber,
@@ -650,6 +652,32 @@ export class ReadingStore {
 
   getAnnotation(annotationId: string): ReadingAnnotation | null {
     return this.data.annotations[annotationId] || null
+  }
+
+  createUserAnnotation(input: any): ReadingAnnotation {
+    const bookId = safeId(input?.bookId ?? input?.book_id, '')
+    const paragraphId = safeId(input?.paragraphId ?? input?.paragraph_id, '')
+    const book = this.getBook(bookId)
+    const state = this.data.states[bookId]
+    if (!book || !state) throw new Error('reading_book_not_found')
+    const paragraph = flattenReadingBook(book).find(block => block.id === paragraphId)
+    if (!paragraph) throw new Error('reading_paragraph_not_found')
+    const quote = boundedText(input?.quote, 1200)
+    if (!quote || !paragraph.text.includes(quote)) throw new Error('reading_quote_not_in_paragraph')
+    const kind: ReadingAnnotation['kind'] = input?.kind === 'annotate' ? 'annotate' : 'highlight'
+    const annotationText = kind === 'annotate' ? boundedText(input?.annotation, 500) : ''
+    if (kind === 'annotate' && !annotationText) throw new Error('reading_annotation_empty')
+    const now = Date.now()
+    const annotation: ReadingAnnotation = {
+      id: nextId('annotation'), bookId, sessionId: 'user', author: 'user', kind,
+      pageId: paragraph.pageId, pageNumber: paragraph.pageNumber, paragraphId,
+      quote, annotation: annotationText, liked: false, replies: [], createdAt: now,
+    }
+    this.data.annotations[annotation.id] = annotation
+    state.recentAnnotationIds = [...state.recentAnnotationIds, annotation.id].slice(-12)
+    state.updatedAt = now
+    this.save()
+    return annotation
   }
 
   toggleAnnotationLike(annotationId: string, liked?: boolean): ReadingAnnotation {

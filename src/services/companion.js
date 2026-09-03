@@ -1696,6 +1696,14 @@ export function likeCompanionReadingAnnotation(id, liked) {
   })
 }
 
+export function createCompanionReadingAnnotation({ bookId, paragraphId, quote, kind, annotation = '' }) {
+  return companionJson('/reading/annotation/create', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ bookId, paragraphId, quote, kind, annotation }),
+  })
+}
+
 export function replyToCompanionReadingAnnotation(id, text) {
   return companionJson('/reading/annotation/reply', {
     method: 'POST',

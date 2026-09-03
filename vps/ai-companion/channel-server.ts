@@ -9183,6 +9183,20 @@ Bun.serve<{ authed: true }>({
       }
     }
 
+    if (url.pathname === '/reading/annotation/create' && req.method === 'POST') {
+      const gate = authGate()
+      if (gate) return gate
+      const cors = corsHeadersFor(origin)
+      try {
+        const body = await req.json() as Record<string, unknown>
+        const annotation = readingStore.createUserAnnotation(body)
+        sendRaw({ type: 'reading_annotation_update', annotation, ts: Date.now() })
+        return jsonResponse({ ok: true, annotation }, { headers: cors })
+      } catch (err) {
+        return jsonResponse({ error: String(err instanceof Error ? err.message : err) }, { status: 400, headers: cors })
+      }
+    }
+
     if (url.pathname === '/reading/annotation/reply' && req.method === 'POST') {
       const gate = authGate()
       if (gate) return gate
