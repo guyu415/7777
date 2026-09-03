@@ -1698,7 +1698,7 @@ export function getCompanionReadingSessions(bookId, limit = 20) {
  * chat. The turn is silent: the only useful payload is the Reading Store
  * commit broadcast. The caller schedules the next batch after this resolves.
  */
-export async function runResidentReadingBatch({ sessionId, signal }) {
+export async function runResidentReadingBatch({ sessionId, signal, onPhase }) {
   if (!sessionId) throw new Error('缺少阅读 session')
   if (signal?.aborted) throw Object.assign(new Error('aborted'), { name: 'AbortError' })
   await ensureFreshConnectionBeforeSend()
@@ -1730,8 +1730,10 @@ export async function runResidentReadingBatch({ sessionId, signal }) {
         return
       }
       if (evt.kind === 'close') {
-        if (result) finish(null, result)
-        else finish(Object.assign(new Error('连接中断；已提交的阅读位置仍会保存在服务器，可重新进入继续。'), { code: 'reading_connection_lost' }))
+        // The resident task belongs to the server, not to this particular
+        // socket. Keep the listener alive across the service's automatic
+        // reconnect so a tab/background transition cannot turn a successful
+        // commit into a local failure.
         return
       }
       if (evt.kind !== 'wire') return
@@ -1741,6 +1743,10 @@ export async function runResidentReadingBatch({ sessionId, signal }) {
         return
       }
       if (message.turnId !== turnId) return
+      if (message.type === 'reading_phase') {
+        onPhase?.(message)
+        return
+      }
       if (message.type === 'reading_update') {
         result = message.result
         return

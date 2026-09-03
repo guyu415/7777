@@ -1446,9 +1446,12 @@ let readingTurn: {
   batchId: string
   bookId: string
   batchPath: string
+  pageStart: number
+  pageEnd: number
   committed: boolean
   stopGraceTimer?: ReturnType<typeof setTimeout>
 } | null = null
+const READING_COMMIT_GRACE_MS = 9 * 60_000
 
 function nextId() {
   return `m${Date.now()}-${++seq}`
@@ -2072,8 +2075,9 @@ function endTurn(): string | null {
           readingTurn.stopGraceTimer = undefined
           failTurn('reading_turn_ended_without_commit')
         }
-      }, 45_000)
+      }, READING_COMMIT_GRACE_MS)
       log('reading_stop_deferred', { turnId, sessionId: readingTurn.sessionId })
+      sendRaw({ type: 'reading_phase', turnId, sessionId: readingTurn.sessionId, phase: 'saving', pageStart: readingTurn.pageStart, pageEnd: readingTurn.pageEnd, ts: Date.now() })
     }
     return turnId
   }
@@ -2254,7 +2258,9 @@ const mcp = new Server(
       `Never ask the user to state their mood or perform an emotion for this layer.\n\n` +
       `AI Reading: durable book progress lives in the external Reading Store, never in chat history. A ` +
       `kind:"reading_batch" notification is a silent, dedicated task: use Agent/Task to create a temporary ` +
-      `subagent that reads only the supplied 1–3 page batch file, then call commit_reading_batch exactly once. ` +
+      `subagent that reads only the supplied 1–3 page batch file and has that subagent call ` +
+      `commit_reading_batch exactly once before it returns. You may commit only as a fallback if the subagent ` +
+      `reports that it could not access the commit tool. ` +
       `The main resident context must not Read the batch file itself, quote the book, call reply/send_voice, or ` +
       `append old summaries. Replace the bounded rolling_state with an updated compact state. After /clear, or ` +
       `when a chat genuinely concerns the book, use get_reading_state; query get_annotations/get_annotation only ` +
@@ -4343,12 +4349,13 @@ function beginMainCcTurn(input: QueuedCcMessage) {
 function beginReadingTurn(turnId: string, sessionId: string, clientTime?: unknown) {
   const batch = readingStore.prepareBatch(sessionId)
   const batchPath = readingStore.writeBatchFile(batch)
-  readingTurn = { turnId, sessionId, batchId: batch.id, bookId: batch.bookId, batchPath, committed: false }
+  readingTurn = { turnId, sessionId, batchId: batch.id, bookId: batch.bookId, batchPath, pageStart: batch.startPage, pageEnd: batch.endPage, committed: false }
   startTurn(turnId, 'reading')
+  sendRaw({ type: 'reading_phase', turnId, sessionId, phase: 'reading', pageStart: batch.startPage, pageEnd: batch.endPage, ts: Date.now() })
   deliver(turnId, JSON.stringify({
     kind: 'reading_batch',
     surface: 'ai_reading',
-    task: '这是独立阅读任务，不是用户聊天。必须使用 Agent/Task 工具启动一个临时子代理，让子代理用 Read 工具读取 batch_file；主常驻上下文不要直接读取正文。子代理只返回结构化阅读结果。你随后必须调用 commit_reading_batch 写入持久 Reading Store。不要调用 reply、send_voice，也不要把正文或完整批注写进聊天。',
+    task: '这是独立阅读任务，不是用户聊天。必须使用 Agent/Task 工具启动一个临时子代理，让子代理用 Read 工具读取 batch_file，并由子代理自己调用 commit_reading_batch 写入持久 Reading Store 后只返回简短提交回执；主常驻上下文不要直接读取正文。只有子代理明确报告无法使用提交工具时，你才兜底提交。不要调用 reply、send_voice，也不要把正文或完整批注写进聊天。',
     batch_file: batchPath,
     book_id: batch.bookId,
     book_title: batch.bookTitle,

@@ -44,6 +44,10 @@ import {
 } from '../services/readingSessions'
 
 const SPEED_OPTIONS = [READING_SPEEDS.slow, READING_SPEEDS.normal, READING_SPEEDS.fast]
+// Survives route/component unmounts for the lifetime of the web app. The
+// server remains authoritative; this map only keeps the local controller
+// reachable if the user comes back and explicitly presses pause.
+const activeResidentReadingSessions = new Map()
 
 const ACTIVITY_LABELS = {
   reading: '正在阅读……',
@@ -313,6 +317,7 @@ export default function AIReading({ theme, onBack }) {
   const currentBlock = blocks[currentIndex] || blocks[0]
   const readingSession = readingSessions?.find(item => item.sessionId === state.activeSessionId) || null
   const currentPage = getPageNumber(currentBlock)
+  const totalPages = Math.max(currentPage, getPageNumber(blocks.at(-1)))
 
   // If a proactive task was already running while the user was away, the
   // visible reader takes over its single session. Aborting the background
@@ -329,7 +334,10 @@ export default function AIReading({ theme, onBack }) {
     Number(state.progressChars) || 0,
     charsReadForIds(blocks, readIds),
   ))
-  const progress = totalChars ? Math.round((readChars / totalChars) * 100) : 0
+  const preciseProgress = totalChars ? (readChars / totalChars) * 100 : 0
+  const progress = Math.round(preciseProgress)
+  const progressLabel = preciseProgress > 0 && preciseProgress < 1 ? '<1%' : `${progress}%`
+  const progressWidth = preciseProgress > 0 ? Math.max(0.8, preciseProgress) : 0
   const annotations = useMemo(() => allAnnotations(state), [state.annotations, state.highlights])
   const notesByParagraph = useMemo(() => {
     const result = new Map()
@@ -358,10 +366,13 @@ export default function AIReading({ theme, onBack }) {
     readingStateRef.current = state
   }, [state])
 
-  // A refresh cannot keep an in-flight request alive. Turn a persisted
-  // transient status into a safe pause while keeping the exact cursor.
+  // A full browser restart cannot retain a JavaScript promise, but it must
+  // never erase the server-owned session or cursor. The authoritative state
+  // hydration below decides whether there is work to resume.
   useEffect(() => {
-    if (!runningRef.current && (state.status === 'reading' || state.status === 'highlight' || state.status === 'annotate')) {
+    if (!runningRef.current
+      && !activeResidentReadingSessions.has(state.activeSessionId)
+      && (state.status === 'reading' || state.status === 'highlight' || state.status === 'annotate')) {
       updateReadingState({
         status: 'pause',
         activity: '已保存阅读位置，等你继续',
@@ -379,33 +390,9 @@ export default function AIReading({ theme, onBack }) {
     }
   }, [blocks, state.activeSessionId, state.currentParagraphId, state.nextParagraphId, state.status, updateReadingSession, updateReadingState])
 
-  useEffect(() => () => {
-    runRef.current += 1
-    abortRef.current?.abort()
-    runningRef.current = false
-    const live = readingStateRef.current
-    if (['reading', 'highlight', 'annotate'].includes(live.status)) {
-      updateReadingState({
-        status: 'pause',
-        activity: '已保存阅读位置，等你继续',
-        pauseReason: '离开页面后，AI 会从原段落继续。',
-      })
-      if (live.activeSessionId) {
-        const cursor = blocks.find(block => block.id === live.currentParagraphId)
-        const startedAt = sessionRunStartedAtRef.current
-        const currentSession = useStore.getState().readingSessions?.find(item => item.sessionId === live.activeSessionId)
-        updateReadingSession(live.activeSessionId, {
-          status: 'paused',
-          currentParagraphId: live.currentParagraphId,
-          currentPageId: cursor?.pageId || null,
-          nextParagraphId: live.nextParagraphId || null,
-          ...(startedAt && currentSession
-            ? { durationMs: (Number(currentSession.durationMs) || 0) + Math.max(0, Date.now() - startedAt) }
-            : {}),
-        })
-      }
-    }
-  }, [blocks, updateReadingSession, updateReadingState])
+  // Deliberately no unmount cleanup that aborts the reading controller: route
+  // changes and screen switches are presentation events, while the approved
+  // resident reading task must keep running in the background.
 
   const patchReading = useCallback((updates) => {
     const next = { ...readingStateRef.current, ...updates }
@@ -509,6 +496,9 @@ export default function AIReading({ theme, onBack }) {
       currentPageId: current?.pageId || null,
       currentPage: remoteState.currentPage || current?.pageNumber || 1,
       nextParagraphId: remoteState.nextParagraphId || null,
+      // Keep the most recent completed session selected for quota/summary UI;
+      // ensureResidentSession still creates a new session because its status
+      // is completed, while the server remains authoritative about activity.
       activeSessionId: remoteState.activeSessionId || remoteState.session?.id || null,
       readParagraphIds,
       progressChars: Math.round(totalChars * progressValue),
@@ -539,7 +529,9 @@ export default function AIReading({ theme, onBack }) {
         }
         const { annotations: remoteNotes = [] } = await getCompanionReadingAnnotations(book.id)
         if (cancelled || runningRef.current || readingStateRef.current.bookId !== book.id) return
-        const restoredStatus = remoteState.progress >= 1
+        const bookCompleted = !remoteState.nextParagraphId
+        const quotaCompleted = remoteState.session?.status === 'completed' && !bookCompleted
+        const restoredStatus = bookCompleted || quotaCompleted
           ? 'complete'
           : remoteState.progress > 0 ? 'pause' : 'idle'
         applyResidentState(remoteState, remoteNotes, restoredStatus)
@@ -559,9 +551,13 @@ export default function AIReading({ theme, onBack }) {
           })
         }
         patchReading({
-          completionReason: remoteState.progress >= 1 ? 'book' : '',
-          activity: remoteState.progress > 0 ? '已从独立书签恢复' : '等常驻 Claude Code 翻开这一页',
-          pauseReason: remoteState.progress > 0 ? '页码、批注和阅读认知已从 Reading Store 恢复。' : '',
+          completionReason: bookCompleted ? 'book' : quotaCompleted ? 'quota' : '',
+          activity: bookCompleted
+            ? ACTIVITY_LABELS.complete
+            : quotaCompleted ? ACTIVITY_LABELS.quota : remoteState.progress > 0 ? '已从独立书签恢复' : '等常驻 Claude Code 翻开这一页',
+          pauseReason: quotaCompleted
+            ? `本轮已读 ${remoteState.session.approvedPages} 页，下一轮从独立书签继续。`
+            : remoteState.progress > 0 ? '页码、批注和阅读认知已从 Reading Store 恢复。' : '',
           error: '',
         })
       } catch (error) {
@@ -571,6 +567,32 @@ export default function AIReading({ theme, onBack }) {
     void hydrate()
     return () => { cancelled = true }
   }, [applyResidentState, book, patchReading, upsertReadingSession])
+
+  // WebSocket delivery is immediate in the normal case; this lightweight
+  // poll is the recovery path for a reconnect or a mobile browser that
+  // suspended event delivery while the resident agent committed the batch.
+  useEffect(() => {
+    if (!['reading', 'highlight', 'annotate'].includes(state.status)) return undefined
+    let cancelled = false
+    const syncCommittedProgress = async () => {
+      try {
+        const remoteState = await getCompanionReadingState(book.id)
+        if (cancelled || remoteState.updatedAt <= (readingStateRef.current.lastReadAt || 0)) return
+        const noteResult = await getCompanionReadingAnnotations(book.id)
+        if (cancelled) return
+        const remoteStatus = remoteState.session?.status === 'completed' ? 'complete' : 'reading'
+        applyResidentState(remoteState, noteResult.annotations || [], remoteStatus)
+      } catch { /* WebSocket/reconnect path remains active. */ }
+    }
+    const timer = window.setInterval(syncCommittedProgress, 3000)
+    const onVisibility = () => { if (!document.hidden) void syncCommittedProgress() }
+    document.addEventListener('visibilitychange', onVisibility)
+    return () => {
+      cancelled = true
+      window.clearInterval(timer)
+      document.removeEventListener('visibilitychange', onVisibility)
+    }
+  }, [applyResidentState, book.id, state.status])
 
   const ensureResidentSession = useCallback(async (liveState) => {
     const store = useStore.getState()
@@ -620,7 +642,7 @@ export default function AIReading({ theme, onBack }) {
   }, [applyResidentState, blocks, book, patchReading, upsertReadingSession])
 
   const runReading = useCallback(async () => {
-    if (runningRef.current || !blocks.length) return
+    if (runningRef.current || activeResidentReadingSessions.has(readingStateRef.current.activeSessionId) || !blocks.length) return
     const token = ++runRef.current
     const controller = new AbortController()
     abortRef.current = controller
@@ -630,6 +652,7 @@ export default function AIReading({ theme, onBack }) {
     try {
       const session = await ensureResidentSession(readingStateRef.current)
       if (!session || token !== runRef.current || controller.signal.aborted) return
+      activeResidentReadingSessions.set(session.sessionId, controller)
       if (session.status === 'completed') {
         const recovered = await getCompanionReadingState(book.id)
         const isBookComplete = !recovered.nextParagraphId
@@ -649,7 +672,18 @@ export default function AIReading({ theme, onBack }) {
       writeReadingSession(session.sessionId, { status: 'reading', startedAt: session.startedAt || runStartedAt })
 
       while (token === runRef.current && !controller.signal.aborted) {
-        const result = await runResidentReadingBatch({ sessionId: session.sessionId, signal: controller.signal })
+        const result = await runResidentReadingBatch({
+          sessionId: session.sessionId,
+          signal: controller.signal,
+          onPhase: phase => {
+            if (token !== runRef.current || controller.signal.aborted) return
+            if (phase.phase === 'reading') {
+              patchReading({ activity: `常驻 Claude Code 正在读第 ${phase.pageStart}–${phase.pageEnd} 页……` })
+            } else if (phase.phase === 'saving') {
+              patchReading({ activity: `已读完第 ${phase.pageStart || state.currentPage} 页附近，正在保存书签与批注……` })
+            }
+          },
+        })
         if (token !== runRef.current || controller.signal.aborted) break
         const remoteSession = result.session
         const existingNotes = allAnnotations(readingStateRef.current)
@@ -711,6 +745,9 @@ export default function AIReading({ theme, onBack }) {
         })
       }
     } finally {
+      for (const [sessionId, activeController] of activeResidentReadingSessions) {
+        if (activeController === controller) activeResidentReadingSessions.delete(sessionId)
+      }
       if (token === runRef.current) {
         runningRef.current = false
         abortRef.current = null
@@ -722,6 +759,7 @@ export default function AIReading({ theme, onBack }) {
   const pauseReading = useCallback(() => {
     if (!runningRef.current && readingStateRef.current.status !== 'reading' && readingStateRef.current.status !== 'highlight' && readingStateRef.current.status !== 'annotate') return
     runRef.current += 1
+    activeResidentReadingSessions.get(readingStateRef.current.activeSessionId)?.abort()
     abortRef.current?.abort()
     runningRef.current = false
     const current = readingStateRef.current.currentParagraphId
@@ -748,6 +786,7 @@ export default function AIReading({ theme, onBack }) {
 
   const resetReading = useCallback(() => {
     runRef.current += 1
+    activeResidentReadingSessions.get(readingStateRef.current.activeSessionId)?.abort()
     abortRef.current?.abort()
     runningRef.current = false
     patchReading({ ...createInitialReadingState(book), speed: readingStateRef.current.speed })
@@ -840,11 +879,11 @@ export default function AIReading({ theme, onBack }) {
           <span className={`ai-reading__status-dot is-${status}`} aria-label={ACTIVITY_LABELS[status] || status} />
         </div>
         <div className="ai-reading__progress-copy">
-          <span>第 {chapterNumber} 章 · 第 {currentPage} 页 · {progress}%</span>
+          <span>第 {chapterNumber} 章 · 第 {currentPage} / {totalPages} 页 · {progressLabel}</span>
           <span>{formatNumber(readChars)} / {formatNumber(totalChars)} 字</span>
         </div>
-        <div className="ai-reading__progress-track" aria-label={`已读 ${progress}%`}>
-          <span style={{ width: `${progress}%` }} />
+        <div className="ai-reading__progress-track" aria-label={`已读 ${progressLabel}`}>
+          <span style={{ width: `${progressWidth}%` }} />
         </div>
         <div className="ai-reading__meta-line">
           <span><Highlighter size={12} /> 批注 {annotations.length} 条</span>
