@@ -330,7 +330,11 @@ export class ReadingStore {
   }
 
   listBooks() {
-    return Object.values(this.data.books).sort((a, b) => b.importedAt - a.importedAt)
+    return Object.values(this.data.books).map(metadata => {
+      const book = this.getBook(metadata.id)
+      const blocks = book ? flattenReadingBook(book) : []
+      return blocks.length ? { ...metadata, paragraphCount: blocks.length, pageCount: blocks.at(-1)!.pageNumber } : metadata
+    }).sort((a, b) => b.importedAt - a.importedAt)
   }
 
   deleteBook(bookId: string): boolean {

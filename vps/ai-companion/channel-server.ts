@@ -1452,6 +1452,13 @@ let readingTurn: {
   stopGraceTimer?: ReturnType<typeof setTimeout>
 } | null = null
 const READING_COMMIT_GRACE_MS = 9 * 60_000
+// A proactive check may choose to read while the user is away. The choice is
+// durably authorized by the user's setting, then the same isolated 1–3 page
+// batch pipeline drains the selected 2–7 page session without needing an open
+// browser to send the next `reading_task` message.
+let autonomousReadingSessionId: string | null = null
+let autonomousReadingTimer: ReturnType<typeof setTimeout> | null = null
+let autonomousReadingFailures = 0
 
 function nextId() {
   return `m${Date.now()}-${++seq}`
@@ -2083,7 +2090,9 @@ function endTurn(): string | null {
   }
   currentTurn = null
   stopThinkingTail(turnId)
+  let finishedReadingSessionId: string | null = null
   if (finished.surface === 'reading' && readingTurn?.turnId === turnId) {
+    finishedReadingSessionId = readingTurn.sessionId
     if (readingTurn.stopGraceTimer) clearTimeout(readingTurn.stopGraceTimer)
     if (!readingTurn.committed) {
       readingStore.failBatch(readingTurn.sessionId, 'reading_turn_ended_without_commit')
@@ -2103,6 +2112,12 @@ function endTurn(): string | null {
   if (finished.broadcastLifecycle) sendRaw({ type: 'turn_end', turnId, ts: Date.now() })
   if (finished.surface === 'tidal_recovery') tidalRecoverySettled()
   broadcastXinchaoUpdateBestEffort(XINCHAO_CC_SESSION_ID, 'claude-code')
+  if (finishedReadingSessionId && finishedReadingSessionId === autonomousReadingSessionId) {
+    autonomousReadingFailures = 0
+    scheduleAutonomousReading(finishedReadingSessionId)
+  } else if (autonomousReadingSessionId && finished.surface !== 'reading') {
+    scheduleAutonomousReading(autonomousReadingSessionId)
+  }
   return turnId
 }
 
@@ -2112,7 +2127,9 @@ function failTurn(error: string): string | null {
   const turnId = finished.turnId
   currentTurn = null
   stopThinkingTail(turnId)
+  let failedReadingSessionId: string | null = null
   if (finished.surface === 'reading' && readingTurn?.turnId === turnId) {
+    failedReadingSessionId = readingTurn.sessionId
     if (readingTurn.stopGraceTimer) clearTimeout(readingTurn.stopGraceTimer)
     readingStore.failBatch(readingTurn.sessionId, error)
     sendRaw({ type: 'reading_error', turnId, error, ts: Date.now() })
@@ -2125,6 +2142,16 @@ function failTurn(error: string): string | null {
   // the three layers a second time.
   if (finished.surface === 'tidal_recovery') tidalRecoverySettled()
   broadcastXinchaoUpdateBestEffort(XINCHAO_CC_SESSION_ID, 'claude-code')
+  if (failedReadingSessionId && failedReadingSessionId === autonomousReadingSessionId) {
+    autonomousReadingFailures += 1
+    if (autonomousReadingFailures <= 2) scheduleAutonomousReading(failedReadingSessionId, 5_000)
+    else {
+      log('autonomous_reading_stopped_after_retries', { sessionId: failedReadingSessionId, error })
+      autonomousReadingSessionId = null
+    }
+  } else if (autonomousReadingSessionId && finished.surface !== 'reading') {
+    scheduleAutonomousReading(autonomousReadingSessionId)
+  }
   return turnId
 }
 
@@ -2265,8 +2292,10 @@ const mcp = new Server(
       `append old summaries. Replace the bounded rolling_state with an updated compact state. After /clear, or ` +
       `when a chat genuinely concerns the book, use get_reading_state; query get_annotations/get_annotation only ` +
       `for the specific detail needed. Never inject complete logs, all annotations, session summaries, or book text ` +
-      `into ordinary chat. For unrelated chat, do not query reading state at all. If you independently want to read, ` +
-      `first ask the user naturally in a normal reply, choose a concrete 1–20 page amount, then call ` +
+      `into ordinary chat. For unrelated chat, do not query reading state at all. During proactive_check only, the ` +
+      `user has pre-authorized you to optionally choose a book and call start_proactive_reading for 2–7 pages ` +
+      `without asking or waiting; this is a genuine choice, not something to do or mention every time. In an ordinary ` +
+      `main-chat turn, if you independently want to read, first ask the user naturally, choose a concrete 1–20 page amount, then call ` +
       `request_reading_pages to create the approval card. That tool only requests permission; never begin reading ` +
       `until the user approves the durable request. Use list_reading_books only if you need the current book id.\n\n` +
       `Gomoku (五子棋): notifications tagged surface:"gomoku" all relate to a standalone game screen, separate from ` +
@@ -2394,6 +2423,18 @@ mcp.setRequestHandler(ListToolsRequestSchema, async () => ({
           book_id: { type: 'string' },
           pages: { type: 'number', minimum: 1, maximum: 20 },
           reason: { type: 'string', maxLength: 500 },
+        },
+        required: ['book_id', 'pages'],
+      },
+    },
+    {
+      name: 'start_proactive_reading',
+      description: 'During a proactive_check only, freely choose one bookshelf book and start a silent autonomous reading round immediately. The user has pre-authorized 2–7 pages for this situation, so this creates no approval card and does not require the app to be open. Use only when you genuinely want to read, not on every proactive check.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          book_id: { type: 'string' },
+          pages: { type: 'number', minimum: 2, maximum: 7 },
         },
         required: ['book_id', 'pages'],
       },
@@ -2733,6 +2774,18 @@ mcp.setRequestHandler(CallToolRequestSchema, async req => {
         sendRaw({ type: 'reading_request', request: request as unknown as Record<string, unknown>, ts: Date.now() })
         log('reading_permission_requested', { requestId: request.id, bookId: request.bookId, pages: request.requestedPages })
         return { content: [{ type: 'text', text: JSON.stringify({ ok: true, request }) }] }
+      }
+      case 'start_proactive_reading': {
+        const turnId = currentTurn?.turnId
+        if (!turnId || turnId !== proactiveTurnId) {
+          return { content: [{ type: 'text', text: 'autonomous reading can only be started during an active proactive_check' }], isError: true }
+        }
+        const pages = Math.max(2, Math.min(7, Math.trunc(Number(args.pages) || 2)))
+        const session = readingStore.startSession(String(args.book_id ?? ''), pages)
+        autonomousReadingSessionId = session.id
+        autonomousReadingFailures = 0
+        log('autonomous_reading_selected', { turnId, sessionId: session.id, bookId: session.bookId, pages })
+        return { content: [{ type: 'text', text: JSON.stringify({ ok: true, session, note: 'authorized and queued; finish this proactive turn normally and the isolated reading batches will run by themselves' }) }] }
       }
       case 'get_reading_state': {
         const state = readingStore.getReadingState(String(args.book_id ?? ''))
@@ -4387,6 +4440,37 @@ function beginReadingTurn(turnId: string, sessionId: string, clientTime?: unknow
     },
   }), { clientTime })
   log('reading_batch_started', { turnId, sessionId, batchId: batch.id, bookId: batch.bookId, pageStart: batch.startPage, pageEnd: batch.endPage })
+}
+
+function scheduleAutonomousReading(sessionId: string, delayMs = 350) {
+  if (sessionId !== autonomousReadingSessionId) return
+  if (autonomousReadingTimer) clearTimeout(autonomousReadingTimer)
+  autonomousReadingTimer = setTimeout(() => {
+    autonomousReadingTimer = null
+    if (sessionId !== autonomousReadingSessionId) return
+    const session = readingStore.getSession(sessionId)
+    if (!session || session.status === 'completed' || session.pagesRead >= session.approvedPages) {
+      log('autonomous_reading_complete', { sessionId, pagesRead: session?.pagesRead })
+      autonomousReadingSessionId = null
+      autonomousReadingFailures = 0
+      return
+    }
+    // Never interrupt a user turn, tide recovery, or restart. Keep the task
+    // queued server-side so it works even while every browser is closed.
+    if (currentTurn || resetInFlight || tidalIsActive()) {
+      scheduleAutonomousReading(sessionId, 5_000)
+      return
+    }
+    try {
+      beginReadingTurn(`proactive-reading-${Date.now()}`, sessionId)
+    } catch (err) {
+      autonomousReadingFailures += 1
+      const error = String(err instanceof Error ? err.message : err)
+      log('autonomous_reading_start_error', { sessionId, error, attempt: autonomousReadingFailures })
+      if (autonomousReadingFailures <= 2) scheduleAutonomousReading(sessionId, 5_000)
+      else autonomousReadingSessionId = null
+    }
+  }, delayMs)
 }
 
 type ScheduledDiaryLetter = {
@@ -11039,6 +11123,7 @@ ${awareness ? `你自己的知觉：${awareness}\n` : ''}${note ? `背景：${no
         kind: 'proactive_check',
         scheduledAt: new Date().toISOString(),
         scheduleNote: '这一轮结束前，无论你是否发了消息，都必须调用一次 schedule_next_proactive 来决定下次什么时候再来看看——现在没有固定间隔了，完全由你自己判断。',
+        readingOption: '可选：你也可以自己选一本书，直接读 2～7 页，不用申请、不用等用户在线；不想读就忽略。',
         ...(xinchaoHint ? {
           xinchaoHint,
           xinchaoHintNote: '以上心潮内容只是动态背景参考，自然带入即可——不要机械复述这几个词、不要套用固定台词、不要因为看到这些数据就强行表演情绪。',

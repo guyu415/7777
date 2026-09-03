@@ -38,7 +38,20 @@ async function getDB() {
 
 export async function saveMessage(msg) {
   const database = await getDB()
-  await database.put('messages', msg)
+  // Reasoning translations are a local display augmentation. Companion
+  // history replays and the final authoritative stream save do not carry
+  // these fields, so a plain put would erase a translation that completed a
+  // moment earlier (most visibly at turn_end / foreground reconnect). Keep
+  // them unless the caller explicitly supplies a replacement.
+  const transaction = database.transaction('messages', 'readwrite')
+  const store = transaction.objectStore('messages')
+  const existing = await store.get(msg.id)
+  const next = { ...msg }
+  for (const key of ['reasoningTranslation', 'reasoningTranslationSourceHash', 'reasoningTranslationUpdatedAt']) {
+    if (next[key] === undefined && existing?.[key] !== undefined) next[key] = existing[key]
+  }
+  await store.put(next)
+  await transaction.done
 }
 
 export async function getMessages(conversationId) {

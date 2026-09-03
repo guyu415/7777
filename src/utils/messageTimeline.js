@@ -176,6 +176,15 @@ function mergeDuplicate(existing, incoming, semanticLegacy = false) {
   // other copy.
   if (!hasText(merged.content) && hasText(secondary.content)) merged.content = secondary.content
   if (!hasText(merged.reasoning) && hasText(secondary.reasoning)) merged.reasoning = secondary.reasoning
+  // Translation is generated and persisted by the client, never by the
+  // companion history wire. A reconnect snapshot must enrich the message,
+  // not make the completed translation disappear from an open sheet.
+  for (const key of ['reasoningTranslation', 'reasoningTranslationSourceHash', 'reasoningTranslationUpdatedAt']) {
+    if (merged[key] === undefined) {
+      if (existing[key] !== undefined) merged[key] = existing[key]
+      else if (incoming[key] !== undefined) merged[key] = incoming[key]
+    }
+  }
   if ((!Array.isArray(merged.toolUses) || merged.toolUses.length === 0) && Array.isArray(secondary.toolUses) && secondary.toolUses.length) {
     merged.toolUses = secondary.toolUses
   }

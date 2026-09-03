@@ -51,6 +51,28 @@ describe('message timeline', () => {
     expect(result[0].reasoning).toBe('r')
   })
 
+  it('preserves a completed local reasoning translation across a server replay', () => {
+    const result = canonicalizeTimeline([
+      {
+        id: 'local', conversationId: 'cc', role: 'assistant', type: 'text',
+        content: '答复', reasoning: 'Thinking in English.', timestamp: 1_800_000_000_000,
+        wireIds: ['wire-translation'], reasoningTranslation: '用英语思考。',
+        reasoningTranslationSourceHash: 'abc123', reasoningTranslationUpdatedAt: 1234,
+      },
+      {
+        id: 'wire-translation', conversationId: 'cc', role: 'assistant', type: 'text',
+        content: '答复', reasoning: 'Thinking in English.', timestamp: 1_800_000_000_100,
+        source: 'cc-proactive',
+      },
+    ])
+    expect(result).toHaveLength(1)
+    expect(result[0]).toMatchObject({
+      reasoningTranslation: '用英语思考。',
+      reasoningTranslationSourceHash: 'abc123',
+      reasoningTranslationUpdatedAt: 1234,
+    })
+  })
+
   it('keeps display fragments distinct while sharing one server identity', () => {
     const result = canonicalizeTimeline([
       { id: 'local-1', role: 'assistant', content: 'one', timestamp: 1000, wireIds: ['wire::part:0'], serverWireIds: ['wire'] },
