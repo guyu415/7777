@@ -67,6 +67,7 @@ export function hasMessageContentPayload(message) {
   if (message.type === 'voice' || message.type === 'image' || message.type === 'file') return true
   if (message.voiceLoading || message.voiceBlobId || message.imageUrl || message.imageData || message.filePath || message.fileName) return true
   if (message.error || message.acStatus) return true
+  if (message.bedtimeCard) return true
   if (Array.isArray(message.toolUses) && message.toolUses.length > 0) return true
   if (message.toolUse && typeof message.toolUse === 'object') return true
   return false

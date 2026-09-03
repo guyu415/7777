@@ -348,6 +348,7 @@ export function useChat() {
         ...(token.serverWireId ? { serverWireIds: [token.serverWireId] } : {}),
         wirePartIndex: token.wirePartIndex,
         wirePartCount: token.wirePartCount,
+        ...(token.bedtimeCard ? { bedtimeCard: token.bedtimeCard } : {}),
       }
     }
 
@@ -749,7 +750,11 @@ export function useChat() {
             if (nextContent !== fullContent) {
               // Logged per raw reply() call (not merged into one shared pool)
               // so Pass 1 can preserve its content and identity as one bubble.
-              if (isVpsProvider) vpsWireIdLog.push({ wireId: chunk.wireId || null, text: chunk.text })
+              if (isVpsProvider) vpsWireIdLog.push({
+                wireId: chunk.wireId || null,
+                text: chunk.text,
+                ...(chunk.bedtimeCard ? { bedtimeCard: chunk.bedtimeCard } : {}),
+              })
               if (!contentStarted) {
                 // Foreground recovery may deliver thinking + reply in one
                 // burst. Persist/paint thinking before changing phases.

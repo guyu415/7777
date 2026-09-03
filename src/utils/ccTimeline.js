@@ -74,6 +74,23 @@ export function ccWireToTimelineMessages(wire, conversationId, options = {}) {
   const turnFields = wire.turnId
     ? { turnId: wire.turnId, replyToTurnId: wire.turnId }
     : {}
+  if (wire.bedtimeCard) {
+    return [{
+      id: wire.id,
+      wireIds: [wire.id],
+      serverWireIds: [wire.id],
+      conversationId,
+      role: 'assistant',
+      type: 'text',
+      content: wire.text || wire.bedtimeCard.english || '',
+      bedtimeCard: wire.bedtimeCard,
+      timestamp,
+      streaming: false,
+      source: 'cc-proactive',
+      ...turnFields,
+      ...reasoningFields,
+    }]
+  }
   if (wire.kind === 'voice') {
     return [{
       id: wire.id,

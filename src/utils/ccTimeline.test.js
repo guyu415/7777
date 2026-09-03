@@ -62,4 +62,12 @@ describe('CC timeline snapshot recovery', () => {
     const mapped = ccWireToTimelineMessage({ ...msg('focus-card', 1000), focusSummary }, 'cc-session')
     expect(mapped.focusSummary).toEqual(focusSummary)
   })
+
+  it('hydrates a bedtime note as one durable card', () => {
+    const bedtimeCard = { english: 'Let the day go gently.', translation: '轻轻放下今天。', date: '2026-09-03' }
+    const mapped = ccWireToTimelineMessages({ ...msg('bedtime-card', 1000), bedtimeCard }, 'cc-session')
+
+    expect(mapped).toHaveLength(1)
+    expect(mapped[0]).toMatchObject({ id: 'bedtime-card', bedtimeCard, content: 'bedtime-card' })
+  })
 })

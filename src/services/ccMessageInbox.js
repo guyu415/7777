@@ -22,6 +22,7 @@ function currentCcSession() {
 }
 
 function previewFor(message) {
+  if (message.bedtimeCard) return `🌙 ${message.bedtimeCard.english || message.content || '睡前英文寄语'}`.slice(0, 40)
   if (message.type === 'voice' || message.voiceLoading) return `[语音] ${message.voiceText || message.content || ''}`.slice(0, 40)
   return (message.content || '').slice(0, 40)
 }

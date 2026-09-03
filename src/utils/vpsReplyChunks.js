@@ -40,7 +40,8 @@ export function extractVpsReplyTokens(processedContent, entries) {
     // wire message.
     const content = source.slice(start, end).replace(/\[\/?VOICE\]/g, '').trim()
     const parts = splitVpsReplyContent(content)
-    const serverWireId = entries?.[entryIndex]?.wireId || null
+    const entry = entries?.[entryIndex]
+    const serverWireId = entry?.wireId || null
     for (let partIndex = 0; partIndex < parts.length; partIndex++) {
       tokens.push({
         type: 'text',
@@ -49,6 +50,7 @@ export function extractVpsReplyTokens(processedContent, entries) {
         serverWireId,
         wirePartIndex: partIndex,
         wirePartCount: parts.length,
+        ...(partIndex === 0 && entry?.bedtimeCard ? { bedtimeCard: entry.bedtimeCard } : {}),
       })
     }
   }

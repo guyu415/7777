@@ -5,6 +5,7 @@ import ImageViewer from '../ImageViewer'
 import AcCard from './AcCard'
 import LetterCard from './LetterCard'
 import NeteasePlayCard from './NeteasePlayCard'
+import BedtimeCard from './BedtimeCard'
 import HealthDataCard from './HealthDataCard'
 import HeartRateCard from './HeartRateCard'
 import FocusSummaryCard from './FocusSummaryCard'
@@ -244,6 +245,7 @@ function MessageBubble({ message, onLongPress, onRegenerate, onRegenerateRound, 
     : allToolUses
   const diceValue = message.type === 'text' ? Number(message.content?.match(DICE_ONE)?.[1] || 0) : 0
   const focusSummary = !isUser ? message.focusSummary : null
+  const bedtimeCard = !isUser ? message.bedtimeCard : null
   const [displayDiceValue, setDisplayDiceValue] = useState(() => diceValue || 1)
   const [diceRolling, setDiceRolling] = useState(false)
   const [diceJustSettled, setDiceJustSettled] = useState(false)
@@ -520,8 +522,9 @@ function MessageBubble({ message, onLongPress, onRegenerate, onRegenerateRound, 
             </span>
           </div>
         )}
+        {bedtimeCard && <div {...pressProps}><BedtimeCard card={bedtimeCard} /></div>}
         {focusSummary && <FocusSummaryCard summary={focusSummary} theme={theme} />}
-        {message.type === 'text' && !diceValue && !focusSummary && !message.voiceLoading && (
+        {message.type === 'text' && !diceValue && !focusSummary && !bedtimeCard && !message.voiceLoading && (
           <div
             className={clsx('relative leading-relaxed select-none cursor-default', pressed ? 'bubble-press' : '')}
             style={showGoldenPending ? {

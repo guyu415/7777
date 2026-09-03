@@ -39,4 +39,13 @@ describe('VPS reply wire boundaries', () => {
       ['wire-2', '结尾'],
     ])
   })
+
+  it('keeps bedtime card metadata on the first bubble of its server message', () => {
+    const bedtimeCard = { english: 'Rest well.', date: '2026-09-03' }
+    const entries = [{ wireId: 'bedtime-1', text: 'Rest well.\n\nTomorrow is waiting.', bedtimeCard }]
+    const tokens = extractVpsReplyTokens(markVpsReplyChunks(entries), entries)
+
+    expect(tokens[0].bedtimeCard).toEqual(bedtimeCard)
+    expect(tokens[1].bedtimeCard).toBeUndefined()
+  })
 })

@@ -122,6 +122,15 @@ import {
   type StudyScheduleState,
   type StudySlot,
 } from './study-schedule.ts'
+import {
+  addAnniversaryEvent,
+  anniversaryRange,
+  defaultAnniversaryState,
+  deleteAnniversaryEvent,
+  isAnniversaryDate,
+  normalizeAnniversaryState,
+  type AnniversaryState,
+} from './anniversary.ts'
 
 const ROOT = dirname(new URL(import.meta.url).pathname)
 const PORT = Number(process.env.AI_COMPANION_PORT ?? 8788)
@@ -145,6 +154,7 @@ const RUNTIME_CONTEXT_CAPTURE_FILE = process.env.AI_COMPANION_RUNTIME_CONTEXT_CA
 // reply that never got the chance to happen. Persisting closes that gap.
 const HISTORY_FILE = process.env.AI_COMPANION_HISTORY_FILE ?? join(ROOT, 'state', 'chat-history.json')
 const STUDY_SCHEDULE_FILE = process.env.AI_COMPANION_STUDY_SCHEDULE_FILE ?? join(ROOT, 'state', 'study-schedule.json')
+const ANNIVERSARY_FILE = process.env.AI_COMPANION_ANNIVERSARY_FILE ?? join(ROOT, 'state', 'anniversary.json')
 const DIARY_LETTER_SCHEDULE_FILE = process.env.AI_COMPANION_DIARY_LETTER_SCHEDULE_FILE ?? join(ROOT, 'state', 'diary-letter-schedule.json')
 const COOKIE_NAME = 'ai_companion_token'
 const SELF_ORIGIN = 'https://companion.xiaoman.xyz'
@@ -932,6 +942,13 @@ type Msg = {
   // page can disappear after acknowledgement; this record remains in normal
   // CC history and recovers on refresh/reconnect like every other message.
   focusSummary?: FocusSummary
+  bedtimeCard?: {
+    title: string
+    english: string
+    translation?: string
+    signature?: string
+    date: string
+  }
 }
 type MsgWire = { type: 'msg' } & Msg
 type TurnStartWire = { type: 'turn_start'; turnId: string; replyTo?: string; ts: number }
@@ -1592,7 +1609,7 @@ function broadcastMsg(m: MsgWire) {
 // message the user is about to see, and the gomoku/group tools narrate
 // themselves through their own wire events. Announcing them would just put a
 // "正在回复…" line above every reply.
-const TOOL_USE_MUTED = new Set(['reply', 'send_voice', 'play_music_on_phone', 'roll_dice', 'gomoku_move', 'gomoku_banter', 'group_speak', 'group_pass'])
+const TOOL_USE_MUTED = new Set(['reply', 'send_voice', 'send_bedtime_card', 'play_music_on_phone', 'roll_dice', 'gomoku_move', 'gomoku_banter', 'group_speak', 'group_pass'])
 
 // Live tool-activity for the open turn. Deliberately fire-and-forget and
 // never persisted: this is the "what is it doing right now" indicator, and a
@@ -2241,6 +2258,10 @@ const mcp = new Server(
       `nothing at all, even though you may have done real work.\n` +
       `Use reply for normal text messages. Use send_voice only when you specifically want the user to actually ` +
       `hear your voice (not for routine replies — most turns should still use reply).\n` +
+      `Use send_bedtime_card when the user asks for a bedtime English note, or at a genuine goodnight moment when ` +
+      `you independently want to leave one. It sends one visible card and automatically records the same note in ` +
+      `the existing anniversary calendar, so never call write_anniversary again for that card and never duplicate ` +
+      `the card with reply. Do not turn it into a mechanical nightly habit.\n` +
       `You also have a real play_music_on_phone tool. When the user explicitly asks to hear/play/pick a song, ` +
       `call it with the song title and optional artist. It sends a visible button that opens the official NetEase ` +
       `Cloud Music app on the user's phone; audio and membership playback stay entirely inside that app, never on ` +
@@ -2396,6 +2417,25 @@ mcp.setRequestHandler(ListToolsRequestSchema, async () => ({
           reply_to: { type: 'string', description: 'message_id to quote-reply' },
         },
         required: ['text'],
+      },
+    },
+    {
+      name: 'send_bedtime_card',
+      description:
+        'Send one visible bedtime English blessing card into the resident web chat and automatically save the same ' +
+        'note as an event in the existing anniversary calendar. Use for an explicit bedtime-note request or a ' +
+        'genuine goodnight moment, not mechanically every night. This tool is already the visible reply and already ' +
+        'syncs the event: do not also call reply or write_anniversary for the same card.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          english: { type: 'string', maxLength: 320, description: 'the warm English bedtime message shown prominently' },
+          translation: { type: 'string', maxLength: 220, description: 'optional concise Chinese translation' },
+          title: { type: 'string', maxLength: 50, description: 'optional short English card title' },
+          signature: { type: 'string', maxLength: 80, description: 'optional short sign-off' },
+          date: { type: 'string', description: 'optional YYYY-MM-DD; defaults to today in the app timezone' },
+        },
+        required: ['english'],
       },
     },
     {
@@ -2757,6 +2797,30 @@ mcp.setRequestHandler(ListToolsRequestSchema, async () => ({
       },
     },
     {
+      name: 'get_anniversary',
+      description: '读取现有纪念日日历。传 date 查单日，或同时传 startDate/endDate 查范围（最多 367 天）。',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          date: { type: 'string', description: '单日，YYYY-MM-DD' },
+          startDate: { type: 'string', description: '范围开始，YYYY-MM-DD' },
+          endDate: { type: 'string', description: '范围结束，YYYY-MM-DD' },
+        },
+      },
+    },
+    {
+      name: 'write_anniversary',
+      description: '在现有纪念日日历指定日期新增一条事件，不覆盖当天已有记录。睡前卡片请改用 send_bedtime_card，以免重复写入。',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          date: { type: 'string', description: '日期，YYYY-MM-DD' },
+          text: { type: 'string', description: '事件内容', maxLength: 500 },
+        },
+        required: ['date', 'text'],
+      },
+    },
+    {
       name: 'get_life_progress',
       description:
         'Read the user\'s compact current life dashboard. Returns only study completion progress and aggregate spending totals for today and this month; it never returns individual ledger entries or a verbose record trail.',
@@ -2876,6 +2940,53 @@ mcp.setRequestHandler(CallToolRequestSchema, async req => {
         }
         log('reply_sent', { id, chars: text.length, turnId, hasThinking: !!thinking, gomoku: isGomokuTurn, focus: isFocusTurn })
         return { content: [{ type: 'text', text: `sent (${id})` }] }
+      }
+      case 'send_bedtime_card': {
+        const turnId = currentTurn?.turnId
+        const allowedTurn = currentTurn?.surface === 'main' || turnId === proactiveTurnId
+        if (!turnId || !allowedTurn) {
+          return { content: [{ type: 'text', text: 'send_bedtime_card is only available during a main-chat or proactive-check turn' }], isError: true }
+        }
+        const duplicate = history.find(item => item.from === 'cc' && item.turnId === turnId && item.bedtimeCard)
+        if (duplicate) {
+          return { content: [{ type: 'text', text: `bedtime card already sent and synced in this turn (${duplicate.id}); do not send another` }] }
+        }
+        const english = String(args.english ?? '').replace(/[\u0000-\u001f\u007f]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 320)
+        if (!english || !/[A-Za-z]/.test(english)) {
+          return { content: [{ type: 'text', text: 'english must contain a real English bedtime message' }], isError: true }
+        }
+        const translation = typeof args.translation === 'string'
+          ? args.translation.replace(/[\u0000-\u001f\u007f]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 220)
+          : ''
+        const title = typeof args.title === 'string' && args.title.trim()
+          ? args.title.replace(/[\u0000-\u001f\u007f]/g, ' ').trim().slice(0, 50)
+          : 'A LITTLE NOTE BEFORE SLEEP'
+        const signature = typeof args.signature === 'string' && args.signature.trim()
+          ? args.signature.replace(/[\u0000-\u001f\u007f]/g, ' ').trim().slice(0, 80)
+          : undefined
+        if (args.date != null && !isAnniversaryDate(args.date)) {
+          return { content: [{ type: 'text', text: 'date must be YYYY-MM-DD and a real calendar date' }], isError: true }
+        }
+        const date = isAnniversaryDate(args.date)
+          ? args.date
+          : zonedDateTime(new Date(), careHubState.config.timezone).date
+        const previousState = anniversaryState
+        const eventText = `🌙 睡前英文寄语｜${english}${translation ? `｜${translation}` : ''}`
+        anniversaryState = addAnniversaryEvent(anniversaryState, date, eventText)
+        if (!saveAnniversary()) {
+          anniversaryState = previousState
+          return { content: [{ type: 'text', text: 'failed to persist the anniversary event; no card was sent' }], isError: true }
+        }
+        const id = nextId()
+        const thinking = consumePendingThinking()
+        const bedtimeCard = { title, english, ...(translation ? { translation } : {}), ...(signature ? { signature } : {}), date }
+        broadcastMsg({
+          type: 'msg', id, from: 'cc', text: english, ts: Date.now(), turnId, bedtimeCard,
+          ...(thinking ? { thinking } : {}),
+        })
+        if (isPushWorthyTurn(turnId)) void sendCompanionPush(`🌙 ${english}`)
+        log('bedtime_card_sent', { id, turnId, date, chars: english.length, translated: !!translation })
+        return { content: [{ type: 'text', text: `bedtime card sent and synced to anniversary ${date} (${id})` }] }
       }
       case 'play_music_on_phone': {
         const turnId = currentTurn?.turnId
@@ -3183,6 +3294,25 @@ mcp.setRequestHandler(CallToolRequestSchema, async req => {
         }
         const entries = studyScheduleRange(studyScheduleState, startDate, endDate)
         return { content: [{ type: 'text', text: JSON.stringify({ startDate, endDate, slots: { morning: '09:00-12:00', afternoon: '14:00-18:00' }, entries }) }] }
+      }
+      case 'get_anniversary': {
+        const args = req.params.arguments as any
+        const single = isAnniversaryDate(args?.date) ? args.date : null
+        const startDate = single || (isAnniversaryDate(args?.startDate) ? args.startDate : null)
+        const endDate = single || (isAnniversaryDate(args?.endDate) ? args.endDate : null)
+        if (!startDate || !endDate) {
+          return { content: [{ type: 'text', text: '请提供 date，或同时提供 startDate 和 endDate（YYYY-MM-DD）' }], isError: true }
+        }
+        return { content: [{ type: 'text', text: JSON.stringify({ startDate, endDate, entries: anniversaryRange(anniversaryState, startDate, endDate) }) }] }
+      }
+      case 'write_anniversary': {
+        const args = req.params.arguments as any
+        if (!isAnniversaryDate(args?.date) || typeof args?.text !== 'string' || !args.text.trim()) {
+          return { content: [{ type: 'text', text: '请提供有效的 date（YYYY-MM-DD）和 text' }], isError: true }
+        }
+        anniversaryState = addAnniversaryEvent(anniversaryState, args.date, args.text)
+        if (!saveAnniversary()) return { content: [{ type: 'text', text: '纪念日写入磁盘失败' }], isError: true }
+        return { content: [{ type: 'text', text: JSON.stringify({ ok: true, date: args.date, entries: anniversaryState.entries[args.date] }) }] }
       }
       default:
         return { content: [{ type: 'text', text: `unknown tool: ${req.params.name}` }], isError: true }
@@ -8193,6 +8323,7 @@ const CARE_GEMINI_KEY_FILE = process.env.AI_COMPANION_GEMINI_KEY_FILE ?? join(RO
 const CARE_PROFILE_FILE = process.env.AI_COMPANION_CARE_PROFILE_FILE ?? join(ROOT, 'config', 'care-profile.json')
 const CARE_ALERTS_FILE = process.env.AI_COMPANION_CARE_ALERTS_FILE ?? join(ROOT, 'state', 'care-alerts.json')
 let studyScheduleState: StudyScheduleState = defaultStudySchedule()
+let anniversaryState: AnniversaryState = defaultAnniversaryState()
 let careHubState: CareHubState = defaultCareHubState()
 let careRunningRole: CareRoleId | null = null
 let careAlertNotified = new Set<string>()
@@ -8211,6 +8342,23 @@ function saveStudySchedule() {
     mkdirSync(dirname(STUDY_SCHEDULE_FILE), { recursive: true })
     writeFileSync(STUDY_SCHEDULE_FILE, JSON.stringify(studyScheduleState, null, 2) + '\n')
   } catch (err) { log('study_schedule_save_error', { error: String(err) }) }
+}
+
+function loadAnniversary() {
+  try { anniversaryState = normalizeAnniversaryState(JSON.parse(readFileSync(ANNIVERSARY_FILE, 'utf8'))) }
+  catch { anniversaryState = defaultAnniversaryState() }
+}
+function saveAnniversary(): boolean {
+  try {
+    mkdirSync(dirname(ANNIVERSARY_FILE), { recursive: true })
+    const temporary = `${ANNIVERSARY_FILE}.tmp`
+    writeFileSync(temporary, JSON.stringify(anniversaryState, null, 2) + '\n')
+    renameSync(temporary, ANNIVERSARY_FILE)
+    return true
+  } catch (err) {
+    log('anniversary_save_error', { error: String(err) })
+    return false
+  }
 }
 
 function loadCareHub() {
@@ -8285,6 +8433,7 @@ function careAppend(role: CareRoleId, text: string, kind: 'report' | 'record' | 
   careHubState.messages.push({ id: nextId(), role, text: text.trim(), ts: Date.now(), kind })
 }
 loadStudySchedule()
+loadAnniversary()
 loadCareHub()
 loadCareAlertKeys()
 
@@ -10333,6 +10482,53 @@ Bun.serve<{ authed: true }>({
       studyScheduleState = setStudyCourse(studyScheduleState, date, slot, clear ? null : { subject, stage })
       saveStudySchedule()
       return jsonResponse({ ok: true, date, entry: studyScheduleState.entries[date] || {}, updatedAt: studyScheduleState.updatedAt }, { headers: cors })
+    }
+
+    // ---- 纪念日日历（与 Claude Code 的工具共用同一份状态） ----
+    if (url.pathname === '/anniversary' && req.method === 'GET') {
+      const gate = authGate()
+      if (gate) return gate
+      const date = url.searchParams.get('date')
+      const startDate = date || url.searchParams.get('start')
+      const endDate = date || url.searchParams.get('end')
+      if (!isAnniversaryDate(startDate) || !isAnniversaryDate(endDate)) {
+        return jsonResponse({ ok: false, error: '请提供有效的 date，或 start/end 日期' }, { status: 400, headers: corsHeadersFor(origin) })
+      }
+      try {
+        return jsonResponse({
+          ok: true, startDate, endDate,
+          entries: anniversaryRange(anniversaryState, startDate, endDate),
+          updatedAt: anniversaryState.updatedAt,
+        }, { headers: corsHeadersFor(origin) })
+      } catch (err) {
+        return jsonResponse({ ok: false, error: err instanceof Error ? err.message : String(err) }, { status: 400, headers: corsHeadersFor(origin) })
+      }
+    }
+    if (url.pathname === '/anniversary/add' && req.method === 'POST') {
+      const gate = authGate()
+      if (gate) return gate
+      const cors = corsHeadersFor(origin)
+      const body = await req.json().catch(() => ({} as Record<string, unknown>)) as any
+      try {
+        anniversaryState = addAnniversaryEvent(anniversaryState, body?.date, String(body?.text ?? ''))
+        if (!saveAnniversary()) throw new Error('纪念日写入磁盘失败')
+        return jsonResponse({ ok: true, date: body.date, entries: anniversaryState.entries[body.date] || [], updatedAt: anniversaryState.updatedAt }, { headers: cors })
+      } catch (err) {
+        return jsonResponse({ ok: false, error: err instanceof Error ? err.message : String(err) }, { status: 400, headers: cors })
+      }
+    }
+    if (url.pathname === '/anniversary/delete' && req.method === 'POST') {
+      const gate = authGate()
+      if (gate) return gate
+      const cors = corsHeadersFor(origin)
+      const body = await req.json().catch(() => ({} as Record<string, unknown>)) as any
+      try {
+        anniversaryState = deleteAnniversaryEvent(anniversaryState, body?.date, body?.id)
+        if (!saveAnniversary()) throw new Error('纪念日写入磁盘失败')
+        return jsonResponse({ ok: true, date: body.date, entries: anniversaryState.entries[body.date] || [], updatedAt: anniversaryState.updatedAt }, { headers: cors })
+      } catch (err) {
+        return jsonResponse({ ok: false, error: err instanceof Error ? err.message : String(err) }, { status: 404, headers: cors })
+      }
     }
 
     // ---- 固定生活关怀群 ----

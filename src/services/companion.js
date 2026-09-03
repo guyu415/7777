@@ -371,7 +371,7 @@ function announceCcMessageDeleted(ids) {
 // routed server-side into the game's own `messages` log (see onGomokuUpdate),
 // never broadcast as a main-chat wire `msg` in the first place.
 function maybeAnnounceProactive(wireMsg) {
-  const { id, text, ts, kind, voice, style, thinking, musicAction } = wireMsg
+  const { id, text, ts, kind, voice, style, thinking, musicAction, bedtimeCard } = wireMsg
   // Deferred to the next tick: lets any active generator's listener (which
   // runs synchronously within the same notify() call) markDelivered() first.
   // Only messages still unclaimed after that are genuinely spontaneous.
@@ -380,7 +380,7 @@ function maybeAnnounceProactive(wireMsg) {
     markDelivered(id)
     for (const fn of proactiveListeners) {
       try {
-        fn({ id, text, ts, kind, voice, style, thinking, musicAction })
+        fn({ id, text, ts, kind, voice, style, thinking, musicAction, bedtimeCard })
       } catch {
         // a subscriber throwing must not break delivery to the others
       }
@@ -1467,7 +1467,7 @@ export async function* streamChatViaCompanion({ text, imagePath, file, signal, m
           // delivered before the disconnect, so appending would duplicate it.
           if (r.thinking) push({ reasoningReplace: r.thinking, reasoningCompletedAt: r.ts })
           if (r.kind === 'voice') push({ voice: { id: r.id, text: r.text, voice: r.voice, style: r.style } })
-          else push({ text: r.text, wireId: r.id, ...(r.musicAction ? { musicAction: r.musicAction } : {}) })
+          else push({ text: r.text, wireId: r.id, ...(r.musicAction ? { musicAction: r.musicAction } : {}), ...(r.bedtimeCard ? { bedtimeCard: r.bedtimeCard } : {}) })
         }
         push({ done: true })
       } else if (!ackReceived) {
@@ -1532,7 +1532,7 @@ export async function* streamChatViaCompanion({ text, imagePath, file, signal, m
       thisTurnDeliveredIds.push(m.id)
       const timing = m.thinking && m.ts ? { reasoningCompletedAt: m.ts } : {}
       if (m.kind === 'voice') push({ voice: { id: m.id, text: m.text, voice: m.voice, style: m.style }, ...timing })
-      else push({ text: m.text, wireId: m.id, ...(m.musicAction ? { musicAction: m.musicAction } : {}), ...timing })
+      else push({ text: m.text, wireId: m.id, ...(m.musicAction ? { musicAction: m.musicAction } : {}), ...(m.bedtimeCard ? { bedtimeCard: m.bedtimeCard } : {}), ...timing })
     } else if (m.type === 'turn_end') {
       push({ done: true })
     } else if (m.type === 'turn_error') {
@@ -1608,6 +1608,7 @@ export async function* streamChatViaCompanion({ text, imagePath, file, signal, m
             text: item.text,
             wireId: item.wireId,
             ...(item.musicAction ? { musicAction: item.musicAction } : {}),
+            ...(item.bedtimeCard ? { bedtimeCard: item.bedtimeCard } : {}),
             ...(item.reasoningCompletedAt ? { reasoningCompletedAt: item.reasoningCompletedAt } : {}),
           }
     }
