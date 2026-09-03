@@ -56,4 +56,10 @@ describe('CC timeline snapshot recovery', () => {
       ['reply-a::part:1', '第二段', 'reply-a'],
     ])
   })
+
+  it('keeps a persisted focus summary card when history is recovered', () => {
+    const focusSummary = { task: '背单词', plannedMinutes: 25, actualMinutes: 25, reason: 'completed' }
+    const mapped = ccWireToTimelineMessage({ ...msg('focus-card', 1000), focusSummary }, 'cc-session')
+    expect(mapped.focusSummary).toEqual(focusSummary)
+  })
 })

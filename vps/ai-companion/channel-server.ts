@@ -928,6 +928,10 @@ type Msg = {
   // A safe handoff into the user's official NetEase app. This contains only
   // catalog metadata + app/web links; no audio URL, cookie, or media bytes.
   musicAction?: NeteasePhoneAction
+  // Server-generated durable completion card for the main chat. The focus
+  // page can disappear after acknowledgement; this record remains in normal
+  // CC history and recovers on refresh/reconnect like every other message.
+  focusSummary?: FocusSummary
 }
 type MsgWire = { type: 'msg' } & Msg
 type TurnStartWire = { type: 'turn_start'; turnId: string; replyTo?: string; ts: number }
@@ -1087,7 +1091,17 @@ type FocusState = {
 // completedByDay (a real timezone-mismatch risk otherwise).
 type FocusPublicState = FocusState & { todayCount: number }
 type FocusUpdateWire = { type: 'focus_update'; state: FocusPublicState }
-type FocusFinishedWire = { type: 'focus_finished'; reason: 'completed' | 'early_end'; manager: FocusManager | null; actualMs?: number }
+type FocusSummary = {
+  task: string
+  plannedMinutes: number
+  actualMinutes: number
+  reason: 'completed' | 'early_end'
+  startedAt: number
+  endedAt: number
+  managerName: string | null
+  interactionCount: number
+}
+type FocusFinishedWire = { type: 'focus_finished'; reason: 'completed' | 'early_end'; manager: FocusManager | null; actualMs?: number; summary?: FocusSummary }
 
 // Group chat (多AI群聊) — see this file's own "Group chat" section further
 // down for the full design. Member identity is now a generic string id:
@@ -2118,6 +2132,7 @@ function endTurn(): string | null {
   } else if (autonomousReadingSessionId && finished.surface !== 'reading') {
     scheduleAutonomousReading(autonomousReadingSessionId)
   }
+  scheduleFocusCcDrain()
   return turnId
 }
 
@@ -2152,6 +2167,7 @@ function failTurn(error: string): string | null {
   } else if (autonomousReadingSessionId && finished.surface !== 'reading') {
     scheduleAutonomousReading(autonomousReadingSessionId)
   }
+  scheduleFocusCcDrain()
   return turnId
 }
 
@@ -5053,6 +5069,9 @@ let focusState: FocusState = loadFocusState()
 // pattern (see those for the full rationale), just for this feature.
 let focusTurnId: string | null = null
 let focusTurnKind: 'interact' | 'decision' | null = null
+type FocusCcJob = { kind: 'interact'; text: string } | { kind: 'decision'; request: FocusRequest }
+const focusCcQueue: FocusCcJob[] = []
+let focusCcDrainTimer: ReturnType<typeof setTimeout> | null = null
 // Turn-scoping for Claude Code's group_speak/group_request_to_speak/
 // group_pass tools during a group-chat decision/mention/expand turn — same
 // pattern again. groupTurnCandidateId is only ever set for phase==='expand'.
@@ -5094,6 +5113,30 @@ function focusAppendLog(from: 'user' | 'model' | 'system', text: string) {
   if (focusState.log.length > FOCUS_LOG_LIMIT) focusState.log.splice(0, focusState.log.length - FOCUS_LOG_LIMIT)
 }
 
+function focusSummaryFor(snapshot: FocusState, reason: FocusSummary['reason'], actualMs: number): FocusSummary {
+  return {
+    task: snapshot.task || '专注学习',
+    plannedMinutes: Math.max(1, Math.round(snapshot.minutes || 0)),
+    actualMinutes: Math.max(0, Math.round(actualMs / 60_000)),
+    reason,
+    startedAt: snapshot.startedAt,
+    endedAt: Date.now(),
+    managerName: snapshot.manager?.name || null,
+    interactionCount: snapshot.log.filter(item => item.from === 'user' || item.from === 'model').length,
+  }
+}
+
+function publishFocusFinished(snapshot: FocusState, reason: FocusSummary['reason'], actualMs: number) {
+  const summary = focusSummaryFor(snapshot, reason, actualMs)
+  sendRaw({ type: 'focus_finished', reason, manager: snapshot.manager, actualMs, summary })
+  const status = reason === 'completed' ? '完成' : '提前结束'
+  broadcastMsg({
+    type: 'msg', id: nextId(), from: 'cc', ts: summary.endedAt,
+    text: `🍅 本次学习${status}：${summary.task} · 实际 ${summary.actualMinutes} 分钟 / 计划 ${summary.plannedMinutes} 分钟`,
+    focusSummary: summary,
+  })
+}
+
 function focusMatchesManager(caller: FocusManager): boolean {
   return !!focusState.manager && focusState.manager.runtime === caller.runtime && focusState.manager.sessionId === caller.sessionId
 }
@@ -5108,16 +5151,16 @@ function focusTick() {
   const counts = { ...focusState.completedByDay }
   const k = focusDayKey(focusState.endAt)
   counts[k] = (Number(counts[k]) || 0) + 1
-  const finishedManager = focusState.manager
+  const finishedSnapshot = focusState
   const finishedTask = focusState.task
   const finishedMinutes = focusState.minutes
   const finishedStartedAt = focusState.startedAt
   focusState = { ...defaultFocusState(), completedByDay: counts, lastEndedReason: 'completed', updatedAt: Date.now() }
   saveFocusState()
   broadcastFocus()
-  sendRaw({ type: 'focus_finished', reason: 'completed', manager: finishedManager })
+  publishFocusFinished(finishedSnapshot, 'completed', finishedMinutes * 60_000)
   void careRecordFocusCompletion(finishedTask, finishedMinutes, finishedStartedAt)
-  log('focus_completed', { manager: finishedManager })
+  log('focus_completed', { manager: finishedSnapshot.manager })
 }
 setInterval(focusTick, 1000)
 
@@ -5167,16 +5210,17 @@ function focusManagerFinish(caller: FocusManager): { ok: true } | { ok: false; r
   const counts = { ...focusState.completedByDay }
   const k = focusDayKey()
   counts[k] = (Number(counts[k]) || 0) + 1
-  const finishedManager = focusState.manager
+  const finishedSnapshot = focusState
   const finishedTask = focusState.task
   const finishedMinutes = focusState.minutes
   const finishedStartedAt = focusState.startedAt
+  const actualMs = Math.max(0, finishedMinutes * 60_000 - focusRemaining())
   focusState = { ...defaultFocusState(), completedByDay: counts, lastEndedReason: 'completed', updatedAt: Date.now() }
   saveFocusState()
   broadcastFocus()
-  sendRaw({ type: 'focus_finished', reason: 'completed', manager: finishedManager })
+  publishFocusFinished(finishedSnapshot, 'completed', actualMs)
   void careRecordFocusCompletion(finishedTask, finishedMinutes, finishedStartedAt)
-  log('focus_manager_finished', { manager: finishedManager })
+  log('focus_manager_finished', { manager: finishedSnapshot.manager })
   return { ok: true }
 }
 
@@ -5215,13 +5259,13 @@ function focusResolveRequest(caller: FocusManager, requestId: string, approve: b
   focusState.lastRequest = request
 
   if (approve && request.kind === 'end') {
-    const actualMs = Date.now() - focusState.startedAt
-    const finishedManager = focusState.manager
+    const finishedSnapshot = focusState
+    const actualMs = Math.max(0, focusState.minutes * 60_000 - focusRemaining())
     const counts = { ...focusState.completedByDay } // early end never increments today's count
     focusState = { ...defaultFocusState(), completedByDay: counts, lastEndedReason: 'early_end', updatedAt: Date.now() }
     saveFocusState()
     broadcastFocus()
-    sendRaw({ type: 'focus_finished', reason: 'early_end', manager: finishedManager, actualMs })
+    publishFocusFinished(finishedSnapshot, 'early_end', actualMs)
     log('focus_request_resolved', { requestId, kind: request.kind, approve })
     return { ok: true }
   }
@@ -5285,9 +5329,12 @@ function focusSelfResume(): { ok: true } | { ok: false; reason: string } {
 }
 function focusSelfEnd(): { ok: true } | { ok: false; reason: string } {
   if (!focusState.active || focusState.manager) return { ok: false, reason: 'not_available' }
+  const finishedSnapshot = focusState
+  const actualMs = Math.max(0, focusState.minutes * 60_000 - focusRemaining())
   focusState = { ...defaultFocusState(), completedByDay: focusState.completedByDay, lastEndedReason: 'early_end', updatedAt: Date.now() }
   saveFocusState()
   broadcastFocus()
+  publishFocusFinished(finishedSnapshot, 'early_end', actualMs)
   return { ok: true }
 }
 
@@ -5298,13 +5345,46 @@ function focusSelfEnd(): { ok: true } | { ok: false; reason: string } {
 // FOCUS_* tag handling), never through here.
 function focusDispatchInteract(text: string) {
   if (!focusState.manager) return
-  if (focusState.manager.runtime === 'claude-code') notifyCcOfFocusInteract(text)
+  if (focusState.manager.runtime === 'claude-code') {
+    focusCcQueue.push({ kind: 'interact', text })
+    scheduleFocusCcDrain()
+  }
   else if (focusState.manager.runtime === 'codex') void codexNotifyFocusInteract(text)
 }
 function focusDispatchRequestNotify(request: FocusRequest) {
   if (!focusState.manager) return
-  if (focusState.manager.runtime === 'claude-code') notifyCcOfFocusRequest(request)
+  if (focusState.manager.runtime === 'claude-code') {
+    if (!focusCcQueue.some(job => job.kind === 'decision' && job.request.id === request.id)) {
+      focusCcQueue.push({ kind: 'decision', request })
+    }
+    scheduleFocusCcDrain()
+  }
   else if (focusState.manager.runtime === 'codex') void codexNotifyFocusRequest(request)
+}
+
+function scheduleFocusCcDrain(delayMs = 0) {
+  if (focusCcDrainTimer || !focusCcQueue.length) return
+  focusCcDrainTimer = setTimeout(() => {
+    focusCcDrainTimer = null
+    if (!focusCcQueue.length) return
+    if (currentTurn || resetInFlight || tidalIsActive()) {
+      scheduleFocusCcDrain(500)
+      return
+    }
+    const job = focusCcQueue.shift()!
+    // A queued message must never revive an already-ended focus session; a
+    // decision is also stale once that exact request has been resolved.
+    if (!focusState.active || focusState.manager?.runtime !== 'claude-code') {
+      focusCcQueue.length = 0
+      return
+    }
+    if (job.kind === 'decision') {
+      if (focusState.pendingRequest?.id === job.request.id) notifyCcOfFocusRequest(job.request)
+      else scheduleFocusCcDrain()
+    } else {
+      notifyCcOfFocusInteract(job.text)
+    }
+  }, delayMs)
 }
 
 // ---------- Group chat (多AI群聊) ----------

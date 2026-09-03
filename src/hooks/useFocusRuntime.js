@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import {
   ensureConnected, reconnectCompanion, getFocusState, onFocusUpdate, onFocusFinished,
+  onTurnEnd,
   startFocus, focusInteract, requestFocus, resumeFocusFromApproval,
   selfPauseFocus, selfResumeFocus, selfEndFocus,
 } from '../services/companion'
@@ -44,8 +45,22 @@ export function useFocusRuntime() {
       if (payload?.reason === 'completed') playFocusAlarm()
       setJustFinished(payload)
     })
-    return () => { cancelled = true; unsubUpdate(); unsubFinished() }
-  }, [])
+    // Focus replies and approval decisions are ordinary resident-agent turns.
+    // Reconcile at their real completion as well as trusting the push: iOS can
+    // keep a half-dead socket that accepts the POST but misses focus_update,
+    // which used to reveal reply N only when POST N+1 caused another GET.
+    const unsubTurnEnd = onTurnEnd(() => { refresh().catch(() => {}) })
+    return () => { cancelled = true; unsubUpdate(); unsubFinished(); unsubTurnEnd() }
+  }, [refresh])
+
+  // A small server-authoritative safety poll while a timer is active covers
+  // suspended WebSockets and missed pause/resume pushes without advancing any
+  // timer locally. It stops completely outside a focus session.
+  useEffect(() => {
+    if (!state?.active) return undefined
+    const timer = setInterval(() => refresh().catch(() => {}), 1500)
+    return () => clearInterval(timer)
+  }, [state?.active, refresh])
 
   // Guided Access and other iOS system overlays freeze the page. On return,
   // Safari can leave the old WebSocket looking OPEN even though it can no

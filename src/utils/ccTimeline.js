@@ -67,6 +67,7 @@ export function ccWireToTimelineMessages(wire, conversationId, options = {}) {
   const reasoningFields = wire.thinking
     ? { reasoning: wire.thinking, reasoningStreaming: false }
     : {}
+  const focusFields = wire.focusSummary ? { focusSummary: wire.focusSummary } : {}
   // On the CC wire, turnId is the stable id of the user message that opened
   // this turn. `replyTo` is a separate semantic quote target and must not be
   // used for timeline placement.
@@ -88,6 +89,7 @@ export function ccWireToTimelineMessages(wire, conversationId, options = {}) {
       source: 'cc-proactive',
       ...turnFields,
       ...reasoningFields,
+      ...focusFields,
     }]
   }
   const parts = splitVpsReplyContent(wire.text || '')
@@ -108,6 +110,7 @@ export function ccWireToTimelineMessages(wire, conversationId, options = {}) {
       source: 'cc-proactive',
       ...turnFields,
       ...(wire.musicAction && partIndex === parts.length - 1 ? { musicAction: wire.musicAction } : {}),
+      ...(wire.focusSummary && partIndex === 0 ? focusFields : {}),
       ...reasoningFields,
     }
   })

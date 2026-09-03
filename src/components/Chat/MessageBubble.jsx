@@ -7,6 +7,7 @@ import LetterCard from './LetterCard'
 import NeteasePlayCard from './NeteasePlayCard'
 import HealthDataCard from './HealthDataCard'
 import HeartRateCard from './HeartRateCard'
+import FocusSummaryCard from './FocusSummaryCard'
 import { GoldenRetrieverThinking } from './PendingReplyIndicator'
 import ReasoningSheet from './ReasoningSheet'
 import clsx from 'clsx'
@@ -244,6 +245,7 @@ function MessageBubble({ message, onLongPress, onRegenerate, onRegenerateRound, 
     ? allToolUses.filter((item) => !isHealthTool(item.tool))
     : allToolUses
   const diceValue = message.type === 'text' ? Number(message.content?.match(DICE_ONE)?.[1] || 0) : 0
+  const focusSummary = !isUser ? message.focusSummary : null
   const [displayDiceValue, setDisplayDiceValue] = useState(() => diceValue || 1)
   const [diceRolling, setDiceRolling] = useState(false)
   const [diceJustSettled, setDiceJustSettled] = useState(false)
@@ -522,7 +524,8 @@ function MessageBubble({ message, onLongPress, onRegenerate, onRegenerateRound, 
             </span>
           </div>
         )}
-        {message.type === 'text' && !diceValue && !message.voiceLoading && (
+        {focusSummary && <FocusSummaryCard summary={focusSummary} theme={theme} />}
+        {message.type === 'text' && !diceValue && !focusSummary && !message.voiceLoading && (
           <div
             className={clsx('relative leading-relaxed select-none cursor-default', pressed ? 'bubble-press' : '')}
             style={showGoldenPending ? {
