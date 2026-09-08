@@ -50,6 +50,7 @@ import {
   isCodexAlreadyInitializedError,
   codexReconnectDelayMs,
 } from './codex-session.ts'
+import { validCoordinates, resolveLocationAddress } from './location.ts'
 import { ReadingStore } from './reading-store.ts'
 import {
   DEFAULT_TIDAL_CONFIG,
@@ -8880,6 +8881,24 @@ Bun.serve<{ authed: true }>({
         return jsonResponse({ error: 'unauthorized' }, { status: 401, headers: corsHeadersFor(origin) })
       }
       return null
+    }
+
+    if (url.pathname === '/location/resolve' && req.method === 'POST') {
+      const gate = authGate()
+      if (gate) return gate
+      const headers = { ...corsHeadersFor(origin), 'cache-control': 'no-store' }
+      let body: unknown
+      try { body = await req.json() } catch {
+        return jsonResponse({ error: 'bad json' }, { status: 400, headers })
+      }
+      if (!validCoordinates(body)) return jsonResponse({ error: 'invalid coordinates' }, { status: 400, headers })
+      try {
+        const result = await resolveLocationAddress(body, process.env.AMAP_WEB_SERVICE_KEY || '')
+        return jsonResponse(result, { headers })
+      } catch {
+        // Never log coordinates, keys, or upstream URLs; raw GPS remains usable.
+        return jsonResponse({ address: '', reason: 'unavailable' }, { headers })
+      }
     }
 
     // Ordinary API chat reads this same process-local snapshot immediately

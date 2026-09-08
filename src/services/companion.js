@@ -2069,3 +2069,12 @@ export async function cleanupMysteryGame(gameId, charIds) {
     body: JSON.stringify({ gameId, charIds }),
   })
 }
+
+export function resolveCurrentLocation(location, signal) {
+  return companionJson('/location/resolve', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ latitude: location.latitude, longitude: location.longitude }),
+    signal,
+  })
+}
