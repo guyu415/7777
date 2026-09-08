@@ -1,6 +1,6 @@
 import { OAuthProvider, type OAuthHelpers } from "@cloudflare/workers-oauth-provider";
 import { AcMcpAgent } from "./ac-agent";
-import { DeviceStateStore } from "./device-state";
+import { DeviceStateStore, reverseGeocodeWithAmap } from "./device-state";
 import { HeartStateStore } from "./heart-state";
 import { handleNeteaseRecentProbe } from "./netease";
 import { extractLatestHistory, handleBilibiliRecentProbe } from "./bilibili";
@@ -25,6 +25,8 @@ export interface Env {
   DEVICE_WRITE_TOKEN: string;
   /** AMap Web Service API key, stored as a Wrangler secret. */
   AMAP_WEB_SERVICE_KEY?: string;
+  /** Separate server-to-worker token for the Companion location proxy. */
+  AMAP_RESOLVE_TOKEN?: string;
   /** NetEase Cloud Music browser cookie, stored as a Wrangler secret. */
   NCM_COOKIE?: string;
   /** Bilibili browser cookie, stored as a Wrangler secret. */
@@ -42,6 +44,72 @@ export interface Env {
 function isAuthorizedDeviceReport(request: Request, env: Env): boolean {
   const header = request.headers.get("Authorization");
   return Boolean(env.DEVICE_WRITE_TOKEN) && header === `Bearer ${env.DEVICE_WRITE_TOKEN}`;
+}
+
+function validLocationCoordinates(value: unknown): value is { latitude: number; longitude: number } {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const body = value as Record<string, unknown>;
+  return typeof body.latitude === "number" && Number.isFinite(body.latitude)
+    && Math.abs(body.latitude) <= 90
+    && typeof body.longitude === "number" && Number.isFinite(body.longitude)
+    && Math.abs(body.longitude) <= 180;
+}
+
+function locationResolveHeaders(): HeadersInit {
+  return { "Cache-Control": "no-store" };
+}
+
+function isTimeoutError(error: unknown): boolean {
+  if (!error || typeof error !== "object") return false;
+  const name = (error as { name?: unknown }).name;
+  return name === "AbortError" || name === "TimeoutError";
+}
+
+async function handleLocationResolve(request: Request, env: Env): Promise<Response> {
+  const headers = locationResolveHeaders();
+  if (request.method !== "POST") {
+    return new Response("Method Not Allowed", { status: 405, headers: { ...headers, Allow: "POST" } });
+  }
+  if (!env.AMAP_RESOLVE_TOKEN) {
+    return Response.json({ address: "", reason: "not_configured" }, { status: 503, headers });
+  }
+  if (request.headers.get("Authorization") !== `Bearer ${env.AMAP_RESOLVE_TOKEN}`) {
+    return Response.json({ ok: false, error: "Unauthorized" }, { status: 401, headers });
+  }
+
+  let body: unknown;
+  try {
+    body = await request.json();
+  } catch {
+    return Response.json({ address: "", reason: "bad_json" }, { status: 400, headers });
+  }
+  if (!validLocationCoordinates(body)) {
+    return Response.json({ address: "", reason: "invalid_coordinates" }, { status: 400, headers });
+  }
+  if (!env.AMAP_WEB_SERVICE_KEY?.trim()) {
+    return Response.json({ address: "", reason: "not_configured" }, { status: 503, headers });
+  }
+
+  try {
+    // This is deliberately a stateless call. It uses exactly the coordinates
+    // supplied by Companion and never reads or updates DeviceStateStore.
+    const resolved = await reverseGeocodeWithAmap(
+      env,
+      body.latitude,
+      body.longitude,
+      AbortSignal.timeout(7000)
+    );
+    const address = resolved?.formattedAddress?.trim().slice(0, 300) ?? "";
+    return Response.json(
+      { address, reason: address ? null : "no_address" },
+      { headers }
+    );
+  } catch (error) {
+    return Response.json(
+      { address: "", reason: isTimeoutError(error) ? "timeout" : "unavailable" },
+      { headers }
+    );
+  }
 }
 
 async function handleDeviceReport(request: Request, env: Env): Promise<Response> {
@@ -395,6 +463,7 @@ const defaultHandler = {
     }
     if (pathname === "/device/netease-probe") return handleProtectedNeteaseProbe(request, env);
     if (pathname === "/device/bilibili-probe") return handleProtectedBilibiliProbe(request, env);
+    if (pathname === "/device/location-resolve") return handleLocationResolve(request, env);
     if (pathname === "/authorize") return handleAuthorize(request, env);
     if (pathname === "/" || pathname === "") return landingPage(new URL(request.url).origin);
 

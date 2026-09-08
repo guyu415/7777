@@ -226,10 +226,11 @@ function apiDistance(value: unknown): number | undefined {
   return Number.isFinite(parsed) ? Math.max(0, Math.round(parsed)) : undefined;
 }
 
-async function reverseGeocodeWithAmap(
+export async function reverseGeocodeWithAmap(
   env: Env,
   latitude: number,
-  longitude: number
+  longitude: number,
+  signal: AbortSignal = AbortSignal.timeout(7000)
 ): Promise<ResolvedLocation | undefined> {
   const key = env.AMAP_WEB_SERVICE_KEY?.trim();
   if (!key) return undefined;
@@ -244,7 +245,7 @@ async function reverseGeocodeWithAmap(
   convertUrl.searchParams.set("coordsys", "gps");
   convertUrl.searchParams.set("output", "JSON");
 
-  const convertResponse = await fetch(convertUrl);
+  const convertResponse = await fetch(convertUrl, { signal });
   if (!convertResponse.ok) {
     throw new Error(`高德坐标转换失败（HTTP ${convertResponse.status}）`);
   }
@@ -263,7 +264,7 @@ async function reverseGeocodeWithAmap(
   regeoUrl.searchParams.set("homeorcorp", "1");
   regeoUrl.searchParams.set("output", "JSON");
 
-  const regeoResponse = await fetch(regeoUrl);
+  const regeoResponse = await fetch(regeoUrl, { signal });
   if (!regeoResponse.ok) {
     throw new Error(`高德逆地理编码失败（HTTP ${regeoResponse.status}）`);
   }
