@@ -1,10 +1,11 @@
-import { memo, forwardRef, useCallback, useEffect, useImperativeHandle, useLayoutEffect, useRef, useState } from 'react'
+import { memo, forwardRef, useCallback, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import { ChevronUp, ChevronDown } from 'lucide-react'
 import MessageBubble from './MessageBubble'
 import PendingReplyIndicator from './PendingReplyIndicator'
 import ReasoningSheet from './ReasoningSheet'
 import { messageListItemCount, shouldShowPendingReply } from './messageListModel'
+import { buildPokeTimeline, canEditPokeText, editablePokeParts, formatPokeNotice } from '../../utils/poke'
 
 // How close to the bottom (px) still counts as "at the bottom" for auto-follow
 // purposes — generous enough to survive sub-pixel/rounding jitter, small
@@ -20,6 +21,131 @@ const TOP_THRESHOLD_PX = 96
 // actually measured; @tanstack/react-virtual corrects it via ResizeObserver
 // the moment each item mounts, so total scroll height stays accurate.
 const ESTIMATED_ITEM_HEIGHT = 88
+
+function timelineTime(value) {
+  const numeric = Number(value)
+  if (Number.isFinite(numeric) && numeric > 0) return numeric
+  const parsed = Date.parse(value)
+  return Number.isFinite(parsed) ? parsed : 0
+}
+
+function PokeTimelineRow({ poke, aiName, onEdit }) {
+  const editable = canEditPokeText(poke) && typeof onEdit === 'function'
+  const parts = editablePokeParts(poke)
+  const [editing, setEditing] = useState(false)
+  const [draftBefore, setDraftBefore] = useState(parts.before)
+  const [draftAfter, setDraftAfter] = useState(parts.after)
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState('')
+  const beforeInputRef = useRef(null)
+
+  useEffect(() => {
+    if (!editing) {
+      const next = editablePokeParts(poke)
+      setDraftBefore(next.before)
+      setDraftAfter(next.after)
+    }
+  }, [editing, poke?.before, poke?.after, poke?.suffix])
+
+  useEffect(() => {
+    if (editing) beforeInputRef.current?.focus()
+  }, [editing])
+
+  const save = async () => {
+    const before = draftBefore.trim()
+    const after = draftAfter.trim()
+    if (!before || !after || saving) return
+    setSaving(true)
+    setError('')
+    try {
+      await onEdit(poke.id, before, after)
+      setEditing(false)
+    } catch (err) {
+      setError(err?.message || '保存失败')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const resetDraft = () => {
+    const next = editablePokeParts(poke)
+    setDraftBefore(next.before)
+    setDraftAfter(next.after)
+    setEditing(false)
+    setError('')
+  }
+
+  const inputStyle = {
+    border: 0, borderBottom: '1px solid rgba(74,130,175,.55)', borderRadius: 0,
+    outline: 'none', padding: '0 2px', background: 'transparent', color: 'rgba(45,70,95,.95)',
+    font: 'inherit', lineHeight: 'inherit', textAlign: 'center',
+  }
+
+  return (
+    <div className="flex justify-center px-4 py-2" aria-label={formatPokeNotice(poke, aiName)}>
+      <div style={{
+        display: 'inline-flex', alignItems: 'center', justifyContent: 'center', flexWrap: 'wrap',
+        maxWidth: '92%', minHeight: 28, padding: '4px 13px', borderRadius: 999,
+        background: 'rgba(255,255,255,.5)', color: 'rgba(55,75,95,.88)',
+        border: '1px solid rgba(255,255,255,.42)', boxShadow: '0 2px 10px rgba(50,80,110,.08)',
+        fontSize: 12, lineHeight: 1.45, textAlign: 'center', backdropFilter: 'blur(10px)',
+        WebkitBackdropFilter: 'blur(10px)',
+      }}>
+        {editing ? (
+          <>
+            <span>{poke?.aiName || aiName || 'CC'}</span>
+            <input
+              ref={beforeInputRef}
+              value={draftBefore}
+              maxLength={20}
+              disabled={saving}
+              aria-label="编辑了字前面的文案"
+              onChange={(event) => setDraftBefore(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter') { event.preventDefault(); void save() }
+                if (event.key === 'Escape') resetDraft()
+              }}
+              style={{
+                ...inputStyle, width: Math.max(28, Math.min(110, (draftBefore.length + 1) * 13)), marginLeft: 3,
+              }}
+            />
+            <span style={{ margin: '0 3px' }}>了</span>
+            <input
+              value={draftAfter}
+              maxLength={40}
+              disabled={saving}
+              aria-label="编辑了字后面的文案"
+              onChange={(event) => setDraftAfter(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter') { event.preventDefault(); void save() }
+                if (event.key === 'Escape') resetDraft()
+              }}
+              style={{
+                ...inputStyle, width: Math.max(58, Math.min(190, (draftAfter.length + 1) * 13)),
+              }}
+            />
+            <button type="button" onClick={() => void save()} disabled={saving || !draftBefore.trim() || !draftAfter.trim()} style={{ marginLeft: 7, padding: 0, border: 0, background: 'transparent', color: '#348bc4', font: 'inherit', cursor: 'pointer', opacity: saving || !draftBefore.trim() || !draftAfter.trim() ? .5 : 1 }}>
+              {saving ? '保存中' : '保存'}
+            </button>
+            <button type="button" onClick={resetDraft} disabled={saving} style={{ marginLeft: 7, padding: 0, border: 0, background: 'transparent', color: 'rgba(70,90,110,.62)', font: 'inherit', cursor: 'pointer' }}>
+              取消
+            </button>
+          </>
+        ) : (
+          <>
+            <span>{formatPokeNotice(poke, aiName)}</span>
+            {editable && (
+              <button type="button" onClick={() => { setEditing(true); setError('') }} style={{ marginLeft: 7, padding: 0, border: 0, background: 'transparent', color: '#348bc4', font: 'inherit', cursor: 'pointer' }}>
+                编辑
+              </button>
+            )}
+          </>
+        )}
+        {error && <span role="alert" style={{ width: '100%', marginTop: 2, color: '#d85f6a', fontSize: 10 }}>{error}</span>}
+      </div>
+    </div>
+  )
+}
 /**
  * Renders only the messages near the viewport (+ overscan buffer), not the
  * full history — this is the actual fix for long-conversation jank. The full
@@ -37,22 +163,25 @@ const MessageList = forwardRef(function MessageList({
   isLoading, userAvatar, aiAvatar, theme, bubbleSkin,
   pendingReplyVariant,
   translateThinking = false,
+  onAvatarDoubleClick,
+  pokeEvents = [], onEditPoke,
   selectionMode, selectedIds, onToggleSelect,
   emptyAiName, emptyHasApiKey, onEmptyConfigureClick,
 }, ref) {
   const messages = sourceMessages
+  const timeline = useMemo(() => buildPokeTimeline(messages, pokeEvents, timelineTime), [messages, pokeEvents])
   // Pending is presentation state, not a fabricated chat message. It gets a
   // virtual row so scrolling still works, but never passes through
   // MessageBubble and therefore has no id/timestamp/menu/delete semantics.
   const showPendingReply = shouldShowPendingReply(messages, isLoading)
-  const itemCount = messageListItemCount(messages, showPendingReply)
+  const itemCount = messageListItemCount(timeline, showPendingReply)
   const scrollRef = useRef(null)
   // Refs, not state — reading/writing them must never itself trigger a
   // re-render of this list on every scroll tick.
   const isNearBottomRef = useRef(true)
   const prevSessionIdRef = useRef(sessionId)
   const prevLastIdRef = useRef(null)
-  const prevMessageCountRef = useRef(messages.length)
+  const prevMessageCountRef = useRef(timeline.length)
   const hasScrolledInitiallyRef = useRef(false)
   // These two ARE state (unlike the ref above) because they drive the jump
   // buttons' visibility — but only ever setState on a threshold *crossing*,
@@ -77,11 +206,11 @@ const MessageList = forwardRef(function MessageList({
   const virtualizer = useVirtualizer({
     count: itemCount,
     getScrollElement: () => scrollRef.current,
-    estimateSize: () => ESTIMATED_ITEM_HEIGHT,
+    estimateSize: (index) => timeline[index]?.type === 'poke' ? 42 : ESTIMATED_ITEM_HEIGHT,
     overscan: 10,
-    getItemKey: (index) => index === messages.length && showPendingReply
+    getItemKey: (index) => index === timeline.length && showPendingReply
       ? 'pending-reply-indicator'
-      : (messages[index]?.id ?? index),
+      : (timeline[index]?.id ?? index),
   })
 
   // Lets the parent (search results, "jump to message") drive this list's
@@ -90,9 +219,11 @@ const MessageList = forwardRef(function MessageList({
     scrollToIndex(index, opts) {
       if (index < 0 || index >= messages.length) return
       isNearBottomRef.current = index >= messages.length - 1
-      virtualizer.scrollToIndex(index, { align: 'center', ...opts })
+      const messageId = messages[index]?.id
+      const timelineIndex = timeline.findIndex((row) => row.type === 'message' && row.message.id === messageId)
+      if (timelineIndex >= 0) virtualizer.scrollToIndex(timelineIndex, { align: 'center', ...opts })
     },
-  }), [messages.length, virtualizer])
+  }), [messages, timeline, virtualizer])
 
   // Cheap, O(1) bottom-proximity check — reads three numbers off the scroll
   // container, never touches the messages array or any DOM node inside it.
@@ -133,7 +264,7 @@ const MessageList = forwardRef(function MessageList({
     if (switched) {
       prevSessionIdRef.current = sessionId
       hasScrolledInitiallyRef.current = false
-      prevMessageCountRef.current = messages.length
+      prevMessageCountRef.current = timeline.length
       setNewBelowCount(0)
     }
     if (!hasScrolledInitiallyRef.current && itemCount > 0) {
@@ -148,18 +279,19 @@ const MessageList = forwardRef(function MessageList({
   // bottom. Streaming growth inside the current bubble does not inflate it.
   useLayoutEffect(() => {
     if (prevSessionIdRef.current !== sessionId) return
-    const added = messages.length - prevMessageCountRef.current
+    const added = timeline.length - prevMessageCountRef.current
     if (added > 0 && !isNearBottomRef.current) {
       setNewBelowCount((count) => count + added)
     }
-    prevMessageCountRef.current = messages.length
-  }, [messages.length, sessionId])
+    prevMessageCountRef.current = timeline.length
+  }, [timeline.length, sessionId])
 
   // New message arrives, or the in-progress (streaming) message's own
   // content/reasoning grows — auto-follow ONLY if the user was already at
   // the bottom. A user who scrolled up to read history must never be yanked
   // back down mid-stream.
-  const lastMsg = messages[messages.length - 1]
+  const lastRow = timeline[timeline.length - 1]
+  const lastMsg = lastRow?.message
   useLayoutEffect(() => {
     if (!itemCount) return
     const lastId = lastMsg?.id
@@ -168,9 +300,9 @@ const MessageList = forwardRef(function MessageList({
       virtualizer.scrollToIndex(itemCount - 1, { align: 'end' })
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [itemCount, lastMsg?.content?.length, lastMsg?.reasoning?.length, lastMsg?.streaming])
+  }, [itemCount, lastMsg?.content?.length, lastMsg?.reasoning?.length, lastMsg?.streaming, lastRow?.poke?.suffix])
 
-  if (messages.length === 0 && !showPendingReply) {
+  if (timeline.length === 0 && !showPendingReply) {
     return (
       <div className="absolute inset-0 overflow-y-auto px-2 py-4" style={{ zIndex: 1 }}>
         <div className="flex flex-col items-center justify-center h-full text-center gap-3">
@@ -218,7 +350,7 @@ const MessageList = forwardRef(function MessageList({
       >
         <div style={{ position: 'relative', height: virtualizer.getTotalSize(), width: '100%' }}>
           {items.map((vi) => {
-            if (showPendingReply && vi.index === messages.length) {
+            if (showPendingReply && vi.index === timeline.length) {
               return (
                 <div
                   key={vi.key}
@@ -230,11 +362,26 @@ const MessageList = forwardRef(function MessageList({
                 </div>
               )
             }
-            const msg = messages[vi.index]
-            if (!msg) return null
+            const row = timeline[vi.index]
+            if (!row) return null
+            if (row.type === 'poke') {
+              return (
+                <div
+                  key={vi.key}
+                  data-index={vi.index}
+                  ref={virtualizer.measureElement}
+                  style={{ position: 'absolute', top: 0, left: 0, width: '100%', transform: `translateY(${vi.start}px)` }}
+                >
+                  <PokeTimelineRow poke={row.poke} aiName={emptyAiName} onEdit={onEditPoke} />
+                </div>
+              )
+            }
+            const msg = row.message
             const isLastAi = msg.id === lastAiId
-            const sameSenderAsPrev = messages[vi.index - 1]?.role === msg.role
-            const sameSenderAsNext = messages[vi.index + 1]?.role === msg.role
+            const prevMessage = timeline[vi.index - 1]?.message
+            const nextMessage = timeline[vi.index + 1]?.message
+            const sameSenderAsPrev = prevMessage?.role === msg.role
+            const sameSenderAsNext = nextMessage?.role === msg.role
             return (
               <div
                 key={vi.key}
@@ -258,7 +405,7 @@ const MessageList = forwardRef(function MessageList({
                   onLongPress={selectionMode ? null : onLongPress}
                   onRegenerate={isLastAi ? onRegenerate : null}
                   onRegenerateRound={isLastAi ? onRegenerateRound : null}
-                  onRetry={msg.error && vi.index === messages.length - 1 ? onRetry : null}
+                  onRetry={msg.error && msg.id === messages[messages.length - 1]?.id ? onRetry : null}
                   isLoading={isLoading}
                   userAvatar={userAvatar}
                   aiAvatar={aiAvatar}
@@ -269,6 +416,7 @@ const MessageList = forwardRef(function MessageList({
                   sameSenderAsNext={sameSenderAsNext}
                   onOpenReasoning={openReasoning}
                   reasoningOpen={reasoningTarget?.id === msg.id}
+                  onAvatarDoubleClick={!selectionMode && msg.role === 'assistant' ? onAvatarDoubleClick : null}
                 />
                 </div>
               </div>
@@ -298,7 +446,7 @@ const MessageList = forwardRef(function MessageList({
           onClick={() => {
             isNearBottomRef.current = true
             setNewBelowCount(0)
-            virtualizer.scrollToIndex(messages.length - 1, { align: 'end' })
+            virtualizer.scrollToIndex(timeline.length - 1, { align: 'end' })
           }}
           title="回到底部"
           aria-label="回到底部"

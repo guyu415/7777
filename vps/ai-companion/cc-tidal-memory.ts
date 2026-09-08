@@ -11,6 +11,11 @@ export type VisibleCcMessage = {
 export type QueuedCcMessage = {
   id: string
   text: string
+  kind?: 'message' | 'poke' | 'poke_settings'
+  userName?: string
+  aiName?: string
+  before?: string
+  after?: string
   imagePath?: string
   filePath?: string
   fileName?: string

@@ -268,6 +268,60 @@ export function onProactiveMessage(fn) {
   return () => proactiveListeners.delete(fn)
 }
 
+const pokeListeners = new Set()
+const pokeSettingsListeners = new Set()
+const pokeHistoryListeners = new Set()
+let lastPokeHistory = null
+let lastCcTimelineWireId = null
+let pokeArrivalOrder = 0
+
+/** Live 拍一拍 rows. The server also includes them in reconnect history. */
+export function onPoke(fn) {
+  pokeListeners.add(fn)
+  return () => pokeListeners.delete(fn)
+}
+
+export function onPokeSettings(fn) {
+  pokeSettingsListeners.add(fn)
+  return () => pokeSettingsListeners.delete(fn)
+}
+
+export function onPokeHistorySnapshot(fn) {
+  pokeHistoryListeners.add(fn)
+  if (lastPokeHistory) queueMicrotask(() => { if (pokeHistoryListeners.has(fn)) fn(lastPokeHistory) })
+  return () => pokeHistoryListeners.delete(fn)
+}
+
+function announcePoke(poke) {
+  for (const fn of pokeListeners) {
+    try { fn(poke) } catch { /* isolate subscribers */ }
+  }
+}
+
+function announcePokeSettings(settings) {
+  for (const fn of pokeSettingsListeners) {
+    try { fn(settings) } catch { /* isolate subscribers */ }
+  }
+}
+
+function announcePokeHistory(items) {
+  let anchorId = null
+  const pokes = []
+  for (const [serverOrder, item] of (Array.isArray(items) ? items : []).entries()) {
+    if (item?.type !== 'msg' || !item.id) continue
+    if (item.kind === 'poke') {
+      pokes.push({ ...item, afterWireId: anchorId, serverOrder })
+    } else {
+      anchorId = item.id
+    }
+  }
+  lastCcTimelineWireId = anchorId
+  lastPokeHistory = pokes
+  for (const fn of pokeHistoryListeners) {
+    try { fn(lastPokeHistory) } catch { /* isolate subscribers */ }
+  }
+}
+
 const proactiveActivityListeners = new Set()
 /** Subscribe to completed self-directed proactive activities. These are
  * durable-until-acknowledged UI hints, deliberately separate from chat history. */
@@ -337,7 +391,7 @@ export function onCcHistorySnapshot(fn) {
 }
 
 function announceCcHistorySnapshot(items) {
-  const snapshot = (Array.isArray(items) ? items : []).filter(item => item?.type === 'msg' && item.id)
+  const snapshot = (Array.isArray(items) ? items : []).filter(item => item?.type === 'msg' && item.kind !== 'poke' && item.id)
   // Let an in-flight stream generator claim its own recovered wires first.
   setTimeout(() => {
     const unclaimed = snapshot.filter(item => !alreadyDelivered(item.id))
@@ -398,7 +452,13 @@ function maybeAnnounceProactive(wireMsg) {
 // shared across tabs of the same origin — lets a late/reconnecting tab
 // detect a reset it missed just as reliably as a tab that was live for it.
 const RESET_MARKER_KEY = 'companion.cc.lastResetAt'
-let lastKnownResetAt = Number(localStorage.getItem(RESET_MARKER_KEY) || 0) || 0
+let lastKnownResetAt = (() => {
+  try {
+    return typeof localStorage === 'undefined' ? 0 : Number(localStorage.getItem(RESET_MARKER_KEY) || 0) || 0
+  } catch {
+    return 0
+  }
+})()
 
 const ccResetListeners = new Set()
 /** Subscribe to CC context resets (live broadcast or detected on reconnect). Returns an unsubscribe fn. */
@@ -1081,6 +1141,8 @@ listeners.add(evt => {
   if (evt.kind === 'wire') {
     const m = evt.wire
     if (m.type === 'reset') {
+      lastCcTimelineWireId = null
+      lastPokeHistory = []
       maybeAnnounceReset({ resetAt: m.ts, mode: m.mode, boundaryId: m.boundaryId, boundaryTs: m.boundaryTs })
       return
     }
@@ -1090,6 +1152,22 @@ listeners.add(evt => {
     }
     if (m.type === 'proactive_activity_ack') {
       announceProactiveActivityAcknowledged(m.id)
+      return
+    }
+    if (m.type === 'poke') {
+      announcePoke({ ...m, afterWireId: lastCcTimelineWireId, arrivalOrder: ++pokeArrivalOrder })
+      return
+    }
+    if (m.type === 'poke_settings') {
+      announcePokeSettings(m.settings)
+      return
+    }
+    if (m.type === 'poke_error') {
+      announcePoke({ ...m, type: 'poke_error' })
+      return
+    }
+    if (m.type === 'msg' && m.kind === 'poke') {
+      announcePoke(m.pokeEdited ? m : { ...m, afterWireId: lastCcTimelineWireId, arrivalOrder: ++pokeArrivalOrder })
       return
     }
     if (m.type === 'gomoku_update') {
@@ -1143,6 +1221,7 @@ listeners.add(evt => {
       announceCcMessageDeleted(m.ids)
       return
     }
+    if (m.type === 'msg') lastCcTimelineWireId = m.id || lastCcTimelineWireId
     if (m.type === 'msg' && m.from === 'user') maybeAnnounceRemoteUserMessage(m)
     if (m.type === 'msg' && m.from === 'cc') maybeAnnounceProactive(m)
     return
@@ -1155,6 +1234,7 @@ listeners.add(evt => {
       boundaryTs: evt.resetBoundaryTs,
     })
     announceCcHistorySnapshot(evt.items)
+    announcePokeHistory(evt.items)
     announceCodex({
       type: 'codex_history_snapshot',
       sessionId: evt.codexSessionId || 'main',
@@ -1335,6 +1415,16 @@ function genId() {
   return `eunoia-${Date.now()}-${++seq}`
 }
 
+export async function sendPoke({ userName, aiName }) {
+  ensureConnected()
+  await ensureFreshConnectionBeforeSend()
+  const id = genId()
+  if (!sendRaw({ type: 'poke', id, userName, aiName, clientTime: clientTimeContext() })) {
+    throw new Error('companion 未连接')
+  }
+  return id
+}
+
 // Best-effort notice for the resident VPS session when the user deletes a
 // message locally: the deletion never touches CC's own persistent memory
 // (there's no such primitive), so without this it can later reference or
@@ -1453,7 +1543,7 @@ export async function* streamChatViaCompanion({ text, imagePath, file, signal, m
       // recover from the replayed message history instead of hanging.
       if (evt.openTurnId === turnId || evt.queuedTurnIds?.includes(turnId)) return // still open/queued server-side, keep waiting
       const isOurs = it => it.turnId === turnId
-      const ccReplies = evt.items.filter(it => isOurs(it) && it.from === 'cc')
+      const ccReplies = evt.items.filter(it => isOurs(it) && it.from === 'cc' && it.kind !== 'poke')
       recoveredFromHistory = true
       if (ccReplies.length > 0) {
         // Dedup by Wire.id, never by text — a reply that happens to repeat
@@ -1526,7 +1616,7 @@ export async function* streamChatViaCompanion({ text, imagePath, file, signal, m
       if (m.tool) push({ toolUse: { tool: m.tool, detail: m.detail || '', ts: m.ts } })
       return
     }
-    if (m.type === 'msg' && m.from === 'cc') {
+    if (m.type === 'msg' && m.from === 'cc' && m.kind !== 'poke') {
       if (alreadyDelivered(m.id)) return // e.g. already delivered via an earlier history recovery
       markDelivered(m.id)
       thisTurnDeliveredIds.push(m.id)
@@ -2002,6 +2092,18 @@ export async function setProactiveSettings(enabled) {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ enabled }),
+  })
+}
+
+export async function getPokeSettings() {
+  return companionJson('/poke/settings')
+}
+
+export async function setUserPokeText(before, after, pokeId) {
+  return companionJson('/poke/settings', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ userBefore: before, userAfter: after, pokeId }),
   })
 }
 

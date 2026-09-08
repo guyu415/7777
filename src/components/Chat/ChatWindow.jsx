@@ -28,7 +28,8 @@ import { putAsset } from '../../services/sync'
 import { formatLocationMessage, distanceMeters } from '../../services/location'
 import LocationPreview from './LocationPreview'
 import { rollD6 } from '../../utils/dice'
-import { getXinchaoStatus, onXinchaoUpdate, getCodexMemoryFile, putCodexMemoryFile, uploadFileToCompanion, getTidalMemoryStatus } from '../../services/companion'
+import { isPokeDoubleTap, POKE_RECEIVE_HAPTIC, POKE_SEND_HAPTIC } from '../../utils/poke'
+import { getXinchaoStatus, onXinchaoUpdate, getCodexMemoryFile, putCodexMemoryFile, uploadFileToCompanion, getTidalMemoryStatus, onPoke, onPokeHistorySnapshot, onCcReset, sendPoke, setUserPokeText } from '../../services/companion'
 
 const SYNC_BASE = 'https://chat.xiaoman.xyz'
 const FAV_LIST_KEY = 'user:xiaoman2.26:voice_fav_list'
@@ -174,6 +175,9 @@ export default function ChatWindow({ theme }) {
   const [tidalNotice, setTidalNotice] = useState(null)
   const tidalNoticeKeyRef = useRef('')
   const tidalNoticeTimerRef = useRef(null)
+  const [pokeEvents, setPokeEvents] = useState([])
+  const pokeTriggerRef = useRef(0)
+  const headerAvatarTapRef = useRef(0)
 
   const playTruthDareRoll = useCallback((value) => {
     if (!truthDareRef.current?.userRolled(value)) return
@@ -326,6 +330,31 @@ export default function ChatWindow({ theme }) {
   // immediately without paying the 1.5-second idle polling cost.
   }, [isVpsSession, isLoading])
 
+  useEffect(() => {
+    if (!isVpsSession) {
+      setPokeEvents([])
+      return
+    }
+    const upsert = (poke) => setPokeEvents((items) => {
+      const index = items.findIndex((item) => item.id === poke.id)
+      if (index < 0) return [...items, poke].sort((a, b) => Number(a.ts) - Number(b.ts))
+      const next = [...items]
+      next[index] = { ...next[index], ...poke }
+      return next
+    })
+    const unsubscribeLive = onPoke((poke) => {
+      if (poke?.type === 'poke_error') {
+        setToast(poke.error || '这次没拍到，再试一下')
+        return
+      }
+      upsert(poke)
+      if (poke.from === 'cc' && !poke.pokeEdited) navigator.vibrate?.(POKE_RECEIVE_HAPTIC)
+    })
+    const unsubscribeHistory = onPokeHistorySnapshot((items) => setPokeEvents(items))
+    const unsubscribeReset = onCcReset(() => setPokeEvents([]))
+    return () => { unsubscribeLive(); unsubscribeHistory(); unsubscribeReset() }
+  }, [isVpsSession])
+
   const showToast = (msg = '✨ 已记住~') => {
     setToast(msg)
     setTimeout(() => setToast(null), 2200)
@@ -345,6 +374,37 @@ export default function ChatWindow({ theme }) {
     })
       .catch(error => showToast(error.message || '发送定位失败，请重试'))
   }
+
+  const handlePokeAi = useCallback(() => {
+    if (!isVpsSession) return
+    const now = Date.now()
+    // Touch browsers may synthesize dblclick after our two-pointer-tap
+    // detector. One physical gesture must produce exactly one poke.
+    if (now - pokeTriggerRef.current < 650) return
+    pokeTriggerRef.current = now
+    navigator.vibrate?.(POKE_SEND_HAPTIC)
+    updateActiveTime()
+    sendPoke({ userName: '你', aiName: effectiveAiName || 'CC' }).catch((error) => {
+      showToast(error?.message || '这次没拍到，再试一下')
+    })
+  }, [isVpsSession, updateActiveTime, effectiveAiName])
+
+  const handleHeaderAvatarPointerUp = useCallback((event) => {
+    if (event.pointerType === 'mouse') return
+    const now = Date.now()
+    if (isPokeDoubleTap(headerAvatarTapRef.current, now)) {
+      headerAvatarTapRef.current = 0
+      handlePokeAi()
+    } else {
+      headerAvatarTapRef.current = now
+    }
+  }, [handlePokeAi])
+
+  const handleEditPokeText = useCallback(async (pokeId, before, after) => {
+    const settings = await setUserPokeText(before, after, pokeId)
+    setPokeEvents((items) => items.map((item) => item.id === pokeId ? { ...item, before: settings.userBefore, after: settings.userAfter } : item))
+    return { before: settings.userBefore, after: settings.userAfter }
+  }, [])
 
   const jumpToMessage = useCallback((index) => {
     setShowSearch(false)
@@ -693,10 +753,18 @@ export default function ChatWindow({ theme }) {
             <ArrowLeft size={20} />
           </button>
           <div className="w-10 h-10 rounded-full overflow-hidden flex items-center justify-center text-xl flex-shrink-0"
+            role={isVpsSession ? 'button' : undefined}
+            tabIndex={isVpsSession ? 0 : undefined}
+            aria-label={isVpsSession ? `双击拍一拍${effectiveAiName || 'CC'}` : undefined}
+            title={isVpsSession ? '双击拍一拍' : undefined}
+            onDoubleClick={isVpsSession ? handlePokeAi : undefined}
+            onPointerUp={isVpsSession ? handleHeaderAvatarPointerUp : undefined}
+            onKeyDown={isVpsSession ? (event) => { if (event.key === 'Enter' || event.key === ' ') handlePokeAi() } : undefined}
             style={{
               background: `${primaryColor}33`,
               border: `2px solid ${primaryColor}9c`,
               boxShadow: `0 0 8px ${primaryColor}b8, 0 0 17px ${primaryColor}68, 0 2px 8px rgba(92,68,102,.18)`,
+              cursor: isVpsSession ? 'pointer' : 'default', touchAction: 'manipulation',
             }}>
             {effectiveAiAvatar
               ? <img src={effectiveAiAvatar} alt="" className="w-full h-full object-cover" />
@@ -850,6 +918,9 @@ export default function ChatWindow({ theme }) {
             bubbleSkin={bubbleSkin}
             pendingReplyVariant={isVpsSession ? 'golden-retriever' : 'default'}
             translateThinking={isVpsSession}
+            onAvatarDoubleClick={isVpsSession ? handlePokeAi : null}
+            pokeEvents={isVpsSession ? pokeEvents : []}
+            onEditPoke={isVpsSession ? handleEditPokeText : null}
             selectionMode={messages.some((message) => selectedMessageIds.has(message.id))}
             selectedIds={selectedMessageIds}
             onToggleSelect={toggleMessageSelection}

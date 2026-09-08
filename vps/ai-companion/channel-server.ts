@@ -465,6 +465,9 @@ const TIDAL_CONFIG: TidalConfig = {
 // phone/browser is open — always knows the real current state. Default is
 // OFF; the file only needs to exist once someone has flipped it on/off.
 const PROACTIVE_CONFIG_FILE = process.env.AI_COMPANION_PROACTIVE_CONFIG_FILE ?? join(ROOT, 'config', 'proactive.json')
+// “拍一拍”文案属于被拍的一方：浏览器只改用户自己的文案，常驻 CC
+// 通过 MCP 工具改自己的文案。两项都落在 VPS，换设备后仍一致。
+const POKE_CONFIG_FILE = process.env.AI_COMPANION_POKE_CONFIG_FILE ?? join(ROOT, 'config', 'poke.json')
 
 // Self-paced proactive scheduling: the model decides, at the end of every
 // proactive_check turn, how long until the next one (via schedule_next_proactive)
@@ -917,7 +920,15 @@ type Msg = {
   // kind omitted/'text' = normal reply-tool message. 'voice' = sent via the
   // send_voice tool — CC's own explicit choice to speak instead of type;
   // never inferred client-side from text content.
-  kind?: 'text' | 'voice'
+  kind?: 'text' | 'voice' | 'poke'
+  // Persistent, timeline-native 拍一拍 notice. `text` stays empty so this
+  // never enters model memory/tidal summaries as pretend conversation text.
+  userName?: string
+  aiName?: string
+  before?: string
+  after?: string
+  suffix?: string
+  pokeEdited?: boolean
   voice?: string // optional TTS voice id override, voice-kind only
   style?: string // optional style/emotion hint, reserved — not wired to any TTS backend yet
   // Public thinking/reasoning text Claude Code's own engine emitted before
@@ -979,6 +990,16 @@ type ThinkingWire = { type: 'thinking'; turnId: string; delta: string }
 // basename, a command, a pattern) — never the full tool input.
 type ToolUseWire = { type: 'tool_use'; turnId: string; tool: string; detail: string; ts: number }
 type ReadingUpdateWire = { type: 'reading_update'; turnId: string; result: Record<string, unknown>; ts: number }
+type PokeWire = {
+  type: 'poke'
+  id: string
+  from: 'user' | 'cc'
+  userName: string
+  aiName: string
+  suffix: string
+  ts: number
+}
+type PokeSettingsWire = { type: 'poke_settings'; settings: PokeConfig; ts: number }
 type ReadingErrorWire = { type: 'reading_error'; turnId: string; error: string; ts: number }
 type ReadingRequestWire = { type: 'reading_request'; request: Record<string, unknown>; ts: number }
 // Gomoku: 0=empty, 1=black (user, always moves first), 2=white (AI, via the
@@ -1223,7 +1244,7 @@ type GroupListWire = { type: 'group_list'; chats: Array<{ id: string; name: stri
 type CareUpdateWire = { type: 'care_update'; state: CareHubState }
 type MsgDeletedWire = { type: 'msg_deleted'; ids: string[]; ts: number }
 
-type LiveWire = MsgWire | MsgDeletedWire | TurnStartWire | TurnEndWire | TurnErrorWire | ResetBusyWire | ResetWire | ThinkingWire | ReadingUpdateWire | ReadingErrorWire | ReadingRequestWire | GomokuWire | GomokuTurnEndWire | DiceDuelWire | XinchaoUpdateWire
+type LiveWire = MsgWire | MsgDeletedWire | TurnStartWire | TurnEndWire | TurnErrorWire | ResetBusyWire | ResetWire | ThinkingWire | ReadingUpdateWire | ReadingErrorWire | ReadingRequestWire | GomokuWire | GomokuTurnEndWire | DiceDuelWire | XinchaoUpdateWire | PokeWire | PokeSettingsWire
   | CodexMsgWire | CodexMsgDeletedWire | CodexStatusWire | CodexNoticeWire | CodexTurnEndWire | CodexTurnBusyWire | CodexResetBusyWire | CodexResetWire
   | FocusUpdateWire | FocusFinishedWire | GroupUpdateWire | GroupListWire | CareUpdateWire
 // resetAt lets a client that reconnects (or opens a brand new tab) long
@@ -1470,7 +1491,7 @@ setInterval(scheduleImageSweep, IMAGE_SWEEP_INTERVAL_MS)
 // Single-flight turn state. This process backs exactly one interactive claude
 // session, which can only run one turn at a time — so "one open turn" is a
 // correct model, not a simplification we'll regret later.
-type CcTurnSurface = 'main' | 'reading' | 'tidal_recovery' | 'other'
+type CcTurnSurface = 'main' | 'poke' | 'reading' | 'tidal_recovery' | 'other'
 let currentTurn: { turnId: string; startedAt: number; surface: CcTurnSurface; broadcastLifecycle: boolean } | null = null
 let readingTurn: {
   turnId: string
@@ -1610,7 +1631,7 @@ function broadcastMsg(m: MsgWire) {
 // message the user is about to see, and the gomoku/group tools narrate
 // themselves through their own wire events. Announcing them would just put a
 // "正在回复…" line above every reply.
-const TOOL_USE_MUTED = new Set(['reply', 'send_voice', 'send_bedtime_card', 'play_music_on_phone', 'roll_dice', 'gomoku_move', 'gomoku_banter', 'group_speak', 'group_pass'])
+const TOOL_USE_MUTED = new Set(['reply', 'poke_user', 'set_poke_text', 'send_voice', 'send_bedtime_card', 'play_music_on_phone', 'roll_dice', 'gomoku_move', 'gomoku_banter', 'group_speak', 'group_pass'])
 
 // Live tool-activity for the open turn. Deliberately fire-and-forget and
 // never persisted: this is the "what is it doing right now" indicator, and a
@@ -1678,6 +1699,11 @@ let deleteNoticeTurnId: string | null = null
 // set right after startTurn() in /internal/proactive-inject, cleared in
 // clearGomokuTurnScope like the other turn-scoped vars here.
 let proactiveTurnId: string | null = null
+// A poke is its own tiny interaction surface. Exactly one visible response is
+// accepted for the turn: either poke_user or reply. It never becomes a fake
+// user/assistant chat bubble and never enters chat history/tidal summaries.
+let pokeTurn: { turnId: string; userName: string; aiName: string; responded: boolean } | null = null
+let pokeUsedTurnId: string | null = null
 // Same idea as proactiveTurnId, but for /internal/dream-announce turns —
 // both are server-initiated turns that may land while the app is closed, so
 // both are the cases reply/send_voice below also fire a real Web Push for.
@@ -2031,10 +2057,6 @@ function startThinkingTail(turnId: string) {
 function stopThinkingTail(turnId: string) {
   if (!thinkingTail) return
   clearInterval(thinkingTail.timer)
-  // One last synchronous pass — closes the race where the final thinking
-  // block for this turn was flushed to disk in the same instant the turn
-  // ended, between the last poll tick and the hook/tool call that stops us.
-  pollThinkingTail(turnId)
   thinkingTail = null
 }
 
@@ -2082,6 +2104,8 @@ function clearGomokuTurnScope(turnId: string) {
     }
     proactiveTurnId = null
   }
+  if (pokeTurn?.turnId === turnId) pokeTurn = null
+  if (pokeUsedTurnId === turnId) pokeUsedTurnId = null
   if (dreamAnnounceTurnId === turnId) { dreamAnnounceTurnId = null }
   if (backgroundPushTurnId === turnId) { backgroundPushTurnId = null }
   if (gomokuTurnId === turnId) { gomokuTurnId = null; gomokuTurnKind = null }
@@ -2151,6 +2175,7 @@ function endTurn(): string | null {
     scheduleAutonomousReading(autonomousReadingSessionId)
   }
   scheduleFocusCcDrain()
+  setTimeout(tidalDrainQueue, 0)
   return turnId
 }
 
@@ -2186,6 +2211,7 @@ function failTurn(error: string): string | null {
     scheduleAutonomousReading(autonomousReadingSessionId)
   }
   scheduleFocusCcDrain()
+  setTimeout(tidalDrainQueue, 0)
   return turnId
 }
 
@@ -2259,6 +2285,9 @@ const mcp = new Server(
       `nothing at all, even though you may have done real work.\n` +
       `Use reply for normal text messages. Use send_voice only when you specifically want the user to actually ` +
       `hear your voice (not for routine replies — most turns should still use reply).\n` +
+      `In an ordinary main-chat turn you may call poke_user instead of a text reply, or together with reply when ` +
+      `both feel natural; the centered poke notice is user-visible by itself, so no filler text is required. ` +
+      `For a notification with kind:"poke", choose exactly one response: poke_user to 拍回来 OR one short reply, never both.\n` +
       `Use send_bedtime_card when the user asks for a bedtime English note, or at a genuine goodnight moment when ` +
       `you independently want to leave one. It sends one visible card and automatically records the same note in ` +
       `the existing anniversary calendar, so never call write_anniversary again for that card and never duplicate ` +
@@ -2399,6 +2428,28 @@ mcp.setRequestHandler(ListToolsRequestSchema, async () => ({
           reply_to: { type: 'string', description: 'message_id to quote-reply' },
         },
         required: ['text'],
+      },
+    },
+    {
+      name: 'poke_user',
+      description:
+        '拍一拍 the user. During an ordinary main-chat turn you may use this by itself or together with reply (in either order). ' +
+        'During a kind:"poke" turn it means 拍回来 and is exclusive: use either this OR one short reply, not both. At most one poke per turn.',
+      inputSchema: { type: 'object', properties: {} },
+    },
+    {
+      name: 'set_poke_text',
+      description:
+        'Edit both sides of the fixed “了” in your own 拍一拍 sentence (shown when the user pokes you). ' +
+        'Use {name} in after for your visible chat name; for example before “捏” and after “捏{name}的猫耳朵”. ' +
+        'This persists across restarts. It does not send a poke or a chat reply.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          before: { type: 'string', maxLength: 20, description: 'words before the fixed 了' },
+          after: { type: 'string', maxLength: 40, description: 'words after the fixed 了' },
+        },
+        required: ['before', 'after'],
       },
     },
     {
@@ -2900,11 +2951,48 @@ mcp.setRequestHandler(CallToolRequestSchema, async req => {
         log('reading_batch_committed', { turnId, sessionId: readingTurn.sessionId, batchId: readingTurn.batchId, completed: result.completed, page: result.state?.currentPage, annotations: result.annotations.length })
         return { content: [{ type: 'text', text: JSON.stringify({ ok: true, completed: result.completed, state: result.state, next: result.completed ? 'session complete; end this turn' : 'batch committed; end this turn so the reader can schedule the next small batch' }) }] }
       }
+      case 'set_poke_text': {
+        const config = readPokeConfig()
+        const ccBefore = normalizePokeText(args.before, '')
+        const ccAfterInput = normalizePokeText(args.after, '')
+        if (!ccBefore || !ccAfterInput) return { content: [{ type: 'text', text: 'both before and after must contain a short visible phrase' }], isError: true }
+        const ccAfter = ccAfterInput.replaceAll('我', '{name}')
+        const next = { ...config, ccBefore, ccAfter }
+        writePokeConfig(next)
+        sendRaw({ type: 'poke_settings', settings: next, ts: Date.now() })
+        log('poke_text_changed', { owner: 'cc', chars: ccBefore.length + ccAfter.length })
+        return { content: [{ type: 'text', text: `saved — your poke sentence is now “你${ccBefore}了${ccAfter.replaceAll('{name}', '我')}”` }] }
+      }
+      case 'poke_user': {
+        const turnId = currentTurn?.turnId
+        const activePoke = pokeTurn?.turnId === turnId ? pokeTurn : null
+        const allowed = currentTurn?.surface === 'main' || currentTurn?.surface === 'poke'
+        if (!turnId || !allowed) {
+          return { content: [{ type: 'text', text: 'poke_user is only available during an ordinary main-chat or poke turn' }], isError: true }
+        }
+        if (pokeUsedTurnId === turnId) {
+          return { content: [{ type: 'text', text: 'already poked once in this turn' }], isError: true }
+        }
+        if (activePoke?.responded) {
+          return { content: [{ type: 'text', text: 'this poke turn already has its one response; do not send another' }], isError: true }
+        }
+        pokeUsedTurnId = turnId
+        if (activePoke) activePoke.responded = true
+        const pokeConfig = readPokeConfig()
+        const wire: MsgWire = { type: 'msg', kind: 'poke', id: nextId(), from: 'cc', text: '', userName: activePoke?.userName || '', aiName: activePoke?.aiName || '', before: pokeConfig.userBefore, after: pokeConfig.userAfter, ts: Date.now(), turnId }
+        broadcastMsg(wire)
+        log('poke_sent', { id: wire.id, from: 'cc', turnId })
+        return { content: [{ type: 'text', text: `poked the user (${wire.id})` }] }
+      }
       case 'reply': {
-        const text = String(args.text ?? '')
+        const turnId = currentTurn?.turnId
+        const activePoke = pokeTurn?.turnId === turnId ? pokeTurn : null
+        if (activePoke?.responded) {
+          return { content: [{ type: 'text', text: 'this poke turn already has its one response; do not send another' }], isError: true }
+        }
+        const text = String(args.text ?? '').slice(0, activePoke ? 160 : 2000)
         const replyTo = typeof args.reply_to === 'string' ? args.reply_to : undefined
         const id = nextId()
-        const turnId = currentTurn?.turnId
         const thinking = consumePendingThinking()
         const isGomokuTurn = !!(turnId && turnId === gomokuTurnId && currentGame)
         const isFocusTurn = !!(turnId && turnId === focusTurnId)
@@ -2930,6 +3018,7 @@ mcp.setRequestHandler(CallToolRequestSchema, async req => {
           log('delete_notice_reply_discarded', { turnId, chars: text.length })
           return { content: [{ type: 'text', text: 'discarded — this is a silent bookkeeping notice, no reply is shown for it, no need to say anything' }] }
         }
+        if (activePoke) activePoke.responded = true
         if (isFocusTurn) {
           focusAppendLog('model', text)
           broadcastFocus()
@@ -3036,6 +3125,9 @@ mcp.setRequestHandler(CallToolRequestSchema, async req => {
         const replyTo = typeof args.reply_to === 'string' ? args.reply_to : undefined
         const id = nextId()
         const turnId = currentTurn?.turnId
+        if (pokeTurn?.turnId === turnId) {
+          return { content: [{ type: 'text', text: 'a poke turn accepts only poke_user or one short text reply; do not send voice' }], isError: true }
+        }
         const thinking = consumePendingThinking()
         const isGomokuTurn = !!(turnId && turnId === gomokuTurnId && currentGame)
         const isFocusTurn = !!(turnId && turnId === focusTurnId)
@@ -3869,6 +3961,44 @@ function writeProactiveConfig(enabled: boolean) {
   writeFileSync(PROACTIVE_CONFIG_FILE, JSON.stringify({ enabled, updatedAt: Date.now() }, null, 2))
 }
 
+type PokeConfig = { userBefore: string; userAfter: string; ccBefore: string; ccAfter: string }
+const DEFAULT_POKE_CONFIG: PokeConfig = { userBefore: '拍', userAfter: '拍你的小脑袋', ccBefore: '拍', ccAfter: '拍{name}的肩膀' }
+
+function normalizePokeText(value: unknown, fallback: string): string {
+  if (typeof value !== 'string') return fallback
+  const text = value.replace(/[\u0000-\u001f\u007f]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 40)
+  return text || fallback
+}
+
+function normalizePokeName(value: unknown, fallback: string): string {
+  if (typeof value !== 'string') return fallback
+  const text = value.replace(/[\u0000-\u001f\u007f]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 24)
+  return text || fallback
+}
+
+function readPokeConfig(): PokeConfig {
+  try {
+    const parsed = JSON.parse(readFileSync(POKE_CONFIG_FILE, 'utf8'))
+    const legacyUserText = normalizePokeText(parsed?.userText, '的小脑袋')
+    const legacyCcText = normalizePokeText(parsed?.ccText, '的肩膀')
+    return {
+      userBefore: normalizePokeText(parsed?.userBefore, DEFAULT_POKE_CONFIG.userBefore),
+      userAfter: normalizePokeText(parsed?.userAfter, `拍你${legacyUserText}`),
+      ccBefore: normalizePokeText(parsed?.ccBefore, DEFAULT_POKE_CONFIG.ccBefore),
+      ccAfter: normalizePokeText(parsed?.ccAfter, `拍{name}${legacyCcText}`),
+    }
+  } catch {
+    return { ...DEFAULT_POKE_CONFIG }
+  }
+}
+
+function writePokeConfig(config: PokeConfig) {
+  mkdirSync(dirname(POKE_CONFIG_FILE), { recursive: true })
+  const tmp = `${POKE_CONFIG_FILE}.tmp`
+  writeFileSync(tmp, JSON.stringify({ ...config, updatedAt: Date.now() }, null, 2) + '\n')
+  renameSync(tmp, POKE_CONFIG_FILE)
+}
+
 // ---------- proactive-message self-paced schedule ----------
 
 type ProactiveSchedule = { nextAt: number; decidedMinutes: number | null; reason: string | null; decidedAt: number | null; turnId: string | null }
@@ -4529,7 +4659,43 @@ function tidalDrainQueue() {
   const next = tidalState.queue.shift()
   if (!next) return
   persistTidalState()
-  beginMainCcTurn(next)
+  if (next.kind === 'poke') beginPokeTurn(next)
+  else if (next.kind === 'poke_settings') beginPokeSettingsTurn(next)
+  else beginMainCcTurn(next)
+}
+
+function beginPokeSettingsTurn(input: QueuedCcMessage) {
+  const aiName = normalizePokeName(input.aiName, 'CC')
+  const before = normalizePokeText(input.before, DEFAULT_POKE_CONFIG.userBefore)
+  const after = normalizePokeText(input.after, DEFAULT_POKE_CONFIG.userAfter)
+  startTurn(input.id, 'other', false)
+  deliver(input.id, JSON.stringify({
+    kind: 'poke_settings_changed',
+    surface: 'main_chat_context_update',
+    owner: 'user',
+    currentText: `${aiName}${before}了${after}`,
+    before,
+    after,
+    instruction: '用户刚刚明确修改了自己的拍一拍文案。这是一次性的静默上下文更新：记住当前文案和它表达的语气，今后互动时可自然理解或接梗，但不要机械复述。不要仅因为这次设置更新调用任何工具或发送用户可见回复；用一句简短的内部确认结束本轮即可。',
+  }))
+  log('poke_settings_context_sent', { id: input.id, chars: before.length + after.length })
+}
+
+function beginPokeTurn(input: QueuedCcMessage) {
+  const userName = normalizePokeName(input.userName, '你')
+  const aiName = normalizePokeName(input.aiName, 'CC')
+  startTurn(input.id, 'poke')
+  pokeTurn = { turnId: input.id, userName, aiName, responded: false }
+  deliver(input.id, JSON.stringify({
+    kind: 'poke',
+    surface: 'main_chat_poke',
+    from: 'user',
+    userName,
+    aiName,
+    instruction: '用户刚刚双击你的头像拍了拍你。你必须只选择一种回应：调用 poke_user 拍回来，或者调用 reply 发一条不超过 160 字的短消息。不要两者都做；不要使用 send_voice；不要长篇回复。',
+  }), { clientTime: input.clientTime })
+  xinchaoHeartbeat(input.id, XINCHAO_CC_SESSION_ID)
+  log('poke_turn_started', { id: input.id, queued: input.queuedAt < Date.now() - 50 })
 }
 
 function beginMainCcTurn(input: QueuedCcMessage) {
@@ -9411,6 +9577,46 @@ Bun.serve<{ authed: true }>({
       return jsonResponse({ ok: true, enabled }, { headers: cors })
     }
 
+    if (url.pathname === '/poke/settings' && req.method === 'GET') {
+      const gate = authGate()
+      if (gate) return gate
+      return jsonResponse(readPokeConfig(), { headers: corsHeadersFor(origin) })
+    }
+
+    if (url.pathname === '/poke/settings' && req.method === 'POST') {
+      const gate = authGate()
+      if (gate) return gate
+      const cors = corsHeadersFor(origin)
+      const body = await req.json().catch(() => null) as any
+      if (typeof body?.userBefore !== 'string' || typeof body?.userAfter !== 'string') return jsonResponse({ error: 'both sides of 了 must be strings' }, { status: 400, headers: cors })
+      const config = readPokeConfig()
+      const userBefore = normalizePokeText(body.userBefore, '')
+      const userAfter = normalizePokeText(body.userAfter, '')
+      if (!userBefore || !userAfter) return jsonResponse({ error: 'both sides of 了 are required' }, { status: 400, headers: cors })
+      const pokeId = typeof body.pokeId === 'string' ? body.pokeId : ''
+      const poke = history.find(item => item.id === pokeId && item.kind === 'poke' && item.from === 'cc')
+      if (!poke) return jsonResponse({ error: 'only your own poke text can be edited from its timeline row' }, { status: 403, headers: cors })
+      const next = { ...config, userBefore, userAfter }
+      const changed = config.userBefore !== userBefore || config.userAfter !== userAfter
+      writePokeConfig(next)
+      poke.before = userBefore
+      poke.after = userAfter
+      poke.suffix = undefined
+      saveHistory()
+      sendRaw({ ...poke, pokeEdited: true })
+      if (changed) {
+        const notice: QueuedCcMessage = {
+          id: `poke-settings:${Date.now()}:${nextId()}`,
+          kind: 'poke_settings', text: '', userName: poke.userName, aiName: poke.aiName,
+          before: userBefore, after: userAfter, queuedAt: Date.now(),
+        }
+        if (currentTurn || tidalIsActive()) tidalEnqueueMessage(notice)
+        else beginPokeSettingsTurn(notice)
+      }
+      log('poke_text_changed', { owner: 'user', chars: userBefore.length + userAfter.length })
+      return jsonResponse({ ok: true, ...next }, { headers: cors })
+    }
+
     // ---- AI Reading Store -------------------------------------------------
     // Reading is deliberately a separate durable subsystem. These endpoints
     // never touch `history` or Auto Memory, so refreshes, restarts and tidal
@@ -11025,7 +11231,7 @@ Bun.serve<{ authed: true }>({
     },
     message(ws, raw) {
       try {
-        const parsed = JSON.parse(String(raw)) as { id?: string; text?: string; messageIds?: string[]; segments?: string[]; type?: string; turnId?: string; runtime?: string; imageUrl?: string; imageSeparate?: boolean; imagePath?: string; filePath?: string; fileName?: string; fileSize?: number; fileType?: string; clientTime?: unknown; sessionId?: string; readingSessionId?: string; prompt?: string; voiceEmotion?: string; voiceAcoustics?: unknown }
+        const parsed = JSON.parse(String(raw)) as { id?: string; text?: string; messageIds?: string[]; segments?: string[]; type?: string; turnId?: string; runtime?: string; imageUrl?: string; imageSeparate?: boolean; imagePath?: string; filePath?: string; fileName?: string; fileSize?: number; fileType?: string; clientTime?: unknown; sessionId?: string; readingSessionId?: string; prompt?: string; voiceEmotion?: string; voiceAcoustics?: unknown; userName?: string; aiName?: string; callMode?: boolean }
 
         // App-level heartbeat — a WS can look "open" to the browser for a
         // long time after the underlying network path has actually died
@@ -11079,6 +11285,35 @@ Bun.serve<{ authed: true }>({
             log('stop_turn_requested', { turnId: stopTurnId })
             withTmuxLock(() => tmuxSendKeys('Escape')).catch((err) => log('stop_turn_error', { turnId: stopTurnId, error: String(err) }))
           }
+          return
+        }
+
+        if (parsed.type === 'poke') {
+          const id = typeof parsed.id === 'string' && parsed.id ? parsed.id : nextId()
+          try { ws.send(JSON.stringify({ type: 'inbound_ack', id })) } catch {}
+          if (resetInFlight) {
+            try { ws.send(JSON.stringify({ type: 'poke_error', id, error: '常驻对话正在清空，请稍后再拍。', ts: Date.now() })) } catch {}
+            return
+          }
+          const input: QueuedCcMessage = {
+            id,
+            kind: 'poke',
+            text: '',
+            userName: normalizePokeName(parsed.userName, '你'),
+            aiName: normalizePokeName(parsed.aiName, 'CC'),
+            clientTime: parsed.clientTime,
+            queuedAt: Date.now(),
+          }
+          const pokeConfig = readPokeConfig()
+          const wire: MsgWire = {
+            type: 'msg', kind: 'poke', id, from: 'user', text: '', userName: input.userName!, aiName: input.aiName!,
+            before: pokeConfig.ccBefore, after: pokeConfig.ccAfter.replaceAll('{name}', input.aiName!), ts: Date.now(), turnId: id,
+          }
+          broadcastMsg(wire)
+          const queued = !!currentTurn || tidalIsActive()
+          if (queued) tidalEnqueueMessage(input)
+          else beginPokeTurn(input)
+          log('poke_received', { id, queued })
           return
         }
 

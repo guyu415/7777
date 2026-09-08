@@ -12,6 +12,7 @@ import FocusSummaryCard from './FocusSummaryCard'
 import LocationMessageCard from './LocationMessageCard'
 import { GoldenRetrieverThinking } from './PendingReplyIndicator'
 import clsx from 'clsx'
+import { isPokeDoubleTap } from '../../utils/poke'
 import { parseReplyQuotes } from '../../utils/replyQuotes'
 import { healthDataCategories, isHealthTool } from '../../utils/healthData'
 import { extractHeartRate, isHeartRateTool } from '../../utils/heartRate'
@@ -222,7 +223,7 @@ function formatFileBytes(bytes) {
   return `${Math.max(1, Math.round(bytes / 1024))}KB`
 }
 
-function MessageBubble({ message, onLongPress, onRegenerate, onRegenerateRound, onRetry, isLoading, userAvatar, aiAvatar, theme, bubbleSkin = 'puppy', pendingReplyVariant = 'default', sameSenderAsPrev, sameSenderAsNext, onOpenReasoning, reasoningOpen = false }) {
+function MessageBubble({ message, onLongPress, onRegenerate, onRegenerateRound, onRetry, isLoading, userAvatar, aiAvatar, theme, bubbleSkin = 'puppy', pendingReplyVariant = 'default', sameSenderAsPrev, sameSenderAsNext, onOpenReasoning, reasoningOpen = false, onAvatarDoubleClick }) {
   const [viewerSrc, setViewerSrc] = useState(null)
   const [pressed, setPressed] = useState(false)
   const [showVoiceText, setShowVoiceText] = useState(false)
@@ -253,6 +254,7 @@ function MessageBubble({ message, onLongPress, onRegenerate, onRegenerateRound, 
   const replyQuote = message.type === 'text' ? parseReplyQuotes(message.content) : null
   const pressTimer = useRef(null)
   const pressAnimTimer = useRef(null)
+  const avatarTapRef = useRef(0)
   // CC creates an empty assistant bubble as soon as it starts thinking, then
   // fills that same bubble after the tool result arrives. Its timestamp can
   // therefore be several seconds old even though the dice itself is brand
@@ -347,7 +349,32 @@ function MessageBubble({ message, onLongPress, onRegenerate, onRegenerateRound, 
   // avatar — later bubbles in the run keep an invisible same-size
   // placeholder so the message column doesn't shift sideways.
   const avatarEl = (
-    <div className="flex-shrink-0 mb-1" style={{ position: 'relative', width: 75, height: 75, visibility: sameSenderAsPrev ? 'hidden' : 'visible' }}>
+    <div
+      className="flex-shrink-0 mb-1"
+      role={onAvatarDoubleClick ? 'button' : undefined}
+      tabIndex={onAvatarDoubleClick ? 0 : undefined}
+      aria-label={onAvatarDoubleClick ? '双击拍一拍对方' : undefined}
+      title={onAvatarDoubleClick ? '双击拍一拍' : undefined}
+      onDoubleClick={onAvatarDoubleClick ? (event) => { event.stopPropagation(); onAvatarDoubleClick() } : undefined}
+      onPointerUp={onAvatarDoubleClick ? (event) => {
+        if (event.pointerType === 'mouse') return
+        const now = Date.now()
+        if (isPokeDoubleTap(avatarTapRef.current, now)) {
+          avatarTapRef.current = 0
+          event.stopPropagation()
+          onAvatarDoubleClick()
+        } else {
+          avatarTapRef.current = now
+        }
+      } : undefined}
+      onKeyDown={onAvatarDoubleClick ? (event) => {
+        if (event.key === 'Enter' || event.key === ' ') {
+          event.preventDefault()
+          onAvatarDoubleClick()
+        }
+      } : undefined}
+      style={{ position: 'relative', width: 75, height: 75, visibility: sameSenderAsPrev ? 'hidden' : 'visible', cursor: onAvatarDoubleClick ? 'pointer' : 'default', touchAction: 'manipulation' }}
+    >
       {/* Avatar — explicit 37px, centered; frame is sibling at 100% of 75px so nothing overflows */}
       <div style={{
         position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%, -50%)',
