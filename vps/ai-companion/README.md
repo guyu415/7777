@@ -20,16 +20,21 @@ chat text message. Refresh obtains a new fix; fixes older than two minutes must
 be refreshed before sending. Closing the preview or switching conversations
 cancels unfinished requests without sending. Existing drafts remain intact.
 
-Deploy `location.ts` alongside `channel-server.ts` and configure the server-only
-`AMAP_WEB_SERVICE_KEY` in the companion process environment. This is the same
-Web Service key type used by the check-in worker on branch
-`claude/worker-oauth-auth-6wxiq4`; that worker's secret is not automatically
-available to the VPS. Never put the key in frontend code or a `VITE_` variable.
+Deploy `location.ts` alongside `channel-server.ts`. If the companion has a
+server-only `AMAP_WEB_SERVICE_KEY` (or
+`AI_COMPANION_AMAP_WEB_SERVICE_KEY_FILE`), it uses that key directly. Otherwise
+it calls the check-in Worker's independently authenticated
+`POST /device/location-resolve` proxy using
+`AI_COMPANION_LOCATION_RESOLVE_TOKEN_FILE` (default:
+`config/amap-resolve.secret`). The proxy reuses the Worker-owned
+`AMAP_WEB_SERVICE_KEY`, so the key is never copied to the VPS or frontend.
+Never put the key or proxy token in frontend code or a `VITE_` variable.
 Preserve the existing CC session and runtime state when deploying.
 
 `POST /location/resolve` uses the existing Origin and HttpOnly cookie gate. It
-converts GPS coordinates through AMap before reverse geocoding, with a shared
-seven-second upstream deadline and no location logging or response caching.
+converts GPS coordinates through AMap before reverse geocoding, with a
+seven-second Worker AMap deadline and a ten-second VPS proxy deadline; there is
+no location logging or response caching.
 API reference: https://lbs.amap.com/api/webservice/guide/api/georegeo
 If the endpoint/key/address service is unavailable, the chat explicitly says
 the address could not be resolved and still sends the fresh GPS fix. It never

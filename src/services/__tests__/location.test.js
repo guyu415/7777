@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest'
 import { getCurrentLocation, formatLocationMessage, distanceMeters, formatDistance, LOCATION_DESTINATION, locationMapUrl } from '../location'
-import { validCoordinates, resolveLocationAddress } from '../../../vps/ai-companion/location'
+import { validCoordinates, resolveLocationAddress, resolveLocationAddressViaProxy } from '../../../vps/ai-companion/location'
 
 describe('one-shot chat location', () => {
   it('measures zero at the fixed destination and includes distance in sent text', () => {
@@ -80,5 +80,30 @@ describe('authenticated route address helper', () => {
   it('does not treat an upstream API error as an address', async () => {
     const fetcher = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ status: '0', info: 'INVALID_USER_KEY' }) })
     await expect(resolveLocationAddress({ latitude: 30, longitude: 104 }, 'test-key', fetcher)).rejects.toThrow('map_unavailable')
+  })
+
+  it('uses the independently authenticated Worker proxy when the key stays there', async () => {
+    const fetcher = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ address: '四川省成都市测试地址', reason: null }) })
+    const result = await resolveLocationAddressViaProxy(
+      { latitude: 30, longitude: 104 },
+      'https://mcp.xiaoman.xyz/device/location-resolve',
+      'proxy-token',
+      fetcher,
+    )
+    expect(result).toEqual({ address: '四川省成都市测试地址', reason: null })
+    expect(fetcher.mock.calls[0][0]).toBe('https://mcp.xiaoman.xyz/device/location-resolve')
+    expect(fetcher.mock.calls[0][1].headers.Authorization).toBe('Bearer proxy-token')
+    expect(JSON.parse(fetcher.mock.calls[0][1].body)).toEqual({ latitude: 30, longitude: 104 })
+  })
+
+  it('returns an explicit timeout reason when the Worker proxy times out', async () => {
+    const timeout = Object.assign(new Error('timed out'), { name: 'TimeoutError' })
+    const fetcher = vi.fn().mockRejectedValue(timeout)
+    await expect(resolveLocationAddressViaProxy(
+      { latitude: 30, longitude: 104 },
+      'https://mcp.xiaoman.xyz/device/location-resolve',
+      'proxy-token',
+      fetcher,
+    )).resolves.toEqual({ address: '', reason: 'timeout' })
   })
 })

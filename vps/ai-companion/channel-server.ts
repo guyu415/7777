@@ -81,6 +81,7 @@ import {
   type VisibleCcMessage,
 } from './cc-tidal-memory.ts'
 import { splitCompletedCodexMessage } from './codex-chat-history.ts'
+import { validCoordinates, resolveLocationAddress, resolveLocationAddressViaProxy } from './location.ts'
 import {
   injectMusicRuntimeContext,
   injectMusicRuntimeContextIntoTurnParams,
@@ -140,6 +141,12 @@ const CHAT_ID = 'web'
 const TOKEN_FILE = process.env.AI_COMPANION_TOKEN_FILE ?? join(ROOT, 'config', 'token.secret')
 const INTERNAL_SECRET_FILE = process.env.AI_COMPANION_INTERNAL_SECRET_FILE ?? join(ROOT, 'config', 'internal.secret')
 const LOG_FILE = process.env.AI_COMPANION_LOG_FILE ?? join(ROOT, 'logs', 'server.log')
+const LOCATION_RESOLVE_URL = process.env.AI_COMPANION_LOCATION_RESOLVE_URL
+  ?? 'https://mcp.xiaoman.xyz/device/location-resolve'
+const LOCATION_RESOLVE_TOKEN_FILE = process.env.AI_COMPANION_LOCATION_RESOLVE_TOKEN_FILE
+  ?? join(ROOT, 'config', 'amap-resolve.secret')
+const AMAP_WEB_SERVICE_KEY_FILE = process.env.AI_COMPANION_AMAP_WEB_SERVICE_KEY_FILE
+  ?? join(ROOT, 'config', 'amap-web-service-key.secret')
 // Test-only boundary capture. Disabled unless explicitly configured and kept
 // separate from chat history and durable memory.
 const RUNTIME_CONTEXT_CAPTURE_FILE = process.env.AI_COMPANION_RUNTIME_CONTEXT_CAPTURE_FILE ?? ''
@@ -900,6 +907,14 @@ function readSecret(file: string, label: string): string {
     process.stderr.write(`ai-companion: FATAL - could not read ${label} at ${file}: ${err}\n`)
     process.exit(1)
   }
+}
+
+function readOptionalSecret(file: string): string {
+  try { return readFileSync(file, 'utf8').trim() } catch { return '' }
+}
+
+function configuredAmapKey(): string {
+  return process.env.AMAP_WEB_SERVICE_KEY?.trim() || readOptionalSecret(AMAP_WEB_SERVICE_KEY_FILE)
 }
 
 const TOKEN = readSecret(TOKEN_FILE, 'token file')
@@ -8893,7 +8908,14 @@ Bun.serve<{ authed: true }>({
       }
       if (!validCoordinates(body)) return jsonResponse({ error: 'invalid coordinates' }, { status: 400, headers })
       try {
-        const result = await resolveLocationAddress(body, process.env.AMAP_WEB_SERVICE_KEY || '')
+        const key = configuredAmapKey()
+        const result = key
+          ? await resolveLocationAddress(body, key)
+          : await resolveLocationAddressViaProxy(
+            body,
+            LOCATION_RESOLVE_URL,
+            readOptionalSecret(LOCATION_RESOLVE_TOKEN_FILE),
+          )
         return jsonResponse(result, { headers })
       } catch {
         // Never log coordinates, keys, or upstream URLs; raw GPS remains usable.
