@@ -50,7 +50,7 @@ import {
   isCodexAlreadyInitializedError,
   codexReconnectDelayMs,
 } from './codex-session.ts'
-import { validCoordinates, resolveLocationAddress } from './location.ts'
+import { validCoordinates, resolveLocationAddress, fetchLocationMap } from './location.ts'
 import { ReadingStore } from './reading-store.ts'
 import {
   DEFAULT_TIDAL_CONFIG,
@@ -8898,6 +8898,23 @@ Bun.serve<{ authed: true }>({
       } catch {
         // Never log coordinates, keys, or upstream URLs; raw GPS remains usable.
         return jsonResponse({ address: '', reason: 'unavailable' }, { headers })
+      }
+    }
+
+    if (url.pathname === '/location/map' && req.method === 'POST') {
+      const gate = authGate()
+      if (gate) return gate
+      const headers = { ...corsHeadersFor(origin), 'cache-control': 'private, max-age=300', 'x-content-type-options': 'nosniff' }
+      let body: unknown
+      try { body = await req.json() } catch {
+        return jsonResponse({ error: 'bad json' }, { status: 400, headers })
+      }
+      if (!validCoordinates(body)) return jsonResponse({ error: 'invalid coordinates' }, { status: 400, headers })
+      try {
+        const map = await fetchLocationMap(body, process.env.AMAP_WEB_SERVICE_KEY || '')
+        return new Response(map.body, { headers: { ...headers, 'content-type': map.contentType } })
+      } catch {
+        return jsonResponse({ error: 'map unavailable' }, { status: 502, headers })
       }
     }
 

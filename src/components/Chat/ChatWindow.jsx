@@ -25,7 +25,7 @@ import { useScheduledMessages } from '../../hooks/useScheduledMessages'
 import { useFocusRuntime } from '../../hooks/useFocusRuntime'
 import { useStore, deleteMessageFromDB, getBlob } from '../../store'
 import { putAsset } from '../../services/sync'
-import { formatLocationMessage } from '../../services/location'
+import { formatLocationMessage, distanceMeters } from '../../services/location'
 import LocationPreview from './LocationPreview'
 import { rollD6 } from '../../utils/dice'
 import { getXinchaoStatus, onXinchaoUpdate, getCodexMemoryFile, putCodexMemoryFile, uploadFileToCompanion, getTidalMemoryStatus } from '../../services/companion'
@@ -335,7 +335,14 @@ export default function ChatWindow({ theme }) {
     if (!isVpsSession || locationSessionId !== currentSessionId || useStore.getState().currentSessionId !== currentSessionId) return
     setLocationSessionId(null)
     updateActiveTime()
-    sendMessage(formatLocationMessage(location, address), 'text')
+    sendMessage(formatLocationMessage(location, address), 'text', {
+      locationCard: {
+        address: address || '我的位置',
+        location: { latitude: location.latitude, longitude: location.longitude },
+        distanceMeters: distanceMeters(location),
+        timestamp: location.timestamp,
+      },
+    })
       .catch(error => showToast(error.message || '发送定位失败，请重试'))
   }
 

@@ -2078,3 +2078,17 @@ export function resolveCurrentLocation(location, signal) {
     signal,
   })
 }
+
+export async function fetchCurrentLocationMap(location, signal) {
+  const res = await fetch(`${COMPANION_BASE}/location/map`, {
+    method: 'POST',
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ latitude: location.latitude, longitude: location.longitude }),
+    signal,
+  })
+  if (!res.ok) throw new Error(`location map failed (${res.status})`)
+  const blob = await res.blob()
+  if (!blob.type.startsWith('image/')) throw new Error('invalid location map')
+  return blob
+}
