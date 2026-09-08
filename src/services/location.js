@@ -70,3 +70,24 @@ export function formatLocationMessage(location, address = '') {
     `直线距离：${formatDistance(distanceMeters(location))}（按给定坐标的球面估算）`,
   ].filter(Boolean).join('\n')
 }
+
+// Companion history stores the text that was actually sent to CC. Rebuild the
+// visual card from that canonical text after reload/reconnect so card metadata
+// does not have to enter CC's message protocol or leak into the visible bubble.
+export function parseLocationMessage(content) {
+  if (typeof content !== 'string' || !content.startsWith('📍 我现在的位置\n')) return null
+  const lines = content.split('\n')
+  const coordinateLine = lines.find(line => line.startsWith('纬度 ')) || ''
+  const coordinates = coordinateLine.match(/^纬度 (-?\d+(?:\.\d+)?)，经度 (-?\d+(?:\.\d+)?)（WGS84）$/)
+  if (!coordinates) return null
+  const latitude = Number(coordinates[1])
+  const longitude = Number(coordinates[2])
+  if (!Number.isFinite(latitude) || Math.abs(latitude) > 90 || !Number.isFinite(longitude) || Math.abs(longitude) > 180) return null
+
+  const address = (lines[1] || '').trim()
+  return {
+    address: address && !address.startsWith('地址暂未解析') ? address.slice(0, 300) : '我的位置',
+    location: { latitude, longitude },
+    distanceMeters: distanceMeters({ latitude, longitude }),
+  }
+}

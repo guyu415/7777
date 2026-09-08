@@ -26,4 +26,27 @@ describe('location chat card', () => {
     expect(html).not.toContain('纬度 29.833510')
     expect(html).not.toContain('定位精度')
   })
+
+  it('rebuilds the card from companion history text after a reload', () => {
+    const html = renderToStaticMarkup(
+      <MessageBubble
+        message={{
+          id: 'location-reloaded', conversationId: 'cc', role: 'user', type: 'text', timestamp: 1_000,
+          content: [
+            '📍 我现在的位置',
+            '四川省眉山市青神县青竹街道兰店儿',
+            '纬度 29.833510，经度 103.825879（WGS84）',
+            '定位精度：约 5 米',
+            '目的地：500 Howard Street, San Francisco, CA 94105, USA',
+          ].join('\n'),
+        }}
+        theme={{ primary: '#5bcaa4' }}
+      />,
+    )
+
+    expect(html).toContain('四川省眉山市青神县青竹街道兰店儿')
+    expect(html).toContain('打开定位详情')
+    expect(html).not.toContain('纬度 29.833510')
+    expect(html).not.toContain('定位精度')
+  })
 })

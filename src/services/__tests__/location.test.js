@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest'
-import { getCurrentLocation, formatLocationMessage, distanceMeters, formatDistance, LOCATION_DESTINATION, locationMapUrl } from '../location'
+import { getCurrentLocation, formatLocationMessage, distanceMeters, formatDistance, LOCATION_DESTINATION, locationMapUrl, parseLocationMessage } from '../location'
 import { validCoordinates, resolveLocationAddress, fetchLocationMap } from '../../../vps/ai-companion/location'
 
 describe('one-shot chat location', () => {
@@ -32,6 +32,15 @@ describe('one-shot chat location', () => {
     expect(geolocation.getCurrentPosition.mock.calls[0][2]).toEqual({ enableHighAccuracy: true, maximumAge: 0, timeout: 20000 })
     expect(result.timestamp).toBe(timestamp)
     expect(formatLocationMessage(result, '测试地址')).toContain('测试地址\n纬度 30.000000，经度 104.000000（WGS84）\n定位精度：约 15 米')
+  })
+  it('restores card data from the text returned by companion history', () => {
+    const message = formatLocationMessage({ latitude: 30, longitude: 104, accuracy: 5, timestamp: Date.now() }, '测试地址')
+    expect(parseLocationMessage(message)).toMatchObject({
+      address: '测试地址',
+      location: { latitude: 30, longitude: 104 },
+    })
+    expect(parseLocationMessage('普通消息')).toBeNull()
+    expect(parseLocationMessage('📍 我现在的位置\n坏坐标\n纬度 999，经度 104（WGS84）')).toBeNull()
   })
   it('reports permission denial without sending a stale location', async () => {
     await expect(getCurrentLocation({ geolocation: { getCurrentPosition: (_, reject) => reject({ code: 1 }) } })).rejects.toThrow('定位权限未开启')
