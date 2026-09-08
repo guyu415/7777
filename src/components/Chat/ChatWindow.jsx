@@ -25,6 +25,8 @@ import { useScheduledMessages } from '../../hooks/useScheduledMessages'
 import { useFocusRuntime } from '../../hooks/useFocusRuntime'
 import { useStore, deleteMessageFromDB, getBlob } from '../../store'
 import { putAsset } from '../../services/sync'
+import { formatLocationMessage } from '../../services/location'
+import LocationPreview from './LocationPreview'
 import { rollD6 } from '../../utils/dice'
 import { getXinchaoStatus, onXinchaoUpdate, getCodexMemoryFile, putCodexMemoryFile, uploadFileToCompanion, getTidalMemoryStatus } from '../../services/companion'
 
@@ -145,6 +147,8 @@ export default function ChatWindow({ theme }) {
   const [editMsg, setEditMsg] = useState(null)
   const [editText, setEditText] = useState('')
   const [toast, setToast] = useState(null)
+  const [locationSessionId, setLocationSessionId] = useState(null)
+  useEffect(() => { setLocationSessionId(null) }, [currentSessionId])
   const [showCall, setShowCall] = useState(false)
   const [showGomoku, setShowGomoku] = useState(false)
   const [showSpicy, setShowSpicy] = useState(false)
@@ -325,6 +329,14 @@ export default function ChatWindow({ theme }) {
   const showToast = (msg = '✨ 已记住~') => {
     setToast(msg)
     setTimeout(() => setToast(null), 2200)
+  }
+
+  const handleConfirmLocation = (location, address) => {
+    if (!isVpsSession || locationSessionId !== currentSessionId || useStore.getState().currentSessionId !== currentSessionId) return
+    setLocationSessionId(null)
+    updateActiveTime()
+    sendMessage(formatLocationMessage(location, address), 'text')
+      .catch(error => showToast(error.message || '发送定位失败，请重试'))
   }
 
   const jumpToMessage = useCallback((index) => {
@@ -1069,6 +1081,7 @@ export default function ChatWindow({ theme }) {
           voiceWorkerUrl={workerUrl}
           onSendImage={handleSendImage}
           onSendFile={isFixedVpsSession ? handleSendFile : undefined}
+          onSendLocation={isVpsSession ? () => setLocationSessionId(currentSessionId) : undefined}
           replyDrafts={replyTargets}
           onCancelReply={(id) => setReplyTargets((current) => id ? current.filter((target) => target.id !== id) : [])}
           onOpenGomoku={() => setShowGomoku(true)}
@@ -1091,6 +1104,15 @@ export default function ChatWindow({ theme }) {
           draftKey={currentSessionId}
         />
       </div>
+
+      {locationSessionId === currentSessionId && isVpsSession && (
+        <LocationPreview
+          key={currentSessionId}
+          theme={theme}
+          onClose={() => setLocationSessionId(null)}
+          onConfirm={handleConfirmLocation}
+        />
+      )}
 
       {/* Memory modal */}
       {memoryMsg && (

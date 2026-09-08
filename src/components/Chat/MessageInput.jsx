@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useCallback, forwardRef, useImperativeHandle } from 'react'
-import { Maximize2, Minimize2, X as CloseIcon } from 'lucide-react'
+import { Maximize2, Minimize2, MapPin, X as CloseIcon } from 'lucide-react'
 import { compressChatImage } from '../../utils/image'
 import { captureAndRecognizePushToTalk, shouldCancelVoiceGesture } from '../../services/pushToTalk'
 import { voiceCaptureConfig } from '../../services/voiceCapture'
@@ -205,7 +205,7 @@ function readDraft(storageKey) {
   } catch { return { text: '', segments: [] } }
 }
 
-const MessageInput = forwardRef(function MessageInput({ onSend, onSendBatch, onStartCall, onSendVoice, onVoiceError, voiceWorkerUrl, onSendImage, onSendFile, replyDrafts = [], onCancelReply, onOpenGomoku, onRollDice, onOpenSpicy, onOpenTruthDare, truthDareEnabled, spicyEnabled, gomokuEnabled, onOpenFocus, onOpenDivination, disabled, theme, isLoading, onStop, draftKey }, ref) {
+const MessageInput = forwardRef(function MessageInput({ onSend, onSendBatch, onStartCall, onSendVoice, onVoiceError, voiceWorkerUrl, onSendImage, onSendFile, onSendLocation, replyDrafts = [], onCancelReply, onOpenGomoku, onRollDice, onOpenSpicy, onOpenTruthDare, truthDareEnabled, spicyEnabled, gomokuEnabled, onOpenFocus, onOpenDivination, disabled, theme, isLoading, onStop, draftKey }, ref) {
   const draftStorageKey = draftKey ? `chat.draft.${draftKey}` : null
   const initialDraft = readDraft(draftStorageKey)
   const [text, setTextRaw] = useState(initialDraft.text)
@@ -903,6 +903,12 @@ const MessageInput = forwardRef(function MessageInput({ onSend, onSendBatch, onS
             borderTop: `1px solid ${primaryColor}18`,
           }}
         >
+          {onSendLocation && <MenuItem
+            icon={<MapPin size={22} />}
+            label="发送定位"
+            sub="预览当前位置"
+            onClick={onSendLocation}
+          />}
           <MenuItem icon={<ImageIcon />} label="图片" onClick={handleMenuImage} />
           {onSendFile && <MenuItem icon={<FileIcon />} label="文件" sub="最大10MB" onClick={handleMenuFile} />}
           <MenuItem icon={<PhoneIcon />} label="语音通话" onClick={handleMenuCall} />

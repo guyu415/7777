@@ -5,6 +5,41 @@ version-controlled source mirror for the VPS-resident CC/Codex companion
 backend. Secrets, logs, state, transcripts, uploads, generated compression
 artifacts, and MCP credentials are intentionally excluded.
 
+## Chat current location
+
+The fixed Claude Code chat toolbar opens a preview of a fresh browser GPS fix.
+The preview shows an OpenStreetMap embed with the original WGS84 marker, the
+resolved address, accuracy, capture time and great-circle distance to the user's
+fixed reference point: 500 Howard Street, San Francisco, CA 94105, USA
+(37.7876, -122.3968). Distance is a spherical estimate, not a driving route.
+OpenStreetMap receives the preview coordinates; the AMap key is not used for
+map display. See https://wiki.openstreetmap.org/wiki/Export for map sharing.
+
+Only the explicit send button sends the displayed fix and distance as a normal
+chat text message. Refresh obtains a new fix; fixes older than two minutes must
+be refreshed before sending. Closing the preview or switching conversations
+cancels unfinished requests without sending. Existing drafts remain intact.
+
+Deploy `location.ts` alongside `channel-server.ts` and configure the server-only
+`AMAP_WEB_SERVICE_KEY` in the companion process environment. This is the same
+Web Service key type used by the check-in worker on branch
+`claude/worker-oauth-auth-6wxiq4`; that worker's secret is not automatically
+available to the VPS. Never put the key in frontend code or a `VITE_` variable.
+Preserve the existing CC session and runtime state when deploying.
+
+`POST /location/resolve` uses the existing Origin and HttpOnly cookie gate. It
+converts GPS coordinates through AMap before reverse geocoding, with a shared
+seven-second upstream deadline and no location logging or response caching.
+API reference: https://lbs.amap.com/api/webservice/guide/api/georegeo
+If the endpoint/key/address service is unavailable, the chat explicitly says
+the address could not be resolved and still sends the fresh GPS fix. It never
+substitutes a previous check-in location.
+
+Before production use, verify on the actual phone: first-time permission,
+denial/retry, timeout, a successful readable address, switching conversations
+mid-request, and the received message in the existing CC conversation. Local
+tests mock GPS and AMap; they do not verify production credentials or location.
+
 ## CC tidal-memory configuration
 
 Only the fixed Claude Code companion window reads these variables:
