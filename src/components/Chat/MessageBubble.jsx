@@ -10,6 +10,7 @@ import HealthDataCard from './HealthDataCard'
 import HeartRateCard from './HeartRateCard'
 import FocusSummaryCard from './FocusSummaryCard'
 import LocationMessageCard from './LocationMessageCard'
+import PokeHapticTarget, { usePokeHapticArm } from './PokeHapticTarget'
 import { GoldenRetrieverThinking } from './PendingReplyIndicator'
 import clsx from 'clsx'
 import { isPokeDoubleTap } from '../../utils/poke'
@@ -255,6 +256,7 @@ function MessageBubble({ message, onLongPress, onRegenerate, onRegenerateRound, 
   const pressTimer = useRef(null)
   const pressAnimTimer = useRef(null)
   const avatarTapRef = useRef(0)
+  const pokeHaptic = usePokeHapticArm()
   // CC creates an empty assistant bubble as soon as it starts thinking, then
   // fills that same bubble after the tool result arrives. Its timestamp can
   // therefore be several seconds old even though the dice itself is brand
@@ -361,10 +363,12 @@ function MessageBubble({ message, onLongPress, onRegenerate, onRegenerateRound, 
         const now = Date.now()
         if (isPokeDoubleTap(avatarTapRef.current, now)) {
           avatarTapRef.current = 0
+          pokeHaptic.disarm()
           event.stopPropagation()
           onAvatarDoubleClick()
         } else {
           avatarTapRef.current = now
+          pokeHaptic.arm()
         }
       } : undefined}
       onKeyDown={onAvatarDoubleClick ? (event) => {
@@ -401,6 +405,7 @@ function MessageBubble({ message, onLongPress, onRegenerate, onRegenerateRound, 
           objectFit: 'contain', pointerEvents: 'none', zIndex: 2,
         }}
       />
+      {onAvatarDoubleClick && <PokeHapticTarget armed={pokeHaptic.armed} />}
     </div>
   )
 

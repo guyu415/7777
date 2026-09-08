@@ -27,6 +27,7 @@ import { useStore, deleteMessageFromDB, getBlob } from '../../store'
 import { putAsset } from '../../services/sync'
 import { formatLocationMessage, distanceMeters } from '../../services/location'
 import LocationPreview from './LocationPreview'
+import PokeHapticTarget, { usePokeHapticArm } from './PokeHapticTarget'
 import { rollD6 } from '../../utils/dice'
 import { isPokeDoubleTap, POKE_RECEIVE_HAPTIC, POKE_SEND_HAPTIC } from '../../utils/poke'
 import { getXinchaoStatus, onXinchaoUpdate, getCodexMemoryFile, putCodexMemoryFile, uploadFileToCompanion, getTidalMemoryStatus, onPoke, onPokeHistorySnapshot, onCcReset, sendPoke, setUserPokeText } from '../../services/companion'
@@ -178,6 +179,7 @@ export default function ChatWindow({ theme }) {
   const [pokeEvents, setPokeEvents] = useState([])
   const pokeTriggerRef = useRef(0)
   const headerAvatarTapRef = useRef(0)
+  const headerPokeHaptic = usePokeHapticArm()
 
   const playTruthDareRoll = useCallback((value) => {
     if (!truthDareRef.current?.userRolled(value)) return
@@ -394,11 +396,13 @@ export default function ChatWindow({ theme }) {
     const now = Date.now()
     if (isPokeDoubleTap(headerAvatarTapRef.current, now)) {
       headerAvatarTapRef.current = 0
+      headerPokeHaptic.disarm()
       handlePokeAi()
     } else {
       headerAvatarTapRef.current = now
+      headerPokeHaptic.arm()
     }
-  }, [handlePokeAi])
+  }, [handlePokeAi, headerPokeHaptic])
 
   const handleEditPokeText = useCallback(async (pokeId, before, after) => {
     const settings = await setUserPokeText(before, after, pokeId)
@@ -764,11 +768,12 @@ export default function ChatWindow({ theme }) {
               background: `${primaryColor}33`,
               border: `2px solid ${primaryColor}9c`,
               boxShadow: `0 0 8px ${primaryColor}b8, 0 0 17px ${primaryColor}68, 0 2px 8px rgba(92,68,102,.18)`,
-              cursor: isVpsSession ? 'pointer' : 'default', touchAction: 'manipulation',
+              cursor: isVpsSession ? 'pointer' : 'default', touchAction: 'manipulation', position: 'relative',
             }}>
             {effectiveAiAvatar
               ? <img src={effectiveAiAvatar} alt="" className="w-full h-full object-cover" />
               : <span style={{ fontSize: 12, fontWeight: 700, color: primaryDarkColor }}>CC</span>}
+            {isVpsSession && <PokeHapticTarget armed={headerPokeHaptic.armed} />}
           </div>
           <div className="min-w-0" style={{ flex: 1, alignSelf: 'stretch', display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
             <div className="flex items-center min-w-0" style={{ height: 20 }}>
