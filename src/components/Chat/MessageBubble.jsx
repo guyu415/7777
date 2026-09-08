@@ -18,6 +18,7 @@ import { parseReplyQuotes } from '../../utils/replyQuotes'
 import { healthDataCategories, isHealthTool } from '../../utils/healthData'
 import { extractHeartRate, isHeartRateTool } from '../../utils/heartRate'
 import { formatReasoningSeconds, getReasoningDurationMs } from '../../utils/reasoningTiming'
+import { parseLocationMessage } from '../../services/location'
 
 // Split content on letter markers — either {{LETTER_CARD:id}} (AI letters, phase 1)
 // or raw [LETTER mood=.. weather=.. date=..]..[/LETTER] (user letters written from diary)
@@ -230,6 +231,9 @@ function MessageBubble({ message, onLongPress, onRegenerate, onRegenerateRound, 
   const [showVoiceText, setShowVoiceText] = useState(false)
   const [reasoningNow, setReasoningNow] = useState(Date.now())
   const isUser = message.role === 'user'
+  const locationCard = isUser && message.type === 'text'
+    ? (message.locationCard || parseLocationMessage(message.content))
+    : null
   const showGoldenPending = !isUser
     && pendingReplyVariant === 'golden-retriever'
     && message.streaming
@@ -557,8 +561,8 @@ function MessageBubble({ message, onLongPress, onRegenerate, onRegenerateRound, 
         )}
         {bedtimeCard && <div {...pressProps}><BedtimeCard card={bedtimeCard} /></div>}
         {focusSummary && <FocusSummaryCard summary={focusSummary} theme={theme} />}
-        {isUser && message.locationCard && <LocationMessageCard card={message.locationCard} theme={theme} />}
-        {message.type === 'text' && !message.locationCard && !diceValue && !focusSummary && !bedtimeCard && !message.voiceLoading && (
+        {locationCard && <LocationMessageCard card={locationCard} theme={theme} />}
+        {message.type === 'text' && !locationCard && !diceValue && !focusSummary && !bedtimeCard && !message.voiceLoading && (
           <div
             className={clsx('relative leading-relaxed select-none cursor-default', pressed ? 'bubble-press' : '')}
             style={showGoldenPending ? {
