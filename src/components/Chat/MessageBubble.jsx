@@ -9,6 +9,7 @@ import BedtimeCard from './BedtimeCard'
 import HealthDataCard from './HealthDataCard'
 import HeartRateCard from './HeartRateCard'
 import FocusSummaryCard from './FocusSummaryCard'
+import LocationMessageCard from './LocationMessageCard'
 import { GoldenRetrieverThinking } from './PendingReplyIndicator'
 import clsx from 'clsx'
 import { parseReplyQuotes } from '../../utils/replyQuotes'
@@ -524,7 +525,8 @@ function MessageBubble({ message, onLongPress, onRegenerate, onRegenerateRound, 
         )}
         {bedtimeCard && <div {...pressProps}><BedtimeCard card={bedtimeCard} /></div>}
         {focusSummary && <FocusSummaryCard summary={focusSummary} theme={theme} />}
-        {message.type === 'text' && !diceValue && !focusSummary && !bedtimeCard && !message.voiceLoading && (
+        {isUser && message.locationCard && <LocationMessageCard card={message.locationCard} theme={theme} />}
+        {message.type === 'text' && !message.locationCard && !diceValue && !focusSummary && !bedtimeCard && !message.voiceLoading && (
           <div
             className={clsx('relative leading-relaxed select-none cursor-default', pressed ? 'bubble-press' : '')}
             style={showGoldenPending ? {

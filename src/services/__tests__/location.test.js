@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest'
 import { getCurrentLocation, formatLocationMessage, distanceMeters, formatDistance, LOCATION_DESTINATION, locationMapUrl } from '../location'
-import { validCoordinates, resolveLocationAddress } from '../../../vps/ai-companion/location'
+import { validCoordinates, resolveLocationAddress, fetchLocationMap } from '../../../vps/ai-companion/location'
 
 describe('one-shot chat location', () => {
   it('measures zero at the fixed destination and includes distance in sent text', () => {
@@ -80,5 +80,18 @@ describe('authenticated route address helper', () => {
   it('does not treat an upstream API error as an address', async () => {
     const fetcher = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ status: '0', info: 'INVALID_USER_KEY' }) })
     await expect(resolveLocationAddress({ latitude: 30, longitude: 104 }, 'test-key', fetcher)).rejects.toThrow('map_unavailable')
+  })
+  it('converts GPS and proxies a real image response for the map card', async () => {
+    const bytes = new Uint8Array([1, 2, 3]).buffer
+    const fetcher = vi.fn()
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ status: '1', locations: '104.003,30.002' }) })
+      .mockResolvedValueOnce({ ok: true, headers: new Headers({ 'content-type': 'image/png' }), arrayBuffer: async () => bytes })
+    const map = await fetchLocationMap({ latitude: 30, longitude: 104 }, 'test-key', fetcher)
+    expect(map.contentType).toBe('image/png')
+    expect(new Uint8Array(map.body)).toEqual(new Uint8Array([1, 2, 3]))
+    const url = fetcher.mock.calls[1][0]
+    expect(url.pathname).toBe('/v3/staticmap')
+    expect(url.searchParams.get('location')).toBe('104.003,30.002')
+    expect(url.searchParams.get('key')).toBe('test-key')
   })
 })

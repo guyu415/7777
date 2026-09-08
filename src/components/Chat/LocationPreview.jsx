@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
 import { Loader2, MapPin, RefreshCw, X } from 'lucide-react'
-import { getCurrentLocation, distanceMeters, formatDistance, locationMapUrl, LOCATION_DESTINATION } from '../../services/location'
+import { getCurrentLocation, distanceMeters, formatDistance } from '../../services/location'
 import { resolveCurrentLocation } from '../../services/companion'
+import LocationMapImage from './LocationMapImage'
 
 export default function LocationPreview({ theme, onClose, onConfirm }) {
   const [attempt, setAttempt] = useState(0)
@@ -86,21 +87,17 @@ export default function LocationPreview({ theme, onClose, onConfirm }) {
           <h2 id="location-preview-title" className="text-base font-semibold flex items-center gap-2"><MapPin size={19} />发送当前位置</h2>
           <button ref={closeRef} onClick={onClose} aria-label="关闭定位预览" className="w-10 h-10 rounded-full grid place-items-center"><X size={20} /></button>
         </div>
-        <div className="mx-4 rounded-2xl overflow-hidden" style={{ height: 'clamp(160px, 28dvh, 230px)', background: '#f0e9ed' }}>
-          {location ? <iframe title="当前位置地图预览" src={locationMapUrl(location)} className="w-full h-full border-0" referrerPolicy="no-referrer" />
+        <div className="mx-4 rounded-2xl overflow-hidden" style={{ height: 'clamp(190px, 34dvh, 280px)', background: '#f0e9ed' }}>
+          {location ? <LocationMapImage location={location} className="h-full w-full" />
             : <div className="h-full flex flex-col items-center justify-center gap-3 px-5 text-center text-sm" role="status">{busy && <Loader2 className="animate-spin" />}<span>{error || '正在获取你的位置…'}</span></div>}
         </div>
-        {location && <div className="px-5 pt-2 text-right text-xs"><a href={`https://www.openstreetmap.org/?mlat=${location.latitude}&mlon=${location.longitude}#map=16/${location.latitude}/${location.longitude}`} target="_blank" rel="noopener noreferrer" style={{ color: '#967482' }}>地图未显示？打开地图 · © OpenStreetMap</a></div>}
         <div className="px-5 pt-3 space-y-3">
           {location && <div className="text-sm" aria-live="polite">
-            <p className="font-medium">{address || (busy ? '正在解析地址…' : '地址暂未解析')}</p>
-            <p className="text-xs mt-1 opacity-70">{location.latitude.toFixed(6)}, {location.longitude.toFixed(6)}{location.accuracy !== null ? ` · 精度约 ${Math.ceil(location.accuracy)} 米` : ''}</p>
-            <p className="text-xs mt-1 opacity-70">采集于 {new Date(location.timestamp).toLocaleTimeString('zh-CN', { hour12: false })}</p>
+            <p className="font-medium">{address || (busy ? '正在解析地址…' : '我的位置')}</p>
           </div>}
           <div className="rounded-2xl p-4" style={{ background: '#f8edf2' }}>
             <p className="text-xs">距离 500 Howard Street</p>
             <p className="text-2xl font-semibold mt-1" style={{ color: primary }}>{location ? formatDistance(distanceMeters(location)) : '等待定位'}</p>
-            <p className="text-xs mt-2 leading-relaxed">{LOCATION_DESTINATION.address}</p>
             <p className="text-xs mt-1 opacity-60">直线距离 · 按给定坐标估算</p>
           </div>
           {expired && <p role="status" className="text-xs text-rose-600">定位已超过两分钟，请刷新后再发送。</p>}

@@ -8,12 +8,13 @@ artifacts, and MCP credentials are intentionally excluded.
 ## Chat current location
 
 The fixed Claude Code chat toolbar opens a preview of a fresh browser GPS fix.
-The preview shows an OpenStreetMap embed with the original WGS84 marker, the
-resolved address, accuracy, capture time and great-circle distance to the user's
+The preview shows a server-proxied AMap static image, the resolved address and
+great-circle distance to the user's
 fixed reference point: 500 Howard Street, San Francisco, CA 94105, USA
 (37.7876, -122.3968). Distance is a spherical estimate, not a driving route.
-OpenStreetMap receives the preview coordinates; the AMap key is not used for
-map display. See https://wiki.openstreetmap.org/wiki/Export for map sharing.
+The browser sends the original WGS84 fix only to the authenticated Companion
+routes. The server converts it to GCJ-02 for AMap address and image requests;
+the AMap key never reaches frontend code.
 
 Only the explicit send button sends the displayed fix and distance as a normal
 chat text message. Refresh obtains a new fix; fixes older than two minutes must
@@ -27,10 +28,12 @@ Web Service key type used by the check-in worker on branch
 available to the VPS. Never put the key in frontend code or a `VITE_` variable.
 Preserve the existing CC session and runtime state when deploying.
 
-`POST /location/resolve` uses the existing Origin and HttpOnly cookie gate. It
+`POST /location/resolve` and `POST /location/map` use the existing Origin and
+HttpOnly cookie gate. They
 converts GPS coordinates through AMap before reverse geocoding, with a shared
 seven-second upstream deadline and no location logging or response caching.
-API reference: https://lbs.amap.com/api/webservice/guide/api/georegeo
+API references: https://lbs.amap.com/api/webservice/guide/api/georegeo and
+https://lbs.amap.com/api/webservice/guide/api/staticmaps
 If the endpoint/key/address service is unavailable, the chat explicitly says
 the address could not be resolved and still sends the fresh GPS fix. It never
 substitutes a previous check-in location.

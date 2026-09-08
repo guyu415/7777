@@ -1261,7 +1261,9 @@ export function useChat() {
 
     addMessage(userMsg)
     updateSession(CONVERSATION_ID, {
-      lastMsgPreview: type === 'text' ? (content || '').slice(0, 40) : type === 'voice' ? `[语音] ${(content || '').slice(0, 35)}`.trim() : type === 'file' ? `[文件] ${extra.fileName || ''}`.trim() : '[图片]',
+      lastMsgPreview: persistedExtra.locationCard
+        ? `[定位] ${persistedExtra.locationCard.address || '我的位置'}`
+        : type === 'text' ? (content || '').slice(0, 40) : type === 'voice' ? `[语音] ${(content || '').slice(0, 35)}`.trim() : type === 'file' ? `[文件] ${extra.fileName || ''}`.trim() : '[图片]',
       lastMsgTime: Date.now(),
     })
     // Fire-and-forget on purpose: mobile Safari's IndexedDB can take
