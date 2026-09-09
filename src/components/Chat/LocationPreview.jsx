@@ -82,12 +82,12 @@ export default function LocationPreview({ theme, onClose, onConfirm }) {
   return (
     <div className="fixed inset-0 z-[90] flex items-end sm:items-center justify-center p-3" style={{ background: 'rgba(48,35,45,.3)', backdropFilter: 'blur(5px)' }} onClick={onClose}>
       <section role="dialog" aria-modal="true" aria-labelledby="location-preview-title" onKeyDown={trapKeys} onClick={e => e.stopPropagation()}
-        className="w-full max-w-md rounded-3xl overflow-y-auto shadow-xl" style={{ background: '#fffafb', color: '#664954', maxHeight: 'calc(100dvh - 32px)', paddingBottom: 'max(16px, env(safe-area-inset-bottom))' }}>
+        className="w-full max-w-md rounded-3xl overflow-y-auto shadow-xl" style={{ fontFamily: 'system-ui, sans-serif', background: '#fffafb', color: '#664954', maxHeight: 'calc(100dvh - 32px)', paddingBottom: 'max(16px, env(safe-area-inset-bottom))' }}>
         <div className="flex items-center justify-between px-5 pt-4 pb-3">
           <h2 id="location-preview-title" className="text-base font-semibold flex items-center gap-2"><MapPin size={19} />发送当前位置</h2>
           <button ref={closeRef} onClick={onClose} aria-label="关闭定位预览" className="w-10 h-10 rounded-full grid place-items-center"><X size={20} /></button>
         </div>
-        <div className="mx-4 rounded-2xl overflow-hidden" style={{ height: 'clamp(190px, 34dvh, 280px)', background: '#f0e9ed' }}>
+        <div className="mx-4 rounded-2xl overflow-hidden" style={{ height: 'clamp(200px, 36dvh, 300px)', background: '#f0e9ed' }}>
           {location ? <LocationMapImage location={location} className="h-full w-full" />
             : <div className="h-full flex flex-col items-center justify-center gap-3 px-5 text-center text-sm" role="status">{busy && <Loader2 className="animate-spin" />}<span>{error || '正在获取你的位置…'}</span></div>}
         </div>
