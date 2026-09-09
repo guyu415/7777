@@ -26,8 +26,33 @@ describe('MessageBubble reasoning and Claude Code loader integration', () => {
     expect(html).toContain('reasoning-trigger')
     expect(html).toContain('看看它在想什么')
     expect(html).toContain('/assets/claude-code-golden-loading.gif')
+    expect(html).not.toContain('/assets/claude-code-golden-responding.gif')
     expect(html).toContain('小鸡毛正在想要怎么回你')
     expect(html).not.toContain('💭 思考过程')
+  })
+
+  it('uses the richer response loop until the first reasoning text arrives', () => {
+    const html = renderToStaticMarkup(
+      <MessageBubble
+        message={{
+          id: 'assistant-waiting',
+          conversationId: 'cc',
+          role: 'assistant',
+          type: 'text',
+          content: '',
+          timestamp: 1_000,
+          streaming: true,
+          reasoning: '',
+          reasoningStreaming: true,
+        }}
+        pendingReplyVariant="golden-retriever"
+        theme={{}}
+      />,
+    )
+
+    expect(html).toContain('/assets/claude-code-golden-responding.gif')
+    expect(html).not.toContain('/assets/claude-code-golden-loading.gif')
+    expect(html).toContain('小鸡毛正在想要怎么回你')
   })
 
   it('renders a synced bedtime English card instead of a plain text bubble', () => {
