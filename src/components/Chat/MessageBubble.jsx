@@ -238,6 +238,8 @@ function MessageBubble({ message, onLongPress, onRegenerate, onRegenerateRound, 
     && pendingReplyVariant === 'golden-retriever'
     && message.streaming
     && !message.content
+  const hasReasoningContent = typeof message.reasoning === 'string'
+    && message.reasoning.trim().length > 0
   const allToolUses = Array.isArray(message.toolUses) ? message.toolUses : []
   const heartToolUses = isUser ? [] : allToolUses.filter((item) => isHeartRateTool(item.tool, item.detail))
   const heartRate = isUser ? null : extractHeartRate(message.content)
@@ -604,7 +606,9 @@ function MessageBubble({ message, onLongPress, onRegenerate, onRegenerateRound, 
               }}
             />}
             {message.streaming && !message.content ? (
-              showGoldenPending ? <GoldenRetrieverThinking theme={theme} /> : <TypingIndicator />
+              showGoldenPending
+                ? <GoldenRetrieverThinking theme={theme} phase={hasReasoningContent ? 'thinking' : 'responding'} />
+                : <TypingIndicator />
             ) : (
               <span className="whitespace-pre-wrap break-words" style={{ position: 'relative', zIndex: 1, display: 'block', minWidth: 0, maxWidth: '100%' }}>
                 {replyQuote && (

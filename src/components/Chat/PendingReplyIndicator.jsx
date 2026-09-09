@@ -1,6 +1,8 @@
 import { memo } from 'react'
 
-export function GoldenRetrieverThinking({ theme }) {
+export function GoldenRetrieverThinking({ theme, phase = 'thinking' }) {
+  const isResponding = phase === 'responding'
+
   return (
     <div style={{ display: 'flex', alignItems: 'flex-end', gap: 6, minWidth: 0 }}>
       <div style={{
@@ -11,7 +13,9 @@ export function GoldenRetrieverThinking({ theme }) {
         filter: `drop-shadow(0 2px 4px ${theme?.aiBubbleShadow || 'rgba(120,100,70,0.16)'})`,
       }}>
         <img
-          src="/assets/claude-code-golden-loading.gif"
+          src={isResponding
+            ? '/assets/claude-code-golden-responding.gif'
+            : '/assets/claude-code-golden-loading.gif'}
           alt=""
           draggable={false}
           style={{ width: '100%', height: '100%', objectFit: 'contain', objectPosition: 'center bottom' }}
@@ -53,7 +57,7 @@ function PendingReplyIndicator({ aiAvatar, theme, variant = 'default' }) {
         </div>
       </div>
       {showGoldenRetriever ? (
-        <GoldenRetrieverThinking theme={theme} />
+        <GoldenRetrieverThinking theme={theme} phase="responding" />
       ) : (
         <div style={{
           display: 'flex', alignItems: 'center', gap: 5,
