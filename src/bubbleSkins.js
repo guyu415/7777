@@ -2,7 +2,7 @@ export const BUBBLE_SKINS = [
   { id: 'puppy', label: '奶油小狗' },
   { id: 'apple-pixel', label: '青苹果像素' },
   { id: 'kakao-rainbow', label: '彩虹', preview: '/assets/bubbles/rainbow/send-01.png' },
-  { id: 'kakao-water', label: '水色系', preview: '/assets/bubbles/water/send-01.png' },
+  { id: 'kakao-water', label: '冰晶丝带', preview: '/assets/bubbles/water/send-01.png' },
   { id: 'kakao-candy', label: '糖果系', preview: '/assets/bubbles/candy/send-01.png' },
   { id: 'kakao-rainbow-bear', label: '彩虹熊', preview: '/assets/bubbles/rainbow-bear/send-01.png' },
 ]
@@ -28,12 +28,12 @@ export const KAKAO_BUBBLE_SKINS = {
   },
   'kakao-water': {
     send: {
-      first: iosFrame('/assets/bubbles/water/send-01.png', 111, 99, 3, 16, 20, '10px 18px 9px', 57, 43),
-      follow: iosFrame('/assets/bubbles/water/send-02.png', 111, 99, 3, 16, 20, '10px 18px 9px', 57, 43),
+      first: androidFrame('/assets/bubbles/water/send-01.png', 360, 150, 3, 72, 288, 60, 96, '10px 18px 9px', 70, 47),
+      follow: androidFrame('/assets/bubbles/water/send-02.png', 360, 150, 3, 72, 288, 60, 96, '10px 18px 9px', 70, 47),
     },
     receive: {
-      first: iosFrame('/assets/bubbles/water/receive-01.png', 111, 99, 3, 16, 20, '10px 18px 9px', 57, 43),
-      follow: iosFrame('/assets/bubbles/water/receive-02.png', 111, 99, 3, 16, 20, '10px 18px 9px', 57, 43),
+      first: androidFrame('/assets/bubbles/water/receive-01.png', 360, 150, 3, 72, 288, 60, 96, '10px 18px 9px', 70, 47),
+      follow: androidFrame('/assets/bubbles/water/receive-02.png', 360, 150, 3, 72, 288, 60, 96, '10px 18px 9px', 70, 47),
     },
   },
   'kakao-candy': {

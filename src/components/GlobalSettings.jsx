@@ -441,30 +441,42 @@ export default function GlobalSettings({ theme, onLogout, onForceSync }) {
           </div>
 
           <div style={{ height: 1, margin: '14px 0 12px', background: 'rgba(90,125,155,.12)' }} />
-          <div className="text-sm mb-1" style={{ color: '#2c5282' }}>对话框款式</div>
-          <div className="text-xs mb-2" style={{ color: '#8aa2b8' }}>只替换文字气泡的外观，配色与字体保持不变。</div>
-          <div className="flex flex-wrap gap-2">
-            {BUBBLE_SKINS.map(option => (
-              <button
-                key={option.id}
-                type="button"
-                onClick={() => setBubbleSkin(option.id)}
-                style={{ ...chipStyle((bubbleSkin || 'puppy') === option.id), display: 'flex', alignItems: 'center', gap: 7 }}
-              >
-                <span aria-hidden="true" style={option.preview ? {
-                  width: 32, height: 20, display: 'inline-block',
-                  background: `url(${option.preview}) center / 100% 100% no-repeat`,
-                } : option.id === 'apple-pixel' ? {
-                  width: 28, height: 15, display: 'inline-block',
-                  background: 'linear-gradient(180deg,#fbffe9,#eef7cf)', border: '1px solid #a7b77a', borderRadius: 2,
-                  boxShadow: '2px 2px 0 rgba(167,183,122,.22)',
-                } : {
-                  width: 28, height: 15, display: 'inline-block',
-                  background: 'linear-gradient(180deg,#fffefe,#fbeef3)', border: '1px solid #d9c0c9', borderRadius: 7,
-                }} />
-                {option.label}
-              </button>
-            ))}
+          <div className="flex items-center gap-2.5">
+            <div className="text-sm flex-shrink-0" style={{ color: '#2c5282' }}>对话框</div>
+            <div style={{ display: 'grid', gridTemplateColumns: `repeat(${BUBBLE_SKINS.length}, minmax(0, 1fr))`, gap: 5, flex: 1, minWidth: 0 }}>
+              {BUBBLE_SKINS.map(option => {
+                const active = (bubbleSkin || 'puppy') === option.id
+                return (
+                  <button
+                    key={option.id}
+                    type="button"
+                    title={option.label}
+                    aria-label={`选择${option.label}对话框`}
+                    aria-pressed={active}
+                    onClick={() => setBubbleSkin(option.id)}
+                    style={{
+                      height: 34, minWidth: 0, padding: 2, borderRadius: 10, cursor: 'pointer',
+                      display: 'flex', alignItems: 'center', justifyContent: 'center',
+                      background: active ? `${primary}18` : 'rgba(255,255,255,.34)',
+                      border: active ? `2px solid ${primary}` : '1px solid rgba(110,140,165,.14)',
+                      boxShadow: active ? `0 2px 7px ${primary}2f` : 'none',
+                    }}
+                  >
+                    <span aria-hidden="true" style={option.preview ? {
+                      width: 34, maxWidth: '100%', height: 21, display: 'inline-block',
+                      background: `url(${option.preview}) center / contain no-repeat`,
+                    } : option.id === 'apple-pixel' ? {
+                      width: 29, height: 16, display: 'inline-block',
+                      background: 'linear-gradient(180deg,#fbffe9,#eef7cf)', border: '1px solid #a7b77a', borderRadius: 2,
+                      boxShadow: '2px 2px 0 rgba(167,183,122,.22)',
+                    } : {
+                      width: 29, height: 16, display: 'inline-block',
+                      background: 'linear-gradient(180deg,#fffefe,#fbeef3)', border: '1px solid #d9c0c9', borderRadius: 7,
+                    }} />
+                  </button>
+                )
+              })}
+            </div>
           </div>
 
           <div style={{ height: 1, margin: '14px 0 12px', background: 'rgba(90,125,155,.12)' }} />
