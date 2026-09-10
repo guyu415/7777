@@ -113,6 +113,7 @@ export default function OpeningSplash({ onComplete }) {
         .opening-splash__scene-photo {
           position: absolute;
           inset: -3%;
+          pointer-events: none;
           background-position: center;
           background-repeat: no-repeat;
           background-size: cover;
@@ -178,6 +179,7 @@ export default function OpeningSplash({ onComplete }) {
         .opening-splash__sunlight {
           position: absolute;
           inset: -20%;
+          pointer-events: none;
           opacity: .65;
           background:
             repeating-linear-gradient(108deg, transparent 0 28px, rgba(255,255,255,.055) 31px 33px, transparent 37px 70px),
@@ -189,6 +191,7 @@ export default function OpeningSplash({ onComplete }) {
         .opening-splash__sea {
           position: absolute;
           left: -28%;
+          pointer-events: none;
           width: 156%;
           border-radius: 0 0 48% 52%;
           transform: rotate(-5deg);
@@ -222,6 +225,7 @@ export default function OpeningSplash({ onComplete }) {
         .opening-splash__foam {
           position: absolute;
           left: -35%;
+          pointer-events: none;
           width: 170%;
           height: 24%;
           border-radius: 50%;
@@ -254,6 +258,7 @@ export default function OpeningSplash({ onComplete }) {
         .opening-splash__shallows {
           position: absolute;
           inset: 57% -20% -28%;
+          pointer-events: none;
           background:
             radial-gradient(ellipse at 20% 10%, rgba(255,255,255,.28), transparent 24%),
             radial-gradient(ellipse at 74% 6%, rgba(255,255,255,.24), transparent 27%),
@@ -273,6 +278,7 @@ export default function OpeningSplash({ onComplete }) {
         .opening-splash__sunset-glow {
           position: absolute;
           left: 50%;
+          pointer-events: none;
           top: 61%;
           width: 96vw;
           height: 42vw;
@@ -288,6 +294,7 @@ export default function OpeningSplash({ onComplete }) {
         .opening-splash__cloud {
           position: absolute;
           left: -35%;
+          pointer-events: none;
           width: 180%;
           border-radius: 50%;
           will-change: transform;
@@ -331,6 +338,7 @@ export default function OpeningSplash({ onComplete }) {
         .opening-splash__horizon {
           position: absolute;
           left: -15%;
+          pointer-events: none;
           right: -15%;
           bottom: -10%;
           height: 38%;
@@ -351,6 +359,7 @@ export default function OpeningSplash({ onComplete }) {
         .opening-splash__brand {
           position: absolute;
           z-index: 3;
+          pointer-events: none;
           left: 50%;
           top: 50%;
           transform: translate(-50%, -50%);
