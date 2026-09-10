@@ -2,6 +2,8 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import SplashRippleCanvas from './SplashRippleCanvas'
 
 const EXIT_MS = 680
+const RIPPLE_HOLD_MS = 5200
+const LOAD_FAILSAFE_MS = 9000
 
 function getScene() {
   const preview = new URLSearchParams(window.location.search).get('splash')
@@ -15,6 +17,7 @@ export default function OpeningSplash({ onComplete }) {
   const [leaving, setLeaving] = useState(false)
   const [visible, setVisible] = useState(true)
   const closingRef = useRef(false)
+  const rippleReadyRef = useRef(false)
   const timersRef = useRef([])
 
   const close = useCallback(() => {
@@ -27,8 +30,14 @@ export default function OpeningSplash({ onComplete }) {
     }, EXIT_MS))
   }, [onComplete])
 
+  const handleRippleReady = useCallback(() => {
+    if (rippleReadyRef.current || closingRef.current) return
+    rippleReadyRef.current = true
+    timersRef.current.push(window.setTimeout(close, RIPPLE_HOLD_MS))
+  }, [close])
+
   useEffect(() => {
-    timersRef.current.push(window.setTimeout(close, 3200))
+    timersRef.current.push(window.setTimeout(close, LOAD_FAILSAFE_MS))
     return () => {
       timersRef.current.forEach(window.clearTimeout)
       timersRef.current = []
@@ -40,18 +49,12 @@ export default function OpeningSplash({ onComplete }) {
   return (
     <div
       className={`opening-splash opening-splash--${scene}${leaving ? ' opening-splash--leaving' : ''}`}
-      onPointerDown={close}
-      aria-label="Eunoia 启动画面，轻触进入"
-      role="button"
-      tabIndex={0}
-      onKeyDown={(event) => {
-        if (event.key === 'Enter' || event.key === ' ') close()
-      }}
+      aria-label="Eunoia 启动画面，触摸水面可以拨动水波"
     >
       {scene === 'day' ? (
         <div className="opening-splash__day" aria-hidden="true">
           <div className="opening-splash__scene-photo opening-splash__scene-photo--day" />
-          <SplashRippleCanvas src="/backgrounds/eunoia-splash-day.webp" />
+          <SplashRippleCanvas src="/backgrounds/eunoia-splash-day.webp" scene="day" onReady={handleRippleReady} />
           <div className="opening-splash__sunlight" />
           <div className="opening-splash__sea opening-splash__sea--back" />
           <div className="opening-splash__foam opening-splash__foam--back" />
@@ -62,7 +65,7 @@ export default function OpeningSplash({ onComplete }) {
       ) : (
         <div className="opening-splash__night" aria-hidden="true">
           <div className="opening-splash__scene-photo opening-splash__scene-photo--night" />
-          <SplashRippleCanvas src="/backgrounds/eunoia-splash-night.webp" />
+          <SplashRippleCanvas src="/backgrounds/eunoia-splash-night.webp" scene="night" onReady={handleRippleReady} />
           <div className="opening-splash__sunset-glow" />
           <div className="opening-splash__cloud opening-splash__cloud--far" />
           <div className="opening-splash__cloud opening-splash__cloud--middle" />
@@ -75,6 +78,9 @@ export default function OpeningSplash({ onComplete }) {
       <div className="opening-splash__brand" aria-hidden="true">
         <img src="/backgrounds/eunoia-crystal-title-v1.webp" alt="" />
       </div>
+      <button className="opening-splash__enter" type="button" onClick={close}>
+        ENTER
+      </button>
 
       <style>{`
         .opening-splash {
@@ -149,13 +155,27 @@ export default function OpeningSplash({ onComplete }) {
           width: 100%;
           height: 100%;
           opacity: 0;
-          touch-action: manipulation;
+          touch-action: none;
           -webkit-tap-highlight-color: transparent;
           transition: opacity 420ms ease;
         }
 
         .opening-splash__ripple[data-ready='true'] {
           opacity: 1;
+        }
+
+        .opening-splash__ripple--day {
+          inset: -3%;
+          width: 106%;
+          height: 106%;
+          animation: opening-splash-water-drift 3.9s cubic-bezier(.42,0,.58,1) infinite;
+        }
+
+        .opening-splash__ripple--night {
+          inset: -14% -24%;
+          width: 148%;
+          height: 128%;
+          animation: opening-splash-sky-drift 4.1s cubic-bezier(.42,0,.58,1) infinite alternate;
         }
 
         .opening-splash__sunlight {
@@ -350,6 +370,35 @@ export default function OpeningSplash({ onComplete }) {
           height: auto;
         }
 
+        .opening-splash__enter {
+          position: absolute;
+          z-index: 4;
+          right: max(7vw, calc(env(safe-area-inset-right, 0px) + 18px));
+          bottom: max(24px, calc(env(safe-area-inset-bottom, 0px) + 16px));
+          min-width: 72px;
+          min-height: 48px;
+          padding: 7px 10px;
+          border: 0;
+          border-radius: 999px;
+          background: rgba(255,255,255,.08);
+          color: rgba(255,255,255,.92);
+          font: 500 11px/1.4 ui-serif, Georgia, serif;
+          letter-spacing: .24em;
+          text-indent: .24em;
+          text-shadow: 0 1px 8px rgba(22,47,73,.62);
+          box-shadow: inset 0 0 0 1px rgba(255,255,255,.18);
+          -webkit-backdrop-filter: blur(8px);
+          backdrop-filter: blur(8px);
+          cursor: pointer;
+          animation: opening-splash-enter 1s 900ms ease both;
+          -webkit-tap-highlight-color: transparent;
+        }
+
+        .opening-splash__enter:active {
+          transform: scale(.96);
+          background: rgba(255,255,255,.16);
+        }
+
         @keyframes opening-splash-arrive {
           from { opacity: 1; transform: scale(1.025); }
           to { opacity: 1; transform: scale(1); }
@@ -361,6 +410,10 @@ export default function OpeningSplash({ onComplete }) {
         @keyframes opening-splash-brand {
           0% { opacity: 0; transform: translate(-50%, -43%) scale(.94); filter: drop-shadow(0 8px 12px rgba(28,47,68,.14)); }
           100% { opacity: 1; transform: translate(-50%, -50%) scale(1); filter: drop-shadow(0 13px 17px rgba(28,47,68,.22)); }
+        }
+        @keyframes opening-splash-enter {
+          from { opacity: 0; transform: translateY(6px); }
+          to { opacity: 1; transform: translateY(0); }
         }
         @keyframes opening-splash-tide-front {
           0%, 100% { transform: rotate(-7deg) translate3d(-3%, -24%, 0) scale(1.08); }

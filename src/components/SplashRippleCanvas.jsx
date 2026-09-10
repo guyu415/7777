@@ -26,7 +26,7 @@ function drawCover(context, image, width, height) {
   context.drawImage(image, (width - drawWidth) / 2, (height - drawHeight) / 2, drawWidth, drawHeight)
 }
 
-function startCanvasFallback(canvas, image, reduceMotion) {
+function startCanvasFallback(canvas, image, reduceMotion, markReady) {
   const context = canvas.getContext('2d')
   if (!context) return () => {}
 
@@ -70,7 +70,7 @@ function startCanvasFallback(canvas, image, reduceMotion) {
       context.restore()
     }
 
-    canvas.dataset.ready = 'true'
+    markReady()
     animationFrame = requestAnimationFrame(draw)
   }
 
@@ -92,7 +92,7 @@ function startCanvasFallback(canvas, image, reduceMotion) {
   }
 }
 
-function startWebGL(canvas, image) {
+function startWebGL(canvas, image, markReady) {
   const gl = canvas.getContext('webgl', {
     alpha: false,
     antialias: false,
@@ -291,7 +291,7 @@ function startWebGL(canvas, image) {
       gl.bindTexture(gl.TEXTURE_2D, waterTexture)
       gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, GRID_WIDTH, gridHeight, gl.RGBA, gl.UNSIGNED_BYTE, waterPixels)
       gl.drawArrays(gl.TRIANGLES, 0, 6)
-      canvas.dataset.ready = 'true'
+      markReady()
     }
     animationFrame = requestAnimationFrame(render)
   }
@@ -313,7 +313,7 @@ function startWebGL(canvas, image) {
   }
 }
 
-export default function SplashRippleCanvas({ src }) {
+export default function SplashRippleCanvas({ src, scene, onReady }) {
   const canvasRef = useRef(null)
 
   useEffect(() => {
@@ -326,6 +326,13 @@ export default function SplashRippleCanvas({ src }) {
     const image = new Image()
     image.decoding = 'async'
     image.src = src
+    let ready = false
+    const markReady = () => {
+      if (ready || cancelled) return
+      ready = true
+      canvas.dataset.ready = 'true'
+      onReady?.()
+    }
 
     const start = () => {
       if (cancelled) return
@@ -335,15 +342,15 @@ export default function SplashRippleCanvas({ src }) {
       canvas.height = Math.max(1, Math.round(bounds.height * pixelRatio))
 
       if (reduceMotion) {
-        dispose = startCanvasFallback(canvas, image, true)
+        dispose = startCanvasFallback(canvas, image, true, markReady)
         return
       }
 
       try {
-        dispose = startWebGL(canvas, image)
+        dispose = startWebGL(canvas, image, markReady)
       } catch (error) {
         console.warn('[OpeningSplash] WebGL ripple fallback:', error)
-        dispose = startCanvasFallback(canvas, image, false)
+        dispose = startCanvasFallback(canvas, image, false, markReady)
       }
     }
 
@@ -355,7 +362,7 @@ export default function SplashRippleCanvas({ src }) {
       image.removeEventListener('load', start)
       dispose()
     }
-  }, [src])
+  }, [onReady, src])
 
-  return <canvas ref={canvasRef} className="opening-splash__ripple" aria-hidden="true" />
+  return <canvas ref={canvasRef} className={`opening-splash__ripple opening-splash__ripple--${scene}`} aria-hidden="true" />
 }
