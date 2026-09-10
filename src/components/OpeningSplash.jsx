@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import SplashRippleCanvas from './SplashRippleCanvas'
 
 const EXIT_MS = 680
 
@@ -50,6 +51,7 @@ export default function OpeningSplash({ onComplete }) {
       {scene === 'day' ? (
         <div className="opening-splash__day" aria-hidden="true">
           <div className="opening-splash__scene-photo opening-splash__scene-photo--day" />
+          <SplashRippleCanvas src="/backgrounds/eunoia-splash-day.webp" />
           <div className="opening-splash__sunlight" />
           <div className="opening-splash__sea opening-splash__sea--back" />
           <div className="opening-splash__foam opening-splash__foam--back" />
@@ -60,6 +62,7 @@ export default function OpeningSplash({ onComplete }) {
       ) : (
         <div className="opening-splash__night" aria-hidden="true">
           <div className="opening-splash__scene-photo opening-splash__scene-photo--night" />
+          <SplashRippleCanvas src="/backgrounds/eunoia-splash-night.webp" />
           <div className="opening-splash__sunset-glow" />
           <div className="opening-splash__cloud opening-splash__cloud--far" />
           <div className="opening-splash__cloud opening-splash__cloud--middle" />
@@ -136,6 +139,23 @@ export default function OpeningSplash({ onComplete }) {
           -webkit-mask-image: linear-gradient(180deg, #000 0 62%, transparent 88%);
           mask-image: linear-gradient(180deg, #000 0 62%, transparent 88%);
           animation: opening-splash-cloud-rush 3.6s cubic-bezier(.45,0,.55,1) infinite alternate;
+        }
+
+        .opening-splash__ripple {
+          position: absolute;
+          inset: 0;
+          z-index: 0;
+          display: block;
+          width: 100%;
+          height: 100%;
+          opacity: 0;
+          touch-action: manipulation;
+          -webkit-tap-highlight-color: transparent;
+          transition: opacity 420ms ease;
+        }
+
+        .opening-splash__ripple[data-ready='true'] {
+          opacity: 1;
         }
 
         .opening-splash__sunlight {
