@@ -7,6 +7,7 @@ import { pushSupportState, getCurrentSubscription, subscribePush, unsubscribePus
 import { THEMES } from '../themes'
 import MemoryPanel from './MemoryPanel'
 import { USER_BUBBLE_TEXT_PALETTE, normalizeBubbleTextColor } from '../utils/bubbleColors'
+import { BUBBLE_SKINS } from '../bubbleSkins'
 
 function genId() {
   return Date.now().toString(36) + Math.random().toString(36).slice(2)
@@ -275,11 +276,6 @@ const THEME_LIST = [
   { id: 'lavender', label: '薰衣草紫', dot: '#9b7fd4' },
 ]
 
-const BUBBLE_SKINS = [
-  { id: 'puppy', label: '奶油小狗' },
-  { id: 'apple-pixel', label: '青苹果像素' },
-]
-
 export default function GlobalSettings({ theme, onLogout, onForceSync }) {
   const {
     themeId, setChatTheme, bubbleSkin, setBubbleSkin,
@@ -455,7 +451,10 @@ export default function GlobalSettings({ theme, onLogout, onForceSync }) {
                 onClick={() => setBubbleSkin(option.id)}
                 style={{ ...chipStyle((bubbleSkin || 'puppy') === option.id), display: 'flex', alignItems: 'center', gap: 7 }}
               >
-                <span aria-hidden="true" style={option.id === 'apple-pixel' ? {
+                <span aria-hidden="true" style={option.preview ? {
+                  width: 32, height: 20, display: 'inline-block',
+                  background: `url(${option.preview}) center / 100% 100% no-repeat`,
+                } : option.id === 'apple-pixel' ? {
                   width: 28, height: 15, display: 'inline-block',
                   background: 'linear-gradient(180deg,#fbffe9,#eef7cf)', border: '1px solid #a7b77a', borderRadius: 2,
                   boxShadow: '2px 2px 0 rgba(167,183,122,.22)',

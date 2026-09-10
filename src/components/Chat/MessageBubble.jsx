@@ -19,6 +19,7 @@ import { healthDataCategories, isHealthTool } from '../../utils/healthData'
 import { extractHeartRate, isHeartRateTool } from '../../utils/heartRate'
 import { formatReasoningSeconds, getReasoningDurationMs } from '../../utils/reasoningTiming'
 import { parseLocationMessage } from '../../services/location'
+import { getKakaoBubbleFrame, getNineSlice } from '../../bubbleSkins'
 
 // Split content on letter markers — either {{LETTER_CARD:id}} (AI letters, phase 1)
 // or raw [LETTER mood=.. weather=.. date=..]..[/LETTER] (user letters written from diary)
@@ -213,6 +214,21 @@ function ApplePixelBubbleDecorations({ isUser }) {
         <path d="M18 5h3V2h4v3h3v4h-3v3h-4V9h-3Z" fill="none" stroke="#91a45f" strokeWidth="1" />
       </svg>
     </>
+  )
+}
+
+function KakaoBubbleBackdrop({ frame }) {
+  const slice = getNineSlice(frame)
+  return (
+    <span
+      aria-hidden="true"
+      style={{
+        position: 'absolute', inset: 0, zIndex: 0, pointerEvents: 'none',
+        borderStyle: 'solid', borderColor: 'transparent', borderWidth: slice.width,
+        borderImageSource: `url(${frame.src})`, borderImageSlice: slice.source,
+        borderImageWidth: slice.width, borderImageRepeat: 'stretch',
+      }}
+    />
   )
 }
 
@@ -464,7 +480,15 @@ function MessageBubble({ message, onLongPress, onRegenerate, onRegenerateRound, 
     overflow: 'visible',
   }
   const isApplePixel = bubbleSkin === 'apple-pixel'
-  const activeTextFrameStyle = isApplePixel ? {
+  const kakaoFrame = getKakaoBubbleFrame(bubbleSkin, isUser, sameSenderAsPrev)
+  const activeTextFrameStyle = kakaoFrame ? {
+    ...textFrameStyle,
+    minWidth: kakaoFrame.minWidth,
+    minHeight: kakaoFrame.minHeight,
+    padding: kakaoFrame.padding,
+    lineHeight: 1.55,
+    letterSpacing: '0.025em',
+  } : isApplePixel ? {
     ...textFrameStyle,
     minHeight: 38,
     padding: '6px 14px 7px',
@@ -575,13 +599,13 @@ function MessageBubble({ message, onLongPress, onRegenerate, onRegenerateRound, 
               // flow rather than a stray dot near the avatar; long messages
               // are unaffected since their intrinsic content width already
               // exceeds this floor.
-              minWidth: 0,
+              minWidth: kakaoFrame?.minWidth || 0,
             }}
             {...pressProps}
           >
-            {!showGoldenPending && (isApplePixel ? <ApplePixelBubbleBackdrop isUser={isUser} /> : <PuppyBubbleBackdrop />)}
-            {!showGoldenPending && (isApplePixel ? <ApplePixelBubbleDecorations isUser={isUser} /> : <PuppyBubbleDecorations />)}
-            {!showGoldenPending && !isApplePixel && <img
+            {!showGoldenPending && (kakaoFrame ? <KakaoBubbleBackdrop frame={kakaoFrame} /> : isApplePixel ? <ApplePixelBubbleBackdrop isUser={isUser} /> : <PuppyBubbleBackdrop />)}
+            {!showGoldenPending && !kakaoFrame && (isApplePixel ? <ApplePixelBubbleDecorations isUser={isUser} /> : <PuppyBubbleDecorations />)}
+            {!showGoldenPending && !kakaoFrame && !isApplePixel && <img
               src={isUser ? '/assets/shy-puppy-tail-v5.png' : '/assets/shy-puppy-head-v5.png'}
               alt=""
               aria-hidden="true"
