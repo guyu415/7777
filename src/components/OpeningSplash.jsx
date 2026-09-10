@@ -78,9 +78,6 @@ export default function OpeningSplash({ onComplete }) {
       <div className="opening-splash__brand" aria-hidden="true">
         <img src="/backgrounds/eunoia-crystal-title-v1.webp" alt="" />
       </div>
-      <button className="opening-splash__enter" type="button" onClick={close}>
-        ENTER
-      </button>
 
       <style>{`
         .opening-splash {
@@ -90,8 +87,8 @@ export default function OpeningSplash({ onComplete }) {
           overflow: hidden;
           isolation: isolate;
           background: #82c9c4;
-          cursor: pointer;
-          touch-action: manipulation;
+          cursor: crosshair;
+          touch-action: none;
           animation: opening-splash-arrive 700ms cubic-bezier(.2,.7,.2,1) both;
         }
 
@@ -370,35 +367,6 @@ export default function OpeningSplash({ onComplete }) {
           height: auto;
         }
 
-        .opening-splash__enter {
-          position: absolute;
-          z-index: 4;
-          right: max(7vw, calc(env(safe-area-inset-right, 0px) + 18px));
-          bottom: max(24px, calc(env(safe-area-inset-bottom, 0px) + 16px));
-          min-width: 72px;
-          min-height: 48px;
-          padding: 7px 10px;
-          border: 0;
-          border-radius: 999px;
-          background: rgba(255,255,255,.08);
-          color: rgba(255,255,255,.92);
-          font: 500 11px/1.4 ui-serif, Georgia, serif;
-          letter-spacing: .24em;
-          text-indent: .24em;
-          text-shadow: 0 1px 8px rgba(22,47,73,.62);
-          box-shadow: inset 0 0 0 1px rgba(255,255,255,.18);
-          -webkit-backdrop-filter: blur(8px);
-          backdrop-filter: blur(8px);
-          cursor: pointer;
-          animation: opening-splash-enter 1s 900ms ease both;
-          -webkit-tap-highlight-color: transparent;
-        }
-
-        .opening-splash__enter:active {
-          transform: scale(.96);
-          background: rgba(255,255,255,.16);
-        }
-
         @keyframes opening-splash-arrive {
           from { opacity: 1; transform: scale(1.025); }
           to { opacity: 1; transform: scale(1); }
@@ -410,10 +378,6 @@ export default function OpeningSplash({ onComplete }) {
         @keyframes opening-splash-brand {
           0% { opacity: 0; transform: translate(-50%, -43%) scale(.94); filter: drop-shadow(0 8px 12px rgba(28,47,68,.14)); }
           100% { opacity: 1; transform: translate(-50%, -50%) scale(1); filter: drop-shadow(0 13px 17px rgba(28,47,68,.22)); }
-        }
-        @keyframes opening-splash-enter {
-          from { opacity: 0; transform: translateY(6px); }
-          to { opacity: 1; transform: translateY(0); }
         }
         @keyframes opening-splash-tide-front {
           0%, 100% { transform: rotate(-7deg) translate3d(-3%, -24%, 0) scale(1.08); }
