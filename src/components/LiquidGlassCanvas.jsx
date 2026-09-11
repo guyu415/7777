@@ -5,6 +5,7 @@ const WIDTH = 1080
 const HEIGHT = 1920
 
 const vertexShader = /* glsl */ `
+  precision highp float;
   in vec3 position;
   in vec2 uv;
   out vec2 vUv;
@@ -40,6 +41,11 @@ const backgroundShader = /* glsl */ `
 
     float ribbon = sin((uv.x * 1.25 + uv.y) * 8.0 + t * 1.7) * 0.5 + 0.5;
     color += vec3(0.025, 0.055, 0.09) * ribbon * smoothstep(0.0, 0.85, uv.y);
+    // Background light ribbons give the clear rim something to refract.
+    float line = uv.x - 0.18 - 0.11 * sin(uv.y * 7.0 + t);
+    float line2 = uv.x - 0.87 + 0.09 * sin(uv.y * 5.0 - t);
+    color += vec3(0.26, 0.36, 0.45) * exp(-line * line / 0.00012);
+    color += vec3(0.17, 0.26, 0.34) * exp(-line2 * line2 / 0.0003);
     float grain = fract(sin(dot(uv * vec2(1080.0, 1920.0), vec2(12.9898, 78.233))) * 43758.5453);
     color += (grain - 0.5) * 0.012;
     outColor = vec4(color, 1.0);
@@ -59,17 +65,22 @@ const glassShader = /* glsl */ `
   }
 
   float glassSdf(vec2 uv) {
-    float header = sdRoundBox(uv - vec2(0.5, 0.925), vec2(0.445, 0.047), 0.026);
-    float letter = sdRoundBox(uv - vec2(0.5, 0.625), vec2(0.445, 0.245), 0.047);
-    float compose = sdRoundBox(uv - vec2(0.5, 0.195), vec2(0.445, 0.155), 0.047);
-    return min(header, min(letter, compose));
+    return sdRoundBox((uv - 0.5) * vec2(1.0, 1920.0 / 1080.0),
+      vec2(0.487, 1920.0 / 2160.0 - 0.013), 0.045);
   }
 
-  vec3 sampleRgbSplit(vec2 uv, vec2 direction, float amount, float lod) {
-    float r = textureLod(uPaintCompose, clamp(uv + direction * amount, 0.001, 0.999), lod).r;
-    float g = textureLod(uPaintCompose, clamp(uv, 0.001, 0.999), lod).g;
-    float b = textureLod(uPaintCompose, clamp(uv - direction * amount, 0.001, 0.999), lod).b;
-    return vec3(r, g, b);
+  float heightAt(vec2 uv) {
+    float depth = clamp(-glassSdf(uv) / 0.035, 0.0, 1.0);
+    return 0.038 * sqrt(max(0.0, 1.0 - (1.0-depth)*(1.0-depth)));
+  }
+
+  vec2 refractThrough(vec2 uv, vec3 normal, float ior) {
+    // Two-interface height-field approximation: curved front, flat rear.
+    vec3 inside = refract(vec3(0.0, 0.0, -1.0), normal, 1.0 / ior);
+    vec3 outside = refract(inside, vec3(0.0, 0.0, 1.0), ior);
+    vec2 travel = inside.xy * heightAt(uv) / max(-inside.z, 0.1);
+    travel += outside.xy * 0.055 / max(-outside.z, 0.1);
+    return uv + travel / vec2(1.0, 1920.0 / 1080.0);
   }
 
   float distributionGgx(vec3 n, vec3 h, float roughness) {
@@ -94,26 +105,19 @@ const glassShader = /* glsl */ `
     }
 
     vec2 px = vec2(1.0 / 1080.0, 1.0 / 1920.0);
-    vec2 gradient = vec2(
-      glassSdf(uv + vec2(px.x, 0.0)) - glassSdf(uv - vec2(px.x, 0.0)),
-      glassSdf(uv + vec2(0.0, px.y)) - glassSdf(uv - vec2(0.0, px.y))
-    );
-    vec2 normal2 = normalize(gradient + vec2(0.00001));
-    float body = smoothstep(0.004, -0.052, d);
-    float rim = exp(-abs(d) * 118.0);
-    float innerRim = exp(-abs(d + 0.020) * 105.0);
-    float wobble = sin((uv.y * 23.0 + uv.x * 11.0) + uTime * 0.45) * 0.0014;
-
-    vec2 faceOffset = normal2 * (0.006 + rim * 0.016 + wobble);
-    vec3 face = textureLod(uPaintCompose, clamp(uv - faceOffset, 0.001, 0.999), mix(0.2, 1.15, body)).rgb;
-    vec3 inner = textureLod(uPaintCompose, clamp(uv + normal2 * (0.011 + innerRim * 0.010), 0.001, 0.999), 2.15).rgb;
-    vec3 outer = textureLod(uPaintCompose, clamp(uv - normal2 * 0.022, 0.001, 0.999), 0.55).rgb;
-    vec3 refracted = mix(outer, inner, 0.46);
-    refracted = mix(refracted, face, 0.48);
-    vec3 dispersion = sampleRgbSplit(uv - faceOffset, normal2, 0.0038 + rim * 0.006, 0.8);
-    refracted = mix(refracted, dispersion, 0.18 + rim * 0.34);
-
-    vec3 n = normalize(vec3(-normal2 * (2.0 + rim * 5.0), 1.0));
+    float body = 1.0 - smoothstep(-0.035, 0.0, d);
+    float rim = exp(-abs(d) * 850.0);
+    float innerRim = exp(-abs(d + 0.026) * 600.0);
+    vec2 slope = vec2(
+      heightAt(uv + vec2(px.x, 0.0)) - heightAt(uv - vec2(px.x, 0.0)),
+      heightAt(uv + vec2(0.0, px.y)) - heightAt(uv - vec2(0.0, px.y))
+    ) / (2.0 * px * vec2(1.0, 1920.0 / 1080.0));
+    vec3 n = normalize(vec3(-slope, 1.0));
+    vec2 faceUv = refractThrough(uv, n, 1.46);
+    vec3 face = textureLod(uPaintCompose, clamp(faceUv, 0.001, 0.999), 0.0).rgb;
+    vec3 inner = textureLod(uPaintCompose, clamp(refractThrough(uv, n, 1.48), 0.001, 0.999), 0.0).rgb;
+    vec3 outer = textureLod(uPaintCompose, clamp(refractThrough(uv, n, 1.44), 0.001, 0.999), 0.0).rgb;
+    vec3 refracted = mix(face, vec3(outer.r, inner.g, inner.b), (1.0-body)*0.7);
     vec3 v = vec3(0.0, 0.0, 1.0);
     vec3 l = normalize(vec3(-0.42, 0.70, 0.82));
     vec3 h = normalize(v + l);
@@ -126,10 +130,10 @@ const glassShader = /* glsl */ `
     vec3 specular = distributionGgx(n, h, roughness) * geometry * fresnel / max(4.0 * nv * nl, 0.001);
 
     vec3 tint = vec3(0.74, 0.86, 1.0);
-    vec3 glass = mix(refracted, tint, 0.055 + body * 0.025);
+    vec3 glass = mix(refracted, tint, 0.008);
     glass += specular * nl * 0.23;
-    glass += vec3(0.72, 0.86, 1.0) * rim * 0.16;
-    glass += vec3(0.90, 0.96, 1.0) * innerRim * 0.055;
+    glass += vec3(0.72, 0.86, 1.0) * rim * 0.42;
+    glass += vec3(0.90, 0.96, 1.0) * innerRim * 0.10;
     glass -= vec3(0.025, 0.038, 0.055) * smoothstep(-0.055, -0.008, d) * 0.55;
 
     float mask = 1.0 - smoothstep(0.0, 0.004, d);

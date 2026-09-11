@@ -218,12 +218,12 @@ export default function UniverseHome({ theme, onOpenReading, onOpenLedger, onOpe
         .liquid-glass-canvas--fallback,
         .liquid-glass-canvas[data-failed="true"] { background:linear-gradient(180deg,#34465e 0%,#142946 48%,#06152f 100%); }
         .universe-home__diary-sheet { position:relative; z-index:1; width:100%; height:100dvh; display:flex; flex-direction:column; overflow:hidden; color:#f7fbff; background:transparent; }
-        .universe-home__diary-head { flex:none; min-height:9.4%; display:flex; align-items:flex-end; justify-content:space-between; padding:calc(env(safe-area-inset-top,0px) + 17px) 7.3% 15px; box-sizing:border-box; }
+        .universe-home__diary-head { flex:none; display:flex; align-items:center; justify-content:space-between; padding:calc(env(safe-area-inset-top,0px) + 20px) 24px 16px; box-sizing:border-box; }
         .universe-home__diary-head strong,.universe-home__diary-head span { display:block; }
         .universe-home__diary-head strong{margin-top:5px;color:#f8fbff;font:600 20px/1.1 'ZCOOL XiaoWei',serif;letter-spacing:.08em;text-shadow:0 1px 12px rgba(0,18,48,.26)}
         .universe-home__diary-head span{color:rgba(222,237,255,.62);font-size:8px;letter-spacing:.24em}
         .universe-home__diary-head button{width:38px;height:38px;display:grid;place-items:center;border:1px solid rgba(255,255,255,.24);border-radius:50%;background:rgba(255,255,255,.08);color:#f8fbff;box-shadow:inset 0 1px rgba(255,255,255,.22),0 7px 20px rgba(0,12,35,.16)}
-        .universe-home__diary-body { flex:1; min-height:0; overflow:hidden; padding:2.1% 5.5% calc(3.5% + env(safe-area-inset-bottom,0px)); box-sizing:border-box; }
+        .universe-home__diary-body { flex:1; min-height:0; overflow:hidden; padding:0 20px calc(12px + env(safe-area-inset-bottom,0px)); box-sizing:border-box; }
         @media (max-height:740px){.universe-home__portrait-card{min-height:282px}.universe-home__avatar{width:91px;height:91px}.universe-home__names{margin-top:19px}.universe-home__scroll{padding-top:5px}}
       `}</style>
     </main>

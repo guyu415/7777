@@ -33,11 +33,14 @@ export async function getLetterById(id) {
 // given session — feeds the "you know these letters exist but not their
 // content" line in the system prompt (see useChat.js). Oldest-of-the-recent-
 // N first, matching the old local .slice(-5) ordering.
-export async function getRecentLettersByCharacter(sessionId, limit = 5) {
+export async function getRecentLettersByCharacter(sessionId, limit = 5, { throwOnError = false } = {}) {
   const password = authPassword()
   if (!password || !sessionId) return []
   const res = await fetch(`${SYNC_BASE}/diary/list?password=${encodeURIComponent(password)}&sessionId=${encodeURIComponent(sessionId)}&limit=${limit}`)
-  if (!res.ok) return []
+  if (!res.ok) {
+    if (throwOnError) throw new Error(`HTTP ${res.status}`)
+    return []
+  }
   const { letters } = await res.json()
   return Array.isArray(letters) ? letters : []
 }

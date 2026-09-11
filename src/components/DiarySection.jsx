@@ -1,6 +1,6 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useStore } from '../store'
-import { getLatestLetter, getLetterById, addLetter } from '../services/letters'
+import { getLatestLetter, getLetterById, getRecentLettersByCharacter, addLetter } from '../services/letters'
 import { scheduleDiaryLetter, sendDiaryLetterNow } from '../services/companion'
 
 const MOOD_OPTIONS = ['😊', '🥰', '😌', '😔', '🥹', '😤', '🤔', '😶‍🌫️']
@@ -22,9 +22,9 @@ function defaultDeliveryTime() {
 }
 
 // Collapsible letter body — folds when content exceeds ~6 lines
-function LetterBody({ text }) {
+function LetterBody({ text, full = false }) {
   const [expanded, setExpanded] = useState(false)
-  const long = text.length > 200 || text.split('\n').length > 6
+  const long = !full && (text.length > 200 || text.split('\n').length > 6)
   return (
     <div style={{ fontSize: 15, lineHeight: 1.7, color: '#fff', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
       <div style={!expanded && long ? { display: '-webkit-box', WebkitLineClamp: 6, WebkitBoxOrient: 'vertical', overflow: 'hidden' } : undefined}>
@@ -39,16 +39,8 @@ function LetterBody({ text }) {
   )
 }
 
-// Diary is a Google Drive-backed mailbox — no browsable history, no avatar
-// picker. Opening it shows just the latest letter as a plain content card
-// (no header — no avatar/name/mood/weather badges, per explicit request);
-// the compose box still lets the user write back, always to whichever
-// session is currently active (no character picker needed since there's
-// only ever one "current" conversation). cc can also write on its own via
-// a separate direct path (see channel-server.ts's diary_write tool).
-//
-// `diaryTarget` (set when a letter-card bubble in chat is clicked) overrides
-// "show latest" with "show this specific letter, by its Drive fileId".
+// Drive-backed mailbox. History loads an index; each selected body is fetched on demand.
+// Chat letter cards can still open a specific Drive file through diaryTarget.
 export default function DiarySection({ theme, liquid = false }) {
   const { sessions, diaryTarget, setDiaryTarget } = useStore()
   const ccSession = sessions?.find(session => session.providerName === 'claude-code-vps')
@@ -67,18 +59,25 @@ export default function DiarySection({ theme, liquid = false }) {
   const [deliveryMode, setDeliveryMode] = useState('now')
   const [deliverAt, setDeliverAt] = useState(defaultDeliveryTime)
   const [sendStatus, setSendStatus] = useState('')
+  const [selectedId, setSelectedId] = useState(diaryTarget || '')
+  const [history, setHistory] = useState([])
+  const [historyStatus, setHistoryStatus] = useState('loading')
+  const [historyRevision, setHistoryRevision] = useState(0)
+  const loadRequest = useRef(0)
 
-  const load = async (targetId) => {
+  const load = async (targetId = '') => {
+    const request = ++loadRequest.current
+    setSelectedId(targetId)
     setLoading(true)
     setLoadError(false)
     try {
       const result = targetId ? await getLetterById(targetId) : await getLatestLetter()
-      setLetter(result)
+      if (request === loadRequest.current) setLetter(result)
     } catch (e) {
       console.warn('[LETTERS] 读取失败:', e.message)
-      setLoadError(true)
+      if (request === loadRequest.current) setLoadError(true)
     } finally {
-      setLoading(false)
+      if (request === loadRequest.current) setLoading(false)
     }
   }
 
@@ -89,8 +88,24 @@ export default function DiarySection({ theme, liquid = false }) {
     } else {
       load()
     }
+    return () => { loadRequest.current += 1 }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+
+  useEffect(() => {
+    if (!liquid) return
+    let cancelled = false
+    setHistory([])
+    setHistoryStatus('loading')
+    getRecentLettersByCharacter(ccSession?.id, 50, { throwOnError: true })
+      .then(items => {
+        if (cancelled) return
+        setHistory([...items].reverse())
+        setHistoryStatus('ready')
+      })
+      .catch(() => { if (!cancelled) setHistoryStatus('error') })
+    return () => { cancelled = true }
+  }, [liquid, ccSession?.id, historyRevision])
 
   const sendLetter = async () => {
     if (!content.trim() || sending || !ccSession?.id) return
@@ -116,6 +131,7 @@ export default function DiarySection({ theme, liquid = false }) {
       }
 
       setContent('')
+      setHistoryRevision(value => value + 1)
       await load()
     } catch (e) {
       console.warn('[LETTERS] 寄出失败:', e.message)
@@ -134,8 +150,17 @@ export default function DiarySection({ theme, liquid = false }) {
 
   return (
     <div className={`flex flex-col h-full diary-section${liquid ? ' diary-section--liquid' : ''}`} style={{ minHeight: 0 }}>
-      {/* Latest (or targeted) letter — plain semi-transparent blue overlay,
-          no avatar/name/mood/weather header, just the text. */}
+      {liquid && (
+        <div className="diary-section__history">
+          <label htmlFor="diary-history">往期信件</label>
+          <select id="diary-history" value={selectedId} onChange={event => load(event.target.value)}>
+            <option value="">最新一封</option>
+            {selectedId && !history.some(item => item.id === selectedId) && <option value={selectedId}>当前打开的信</option>}
+            {history.map((item, index) => <option key={item.id} value={item.id}>{item.date || '未标日期'} · {item.role === 'user' ? '我的回信' : '来信'} · {history.length - index}</option>)}
+          </select>
+          <small>{historyStatus === 'loading' ? '目录读取中…' : historyStatus === 'error' ? <button onClick={() => setHistoryRevision(value => value + 1)}>目录读取失败 · 重试</button> : history.length ? `当前会话 · 最近 ${history.length} 封` : '当前会话暂无可选信件'}</small>
+        </div>
+      )}
       <div className="flex-1 overflow-y-auto px-1 diary-section__letters" style={{ minHeight: 0 }}>
         {loading ? (
           <div className="flex items-center justify-center h-full text-center" style={{ color: liquid ? 'rgba(232,242,255,.7)' : '#a0b8d0' }}>
@@ -162,13 +187,13 @@ export default function DiarySection({ theme, liquid = false }) {
               boxShadow: liquid ? 'none' : '0 4px 20px rgba(30,70,150,0.18)',
             }}
           >
-            <LetterBody text={letter.content || ''} />
+            <LetterBody key={letter.id || selectedId} text={letter.content || ''} full={liquid} />
           </div>
         )}
       </div>
 
       {/* Write panel — always archives to Drive and delivers to resident CC. */}
-      <div className="flex-shrink-0 pt-2 mt-1 diary-section__compose" style={{ borderTop: liquid ? '0' : '1px solid rgba(200,220,255,0.3)', paddingBottom: 'env(safe-area-inset-bottom, 0px)' }}>
+      <div className="flex-shrink-0 pt-2 mt-1 diary-section__compose" style={{ borderTop: liquid ? '0' : '1px solid rgba(200,220,255,0.3)', paddingBottom: liquid ? 12 : 'env(safe-area-inset-bottom, 0px)' }}>
         {!ccSession ? (
           <div style={{ padding: 10, color: liquid ? '#ffd7e2' : '#a06f7c', fontSize: 12 }}>请先绑定 Claude Code 常驻聊天窗。</div>
         ) : (
@@ -195,6 +220,7 @@ export default function DiarySection({ theme, liquid = false }) {
             )}
             <div className="flex items-center gap-2">
               <textarea
+                aria-label="回信内容"
                 value={content}
                 onChange={e => setContent(e.target.value)}
                 onFocus={e => setTimeout(() => e.target.scrollIntoView({ block: 'nearest', behavior: 'smooth' }), 250)}
@@ -209,6 +235,7 @@ export default function DiarySection({ theme, liquid = false }) {
                 }}
               />
               <button
+                aria-label={sending ? '正在寄出' : '寄出回信'}
                 onClick={sendLetter}
                 disabled={!content.trim() || sending}
                 className="rounded-full text-sm font-medium text-white transition-all duration-200 flex-shrink-0"
@@ -227,12 +254,18 @@ export default function DiarySection({ theme, liquid = false }) {
         )}
       </div>
       {liquid && <style>{`
-        .diary-section--liquid{gap:2.6%;color:#f8fbff}
-        .diary-section--liquid .diary-section__letters{padding:4.2% 4.6% 3.2%;box-sizing:border-box;scrollbar-width:none}
+        .diary-section--liquid{display:grid;grid-template-rows:auto minmax(0,1fr) auto;height:100%;overflow:hidden;gap:8px;color:#f8fbff}
+        .diary-section__history{display:grid;grid-template-columns:auto minmax(0,1fr);align-items:center;gap:6px 12px;padding:4px 4px 10px;border-bottom:1px solid rgba(220,237,255,.14)}
+        .diary-section__history label{font-size:12px;color:rgba(232,242,255,.8)}
+        .diary-section__history select{width:100%;min-width:0;min-height:40px;padding:8px 12px;border:1px solid rgba(220,237,255,.22);border-radius:12px;background:rgba(255,255,255,.06);color:#f8fbff;font-size:14px;color-scheme:dark}
+        .diary-section__history small{grid-column:1/-1;font-size:10px;color:rgba(225,239,255,.6)}
+        .diary-section__history small button{color:inherit;background:none;border:0;padding:4px 0;text-decoration:underline}
+        .diary-section--liquid :is(button,select,textarea):focus-visible{outline:2px solid #b7ddff;outline-offset:2px}
+        .diary-section--liquid .diary-section__letters{min-height:0;overflow:auto;overscroll-behavior:contain;padding:12px 4px 20px;box-sizing:border-box;scrollbar-width:none}
         .diary-section--liquid .diary-section__letters::-webkit-scrollbar{display:none}
-        .diary-section--liquid .diary-section__letter-card{min-height:100%;box-sizing:border-box}
+        .diary-section--liquid .diary-section__letter-card{box-sizing:border-box;padding:8px 10px!important}
         .diary-section--liquid .diary-section__letter-card>div{font-family:'ZCOOL XiaoWei','Noto Serif SC',serif;font-size:16px!important;line-height:1.9!important;color:#f8fbff!important;text-shadow:0 1px 10px rgba(0,19,50,.24)}
-        .diary-section--liquid .diary-section__compose{padding:13px 4.2% 12px;margin:0;box-sizing:border-box}
+        .diary-section--liquid .diary-section__compose{max-height:45dvh;overflow:auto;overscroll-behavior:contain;padding:12px 4px;margin:0;box-sizing:border-box}
         .diary-section--liquid textarea::placeholder{color:rgba(229,240,255,.55)}
         .diary-section--liquid input{color-scheme:dark}
       `}</style>}
