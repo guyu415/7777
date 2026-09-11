@@ -49,7 +49,7 @@ function LetterBody({ text }) {
 //
 // `diaryTarget` (set when a letter-card bubble in chat is clicked) overrides
 // "show latest" with "show this specific letter, by its Drive fileId".
-export default function DiarySection({ theme }) {
+export default function DiarySection({ theme, liquid = false }) {
   const { sessions, diaryTarget, setDiaryTarget } = useStore()
   const ccSession = sessions?.find(session => session.providerName === 'claude-code-vps')
 
@@ -128,37 +128,38 @@ export default function DiarySection({ theme }) {
   const emojiBtn = (active) => ({
     fontSize: 16, lineHeight: 1, padding: '3px 5px', borderRadius: 9, cursor: 'pointer',
     border: active ? `1.5px solid ${primary}` : '1.5px solid transparent',
-    background: active ? `${primary}1f` : 'rgba(255,255,255,0.35)',
+    background: active ? `${primary}32` : (liquid ? 'rgba(255,255,255,0.08)' : 'rgba(255,255,255,0.35)'),
     transition: 'all 0.15s',
   })
 
   return (
-    <div className="flex flex-col h-full" style={{ minHeight: 0 }}>
+    <div className={`flex flex-col h-full diary-section${liquid ? ' diary-section--liquid' : ''}`} style={{ minHeight: 0 }}>
       {/* Latest (or targeted) letter — plain semi-transparent blue overlay,
           no avatar/name/mood/weather header, just the text. */}
-      <div className="flex-1 overflow-y-auto px-1" style={{ minHeight: 0 }}>
+      <div className="flex-1 overflow-y-auto px-1 diary-section__letters" style={{ minHeight: 0 }}>
         {loading ? (
-          <div className="flex items-center justify-center h-full text-center" style={{ color: '#a0b8d0' }}>
+          <div className="flex items-center justify-center h-full text-center" style={{ color: liquid ? 'rgba(232,242,255,.7)' : '#a0b8d0' }}>
             <div className="text-sm">读取中…</div>
           </div>
         ) : loadError ? (
-          <div className="flex flex-col items-center justify-center h-full text-center gap-1 py-4" style={{ color: '#a0b8d0' }}>
+          <div className="flex flex-col items-center justify-center h-full text-center gap-1 py-4" style={{ color: liquid ? 'rgba(232,242,255,.7)' : '#a0b8d0' }}>
             <div className="text-3xl">📭</div>
             <div className="text-xs">信箱暂时联系不上，稍后再看看？</div>
           </div>
         ) : !letter ? (
-          <div className="flex flex-col items-center justify-center h-full text-center gap-1 py-4" style={{ color: '#a0b8d0' }}>
+          <div className="flex flex-col items-center justify-center h-full text-center gap-1 py-4" style={{ color: liquid ? 'rgba(232,242,255,.7)' : '#a0b8d0' }}>
             <div className="text-3xl">📭</div>
             <div className="text-xs">还没有信，跟 AI 聊聊看看？</div>
           </div>
         ) : (
           <div
+            className="diary-section__letter-card"
             style={{
-              background: 'rgba(74,144,226,0.32)',
-              backdropFilter: 'blur(10px)', WebkitBackdropFilter: 'blur(10px)',
+              background: liquid ? 'transparent' : 'rgba(74,144,226,0.32)',
+              backdropFilter: liquid ? undefined : 'blur(10px)', WebkitBackdropFilter: liquid ? undefined : 'blur(10px)',
               borderRadius: 18,
               padding: '18px 18px',
-              boxShadow: '0 4px 20px rgba(30,70,150,0.18)',
+              boxShadow: liquid ? 'none' : '0 4px 20px rgba(30,70,150,0.18)',
             }}
           >
             <LetterBody text={letter.content || ''} />
@@ -167,27 +168,27 @@ export default function DiarySection({ theme }) {
       </div>
 
       {/* Write panel — always archives to Drive and delivers to resident CC. */}
-      <div className="flex-shrink-0 pt-2 mt-1" style={{ borderTop: '1px solid rgba(200,220,255,0.3)', paddingBottom: 'env(safe-area-inset-bottom, 0px)' }}>
+      <div className="flex-shrink-0 pt-2 mt-1 diary-section__compose" style={{ borderTop: liquid ? '0' : '1px solid rgba(200,220,255,0.3)', paddingBottom: 'env(safe-area-inset-bottom, 0px)' }}>
         {!ccSession ? (
-          <div style={{ padding: 10, color: '#a06f7c', fontSize: 12 }}>请先绑定 Claude Code 常驻聊天窗。</div>
+          <div style={{ padding: 10, color: liquid ? '#ffd7e2' : '#a06f7c', fontSize: 12 }}>请先绑定 Claude Code 常驻聊天窗。</div>
         ) : (
           <>
-            <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8, margin: '3px 0 7px', fontSize: 12, color: '#7a9cc0' }}>
-              <button type="button" onClick={() => setDeliveryMode('now')} style={{ border: 0, borderRadius: 999, padding: '5px 10px', color: deliveryMode === 'now' ? '#fff' : '#6d8daf', background: deliveryMode === 'now' ? primary : 'rgba(220,232,248,.7)' }}>立即发送</button>
-              <button type="button" onClick={() => setDeliveryMode('scheduled')} style={{ border: 0, borderRadius: 999, padding: '5px 10px', color: deliveryMode === 'scheduled' ? '#fff' : '#6d8daf', background: deliveryMode === 'scheduled' ? primary : 'rgba(220,232,248,.7)' }}>定时发送</button>
-              <button type="button" onClick={() => setDetailsOpen(value => !value)} style={{ marginLeft: deliveryMode === 'scheduled' ? 0 : 'auto', border: 0, borderRadius: 999, padding: '5px 9px', color: detailsOpen ? primaryDark : '#8295aa', background: detailsOpen ? `${primary}18` : 'transparent' }}>
+            <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8, margin: '3px 0 7px', fontSize: 12, color: liquid ? 'rgba(225,239,255,.72)' : '#7a9cc0' }}>
+              <button type="button" onClick={() => setDeliveryMode('now')} style={{ border: liquid ? '1px solid rgba(255,255,255,.16)' : 0, borderRadius: 999, padding: '5px 10px', color: deliveryMode === 'now' ? '#fff' : (liquid ? 'rgba(230,241,255,.72)' : '#6d8daf'), background: deliveryMode === 'now' ? (liquid ? 'rgba(134,188,255,.30)' : primary) : (liquid ? 'rgba(255,255,255,.06)' : 'rgba(220,232,248,.7)') }}>立即发送</button>
+              <button type="button" onClick={() => setDeliveryMode('scheduled')} style={{ border: liquid ? '1px solid rgba(255,255,255,.16)' : 0, borderRadius: 999, padding: '5px 10px', color: deliveryMode === 'scheduled' ? '#fff' : (liquid ? 'rgba(230,241,255,.72)' : '#6d8daf'), background: deliveryMode === 'scheduled' ? (liquid ? 'rgba(134,188,255,.30)' : primary) : (liquid ? 'rgba(255,255,255,.06)' : 'rgba(220,232,248,.7)') }}>定时发送</button>
+              <button type="button" onClick={() => setDetailsOpen(value => !value)} style={{ marginLeft: deliveryMode === 'scheduled' ? 0 : 'auto', border: 0, borderRadius: 999, padding: '5px 9px', color: liquid ? 'rgba(235,244,255,.78)' : (detailsOpen ? primaryDark : '#8295aa'), background: detailsOpen ? (liquid ? 'rgba(255,255,255,.10)' : `${primary}18`) : 'transparent' }}>
                 {detailsOpen ? '收起心情天气' : `${mood || weather ? `${mood || ''}${weather || ''} ` : ''}心情天气⌄`}
               </button>
-              {deliveryMode === 'scheduled' && <input type="datetime-local" value={deliverAt} min={defaultDeliveryTime()} onChange={e => setDeliverAt(e.target.value)} style={{ minWidth: 180, flex: '1 1 100%', border: '1px solid rgba(160,190,225,.45)', borderRadius: 9, padding: '5px 6px', color: '#52749a', background: 'rgba(255,255,255,.76)', fontSize: 11 }} />}
+              {deliveryMode === 'scheduled' && <input type="datetime-local" value={deliverAt} min={defaultDeliveryTime()} onChange={e => setDeliverAt(e.target.value)} style={{ minWidth: 180, flex: '1 1 100%', border: '1px solid rgba(160,190,225,.45)', borderRadius: 9, padding: '5px 6px', color: liquid ? '#f3f8ff' : '#52749a', background: liquid ? 'rgba(255,255,255,.10)' : 'rgba(255,255,255,.76)', fontSize: 11 }} />}
             </div>
             {detailsOpen && (
-              <div style={{ marginBottom: 7, padding: '7px 8px', borderRadius: 12, background: 'rgba(235,242,252,.56)' }}>
+              <div style={{ marginBottom: 7, padding: '7px 8px', borderRadius: 12, background: liquid ? 'rgba(255,255,255,.06)' : 'rgba(235,242,252,.56)' }}>
                 <div className="flex items-center gap-1 overflow-x-auto">
-                  <span style={{ fontSize: 11, color: '#7a9cc0', flexShrink: 0 }}>心情</span>
+                  <span style={{ fontSize: 11, color: liquid ? 'rgba(225,239,255,.72)' : '#7a9cc0', flexShrink: 0 }}>心情</span>
                   {MOOD_OPTIONS.map(m => <button key={m} style={emojiBtn(mood === m)} onClick={() => setMood(current => current === m ? null : m)}>{m}</button>)}
                 </div>
                 <div className="flex items-center gap-1 mt-1 overflow-x-auto">
-                  <span style={{ fontSize: 11, color: '#7a9cc0', flexShrink: 0 }}>天气</span>
+                  <span style={{ fontSize: 11, color: liquid ? 'rgba(225,239,255,.72)' : '#7a9cc0', flexShrink: 0 }}>天气</span>
                   {WEATHER_OPTIONS.map(w => <button key={w} style={emojiBtn(weather === w)} onClick={() => setWeather(current => current === w ? null : w)}>{w}</button>)}
                 </div>
               </div>
@@ -201,9 +202,9 @@ export default function DiarySection({ theme }) {
                 rows={1}
                 style={{
                   flex: 1, height: 44, minHeight: 44, maxHeight: 44, resize: 'none', overflowY: 'auto',
-                  background: 'rgba(255,255,255,0.75)',
-                  border: '1px solid rgba(200,220,255,0.5)',
-                  borderRadius: 22, padding: '11px 15px', fontSize: 13, lineHeight: '20px', color: '#2c5282',
+                  background: liquid ? 'rgba(255,255,255,0.08)' : 'rgba(255,255,255,0.75)',
+                  border: liquid ? '1px solid rgba(255,255,255,.19)' : '1px solid rgba(200,220,255,0.5)',
+                  borderRadius: 22, padding: '11px 15px', fontSize: 13, lineHeight: '20px', color: liquid ? '#f8fbff' : '#2c5282',
                   outline: 'none', fontFamily: 'inherit', boxSizing: 'border-box',
                 }}
               />
@@ -213,18 +214,28 @@ export default function DiarySection({ theme }) {
                 className="rounded-full text-sm font-medium text-white transition-all duration-200 flex-shrink-0"
                 style={{
                   width: 44, height: 44, padding: 0,
-                  background: (!content.trim() || sending) ? 'rgba(150,170,200,0.4)' : `linear-gradient(135deg, ${primary}, ${primaryDark})`,
-                  boxShadow: (!content.trim() || sending) ? 'none' : `0 4px 12px ${primary}55`,
+                  background: (!content.trim() || sending) ? 'rgba(150,170,200,0.28)' : (liquid ? 'linear-gradient(135deg,rgba(159,207,255,.74),rgba(87,133,207,.78))' : `linear-gradient(135deg, ${primary}, ${primaryDark})`),
+                  boxShadow: (!content.trim() || sending) ? 'none' : (liquid ? '0 5px 18px rgba(78,139,222,.30)' : `0 4px 12px ${primary}55`),
                   border: 'none', cursor: (!content.trim() || sending) ? 'default' : 'pointer',
                 }}
               >
                 📮
               </button>
             </div>
-            {sendStatus && <div style={{ marginTop: 5, paddingInline: 2, color: sendStatus.startsWith('寄出失败') ? '#b76472' : '#668b78', fontSize: 11 }}>{sendStatus}</div>}
+            {sendStatus && <div style={{ marginTop: 5, paddingInline: 2, color: sendStatus.startsWith('寄出失败') ? (liquid ? '#ffd1dc' : '#b76472') : (liquid ? '#cdebdc' : '#668b78'), fontSize: 11 }}>{sendStatus}</div>}
           </>
         )}
       </div>
+      {liquid && <style>{`
+        .diary-section--liquid{gap:2.6%;color:#f8fbff}
+        .diary-section--liquid .diary-section__letters{padding:4.2% 4.6% 3.2%;box-sizing:border-box;scrollbar-width:none}
+        .diary-section--liquid .diary-section__letters::-webkit-scrollbar{display:none}
+        .diary-section--liquid .diary-section__letter-card{min-height:100%;box-sizing:border-box}
+        .diary-section--liquid .diary-section__letter-card>div{font-family:'ZCOOL XiaoWei','Noto Serif SC',serif;font-size:16px!important;line-height:1.9!important;color:#f8fbff!important;text-shadow:0 1px 10px rgba(0,19,50,.24)}
+        .diary-section--liquid .diary-section__compose{padding:13px 4.2% 12px;margin:0;box-sizing:border-box}
+        .diary-section--liquid textarea::placeholder{color:rgba(229,240,255,.55)}
+        .diary-section--liquid input{color-scheme:dark}
+      `}</style>}
     </div>
   )
 }
