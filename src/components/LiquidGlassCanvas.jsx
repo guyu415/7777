@@ -160,7 +160,7 @@ export default function LiquidGlassCanvas() {
     const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 2)
     camera.position.z = 1
     const geometry = new THREE.PlaneGeometry(2, 2)
-    const backgroundMaterial = new THREE.ShaderMaterial({
+    const backgroundMaterial = new THREE.RawShaderMaterial({
       glslVersion: THREE.GLSL3,
       uniforms: { uTime: { value: 0 } },
       vertexShader,
@@ -180,7 +180,7 @@ export default function LiquidGlassCanvas() {
     })
     paintComposeRT.texture.colorSpace = THREE.SRGBColorSpace
 
-    const glassMaterial = new THREE.ShaderMaterial({
+    const glassMaterial = new THREE.RawShaderMaterial({
       glslVersion: THREE.GLSL3,
       uniforms: {
         uPaintCompose: { value: paintComposeRT.texture },
