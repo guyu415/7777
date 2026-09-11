@@ -261,10 +261,10 @@ export default function DiarySection({ theme, liquid = false }) {
         .diary-section__history small{grid-column:1/-1;font-size:10px;color:rgba(225,239,255,.6)}
         .diary-section__history small button{color:inherit;background:none;border:0;padding:4px 0;text-decoration:underline}
         .diary-section--liquid :is(button,select,textarea):focus-visible{outline:2px solid #b7ddff;outline-offset:2px}
-        .diary-section--liquid .diary-section__letters{min-height:0;overflow:auto;overscroll-behavior:contain;padding:12px 4px 20px;box-sizing:border-box;scrollbar-width:none}
+        .diary-section--liquid .diary-section__letters{min-height:0;overflow:auto;overscroll-behavior:contain;padding:6px 4px 12px;box-sizing:border-box;scrollbar-width:none}
         .diary-section--liquid .diary-section__letters::-webkit-scrollbar{display:none}
         .diary-section--liquid .diary-section__letter-card{box-sizing:border-box;padding:8px 10px!important}
-        .diary-section--liquid .diary-section__letter-card>div{font-family:'ZCOOL XiaoWei','Noto Serif SC',serif;font-size:16px!important;line-height:1.9!important;color:#f8fbff!important;text-shadow:0 1px 10px rgba(0,19,50,.24)}
+        .diary-section--liquid .diary-section__letter-card>div{font-family:'ZCOOL XiaoWei','Noto Serif SC',serif;font-size:14px!important;line-height:1.8!important;color:#f8fbff!important;text-shadow:0 1px 10px rgba(0,19,50,.24)}
         .diary-section--liquid .diary-section__compose{max-height:45dvh;overflow:auto;overscroll-behavior:contain;padding:12px 4px;margin:0;box-sizing:border-box}
         .diary-section--liquid textarea::placeholder{color:rgba(229,240,255,.55)}
         .diary-section--liquid input{color-scheme:dark}
