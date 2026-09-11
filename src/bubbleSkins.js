@@ -49,7 +49,7 @@ export const KAKAO_BUBBLE_SKINS = {
   'kakao-rainbow-bear': {
     send: {
       first: androidFrame('/assets/bubbles/rainbow-bear/send-01.png', 151, 172, 3, 43, 44, 125, 126, '34px 28px 8px 10px', 62, 58),
-      follow: androidFrame('/assets/bubbles/rainbow-bear/send-02.png', 109, 100, 3, 43, 44, 53, 54, '9px 28px 7px 9px', 48, 39),
+      follow: androidFrame('/assets/bubbles/rainbow-bear/send-02.png', 151, 100, 3, 43, 44, 53, 54, '9px 28px 7px 9px', 48, 39),
     },
     receive: {
       first: androidFrame('/assets/bubbles/rainbow-bear/receive-01.png', 109, 100, 3, 65, 66, 52, 53, '9px 8px 7px 14px', 48, 39),
