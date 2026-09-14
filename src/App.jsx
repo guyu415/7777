@@ -1,4 +1,5 @@
-import { lazy, Suspense, useCallback, useEffect, useState, useRef } from 'react'
+import { lazy, Suspense, useCallback, useEffect, useMemo, useState, useRef } from 'react'
+import { useShallow } from 'zustand/react/shallow'
 import { useStore, getCustomFont, getBlob, getMessages, saveMessage, deleteMessageFromDB, deleteMessagesForSession } from './store'
 import { THEMES } from './themes'
 import ChatWindow from './components/Chat/ChatWindow'
@@ -76,7 +77,14 @@ export default function App() {
     defaultFontSize,
     customFonts,
     sessions, currentSessionId,
-  } = useStore()
+  } = useStore(useShallow(s => ({
+    currentView: s.currentView, setCurrentView: s.setCurrentView,
+    setCurrentSessionId: s.setCurrentSessionId,
+    currentGroupChatId: s.currentGroupChatId, setCurrentGroupChatId: s.setCurrentGroupChatId,
+    themeId: s.themeId, userBubbleTextColor: s.userBubbleTextColor,
+    chatBg: s.chatBg, fontFamily: s.fontFamily, defaultFontSize: s.defaultFontSize,
+    customFonts: s.customFonts, sessions: s.sessions, currentSessionId: s.currentSessionId,
+  })))
 
   const openAiReading = useCallback(() => {
     setCurrentView('aiReading')
@@ -507,7 +515,15 @@ export default function App() {
   const effectiveFontFamily = currentSession?.fontFamily ?? globalFontFamily
   const effectiveFontSize = currentSession?.fontSize ?? defaultFontSize
 
-  const theme = themeWithUserBubbleText(THEMES[effectiveThemeId] || THEMES.pink, userBubbleTextColor)
+  const theme = useMemo(
+    () => themeWithUserBubbleText(THEMES[effectiveThemeId] || THEMES.pink, userBubbleTextColor),
+    [effectiveThemeId, userBubbleTextColor],
+  )
+  // Claude Code is a resident conversation. Keep its already-loaded window
+  // alive while settings/other panels are open so returning does not rebuild
+  // the virtualized list and reload the entire history from storage.
+  const keepResidentCcChat = currentSession?.providerName === 'claude-code-vps'
+  const showChatWindow = currentView === 'chat'
 
   const [bgUrl, setBgUrl] = useState(null)
 
@@ -830,11 +846,23 @@ export default function App() {
             : 'transparent',
         }}
       >
-        <div className="flex-1 overflow-hidden min-h-0">
+        <div className="relative flex-1 overflow-hidden min-h-0">
           {/* One shared window for every provider (Claude Code VPS, Codex
               VPS, plain API-key) — ChatWindow.jsx itself picks the right
               runtime adapter internally, see its own top-of-file comment. */}
-          {currentView === 'chat' && <ChatWindow theme={theme} />}
+          {(showChatWindow || keepResidentCcChat) && (
+            <div
+              className="absolute inset-0"
+              aria-hidden={!showChatWindow}
+              style={{
+                visibility: showChatWindow ? 'visible' : 'hidden',
+                pointerEvents: showChatWindow ? 'auto' : 'none',
+                zIndex: showChatWindow ? 2 : 0,
+              }}
+            >
+              <ChatWindow theme={theme} />
+            </div>
+          )}
           {currentView === 'groupChat' && currentGroupChatId && (
             <GroupChatWindow theme={theme} chatId={currentGroupChatId} onClose={() => setCurrentView('sessions')} />
           )}

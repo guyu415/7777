@@ -930,7 +930,7 @@ export default function ChatWindow({ theme }) {
             selectedIds={selectedMessageIds}
             onToggleSelect={toggleMessageSelection}
             emptyAiName={effectiveAiName}
-            emptyHasApiKey={isCodexSession ? true : !!effectiveApiKey}
+            emptyHasApiKey={isFixedVpsSession || !!effectiveApiKey}
             onEmptyConfigureClick={goToGlobalSettings}
           />
         </div>
