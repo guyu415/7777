@@ -86,6 +86,7 @@ import {
   injectMusicRuntimeContextIntoTurnParams,
   renderMusicRuntimeContext,
 } from './music-runtime-context.ts'
+import { buildSpicyVisual, spicyRollDelivery, spicyRollUserText } from './spicy-monopoly.ts'
 import { SENSEVOICE_MAX_AUDIO_BYTES, transcribeWithSenseVoice } from './sensevoice-stt.ts'
 import { analyzeVoiceAcoustics, type VoiceAcoustics } from './opensmile-acoustics.ts'
 import {
@@ -495,6 +496,7 @@ const GOMOKU_FILE = process.env.AI_COMPANION_GOMOKU_FILE ?? join(ROOT, 'state', 
 const GOMOKU_BOARD_SIZE = 15
 const DICE_DUEL_FILE = process.env.AI_COMPANION_DICE_DUEL_FILE ?? join(ROOT, 'state', 'dice-duel.json')
 const SPICY_VISUAL_STATE_FILE = process.env.AI_COMPANION_SPICY_VISUAL_STATE_FILE ?? join(ROOT, 'state', 'spicy-monopoly-cc.json')
+const SPICY_MONOPOLY_BASE_URL = process.env.SPICY_MONOPOLY_BASE_URL ?? 'http://127.0.0.1:8069'
 
 // 心潮 (xinchao-dynamic-mind) — a separate, independently-deployed dynamic
 // state layer (Docker Compose, 127.0.0.1:18110 only, SHADOW_MODE=true,
@@ -950,6 +952,7 @@ type Msg = {
   // A safe handoff into the user's official NetEase app. This contains only
   // catalog metadata + app/web links; no audio URL, cookie, or media bytes.
   musicAction?: NeteasePhoneAction
+  source?: 'spicy_roll'
   // Server-generated durable completion card for the main chat. The focus
   // page can disappear after acknowledgement; this record remains in normal
   // CC history and recovers on refresh/reconnect like every other message.
@@ -4724,6 +4727,100 @@ function beginMainCcTurn(input: QueuedCcMessage) {
   deliver(id, deliverText, { clientTime, contextPrefix: contextPrefix || undefined })
   xinchaoHeartbeat(id, XINCHAO_CC_SESSION_ID)
   log('inbound', { id, chars: text.length, turnId: id, hasImage: !!imagePath, hasFile: !!filePath, queued: input.queuedAt < Date.now() - 50 })
+}
+
+function spicyRequestError(message: string, status = 502) {
+  return Object.assign(new Error(message), { status })
+}
+
+async function fetchSpicyJson(pathname: string, init?: RequestInit): Promise<Record<string, unknown>> {
+  const controller = new AbortController()
+  const timeout = setTimeout(() => controller.abort(), 15_000)
+  try {
+    const response = await fetch(`${SPICY_MONOPOLY_BASE_URL}${pathname}`, { ...init, signal: controller.signal })
+    const text = await response.text()
+    let data: unknown = {}
+    try { data = text ? JSON.parse(text) : {} } catch { data = { detail: text } }
+    if (!response.ok) {
+      const detail = typeof (data as any)?.detail === 'string'
+        ? (data as any).detail
+        : typeof (data as any)?.error === 'string'
+          ? (data as any).error
+          : `Spice 游戏引擎返回 ${response.status}`
+      throw spicyRequestError(detail, response.status >= 400 && response.status < 500 ? 409 : 502)
+    }
+    return data && typeof data === 'object' && !Array.isArray(data) ? data as Record<string, unknown> : {}
+  } catch (error) {
+    if ((error as any)?.status) throw error
+    const message = (error as any)?.name === 'AbortError' ? 'Spice 游戏引擎响应超时' : 'Spice 游戏引擎暂时连不上'
+    throw spicyRequestError(message)
+  } finally {
+    clearTimeout(timeout)
+  }
+}
+
+function readSpicySavedSession(): Record<string, unknown> {
+  try {
+    const saved = JSON.parse(readFileSync(SPICY_VISUAL_STATE_FILE, 'utf8'))
+    return saved && typeof saved === 'object' && !Array.isArray(saved) ? saved : {}
+  } catch {
+    return {}
+  }
+}
+
+async function refreshSpicyVisualAfterDirectRoll(gameId: string, result: Record<string, unknown>) {
+  const state = await fetchSpicyJson(`/state/${encodeURIComponent(gameId)}`)
+  const saved = readSpicySavedSession()
+  if (saved.game_id !== gameId) return
+  const next = { ...saved, visual: buildSpicyVisual(saved, state, result) }
+  mkdirSync(dirname(SPICY_VISUAL_STATE_FILE), { recursive: true })
+  const tmp = `${SPICY_VISUAL_STATE_FILE}.${process.pid}.tmp`
+  writeFileSync(tmp, JSON.stringify(next))
+  renameSync(tmp, SPICY_VISUAL_STATE_FILE)
+}
+
+async function beginSpicyMonopolyBoardRoll(clientTime?: unknown) {
+  // Recheck at the mutation boundary as well as in the HTTP route. Two POSTs
+  // can both pass a pre-body-parse check before either one reaches this
+  // function; startTurn below must reserve the engine roll atomically.
+  if (resetInFlight) throw spicyRequestError('reset_in_progress', 409)
+  if (tidalIsActive()) throw spicyRequestError('tidal_active', 409)
+  if (currentTurn) throw spicyRequestError('turn_in_progress', 409)
+  const saved = readSpicySavedSession()
+  const gameId = typeof saved.game_id === 'string' ? saved.game_id.trim() : ''
+  if (!gameId) throw spicyRequestError('还没有进行中的 Spice 大富翁棋局', 409)
+
+  const id = `spicy-${nextId()}`
+  startTurn(id, 'main')
+  try {
+    // The game engine owns the random roll. Calling its existing endpoint
+    // directly keeps the chat bubble, board animation and persisted game on
+    // one authoritative result instead of asking the model to roll for the
+    // user through a natural-language message.
+    const result = await fetchSpicyJson(`/roll/${encodeURIComponent(gameId)}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: '{}',
+    })
+    try {
+      await refreshSpicyVisualAfterDirectRoll(gameId, result)
+    } catch (error) {
+      // The roll already mutated the engine state, so never report failure
+      // and invite a retry that would advance a second time. Polling can
+      // recover on the next successful state refresh.
+      log('spicy_visual_refresh_error', { turnId: id, gameId, error: String(error) })
+    }
+
+    const text = spicyRollUserText(result)
+    broadcastMsg({ type: 'msg', id, from: 'user', text, ts: Date.now(), turnId: id, source: 'spicy_roll' })
+    deliver(id, spicyRollDelivery(result), { clientTime })
+    xinchaoHeartbeat(id, XINCHAO_CC_SESSION_ID)
+    log('spicy_board_roll', { turnId: id, gameId, who: result.who, dice: result.dice })
+    return { ok: true, turnId: id, dice: result.dice ?? null }
+  } catch (error) {
+    failTurn('spicy_roll_failed')
+    throw error
+  }
 }
 
 function beginReadingTurn(turnId: string, sessionId: string, clientTime?: unknown) {
@@ -10128,6 +10225,25 @@ Bun.serve<{ authed: true }>({
         return jsonResponse({ state: saved?.visual ?? null }, { headers: corsHeadersFor(origin) })
       } catch {
         return jsonResponse({ state: null }, { headers: corsHeadersFor(origin) })
+      }
+    }
+
+    if (url.pathname === '/spicy/roll' && req.method === 'POST') {
+      const gate = authGate()
+      if (gate) return gate
+      const cors = corsHeadersFor(origin)
+      if (resetInFlight) return jsonResponse({ error: 'reset_in_progress' }, { status: 409, headers: cors })
+      if (tidalIsActive()) return jsonResponse({ error: 'tidal_active' }, { status: 409, headers: cors })
+      if (currentTurn) return jsonResponse({ error: 'turn_in_progress' }, { status: 409, headers: cors })
+      let body: { clientTime?: unknown } = {}
+      try { body = await req.json() } catch {}
+      try {
+        const result = await beginSpicyMonopolyBoardRoll(body.clientTime)
+        return jsonResponse(result, { headers: cors })
+      } catch (error) {
+        const status = Number((error as any)?.status) || 502
+        const message = error instanceof Error ? error.message : 'Spice 掷骰失败'
+        return jsonResponse({ error: message }, { status, headers: cors })
       }
     }
 

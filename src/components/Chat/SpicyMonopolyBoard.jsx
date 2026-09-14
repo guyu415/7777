@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { ChevronLeft } from 'lucide-react'
-import { getSpicyVisualState } from '../../services/companion'
+import { getSpicyVisualState, onTurnEnd } from '../../services/companion'
 
 const FACES = ['⚀', '⚁', '⚂', '⚃', '⚄', '⚅']
 const TILE_META = {
@@ -23,10 +23,13 @@ export default function SpicyMonopolyBoard({ theme, onClose, onRequestRoll, isLo
   const [rolling, setRolling] = useState(false)
   const [movingPlayer, setMovingPlayer] = useState('')
   const [requested, setRequested] = useState(false)
-  const [error, setError] = useState('')
+  const [loadError, setLoadError] = useState('')
+  const [rollError, setRollError] = useState('')
   const initialized = useRef(false)
   const lastEventSeq = useRef(0)
   const positionsRef = useRef({})
+  const pendingTurn = useRef('')
+  const requestTimer = useRef(null)
   const timers = useRef([])
 
   const clearTimers = () => {
@@ -55,7 +58,6 @@ export default function SpicyMonopolyBoard({ theme, onClose, onRequestRoll, isLo
         return
       }
       lastEventSeq.current = event.seq
-      setRequested(false)
       setGame(next)
       const who = event.who
       const dice = Number(event.dice)
@@ -106,15 +108,57 @@ export default function SpicyMonopolyBoard({ theme, onClose, onRequestRoll, isLo
       try {
         const data = await getSpicyVisualState()
         apply(data.state)
-        setError('')
+        setLoadError('')
       } catch (err) {
-        if (alive) setError(err.message || '棋盘暂时连不上')
+        if (alive) setLoadError(err.message || '棋盘暂时连不上')
       }
     }
     load()
     const poll = setInterval(load, 700)
-    return () => { alive = false; clearInterval(poll); clearTimers() }
+    return () => {
+      alive = false
+      clearInterval(poll)
+      clearTimers()
+      clearTimeout(requestTimer.current)
+    }
   }, [])
+
+  useEffect(() => onTurnEnd((turnId) => {
+    if (!pendingTurn.current || turnId !== pendingTurn.current) return
+    pendingTurn.current = ''
+    clearTimeout(requestTimer.current)
+    setRequested(false)
+  }), [])
+
+  const requestRoll = async () => {
+    if (rolling || movingPlayer || requested || isLoading) return
+    setRollError('')
+    setRequested(true)
+    try {
+      const result = await onRequestRoll?.()
+      pendingTurn.current = result?.turnId || ''
+      clearTimeout(requestTimer.current)
+      if (pendingTurn.current) {
+        requestTimer.current = setTimeout(() => {
+          pendingTurn.current = ''
+          setRequested(false)
+        }, 30_000)
+      } else {
+        setRequested(false)
+      }
+    } catch (err) {
+      const code = err?.code
+      const message = code === 'turn_in_progress'
+        ? 'CC 还在处理上一轮，等一下再掷'
+        : code === 'tidal_active'
+          ? 'CC 正在整理记忆，等一下再掷'
+          : code === 'reset_in_progress'
+            ? '对话正在重置，等一下再掷'
+            : err?.message || '骰子没掷出去'
+      setRollError(message)
+      setRequested(false)
+    }
+  }
 
   const names = Object.keys(game?.positions || {})
   const colors = ['#ff6f9f', '#668cff']
@@ -174,14 +218,14 @@ export default function SpicyMonopolyBoard({ theme, onClose, onRequestRoll, isLo
                 <div className={rolling ? 'spicy-dice-roll' : ''} style={{ fontSize: 'clamp(38px,11vw,58px)', lineHeight: 1, color: primary, filter: `drop-shadow(0 5px 10px ${primary}35)` }}>{diceFace ? FACES[diceFace - 1] : '◇'}</div>
                 <div className="mt-1.5 text-xs font-bold" style={{ color: '#735866' }}>{rolling ? '骰子滚动中…' : movingPlayer ? `${movingPlayer} 前进中…` : `轮到 ${game.turn || '下一位'}`}</div>
                 <div className="mt-1 text-xs" style={{ color: '#a08d98' }}>回合 {game.round || 0}/{game.total_rounds || '?'}</div>
-                <button onClick={() => { setRequested(true); onRequestRoll?.(); timers.current.push(setTimeout(() => setRequested(false), 15000)) }} disabled={busy} className="mt-2.5 rounded-full px-5 py-2 text-white text-xs font-semibold disabled:opacity-50" style={{ border: 0, background: `linear-gradient(135deg, ${primary}, ${theme?.primaryDark || '#718ee8'})` }}>{busy ? '等 CC…' : '摇骰子'}</button>
+                <button onClick={requestRoll} disabled={busy} className="mt-2.5 rounded-full px-5 py-2 text-white text-xs font-semibold disabled:opacity-50" style={{ border: 0, background: `linear-gradient(135deg, ${primary}, ${theme?.primaryDark || '#718ee8'})` }}>{requested ? '等 CC…' : rolling ? '骰子滚动中…' : movingPlayer ? '棋子前进中…' : '摇骰子'}</button>
               </>
             )}
           </div>
         </div>
 
         {game && <div className="w-full max-w-[305px] mt-2 grid grid-cols-2 gap-2">{names.map((name, index) => <div key={name} className="rounded-xl px-2.5 py-1.5" style={{ background: 'rgba(255,255,255,.72)', border: `1px solid ${colors[index]}22` }}><div className="text-xs font-semibold truncate" style={{ color: colors[index] }}>{name}</div><div className="text-[10px] mt-0.5" style={{ color: '#887684' }}>💰 {game.coins?.[name] ?? 0} · 第 {(game.laps?.[name] ?? 0) + 1} 圈 · 格 {positions[name] ?? 0}</div></div>)}</div>}
-        {error && <div className="mt-3 text-xs" style={{ color: '#d96f78' }}>{error}</div>}
+        {(rollError || loadError) && <div className="mt-3 text-xs" style={{ color: '#d96f78' }}>{rollError || loadError}</div>}
       </div>
     </section>
   )

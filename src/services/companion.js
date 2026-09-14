@@ -886,6 +886,13 @@ export async function getDiceDuelState(runtime = 'claude-code') {
 export async function getSpicyVisualState() {
   return companionJson('/spicy/visual-state')
 }
+export async function rollSpicyMonopoly() {
+  return companionJson('/spicy/roll', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ clientTime: clientTimeContext() }),
+  })
+}
 export async function rollDiceDuel(runtime = 'claude-code') {
   return companionJson('/dice/roll', {
     method: 'POST',

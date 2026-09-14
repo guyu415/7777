@@ -30,7 +30,7 @@ import LocationPreview from './LocationPreview'
 import PokeHapticTarget, { usePokeHapticArm } from './PokeHapticTarget'
 import { rollD6 } from '../../utils/dice'
 import { isPokeDoubleTap, POKE_RECEIVE_HAPTIC, POKE_SEND_HAPTIC } from '../../utils/poke'
-import { getXinchaoStatus, onXinchaoUpdate, getCodexMemoryFile, putCodexMemoryFile, uploadFileToCompanion, getTidalMemoryStatus, onPoke, onPokeHistorySnapshot, onCcReset, sendPoke, setUserPokeText } from '../../services/companion'
+import { getXinchaoStatus, onXinchaoUpdate, getCodexMemoryFile, putCodexMemoryFile, uploadFileToCompanion, getTidalMemoryStatus, onPoke, onPokeHistorySnapshot, onCcReset, sendPoke, setUserPokeText, rollSpicyMonopoly } from '../../services/companion'
 
 const SYNC_BASE = 'https://chat.xiaoman.xyz'
 const FAV_LIST_KEY = 'user:xiaoman2.26:voice_fav_list'
@@ -855,7 +855,7 @@ export default function ChatWindow({ theme }) {
             isLoading={isLoading}
             onRequestRoll={() => {
               updateActiveTime()
-              sendMessage('掷骰子', 'text').catch((e) => console.error('[SPICY] roll request failed:', e.message))
+              return rollSpicyMonopoly()
             }}
             onClose={() => setShowSpicy(false)}
           />
