@@ -855,7 +855,7 @@ export default function App() {
               className="absolute inset-0"
               aria-hidden={!showChatWindow}
               style={{
-                display: showChatWindow ? 'block' : 'none',
+                opacity: showChatWindow ? 1 : 0,
                 pointerEvents: showChatWindow ? 'auto' : 'none',
                 zIndex: showChatWindow ? 2 : 0,
               }}
