@@ -353,6 +353,8 @@ async function resolveNeteasePhoneAction(titleValue: unknown, artistValue: unkno
 // (path separators -> '-'). Not a second memory system — same files.
 const MEMORY_DIR = process.env.AI_COMPANION_MEMORY_DIR
   ?? join(process.env.HOME ?? '/home/companion', '.claude', 'projects', '-opt-ai-companion', 'memory')
+const PROJECT_INSTRUCTIONS_NAME = 'CLAUDE.md'
+const PROJECT_INSTRUCTIONS_PATH = process.env.AI_COMPANION_CLAUDE_MD ?? join(ROOT, PROJECT_INSTRUCTIONS_NAME)
 const MEMORY_BACKUP_DIR = join(ROOT, 'backups', 'memory-last')
 // Codex memory is deliberately not Claude Code's Auto Memory directory. It
 // is scoped by Eunoia conversation id and injected into that conversation's
@@ -3728,6 +3730,18 @@ function safeMemoryPath(filename: string): string | null {
   return p
 }
 
+function safeManagedMemoryPath(filename: string): string | null {
+  if (filename === PROJECT_INSTRUCTIONS_NAME) {
+    if (existsSync(PROJECT_INSTRUCTIONS_PATH) && lstatSync(PROJECT_INSTRUCTIONS_PATH).isSymbolicLink()) return null
+    return PROJECT_INSTRUCTIONS_PATH
+  }
+  return safeMemoryPath(filename)
+}
+
+function isProtectedMemoryFile(filename: string): boolean {
+  return filename === PROJECT_INSTRUCTIONS_NAME
+}
+
 function codexMemoryDir(sessionId: string): string {
   return join(CODEX_MEMORY_ROOT, codexSessionStorageKey(sessionId))
 }
@@ -3825,8 +3839,16 @@ function backupMemoryFile(filename: string, path: string) {
   }
 }
 
-function listMemoryFiles(): Array<{ name: string; size: number; mtime: number; kind: 'fixed' | 'on-demand' }> {
-  const out: Array<{ name: string; size: number; mtime: number; kind: 'fixed' | 'on-demand' }> = []
+function listMemoryFiles(): Array<{ name: string; size: number; mtime: number; kind: 'fixed' | 'on-demand'; deletable: boolean }> {
+  const out: Array<{ name: string; size: number; mtime: number; kind: 'fixed' | 'on-demand'; deletable: boolean }> = []
+  try {
+    const st = lstatSync(PROJECT_INSTRUCTIONS_PATH)
+    if (st.isFile() && !st.isSymbolicLink()) {
+      out.push({ name: PROJECT_INSTRUCTIONS_NAME, size: st.size, mtime: st.mtimeMs, kind: 'fixed', deletable: false })
+    }
+  } catch {
+    // The project instructions file is optional until first created.
+  }
   const walk = (dir: string, prefix = '') => {
     for (const name of readdirSync(dir)) {
       const relativeName = prefix ? `${prefix}/${name}` : name
@@ -3834,8 +3856,8 @@ function listMemoryFiles(): Array<{ name: string; size: number; mtime: number; k
       try {
         const st = lstatSync(p)
         if (st.isDirectory()) walk(p, relativeName)
-        else if (st.isFile() && MEMORY_RELATIVE_PATH_RE.test(relativeName)) {
-          out.push({ name: relativeName, size: st.size, mtime: st.mtimeMs, kind: relativeName === 'MEMORY.md' ? 'fixed' : 'on-demand' })
+        else if (st.isFile() && MEMORY_RELATIVE_PATH_RE.test(relativeName) && relativeName !== PROJECT_INSTRUCTIONS_NAME) {
+          out.push({ name: relativeName, size: st.size, mtime: st.mtimeMs, kind: relativeName === 'MEMORY.md' ? 'fixed' : 'on-demand', deletable: true })
         }
       } catch {
         // ignore races
@@ -3843,7 +3865,11 @@ function listMemoryFiles(): Array<{ name: string; size: number; mtime: number; k
     }
   }
   walk(MEMORY_DIR)
-  out.sort((a, b) => (a.kind === b.kind ? b.mtime - a.mtime : a.kind === 'fixed' ? -1 : 1))
+  out.sort((a, b) => {
+    if (a.name === PROJECT_INSTRUCTIONS_NAME) return -1
+    if (b.name === PROJECT_INSTRUCTIONS_NAME) return 1
+    return a.kind === b.kind ? b.mtime - a.mtime : a.kind === 'fixed' ? -1 : 1
+  })
   return out
 }
 
@@ -9896,13 +9922,13 @@ Bun.serve<{ authed: true }>({
       if (gate) return gate
       const cors = corsHeadersFor(origin)
       const name = url.searchParams.get('name') ?? ''
-      const p = safeMemoryPath(name)
+      const p = safeManagedMemoryPath(name)
       if (!p) return jsonResponse({ error: 'invalid filename' }, { status: 400, headers: cors })
       if (!existsSync(p)) return jsonResponse({ error: 'not found' }, { status: 404, headers: cors })
       try {
         const st = statSync(p)
         const content = readFileSync(p, 'utf8')
-        return jsonResponse({ name, content, size: st.size, mtime: st.mtimeMs }, { headers: cors })
+        return jsonResponse({ name, content, size: st.size, mtime: st.mtimeMs, kind: name === PROJECT_INSTRUCTIONS_NAME || name === 'MEMORY.md' ? 'fixed' : 'on-demand', deletable: !isProtectedMemoryFile(name) }, { headers: cors })
       } catch (err) {
         log('memory_get_error', { name, error: String(err) })
         return jsonResponse({ error: 'read failed' }, { status: 500, headers: cors })
@@ -9921,14 +9947,14 @@ Bun.serve<{ authed: true }>({
       }
       const name = typeof (body as any)?.name === 'string' ? (body as any).name : ''
       const content = typeof (body as any)?.content === 'string' ? (body as any).content : null
-      const p = safeMemoryPath(name)
+      const p = safeManagedMemoryPath(name)
       if (!p || content === null) return jsonResponse({ error: 'invalid filename or content' }, { status: 400, headers: cors })
       const contentBytes = Buffer.byteLength(content, 'utf8')
       if (contentBytes > MEMORY_FILE_MAX_BYTES) {
         return jsonResponse({ error: 'file too large', maxBytes: MEMORY_FILE_MAX_BYTES }, { status: 413, headers: cors })
       }
-      const totalOthers = memoryDirTotalBytes(name)
-      if (totalOthers + contentBytes > MEMORY_DIR_MAX_BYTES) {
+      const totalOthers = name === PROJECT_INSTRUCTIONS_NAME ? 0 : memoryDirTotalBytes(name)
+      if (name !== PROJECT_INSTRUCTIONS_NAME && totalOthers + contentBytes > MEMORY_DIR_MAX_BYTES) {
         return jsonResponse({ error: 'memory directory quota exceeded', maxBytes: MEMORY_DIR_MAX_BYTES }, { status: 413, headers: cors })
       }
       try {
@@ -9955,7 +9981,8 @@ Bun.serve<{ authed: true }>({
         return jsonResponse({ error: 'bad json' }, { status: 400, headers: cors })
       }
       const name = typeof (body as any)?.name === 'string' ? (body as any).name : ''
-      const p = safeMemoryPath(name)
+      if (isProtectedMemoryFile(name)) return jsonResponse({ error: 'protected_file' }, { status: 403, headers: cors })
+      const p = safeManagedMemoryPath(name)
       if (!p) return jsonResponse({ error: 'invalid filename' }, { status: 400, headers: cors })
       if (!existsSync(p)) return jsonResponse({ error: 'not found' }, { status: 404, headers: cors })
       try {

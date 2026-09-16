@@ -10,8 +10,8 @@ function formatTime(ms) {
   return d.toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false })
 }
 
-// VPS 本体记忆管理 — 直接读写生产 Claude Code 会话真实使用的 Auto Memory
-// Markdown 文件（不是 Eunoia 自己那套"存入记忆"/G1 记忆，两者互不相关）。
+// VPS 本体记忆管理 — 直接读写生产 Claude Code 会话真实使用的
+// 项目指令和 Auto Memory Markdown 文件。
 export default function CompanionMemory({ theme, onBack }) {
   const primary = theme?.primary || '#4aacf0'
   const primaryDark = theme?.primaryDark || '#2196d3'
@@ -25,8 +25,8 @@ export default function CompanionMemory({ theme, onBack }) {
   const [saveError, setSaveError] = useState(null)
   const [newName, setNewName] = useState('')
   const [showNewForm, setShowNewForm] = useState(false)
-  const fixedFiles = files?.filter(f => f.kind === 'fixed' || f.name === 'MEMORY.md') || []
-  const onDemandFiles = files?.filter(f => f.kind === 'on-demand' || (f.kind == null && f.name !== 'MEMORY.md')) || []
+  const fixedFiles = files?.filter(f => f.kind === 'fixed' || f.name === 'CLAUDE.md' || f.name === 'MEMORY.md') || []
+  const onDemandFiles = files?.filter(f => f.kind === 'on-demand' || (f.kind == null && f.name !== 'CLAUDE.md' && f.name !== 'MEMORY.md')) || []
 
   const refreshList = async () => {
     setLoadError(null)
@@ -127,7 +127,7 @@ export default function CompanionMemory({ theme, onBack }) {
         {!selected ? (
           <div className="space-y-3">
             <p className="text-[11px]" style={{ color: '#7a9cc0' }}>
-              MEMORY.md 会固定注入常驻会话；“按需提取”目录里的资料会在相关话题出现时按需调用。这里列出两类真实文件，不会复制成另一套记忆。
+              CLAUDE.md 保存长期行为指令，MEMORY.md 保存精简的 Auto Memory，两者都会固定加载；其他资料只在相关话题出现时按需调用。
             </p>
             {loadError && (
               <div className="text-xs p-3 rounded-xl" style={{ background: 'rgba(255,100,100,0.08)', color: '#e07070' }}>{loadError}</div>
@@ -149,11 +149,13 @@ export default function CompanionMemory({ theme, onBack }) {
                   >
                     <div className="flex items-center justify-between gap-2">
                       <span className="text-sm font-semibold break-all" style={{ color: '#2c5282' }}>{f.name}</span>
-                      <button
-                        onClick={e => { e.stopPropagation(); remove(f.name) }}
-                        className="text-xs px-2 py-1 rounded-lg flex-shrink-0"
-                        style={{ color: '#e07070', background: 'rgba(255,100,100,0.08)' }}
-                      >删除</button>
+                      {f.deletable !== false && (
+                        <button
+                          onClick={e => { e.stopPropagation(); remove(f.name) }}
+                          className="text-xs px-2 py-1 rounded-lg flex-shrink-0"
+                          style={{ color: '#e07070', background: 'rgba(255,100,100,0.08)' }}
+                        >删除</button>
+                      )}
                     </div>
                     <div className="text-[11px] mt-1" style={{ color: '#a0b8d0' }}>
                       {f.size} 字节 · 更新于 {formatTime(f.mtime)}
@@ -205,10 +207,12 @@ export default function CompanionMemory({ theme, onBack }) {
                 style={{ background: (!dirty || saving) ? 'rgba(120,160,220,0.4)' : `linear-gradient(135deg, ${primary}, ${primaryDark})` }}>
                 {saving ? '保存中…' : dirty ? '保存修改' : '已保存'}
               </button>
-              <button onClick={() => remove(selected.name)} className="px-4 py-2.5 rounded-full text-sm"
-                style={{ background: 'rgba(255,100,100,0.08)', color: '#e07070', border: '1px solid rgba(255,100,100,0.2)' }}>
-                删除
-              </button>
+              {selected.deletable !== false && (
+                <button onClick={() => remove(selected.name)} className="px-4 py-2.5 rounded-full text-sm"
+                  style={{ background: 'rgba(255,100,100,0.08)', color: '#e07070', border: '1px solid rgba(255,100,100,0.2)' }}>
+                  删除
+                </button>
+              )}
             </div>
           </div>
         )}
