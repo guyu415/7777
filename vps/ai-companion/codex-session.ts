@@ -81,3 +81,31 @@ export function codexReconnectDelayMs(attempt: number): number {
   const safeAttempt = Math.max(1, Math.floor(Number(attempt) || 1))
   return Math.min(10_000, 500 * (2 ** (safeAttempt - 1)))
 }
+
+export type CodexGroupTurnPhase = 'free' | 'candidate' | 'mention' | 'expand'
+
+export type CodexGroupFallbackAction =
+  | { kind: 'none' }
+  | { kind: 'speak'; text: string }
+  | { kind: 'candidate'; direction: string }
+  | { kind: 'cancel_expand' }
+
+// Models normally use group_speak/group_request_to_speak/group_pass, but an
+// otherwise successful turn may still return ordinary final text. Group
+// threads have no transcript surface of their own, so decide explicitly how
+// to preserve that text without duplicating a successful tool action.
+export function codexGroupFallbackAction(input: {
+  actionTaken: boolean
+  agentText: unknown
+  phase: CodexGroupTurnPhase
+  candidateId?: string | null
+}): CodexGroupFallbackAction {
+  if (input.actionTaken) return { kind: 'none' }
+  const text = typeof input.agentText === 'string' ? input.agentText.trim() : ''
+  if (text) {
+    if (input.phase === 'candidate') return { kind: 'candidate', direction: text.slice(0, 24) }
+    return { kind: 'speak', text }
+  }
+  if (input.phase === 'expand' && input.candidateId) return { kind: 'cancel_expand' }
+  return { kind: 'none' }
+}

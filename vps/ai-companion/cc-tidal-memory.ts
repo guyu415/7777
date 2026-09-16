@@ -6,6 +6,7 @@ export type VisibleCcMessage = {
   from: 'user' | 'cc'
   text: string
   ts: number
+  turnId?: string
 }
 
 export type QueuedCcMessage = {
@@ -37,7 +38,28 @@ export type RollingSummary = {
   preferences: string
 }
 
+export type SubjectiveCheckpoint = {
+  continuityBridge: string
+}
+
+export type TidalBoundaryOption = {
+  boundaryId: string
+  boundaryTs: number
+  sourceCount: number
+  preservedCount: number
+  preservedTokens: number
+  boundaryPreview: string
+}
+
+export type TidalReviewMode = 'ask' | 'reask' | 'force'
+
+export type TidalReviewDeferral = {
+  baselinePercent: number
+  reasked: boolean
+}
+
 export type TidalPhase =
+  | 'reviewing'
   | 'summarizing'
   | 'summary_ready'
   | 'compact_sending'
@@ -48,18 +70,26 @@ export type TidalPhase =
 export type TidalPending = {
   taskId: string
   phase: TidalPhase
-  triggerReason: 'tokens' | 'visible_messages' | 'tokens+visible_messages'
+  triggerReason: 'tokens' | 'visible_messages' | 'tokens+visible_messages' | 'retry_recovery'
   boundaryId: string
   boundaryTs: number
   sourceCount: number
   summary?: RollingSummary
-  summaryProvider?: 'luna' | 'gemini'
+  summaryProvider?: 'luna' | 'fallback'
   contextTokens: number
   compactStartedAt?: number
   compactConfirmedAt?: number
   recoveryMarker?: string
   recoveryInjectedAt?: number
   baseSummaryRevision?: number
+  boundaryOptions?: TidalBoundaryOption[]
+  proposedBoundaryId?: string
+  subjectiveCheckpoint?: SubjectiveCheckpoint
+  reviewedAt?: number
+  reviewDeferred?: boolean
+  reviewMode?: TidalReviewMode
+  reviewContextPercent?: number
+  sourceStartId?: string
 }
 
 export type TidalLastRun = {
@@ -84,6 +114,10 @@ export type TidalState = {
   summaryUpdatedAt: number | null
   summaryModel: string | null
   summarySource: 'automatic' | 'manual' | 'legacy' | null
+  progressiveCoverage: boolean
+  subjectiveCheckpoint: SubjectiveCheckpoint | null
+  checkpointUpdatedAt: number | null
+  reviewDeferral: TidalReviewDeferral | null
   lastRun: TidalLastRun | null
   updatedAt: number
 }
@@ -98,17 +132,47 @@ export type TidalPublicStatus = {
 export type TidalConfig = {
   tokenThreshold: number
   visibleThreshold: number
-  recentMax: number
+  /** Desired exact-text suffix after a tide. This is a token target, not a fixed message window. */
+  rawTargetTokens: number
+  /** Main CC may move the boundary earlier while the exact suffix remains under this hard limit. */
+  rawMaxTokens: number
   recoveryTokenBudget: number
   retryMs: number
 }
 
 export const DEFAULT_TIDAL_CONFIG: TidalConfig = {
-  tokenThreshold: 110_000,
-  visibleThreshold: 150,
-  recentMax: 16,
-  recoveryTokenBudget: 4_000,
+  // Production CC now has a 1M window. Keep the resident chat below the
+  // expensive upper half while leaving ample headroom before CC's native
+  // ~980k compaction boundary.
+  tokenThreshold: 450_000,
+  // Fallback only when Claude exposes no trustworthy token waterline.
+  visibleThreshold: 240,
+  rawTargetTokens: 180_000,
+  rawMaxTokens: 240_000,
+  recoveryTokenBudget: 260_000,
   retryMs: 5 * 60_000,
+}
+
+/**
+ * Keep the 1M resident profile by default, but scale back to the proven 200k
+ * profile when the user switches this same long-lived session to a smaller
+ * context model. The caps also make environment overrides unable to produce
+ * a recovery packet larger than the active model can accept.
+ */
+export function tidalConfigForWindow(
+  config: TidalConfig,
+  contextWindowSize: number | null,
+): TidalConfig {
+  const size = Number(contextWindowSize)
+  if (!Number.isFinite(size) || size <= 0 || size >= 500_000) return { ...config }
+  return {
+    tokenThreshold: Math.min(config.tokenThreshold, Math.floor(size * 0.70)),
+    visibleThreshold: config.visibleThreshold,
+    rawTargetTokens: Math.min(config.rawTargetTokens, Math.floor(size * 0.28)),
+    rawMaxTokens: Math.min(config.rawMaxTokens, Math.floor(size * 0.35)),
+    recoveryTokenBudget: Math.min(config.recoveryTokenBudget, Math.floor(size * 0.41)),
+    retryMs: config.retryMs,
+  }
 }
 
 export function createTidalState(sessionId: string, now = Date.now()): TidalState {
@@ -126,9 +190,36 @@ export function createTidalState(sessionId: string, now = Date.now()): TidalStat
     summaryUpdatedAt: null,
     summaryModel: null,
     summarySource: null,
+    progressiveCoverage: false,
+    subjectiveCheckpoint: null,
+    checkpointUpdatedAt: null,
+    reviewDeferral: null,
     lastRun: null,
     updatedAt: now,
   }
+}
+
+export function validateSubjectiveCheckpoint(value: unknown): SubjectiveCheckpoint | null {
+  if (!value || typeof value !== 'object') return null
+  const continuityBridge = String((value as any).continuityBridge ?? '').trim()
+  if (!continuityBridge || continuityBridge.length > 600) return null
+  return { continuityBridge }
+}
+
+export function renderSubjectiveCheckpoint(checkpoint: SubjectiveCheckpoint | null): string {
+  return checkpoint?.continuityBridge ?? ''
+}
+
+export function tidalReviewMode(
+  currentPercent: number | null,
+  deferral: TidalReviewDeferral | null,
+): 'wait' | TidalReviewMode {
+  if (!deferral) return 'ask'
+  if (currentPercent === null || !Number.isFinite(currentPercent)) return 'wait'
+  const growth = currentPercent - deferral.baselinePercent
+  if (growth >= 10) return 'force'
+  if (growth >= 5 && !deferral.reasked) return 'reask'
+  return 'wait'
 }
 
 function finiteNonNegative(value: unknown): number {
@@ -193,6 +284,22 @@ export function unprocessedVisibleMessages(
   return history.slice(boundaryIndex + 1).filter(isVisibleMessage)
 }
 
+/** One-time bridge from the old fixed 16-message recovery window. */
+export function progressiveVisibleMessages(
+  history: VisibleCcMessage[],
+  processedBoundaryId: string | null,
+  hasSubjectiveCheckpoint: boolean,
+  legacyOverlap = 16,
+): VisibleCcMessage[] {
+  const visible = history.filter(isVisibleMessage)
+  if (!processedBoundaryId || hasSubjectiveCheckpoint) {
+    return unprocessedVisibleMessages(visible, processedBoundaryId)
+  }
+  const boundaryIndex = visible.findIndex((message) => message.id === processedBoundaryId)
+  if (boundaryIndex < 0) return visible
+  return visible.slice(Math.max(0, boundaryIndex - Math.max(0, legacyOverlap - 1)))
+}
+
 function isVisibleMessage(message: VisibleCcMessage): boolean {
   return (message.from === 'user' || message.from === 'cc')
     && typeof message.text === 'string'
@@ -203,12 +310,16 @@ export function tidalTrigger(
   contextTokens: number | null,
   visibleCount: number,
   config: TidalConfig = DEFAULT_TIDAL_CONFIG,
+  forceRetry = false,
 ): { trigger: boolean; reason: TidalPending['triggerReason'] | null } {
   const byTokens = contextTokens !== null && contextTokens >= config.tokenThreshold
-  const byVisible = visibleCount >= config.visibleThreshold
+  const byVisible = contextTokens === null && visibleCount >= config.visibleThreshold
+  if (!byTokens && !byVisible && forceRetry && visibleCount > 0) {
+    return { trigger: true, reason: 'retry_recovery' }
+  }
   return {
     trigger: byTokens || byVisible,
-    reason: byTokens && byVisible ? 'tokens+visible_messages' : byTokens ? 'tokens' : byVisible ? 'visible_messages' : null,
+    reason: byTokens ? 'tokens' : byVisible ? 'visible_messages' : null,
   }
 }
 
@@ -229,8 +340,43 @@ export function validateRollingSummary(value: unknown): RollingSummary | null {
     out[key] = text
   }
   const total = keys.reduce((n, key) => n + out[key].length, 0)
-  if (total < 120 || total > 5_000) return null
+  if (total > 5_000) return null
+  // Keep both layers bounded independently. This prevents either the durable
+  // relationship record or one intense recent episode from consuming the
+  // whole recovery packet.
+  const durableTotal = out.relationshipIdentity.length + out.factsCommitments.length + out.preferences.length
+  const recentTotal = out.emotionInteraction.length + out.ongoing.length + out.todos.length
+  if (durableTotal > 2_600 || recentTotal > 2_400) return null
   return out
+}
+
+export function renderLongTermSummary(summary: RollingSummary | null): string {
+  if (!summary) return '（尚无长期关系基线）'
+  return [
+    `关系与身份连续性：${summary.relationshipIdentity}`,
+    `明确事实和约定：${summary.factsCommitments}`,
+    `用户偏好：${summary.preferences}`,
+  ].join('\n')
+}
+
+export function renderRecentSummary(summary: RollingSummary | null): string {
+  if (!summary) return '（尚无近期状态摘要）'
+  return [
+    `重要情绪与互动状态：${summary.emotionInteraction}`,
+    `正在进行的事情：${summary.ongoing}`,
+    `待办：${summary.todos}`,
+  ].join('\n')
+}
+
+export function recentSummaryChars(summary: RollingSummary): number {
+  return summary.emotionInteraction.length + summary.ongoing.length + summary.todos.length
+}
+
+export function minimumRecentSummaryChars(sourceCount: number): number {
+  if (sourceCount >= 180) return 700
+  if (sourceCount >= 80) return 500
+  if (sourceCount >= 30) return 300
+  return 0
 }
 
 export function renderRollingSummary(summary: RollingSummary | null): string {
@@ -317,16 +463,23 @@ export function tidalStatusSnapshot(state: TidalState, now = Date.now()): TidalP
   return { status: 'idle', stage: 'no_summary', at: null, retryAt: null }
 }
 
-export function summaryInput(previous: RollingSummary | null, messages: VisibleCcMessage[]): string {
+export function summaryInput(
+  previous: RollingSummary | null,
+  messages: VisibleCcMessage[],
+  longTermReference = '',
+): string {
   const dialogue = messages
     .filter(isVisibleMessage)
-    .map((m) => `${m.from === 'user' ? '用户' : '助手'}：${m.text}`)
+    .map((m) => `${m.from === 'user' ? '用户' : '你'}：${m.text}`)
     .join('\n\n')
   return [
-    '【上一版滚动摘要】',
+    '【长期记忆校准参考（只用于防止稳定事实丢失，不要整段抄写）】',
+    longTermReference.trim() || '（无）',
+    '',
+    '【上一版分层摘要】',
     renderRollingSummary(previous),
     '',
-    '【本轮尚未压缩的用户/助手可见原文】',
+    '【经主CC确认可以模糊化的最老闭合原文（边界之后的对话未提供，仍将逐字保留）】',
     dialogue || '（无）',
   ].join('\n')
 }
@@ -341,64 +494,150 @@ export function estimateTokens(text: string): number {
   return cjk + Math.ceil(other / 4)
 }
 
+function messageTokens(message: VisibleCcMessage): number {
+  return estimateTokens(`${message.from === 'user' ? '用户' : '你'}：${message.text}\n`)
+}
+
+function isCompletedTurnBoundary(messages: VisibleCcMessage[], index: number): boolean {
+  const current = messages[index]
+  const next = messages[index + 1]
+  if (!current || current.from !== 'cc') return false
+  if (!next) return true
+  if (current.turnId && next.turnId) return current.turnId !== next.turnId
+  return next.from === 'user'
+}
+
+/**
+ * Builds token-bounded choices for the main CC to approve. The first choice
+ * is the smallest old prefix that returns the exact suffix to the low-water
+ * target. Earlier choices preserve more verbatim history and are offered as
+ * veto fallbacks, but none may exceed the hard raw-text ceiling.
+ */
+export function tidalBoundaryOptions(
+  messages: VisibleCcMessage[],
+  targetRawTokens: number,
+  maxRawTokens: number,
+  maxOptions = 6,
+): TidalBoundaryOption[] {
+  const source = messages.filter(isVisibleMessage)
+  if (source.length < 4) return []
+  const suffixTokens = new Array<number>(source.length + 1).fill(0)
+  for (let i = source.length - 1; i >= 0; i--) suffixTokens[i] = suffixTokens[i + 1] + messageTokens(source[i])
+
+  const safe = source
+    .map((message, index) => ({ message, index, preservedTokens: suffixTokens[index + 1] }))
+    .filter(({ index, preservedTokens }) => (
+      index >= 1
+      && isCompletedTurnBoundary(source, index)
+      && preservedTokens <= maxRawTokens
+    ))
+  if (!safe.length) return []
+
+  const proposedPosition = safe.findIndex(({ preservedTokens }) => preservedTokens <= targetRawTokens)
+  const proposed = proposedPosition >= 0 ? proposedPosition : safe.length - 1
+  const candidates = safe.slice(0, proposed + 1)
+  const picked: typeof safe = []
+  // Always include the proposed low-water boundary, then spread the remaining
+  // choices toward older boundaries so CC can preserve an open event intact.
+  picked.push(candidates[candidates.length - 1])
+  if (maxOptions > 1 && candidates.length > 1) {
+    for (let slot = 1; slot < maxOptions; slot++) {
+      const index = Math.round((candidates.length - 1) * (1 - slot / (maxOptions - 1)))
+      const candidate = candidates[index]
+      if (candidate && !picked.some((item) => item.index === candidate.index)) picked.push(candidate)
+    }
+  }
+
+  return picked
+    .sort((a, b) => a.index - b.index)
+    .map(({ message, index, preservedTokens }) => ({
+      boundaryId: message.id,
+      boundaryTs: message.ts,
+      sourceCount: index + 1,
+      preservedCount: source.length - index - 1,
+      preservedTokens,
+      boundaryPreview: [
+        source.slice(0, index + 1).reverse().find((item) => item.from === 'user')?.text,
+        message.text,
+      ].filter(Boolean).map((text) => String(text).replace(/\s+/g, ' ').trim().slice(0, 90)).join(' / '),
+    }))
+}
+
+export function renderTidalReviewPrompt(
+  options: TidalBoundaryOption[],
+  proposedBoundaryId: string,
+  mode: TidalReviewMode = 'ask',
+): string {
+  const lines = options.map((option) => {
+    const proposed = option.boundaryId === proposedBoundaryId ? '（建议低水位边界）' : '（更保守，保留更多原文）'
+    return `- boundary_id=${option.boundaryId} ${proposed}；边界后保留 ${option.preservedCount} 条、约 ${option.preservedTokens} tokens；边界处你的原话：“${option.boundaryPreview || '（空）'}”`
+  })
+  const decision = mode === 'force'
+    ? [
+        '这是在上次拒绝后上下文又增长 10 个百分点的强制整理。本次不能 defer；必须选择一个最保守且安全的边界。',
+        '本次必须写 continuity_bridge 检查点，用第一人称留下压缩后维持连续性所必需的理解；不得留空。',
+      ]
+    : [
+        mode === 'reask' ? '这是在上次拒绝后上下文又增长 5 个百分点时的再次询问；如果仍没有安全边界，可以继续 defer。' : '如果所有候选都会切进尚未闭合的事件，可以设 defer=true，本次不会摘要或 compact。',
+        '若选择任一边界（包括最保守、改动最小的边界），必须明确决定是否需要检查点：需要则 write_checkpoint=true 并填写 continuity_bridge；不需要则 write_checkpoint=false。',
+      ]
+  return [
+    '[系统内部潮汐维护，不是用户消息，不要向用户回复，也不要改变你正在使用的模型或推理配置。]',
+    '上下文已到主动整理高水位。外部整理器只会概括你确认已经闭合的最老前缀；选定边界之后的对话会逐字恢复，不会交给摘要模型。',
+    '请从下面候选中选择一个 boundary_id：如果建议边界切进了仍会影响你接下来理解与回应的情绪、关系变化、承诺、自我认知或未完话题，就选择更保守的较早边界。只要不确定，就不要把它判为闭合。',
+    ...decision,
+    '必须调用一次 tidal_memory_checkpoint。continuity_bridge 只写边界后原文与核心记忆无法还原、但继续相处必需的一条跨边界理解，最多 600 字。',
+    '',
+    '【可选闭合边界】',
+    ...lines,
+  ].join('\n')
+}
+
 export type RecoveryPacket = {
   marker: string
   content: string
   recent: VisibleCcMessage[]
   estimatedTokens: number
+  fitsBudget: boolean
 }
 
 export function buildRecoveryPacket(args: {
   marker: string
-  coreMemory: string
   rollingSummary: RollingSummary
+  includeLongTermFallback?: boolean
+  subjectiveCheckpoint?: SubjectiveCheckpoint | null
   visibleHistory: VisibleCcMessage[]
   boundaryId: string
-  recentMax?: number
   tokenBudget?: number
 }): RecoveryPacket {
-  const recentMax = Math.max(0, args.recentMax ?? DEFAULT_TIDAL_CONFIG.recentMax)
   const tokenBudget = Math.max(256, args.tokenBudget ?? DEFAULT_TIDAL_CONFIG.recoveryTokenBudget)
   const boundaryIndex = args.visibleHistory.findIndex((m) => m.id === args.boundaryId)
-  const throughBoundary = (boundaryIndex >= 0 ? args.visibleHistory.slice(0, boundaryIndex + 1) : args.visibleHistory)
+  // The boundary is the newest message represented only in the blurred
+  // archive. Everything after it remains verbatim; it must never also be fed
+  // to the external summarizer.
+  const recent = (boundaryIndex >= 0 ? args.visibleHistory.slice(boundaryIndex + 1) : [])
     .filter(isVisibleMessage)
-  let recent = throughBoundary.slice(-recentMax)
-  const core = args.coreMemory.trim() || '（无可用核心记忆摘要）'
-  const rolling = renderRollingSummary(args.rollingSummary)
+  const checkpoint = renderSubjectiveCheckpoint(args.subjectiveCheckpoint ?? null)
+  const archive = [
+    ...(args.includeLongTermFallback ? [renderLongTermSummary(args.rollingSummary)] : []),
+    renderRecentSummary(args.rollingSummary),
+  ].join('\n')
 
   const render = (items: VisibleCcMessage[]) => [
     `[系统恢复层；仅供模型读取；${args.marker}]`,
-    '【第一层：现有核心记忆摘要】',
-    core,
+    '【已经闭合并模糊化的早期事件档案】',
+    archive,
     '',
-    '【第二层：最新滚动对话摘要】',
-    rolling,
+    ...(checkpoint ? ['【仅在原文无法还原时使用的跨边界桥接】', checkpoint, ''] : []),
+    `【边界之后保留的连续原文（${items.length} 条）】`,
+    ...items.map((m) => `${m.from === 'user' ? '用户' : '你'}：${m.text}`),
     '',
-    `【第三层：最近可见原文（${items.length} 条）】`,
-    ...items.map((m) => `${m.from === 'user' ? '用户' : '助手'}：${m.text}`),
-    '',
-    'session 没有更换。继续刚才的关系、语气和话题；不要重新自我介绍，不要向用户提及压缩。不要回复本条系统恢复层。',
+    `${args.includeLongTermFallback ? '当前没有可自动加载的核心记忆，档案临时包含长期基线。' : '核心记忆由系统自动加载，不在这里重复。'}闭合档案不代表当前状态；若与桥接或连续原文冲突，以更近的内容为准。session 没有更换。继续刚才的关系、语气和话题；不要重新自我介绍，不要向用户提及压缩。仅本条系统恢复层保持静默；下一条真实用户消息仍必须通过 reply（或适当的可见动作工具）发送，不要把本条静默要求延续到下一轮。`,
   ].join('\n')
 
-  let content = render(recent)
-  while (recent.length > 0 && estimateTokens(content) > tokenBudget) {
-    recent = recent.slice(1)
-    content = render(recent)
-  }
-
-  // Core + rolling can theoretically exceed the total budget by themselves.
-  // Keep all three layer headings but deterministically trim only the core
-  // text, never the freshly generated rolling summary or recent dialogue.
-  if (estimateTokens(content) > tokenBudget) {
-    const allowedCoreTokens = Math.max(32, tokenBudget - estimateTokens(render(recent).replace(core, '')))
-    let trimmedCore = core
-    while (trimmedCore.length > 32 && estimateTokens(trimmedCore) > allowedCoreTokens) {
-      trimmedCore = trimmedCore.slice(Math.ceil(trimmedCore.length * 0.1))
-    }
-    content = render(recent).replace(core, `（核心记忆过长，保留末段）${trimmedCore}`)
-  }
-
-  return { marker: args.marker, content, recent, estimatedTokens: estimateTokens(content) }
+  const content = render(recent)
+  const estimatedTokens = estimateTokens(content)
+  return { marker: args.marker, content, recent, estimatedTokens, fitsBudget: estimatedTokens <= tokenBudget }
 }
 
 export function transcriptContainsMarker(transcriptPath: string, marker: string): boolean {
@@ -442,6 +681,16 @@ export function loadTidalState(path: string, sessionId: string): TidalState {
       summaryUpdatedAt: typeof raw.summaryUpdatedAt === 'number' ? raw.summaryUpdatedAt : (validateRollingSummary(raw.rollingSummary) ? (typeof raw.updatedAt === 'number' ? raw.updatedAt : Date.now()) : null),
       summaryModel: typeof raw.summaryModel === 'string' ? raw.summaryModel : null,
       summarySource: raw.summarySource === 'automatic' || raw.summarySource === 'manual' || raw.summarySource === 'legacy' ? raw.summarySource : null,
+      // The former five-field checkpoint was also the rollout marker for the
+      // progressive exact suffix. Preserve that signal without carrying its
+      // duplicated prose into the new recovery packet.
+      progressiveCoverage: raw.progressiveCoverage === true || (!!raw.subjectiveCheckpoint && typeof raw.subjectiveCheckpoint === 'object'),
+      subjectiveCheckpoint: validateSubjectiveCheckpoint(raw.subjectiveCheckpoint),
+      checkpointUpdatedAt: typeof raw.checkpointUpdatedAt === 'number' ? raw.checkpointUpdatedAt : null,
+      reviewDeferral: raw.reviewDeferral && typeof raw.reviewDeferral === 'object'
+        && Number.isFinite(Number(raw.reviewDeferral.baselinePercent))
+        ? { baselinePercent: Number(raw.reviewDeferral.baselinePercent), reasked: raw.reviewDeferral.reasked === true }
+        : null,
       lastRun: raw.lastRun && typeof raw.lastRun === 'object' ? raw.lastRun as TidalLastRun : null,
       updatedAt: typeof raw.updatedAt === 'number' ? raw.updatedAt : Date.now(),
     }
@@ -492,6 +741,7 @@ export function tidalStateAfterConversationClear(
     queue: [],
     retryAt: null,
     lastContextTokens: null,
+    reviewDeferral: null,
     updatedAt: now,
   }
 }

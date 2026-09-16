@@ -13,15 +13,20 @@ import {
   inputTokensFromMessageStart,
   loadTidalState,
   manualSummaryUpdateCandidate,
-  retainThroughBoundary,
+  minimumRecentSummaryChars,
+  recentSummaryChars,
+  renderLongTermSummary,
+  renderRecentSummary,
   renderRollingSummary,
+  renderTidalReviewPrompt,
   saveTidalState,
   sessionIdUnchanged,
   shouldEvaluateTidalSurface,
-  shouldInjectTidalStartupRecovery,
   tidalTrigger,
+  tidalConfigForWindow,
+  tidalReviewMode,
   tidalStatusSnapshot,
-  tidalStateAfterConversationClear,
+  summaryInput,
   type RollingSummary,
   type VisibleCcMessage,
 } from '../cc-tidal-memory.ts'
@@ -36,15 +41,27 @@ const summary: RollingSummary = {
 }
 
 describe('CC tidal context waterline', () => {
+  test('scales the 1M profile safely when the active model has a 200k window', () => {
+    expect(tidalConfigForWindow(DEFAULT_TIDAL_CONFIG, 1_000_000)).toEqual(DEFAULT_TIDAL_CONFIG)
+    expect(tidalConfigForWindow(DEFAULT_TIDAL_CONFIG, 200_000)).toEqual({
+      tokenThreshold: 140_000,
+      visibleThreshold: 240,
+      rawTargetTokens: 56_000,
+      rawMaxTokens: 70_000,
+      recoveryTokenBudget: 82_000,
+      retryMs: 5 * 60_000,
+    })
+  })
+
   test('reads real input-side usage from stream-json message_start', () => {
     const tokens = inputTokensFromMessageStart({
       type: 'stream_event',
       event: {
         type: 'message_start',
-        message: { usage: { input_tokens: 7, cache_creation_input_tokens: 12_000, cache_read_input_tokens: 98_500 } },
+        message: { usage: { input_tokens: 7, cache_creation_input_tokens: 42_000, cache_read_input_tokens: 408_500 } },
       },
     })
-    expect(tokens).toBe(110_507)
+    expect(tokens).toBe(450_507)
     expect(tidalTrigger(tokens, 0).reason).toBe('tokens')
   })
 
@@ -52,6 +69,65 @@ describe('CC tidal context waterline', () => {
     const tokens = inputTokensFromMessageStart({ type: 'result', usage: { input_tokens: 999_999 } })
     expect(tokens).toBeNull()
     expect(tidalTrigger(tokens, 12)).toEqual({ trigger: false, reason: null })
+  })
+
+  test('visible-message fallback never overrides a reliable token waterline', () => {
+    expect(tidalTrigger(82_325, 153)).toEqual({ trigger: false, reason: null })
+    expect(tidalTrigger(null, 240)).toEqual({ trigger: true, reason: 'visible_messages' })
+  })
+
+  test('a scheduled retry cannot be cancelled by native compact lowering the token count', () => {
+    expect(tidalTrigger(28_000, 12, DEFAULT_TIDAL_CONFIG, true)).toEqual({
+      trigger: true,
+      reason: 'retry_recovery',
+    })
+    expect(tidalTrigger(28_000, 0, DEFAULT_TIDAL_CONFIG, true)).toEqual({ trigger: false, reason: null })
+  })
+})
+
+describe('CC tidal review escalation', () => {
+  test('waits for +5 points to ask again and +10 points to force', () => {
+    expect(tidalReviewMode(45, null)).toBe('ask')
+    expect(tidalReviewMode(49.9, { baselinePercent: 45, reasked: false })).toBe('wait')
+    expect(tidalReviewMode(50, { baselinePercent: 45, reasked: false })).toBe('reask')
+    expect(tidalReviewMode(54.9, { baselinePercent: 45, reasked: true })).toBe('wait')
+    expect(tidalReviewMode(55, { baselinePercent: 45, reasked: true })).toBe('force')
+  })
+
+  test('normal review asks explicitly about a checkpoint and forced review requires one', () => {
+    const option = [{ boundaryId: 'm1', boundaryTs: 1, sourceCount: 2, preservedCount: 2, preservedTokens: 100, boundaryPreview: 'closed' }]
+    const normal = renderTidalReviewPrompt(option, 'm1', 'ask')
+    const forced = renderTidalReviewPrompt(option, 'm1', 'force')
+    expect(normal).toContain('write_checkpoint=true')
+    expect(normal).toContain('write_checkpoint=false')
+    expect(forced).toContain('本次不能 defer')
+    expect(forced).toContain('必须写 continuity_bridge 检查点')
+  })
+
+  test('a Claude deferral is growth-gated instead of scheduling a timer retry', () => {
+    const serverSource = readFileSync(new URL('../channel-server.ts', import.meta.url), 'utf8')
+    const settle = serverSource.slice(serverSource.indexOf('function tidalReviewSettled()'), serverSource.indexOf('async function injectTidalRecovery()'))
+    expect(settle).toContain("deferTidalReview(pending, 'review_deferred_by_cc')")
+    expect(settle).not.toContain("tidalRetry('review_deferred_by_cc'")
+    expect(serverSource).toContain("mode === 'force' && defer")
+    expect(serverSource).toContain("forced tidal review requires write_checkpoint=true")
+  })
+
+  test('the ordinary reply transport is always loaded after clear or compaction', () => {
+    const serverSource = readFileSync(new URL('../channel-server.ts', import.meta.url), 'utf8')
+    expect(serverSource).toContain("_meta: { 'anthropic/alwaysLoad': true }")
+    expect(serverSource).toContain('tools: { listChanged: true }')
+    expect(serverSource).toContain('mcp.sendToolListChanged()')
+    expect(serverSource).toContain('const resident = brainTranscriptPath()')
+    expect(serverSource).toContain('if (existsSync(resident)) return resident')
+    const packet = buildRecoveryPacket({
+      marker: 'cc-tidal-recovery:test',
+      rollingSummary: summary,
+      visibleHistory: [],
+      boundaryId: 'missing',
+    })
+    expect(packet.content).toContain('仅本条系统恢复层保持静默')
+    expect(packet.content).toContain('下一条真实用户消息仍必须通过 reply')
   })
 })
 
@@ -76,6 +152,22 @@ describe('two-phase safety', () => {
     expect(sessionIdUnchanged('same-session', 'new-session')).toBeFalse()
   })
 
+  test('server never advances recovery without confirmed compaction', () => {
+    const serverSource = readFileSync(new URL('../channel-server.ts', import.meta.url), 'utf8')
+    expect(serverSource).toContain("return { ok: false, compacted: false, error: 'compact_timeout_or_rejected' }")
+    expect(serverSource).toContain("tidalRetry('compact_retry_scheduled', compact.compacted)")
+    expect(serverSource).toContain("['compacted', 'recovery_sending', 'recovering'].includes")
+  })
+
+  test('summary-writing rules never leak into the remembered relationship', () => {
+    const serverSource = readFileSync(new URL('../channel-server.ts', import.meta.url), 'utf8')
+    const lunaPrompt = readFileSync(new URL('../scripts/tidal-luna-summary.sh', import.meta.url), 'utf8')
+    expect(serverSource).toContain('不得把近期实例附在长期事实后面')
+    expect(lunaPrompt).toContain('不能记成用户偏好、事实、约定或待办')
+    expect(serverSource).not.toContain('一律固定写“你（CC）”')
+    expect(lunaPrompt).not.toContain('一律固定写“你（CC）”')
+  })
+
   test('pending state, boundary, summary, session and queue survive restart', () => {
     const dir = mkdtempSync(join(tmpdir(), 'tidal-state-'))
     const path = join(dir, 'state.json')
@@ -86,7 +178,7 @@ describe('two-phase safety', () => {
       taskId: 'task-1', phase: 'compacted', triggerReason: 'tokens', boundaryId: 'm-new', boundaryTs: 2,
       sourceCount: 150, summary, summaryProvider: 'luna', contextTokens: 120_000, recoveryMarker: 'marker-1',
     }
-    state.queue.push({ id: 'queued-1', text: 'later', filePath: '/opt/ai-companion/uploads/example.pdf', fileName: 'example.pdf', fileSize: 123, fileType: 'application/pdf', queuedAt: 3 })
+    state.queue.push({ id: 'queued-1', text: 'later', queuedAt: 3 })
     saveTidalState(path, state)
     const loaded = loadTidalState(path, 'different-default')
     expect(loaded.sessionId).toBe('session-a')
@@ -94,7 +186,6 @@ describe('two-phase safety', () => {
     expect(loaded.pending?.recoveryMarker).toBe('marker-1')
     expect(loaded.processedBoundaryId).toBe('m-old')
     expect(loaded.queue.map((q) => q.id)).toEqual(['queued-1'])
-    expect(loaded.queue[0]).toMatchObject({ fileName: 'example.pdf', fileSize: 123, fileType: 'application/pdf' })
     expect(readFileSync(path, 'utf8')).toContain('relationshipIdentity')
   })
 })
@@ -213,24 +304,71 @@ describe('recovery packet and isolation', () => {
     ts: i,
   }))
 
-  test('injects all three layers once, with at most 16 recent messages and 4000 tokens', () => {
+  test('large source windows require a detailed recent layer', () => {
+    expect(minimumRecentSummaryChars(29)).toBe(0)
+    expect(minimumRecentSummaryChars(30)).toBe(300)
+    expect(minimumRecentSummaryChars(80)).toBe(500)
+    expect(minimumRecentSummaryChars(314)).toBe(700)
+    expect(recentSummaryChars(summary)).toBeGreaterThan(0)
+  })
+
+  test('one-turn examples cannot leak into the durable layer', () => {
+    const serverSource = readFileSync(new URL('../channel-server.ts', import.meta.url), 'utf8')
+    const lunaPrompt = readFileSync(new URL('../scripts/tidal-luna-summary.sh', import.meta.url), 'utf8')
+    expect(serverSource).toContain('不得把近期实例附在长期事实后面')
+    expect(lunaPrompt).toContain('不得把近期实例附在长期事实后面')
+    expect(lunaPrompt).toContain('“本轮梦见什么”只进近期层')
+  })
+
+  test('injects the blurred archive and exact post-boundary dialogue separately', () => {
     const packet = buildRecoveryPacket({
       marker: 'unique-recovery-marker',
-      coreMemory: '核心记忆摘要',
       rollingSummary: summary,
       visibleHistory: history,
-      boundaryId: 'm39',
-      recentMax: 16,
-      tokenBudget: 4_000,
+      boundaryId: 'm23',
+      tokenBudget: 260_000,
     })
     expect(packet.content.match(/unique-recovery-marker/g)?.length).toBe(1)
-    expect(packet.content).toContain('第一层：现有核心记忆摘要')
-    expect(packet.content).toContain('第二层：最新滚动对话摘要')
-    expect(packet.content).toContain('第三层：最近可见原文')
-    expect(packet.recent.length).toBeLessThanOrEqual(16)
-    expect(packet.estimatedTokens).toBeLessThanOrEqual(4_000)
+    expect(packet.content).toContain('已经闭合并模糊化的早期事件档案')
+    expect(packet.content).toContain('边界之后保留的连续原文')
+    expect(packet.content).toContain(renderRecentSummary(summary))
+    expect(packet.recent.map((message) => message.id)).toEqual(history.slice(24).map((message) => message.id))
+    expect(packet.fitsBudget).toBeTrue()
     expect(packet.content).toContain('session 没有更换')
     expect(packet.content).not.toContain('thinking')
+  })
+
+  test('summary input carries a bounded long-term calibration source', () => {
+    const input = summaryInput(summary, history.slice(-2), '早期关系里程碑：8月6日开始固定相处。')
+    expect(input).toContain('长期记忆校准参考')
+    expect(input).toContain('8月6日开始固定相处')
+    expect(input).toContain('上一版分层摘要')
+    expect(input).toContain('经主CC确认可以模糊化的最老闭合原文')
+  })
+
+  test('normal restart recovery uses the latest dialogue beyond an old summary boundary', () => {
+    const packet = buildRecoveryPacket({
+      marker: 'startup-recovery',
+      rollingSummary: summary,
+      visibleHistory: history,
+      boundaryId: 'm19',
+      tokenBudget: 260_000,
+    })
+    expect(packet.recent.map((message) => message.id)).toEqual(history.slice(20).map((message) => message.id))
+    expect(packet.content).toContain('第 39 条可见原文')
+    expect(packet.content).not.toContain('第 19 条可见原文')
+  })
+
+  test('post-clear recovery also preserves the exact suffix after the summarized boundary', () => {
+    const packet = buildRecoveryPacket({
+      marker: 'clear-recovery',
+      rollingSummary: summary,
+      visibleHistory: history,
+      boundaryId: 'm19',
+      tokenBudget: 260_000,
+    })
+    expect(packet.recent.map((message) => message.id)).toEqual(history.slice(20).map((message) => message.id))
+    expect(packet.content).toContain('第 39 条可见原文')
   })
 
   test('full UI history is append-only and never trimmed by tidal processing', () => {
@@ -247,12 +385,6 @@ describe('recovery packet and isolation', () => {
     expect(shouldEvaluateTidalSurface('gomoku')).toBeFalse()
   })
 
-  test('does not duplicate the recovery packet into a normally resumed session', () => {
-    expect(shouldInjectTidalStartupRecovery('resumed')).toBeFalse()
-    expect(shouldInjectTidalStartupRecovery('fresh')).toBeTrue()
-    expect(shouldInjectTidalStartupRecovery(undefined)).toBeTrue()
-  })
-
   test('concurrent messages deduplicate queue entries and only one tide can be claimed', () => {
     const state = createTidalState('session-a')
     const queued = { id: 'same-message', text: 'hello', queuedAt: Date.now() }
@@ -266,41 +398,5 @@ describe('recovery packet and isolation', () => {
     expect(claimTidalPending(state, pending)).toBeTrue()
     expect(claimTidalPending(state, { ...pending, taskId: 'two' })).toBeFalse()
     expect(state.pending?.taskId).toBe('one')
-  })
-})
-
-describe('conversation clear modes', () => {
-  test('keeps only messages through the completed summary boundary', () => {
-    const items = [
-      { id: 'before', ts: 10 },
-      { id: 'boundary', ts: 20 },
-      { id: 'after', ts: 30 },
-    ]
-    expect(retainThroughBoundary(items, 'boundary', 20).map((item) => item.id)).toEqual(['before', 'boundary'])
-    expect(retainThroughBoundary(items, 'missing-imported-id', 20).map((item) => item.id)).toEqual(['before', 'boundary'])
-  })
-
-  test('preserve mode keeps the summary but drops transient tide state, while full mode removes it', () => {
-    const state = createTidalState('old-session', 1)
-    state.rollingSummary = summary
-    state.processedBoundaryId = 'boundary'
-    state.processedBoundaryTs = 20
-    state.summaryRevision = 3
-    state.queue = [{ id: 'after', text: 'new', queuedAt: 30 }]
-    state.retryAt = 99
-    state.lastContextTokens = 120_000
-
-    const preserved = tidalStateAfterConversationClear(state, 'new-session', true, 40)
-    expect(preserved.rollingSummary).toEqual(summary)
-    expect(preserved.processedBoundaryId).toBe('boundary')
-    expect(preserved.summaryRevision).toBe(3)
-    expect(preserved.queue).toEqual([])
-    expect(preserved.retryAt).toBeNull()
-    expect(preserved.lastContextTokens).toBeNull()
-
-    const cleared = tidalStateAfterConversationClear(state, 'new-session', false, 40)
-    expect(cleared.rollingSummary).toBeNull()
-    expect(cleared.processedBoundaryId).toBeNull()
-    expect(cleared.summaryRevision).toBe(0)
   })
 })
