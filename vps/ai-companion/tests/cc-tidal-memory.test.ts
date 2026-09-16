@@ -157,6 +157,7 @@ describe('lightweight thinking flush', () => {
     expect(run).toContain("recoveryPending: { beforePct, stage: 'recovering', startedAt }")
     expect(run).toContain("startTurn(packet.marker, 'tidal_recovery', false)")
     expect(run).toContain('sendClaudeChannelNotification(packet.marker, packet.content)')
+    expect(run).toContain('tidalState.lastContextTokens = null')
     expect(run).not.toContain("startTurn(marker, 'tidal_recovery', false)")
     expect(serverSource).toContain('if (flushState.recoveryPending)')
   })

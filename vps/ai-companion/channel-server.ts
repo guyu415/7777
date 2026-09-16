@@ -4933,6 +4933,10 @@ async function runThinkingFlush(
     tidalLog('thinking_flush_recovery_send_failed', { error })
     return { ok: false, error }
   }
+  // The accepted recovery turn changes the waterline again. Do not let a
+  // pre-recovery main-turn sample become the next 20-point baseline.
+  tidalState.lastContextTokens = null
+  persistTidalState()
   markThinkingFlushBaselineStale()
   announceThinkingFlush(beforePct)
   tidalLog('thinking_flush_ok', { recentCount: packet.recent.length, recoveryTokens: packet.estimatedTokens })
