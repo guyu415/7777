@@ -274,6 +274,30 @@ export function latestInputTokensFromTranscript(transcriptPath: string): number 
   return null
 }
 
+/**
+ * The first real input waterline is the best available low-water mark after
+ * a full `/clear`. It lets a newly deployed checker recover a missed baseline
+ * without pretending that the fixed system/tool prompt can be reclaimed.
+ */
+export function firstInputTokensFromTranscript(transcriptPath: string): number | null {
+  if (!existsSync(transcriptPath)) return null
+  let lines: string[]
+  try {
+    lines = readFileSync(transcriptPath, 'utf8').split('\n')
+  } catch {
+    return null
+  }
+  for (const line of lines) {
+    if (!line) continue
+    let row: any
+    try { row = JSON.parse(line) } catch { continue }
+    if (row?.type !== 'assistant' || !row?.message?.usage) continue
+    const tokens = inputTokensFromMessageStart({ type: 'message_start', message: { usage: row.message.usage } })
+    if (tokens !== null && tokens > 0) return tokens
+  }
+  return null
+}
+
 export function unprocessedVisibleMessages(
   history: VisibleCcMessage[],
   processedBoundaryId: string | null,
@@ -599,6 +623,75 @@ export type RecoveryPacket = {
   recent: VisibleCcMessage[]
   estimatedTokens: number
   fitsBudget: boolean
+}
+
+export type ThinkingFlushDecision = {
+  action: 'wait' | 'skip_low_benefit' | 'flush'
+  growthTokens: number
+  growthPercent: number
+  estimatedGainTokens: number
+  estimatedGainPercent: number
+}
+
+/**
+ * The 20-point interval is only an evaluation cadence. A clear is worthwhile
+ * only when context growth not represented by the recovery packet would save
+ * at least 10% of the active model window.
+ */
+export function thinkingFlushDecision(args: {
+  currentContextTokens: number
+  baselineContextTokens: number
+  contextWindowSize: number
+  currentRecoveryTokens: number
+  baselineRecoveryTokens: number
+  evaluationDeltaPercent?: number
+  minimumGainPercent?: number
+}): ThinkingFlushDecision {
+  const windowSize = Math.max(1, finiteNonNegative(args.contextWindowSize))
+  const growthTokens = Math.max(0, finiteNonNegative(args.currentContextTokens) - finiteNonNegative(args.baselineContextTokens))
+  const recoveryGrowth = Math.max(0, finiteNonNegative(args.currentRecoveryTokens) - finiteNonNegative(args.baselineRecoveryTokens))
+  const estimatedGainTokens = Math.max(0, growthTokens - recoveryGrowth)
+  const growthPercent = growthTokens / windowSize * 100
+  const estimatedGainPercent = estimatedGainTokens / windowSize * 100
+  const evaluationDelta = Math.max(0, args.evaluationDeltaPercent ?? 20)
+  const minimumGain = Math.max(0, args.minimumGainPercent ?? 10)
+  return {
+    action: growthPercent < evaluationDelta
+      ? 'wait'
+      : estimatedGainPercent < minimumGain
+        ? 'skip_low_benefit'
+        : 'flush',
+    growthTokens,
+    growthPercent,
+    estimatedGainTokens,
+    estimatedGainPercent,
+  }
+}
+
+/**
+ * A full user-requested clear intentionally discards every older archive.
+ * Lightweight cleanup may still preserve the exact post-clear conversation,
+ * but must never pull an old summary or pre-clear troubleshooting text back.
+ */
+export function buildVerbatimRecoveryPacket(args: {
+  marker: string
+  visibleHistory: VisibleCcMessage[]
+  sinceTs: number
+  tokenBudget?: number
+}): RecoveryPacket {
+  const tokenBudget = Math.max(256, args.tokenBudget ?? DEFAULT_TIDAL_CONFIG.recoveryTokenBudget)
+  const recent = args.visibleHistory
+    .filter(isVisibleMessage)
+    .filter((message) => Number.isFinite(message.ts) && message.ts >= args.sinceTs)
+  const content = [
+    `[系统恢复层；仅供模型读取；${args.marker}]`,
+    `【本次完整清空之后保留的连续原文（${recent.length} 条）】`,
+    ...recent.map((message) => `${message.from === 'user' ? '用户' : '你'}：${message.text}`),
+    '',
+    '这里只恢复本次完整清空之后的可见原文；没有旧摘要、旧档案或更早的排障记录。核心记忆仍由系统自动加载。继续刚才的关系、语气和话题，不要重新自我介绍，也不要向用户提及本次轻量清理。仅本条系统恢复层保持静默；下一条真实用户消息仍必须通过 reply（或适当的可见动作工具）发送。',
+  ].join('\n')
+  const estimatedTokens = estimateTokens(content)
+  return { marker: args.marker, content, recent, estimatedTokens, fitsBudget: estimatedTokens <= tokenBudget }
 }
 
 export function buildRecoveryPacket(args: {

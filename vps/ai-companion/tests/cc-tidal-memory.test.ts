@@ -6,9 +6,11 @@ import {
   DEFAULT_TIDAL_CONFIG,
   appendOnly,
   buildRecoveryPacket,
+  buildVerbatimRecoveryPacket,
   claimTidalPending,
   createTidalState,
   enqueueUnique,
+  firstInputTokensFromTranscript,
   guardedSummaryBeforeCompact,
   inputTokensFromMessageStart,
   loadTidalState,
@@ -26,6 +28,7 @@ import {
   tidalConfigForWindow,
   tidalReviewMode,
   tidalStatusSnapshot,
+  thinkingFlushDecision,
   summaryInput,
   type RollingSummary,
   type VisibleCcMessage,
@@ -76,12 +79,72 @@ describe('CC tidal context waterline', () => {
     expect(tidalTrigger(null, 240)).toEqual({ trigger: true, reason: 'visible_messages' })
   })
 
+  test('recovers the first real post-clear waterline without counting a zero record', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'tidal-first-waterline-'))
+    const path = join(dir, 'session.jsonl')
+    writeFileSync(path, [
+      JSON.stringify({ type: 'assistant', message: { usage: { input_tokens: 0, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 } } }),
+      JSON.stringify({ type: 'assistant', message: { usage: { input_tokens: 3, cache_creation_input_tokens: 26_982, cache_read_input_tokens: 0 } } }),
+      JSON.stringify({ type: 'assistant', message: { usage: { input_tokens: 1, cache_creation_input_tokens: 7_291, cache_read_input_tokens: 26_982 } } }),
+    ].join('\n'))
+    expect(firstInputTokensFromTranscript(path)).toBe(26_985)
+  })
+
   test('a scheduled retry cannot be cancelled by native compact lowering the token count', () => {
     expect(tidalTrigger(28_000, 12, DEFAULT_TIDAL_CONFIG, true)).toEqual({
       trigger: true,
       reason: 'retry_recovery',
     })
     expect(tidalTrigger(28_000, 0, DEFAULT_TIDAL_CONFIG, true)).toEqual({ trigger: false, reason: null })
+  })
+})
+
+describe('lightweight thinking flush', () => {
+  test('checks at +20 points but skips when the recovery packet consumes most of the gain', () => {
+    expect(thinkingFlushDecision({
+      baselineContextTokens: 40_000,
+      currentContextTokens: 80_000,
+      contextWindowSize: 200_000,
+      baselineRecoveryTokens: 5_000,
+      currentRecoveryTokens: 35_000,
+    })).toMatchObject({ action: 'skip_low_benefit', growthPercent: 20, estimatedGainPercent: 5 })
+  })
+
+  test('flushes when a 4.6 context has at least ten points of real reclaimable gain', () => {
+    expect(thinkingFlushDecision({
+      baselineContextTokens: 26_985,
+      currentContextTokens: 108_828,
+      contextWindowSize: 200_000,
+      baselineRecoveryTokens: 0,
+      currentRecoveryTokens: 16_447,
+    })).toMatchObject({ action: 'flush' })
+  })
+
+  test('uses percentages of the active window instead of a 4.7-only token constant', () => {
+    expect(thinkingFlushDecision({
+      baselineContextTokens: 200_000,
+      currentContextTokens: 400_000,
+      contextWindowSize: 1_000_000,
+      baselineRecoveryTokens: 50_000,
+      currentRecoveryTokens: 130_000,
+    })).toMatchObject({ action: 'flush', growthPercent: 20, estimatedGainPercent: 12 })
+  })
+
+  test('raw recovery includes only visible messages after the full-clear marker', () => {
+    const packet = buildVerbatimRecoveryPacket({
+      marker: 'cc-thinking-flush:test',
+      sinceTs: 200,
+      visibleHistory: [
+        { id: 'old', from: 'user', text: '旧排障记录', ts: 100 },
+        { id: 'new-user', from: 'user', text: '清空后的问题', ts: 200 },
+        { id: 'new-cc', from: 'cc', text: '清空后的回答', ts: 201 },
+      ],
+      tokenBudget: 10_000,
+    })
+    expect(packet.recent.map((message) => message.id)).toEqual(['new-user', 'new-cc'])
+    expect(packet.content).not.toContain('旧排障记录')
+    expect(packet.content).toContain('没有旧摘要、旧档案或更早的排障记录')
+    expect(packet.fitsBudget).toBeTrue()
   })
 })
 

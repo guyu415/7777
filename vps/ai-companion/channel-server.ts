@@ -61,8 +61,10 @@ import {
   DEFAULT_TIDAL_CONFIG,
   appendOnly,
   buildRecoveryPacket,
+  buildVerbatimRecoveryPacket,
   claimTidalPending,
   enqueueUnique,
+  firstInputTokensFromTranscript,
   latestInputTokensFromTranscript,
   loadTidalState,
   manualSummaryUpdateCandidate,
@@ -81,6 +83,7 @@ import {
   tidalReviewMode,
   tidalStatusSnapshot,
   tidalStateAfterConversationClear,
+  thinkingFlushDecision,
   tidalTrigger,
   transcriptContainsMarker,
   transcriptHasCompactAfter,
@@ -4750,21 +4753,41 @@ async function injectPreservedSummaryAfterClear(reset: CcResetMarker): Promise<b
 // away), ctx% could plateau above a fixed floor and re-trigger every tick.
 const THINKING_FLUSH_STATE_FILE = process.env.AI_COMPANION_THINKING_FLUSH_STATE_FILE ?? join(ROOT, 'state', 'thinking-flush.json')
 const THINKING_FLUSH_DELTA_PCT = 20
+const THINKING_FLUSH_MIN_GAIN_PCT = 10
 const MAINT_FLAG_FILE = join(ROOT, 'state', 'maintenance-in-progress')
 
-type ThinkingFlushState = { baselinePct: number | null; updatedAt: number }
+type ThinkingFlushState = {
+  baselinePct: number | null
+  baselineContextTokens: number | null
+  baselineRecoveryTokens: number | null
+  contextWindowSize: number | null
+  updatedAt: number
+}
+
+function nullableFinite(value: unknown): number | null {
+  if (value === null || value === undefined) return null
+  const parsed = Number(value)
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : null
+}
 
 function readThinkingFlushState(): ThinkingFlushState {
   try {
     const parsed = JSON.parse(readFileSync(THINKING_FLUSH_STATE_FILE, 'utf8'))
-    const rawBaseline = parsed?.baselinePct
-    const baselinePct = rawBaseline === null ? null : Number(rawBaseline)
     return {
-      baselinePct: baselinePct === null || Number.isFinite(baselinePct) ? baselinePct : null,
+      baselinePct: nullableFinite(parsed?.baselinePct),
+      baselineContextTokens: nullableFinite(parsed?.baselineContextTokens),
+      baselineRecoveryTokens: nullableFinite(parsed?.baselineRecoveryTokens),
+      contextWindowSize: nullableFinite(parsed?.contextWindowSize),
       updatedAt: Number.isFinite(Number(parsed?.updatedAt)) ? Number(parsed.updatedAt) : 0,
     }
   } catch {
-    return { baselinePct: null, updatedAt: 0 }
+    return {
+      baselinePct: null,
+      baselineContextTokens: null,
+      baselineRecoveryTokens: null,
+      contextWindowSize: null,
+      updatedAt: 0,
+    }
   }
 }
 
@@ -4778,7 +4801,13 @@ function writeThinkingFlushState(state: ThinkingFlushState) {
 // context-reducing event — this lightweight flush's own /clear, or a real
 // tidal run's /compact. See call sites in requestReset() and finalizeTidalSuccess().
 function markThinkingFlushBaselineStale() {
-  writeThinkingFlushState({ baselinePct: null, updatedAt: Date.now() })
+  writeThinkingFlushState({
+    baselinePct: null,
+    baselineContextTokens: null,
+    baselineRecoveryTokens: null,
+    contextWindowSize: null,
+    updatedAt: Date.now(),
+  })
 }
 
 // User was explicit about this (2026-08-24, right after two same-day
@@ -4803,23 +4832,39 @@ function announceThinkingFlush(beforePct: number) {
 // this second mechanism exists.
 let thinkingFlushInFlight: Promise<{ ok: boolean; error?: string }> | null = null
 
-async function runThinkingFlush(beforePct: number): Promise<{ ok: boolean; error?: string }> {
+function prepareThinkingFlushPacket(): ReturnType<typeof buildRecoveryPacket> | null {
   // Snapshot BEFORE anything is sent to CC — this is the fix for the
   // incident above. Nothing here mutates `history`.
   const visibleHistory = visibleCcHistory()
   const boundaryId = tidalState.processedBoundaryId
-  if (!tidalState.rollingSummary || !boundaryId) return { ok: false, error: 'no_completed_summary' }
   const marker = `cc-thinking-flush:${tidalState.sessionId}:${Date.now()}:r${tidalState.summaryRevision}`
-  const packet = buildRecoveryPacket({
+  if (tidalState.rollingSummary && boundaryId) {
+    return buildRecoveryPacket({
+      marker,
+      rollingSummary: tidalState.rollingSummary,
+      includeLongTermFallback: !readCoreMemorySummary(),
+      subjectiveCheckpoint: tidalState.subjectiveCheckpoint,
+      visibleHistory,
+      boundaryId,
+      tokenBudget: activeTidalConfig().recoveryTokenBudget,
+    })
+  }
+  const reset = readResetMarker()
+  if (reset.mode !== 'all' || !Number.isFinite(reset.resetAt)) return null
+  return buildVerbatimRecoveryPacket({
     marker,
-    rollingSummary: tidalState.rollingSummary,
-    includeLongTermFallback: !readCoreMemorySummary(),
-    subjectiveCheckpoint: tidalState.subjectiveCheckpoint,
     visibleHistory,
-    boundaryId,
+    sinceTs: reset.resetAt,
     tokenBudget: activeTidalConfig().recoveryTokenBudget,
   })
+}
+
+async function runThinkingFlush(
+  beforePct: number,
+  packet: NonNullable<ReturnType<typeof prepareThinkingFlushPacket>>,
+): Promise<{ ok: boolean; error?: string }> {
   if (!packet.fitsBudget) return { ok: false, error: 'recovery_packet_exceeds_budget' }
+  if (!packet.recent.length) return { ok: false, error: 'recovery_packet_empty' }
 
   const resetResult = await withTmuxLock(resetCcContext)
   if (!resetResult.ok) return { ok: false, error: resetResult.error }
@@ -4837,6 +4882,7 @@ async function runThinkingFlush(beforePct: number): Promise<{ ok: boolean; error
   if (tidalRetryTimer) clearTimeout(tidalRetryTimer)
   tidalRetryTimer = null
   tidalState.sessionId = readBrainSessionId()
+  tidalState.lastContextTokens = null
   persistTidalState()
 
   startTurn(marker, 'tidal_recovery', false)
@@ -4852,9 +4898,12 @@ async function runThinkingFlush(beforePct: number): Promise<{ ok: boolean; error
   return { ok: true }
 }
 
-function requestThinkingFlush(beforePct: number): Promise<{ ok: boolean; error?: string }> {
+function requestThinkingFlush(
+  beforePct: number,
+  packet: NonNullable<ReturnType<typeof prepareThinkingFlushPacket>>,
+): Promise<{ ok: boolean; error?: string }> {
   if (thinkingFlushInFlight) return thinkingFlushInFlight
-  const run = runThinkingFlush(beforePct)
+  const run = runThinkingFlush(beforePct, packet)
   thinkingFlushInFlight = run
   resetInFlight = run
   const clear = () => { thinkingFlushInFlight = null; resetInFlight = null }
@@ -4862,27 +4911,115 @@ function requestThinkingFlush(beforePct: number): Promise<{ ok: boolean; error?:
   return run
 }
 
-async function checkThinkingFlush(): Promise<{ ok: boolean; skipped?: string; firedPct?: number; baselinePct?: number }> {
+async function checkThinkingFlush(): Promise<{
+  ok: boolean
+  skipped?: string
+  firedPct?: number
+  baselinePct?: number
+  estimatedGainPct?: number
+}> {
   if (existsSync(MAINT_FLAG_FILE)) return { ok: false, skipped: 'maintenance_in_progress' }
   if (currentTurn) return { ok: false, skipped: 'turn_in_progress' }
   if (resetInFlight) return { ok: false, skipped: 'reset_in_progress' }
   if (tidalState.pending) return { ok: false, skipped: 'tidal_run_in_progress' }
-  if (!tidalState.rollingSummary || !tidalState.processedBoundaryId) return { ok: false, skipped: 'no_completed_summary_yet' }
 
-  const status = readStatus() as { context_window?: { used_percentage?: number | null } | null }
+  const packet = prepareThinkingFlushPacket()
+  if (!packet) return { ok: false, skipped: 'no_recovery_anchor' }
+  if (!packet.recent.length) return { ok: false, skipped: 'recovery_packet_empty' }
+  if (!packet.fitsBudget) return { ok: false, skipped: 'recovery_packet_exceeds_budget' }
+
+  const status = readStatus() as {
+    context_window?: {
+      used_percentage?: number | null
+      context_window_size?: number | null
+    } | null
+  }
   const pct = Number(status?.context_window?.used_percentage)
   if (!Number.isFinite(pct)) return { ok: false, skipped: 'ctx_unknown' }
+  const contextWindowSize = Number(status?.context_window?.context_window_size)
+  if (!Number.isFinite(contextWindowSize) || contextWindowSize <= 0) {
+    return { ok: false, skipped: 'ctx_window_unknown' }
+  }
+  const exactContextTokens = Number(tidalState.lastContextTokens)
+  const currentContextTokens = Number.isFinite(exactContextTokens) && exactContextTokens > 0
+    ? exactContextTokens
+    : Math.round(contextWindowSize * pct / 100)
 
   const flushState = readThinkingFlushState()
-  if (flushState.baselinePct === null) {
-    writeThinkingFlushState({ baselinePct: pct, updatedAt: Date.now() })
-    return { ok: false, skipped: 'baseline_primed', baselinePct: pct }
+  let baselineContextTokens = flushState.baselineContextTokens
+  let baselineRecoveryTokens = flushState.baselineRecoveryTokens
+
+  // Migration for the one bad cycle that exposed this bug: an all-clear
+  // recorded the stale marker, but the old checker returned before priming.
+  // Use the first real input waterline from this brand-new transcript, never
+  // zero, so fixed CLAUDE.md/tool overhead is not counted as reclaimable.
+  if (baselineContextTokens === null) {
+    const reset = readResetMarker()
+    const followsFullClear = !tidalState.rollingSummary
+      && reset.mode === 'all'
+      && Math.abs(flushState.updatedAt - reset.resetAt) <= 5_000
+    const recoveredLowWater = followsFullClear
+      ? firstInputTokensFromTranscript(brainTranscriptPath(tidalState.sessionId))
+      : null
+    if (recoveredLowWater !== null && recoveredLowWater <= currentContextTokens) {
+      baselineContextTokens = recoveredLowWater
+      baselineRecoveryTokens = 0
+    } else if (flushState.baselinePct !== null) {
+      baselineContextTokens = Math.round(contextWindowSize * flushState.baselinePct / 100)
+      // The old state did not record recovery size. Starting from the current
+      // packet is conservative and cannot cause an eager clear.
+      baselineRecoveryTokens = packet.estimatedTokens
+    } else {
+      baselineContextTokens = currentContextTokens
+      baselineRecoveryTokens = packet.estimatedTokens
+    }
+    writeThinkingFlushState({
+      baselinePct: baselineContextTokens / contextWindowSize * 100,
+      baselineContextTokens,
+      baselineRecoveryTokens,
+      contextWindowSize,
+      updatedAt: Date.now(),
+    })
   }
-  if (pct - flushState.baselinePct < THINKING_FLUSH_DELTA_PCT) {
-    return { ok: false, skipped: 'below_threshold', baselinePct: flushState.baselinePct }
+  if (baselineRecoveryTokens === null) {
+    baselineRecoveryTokens = packet.estimatedTokens
+    writeThinkingFlushState({
+      baselinePct: baselineContextTokens / contextWindowSize * 100,
+      baselineContextTokens,
+      baselineRecoveryTokens,
+      contextWindowSize,
+      updatedAt: Date.now(),
+    })
   }
 
-  const result = await requestThinkingFlush(pct)
+  const decision = thinkingFlushDecision({
+    currentContextTokens,
+    baselineContextTokens,
+    contextWindowSize,
+    currentRecoveryTokens: packet.estimatedTokens,
+    baselineRecoveryTokens,
+    evaluationDeltaPercent: THINKING_FLUSH_DELTA_PCT,
+    minimumGainPercent: THINKING_FLUSH_MIN_GAIN_PCT,
+  })
+  const baselinePct = baselineContextTokens / contextWindowSize * 100
+  if (decision.action === 'wait') {
+    return { ok: false, skipped: 'below_threshold', baselinePct }
+  }
+  if (decision.action === 'skip_low_benefit') {
+    tidalLog('thinking_flush_low_benefit', {
+      growthPercent: decision.growthPercent,
+      estimatedGainPercent: decision.estimatedGainPercent,
+      recoveryTokens: packet.estimatedTokens,
+    })
+    return {
+      ok: false,
+      skipped: 'low_estimated_benefit',
+      baselinePct,
+      estimatedGainPct: decision.estimatedGainPercent,
+    }
+  }
+
+  const result = await requestThinkingFlush(pct, packet)
   if (!result.ok) {
     // A failed/refused flush changed nothing — leave the baseline as-is so
     // the next tick keeps comparing against the same floor instead of
@@ -4890,7 +5027,12 @@ async function checkThinkingFlush(): Promise<{ ok: boolean; skipped?: string; fi
     tidalLog('thinking_flush_failed', { error: result.error })
     return { ok: false, skipped: `flush_failed:${result.error}` }
   }
-  return { ok: true, firedPct: pct, baselinePct: flushState.baselinePct }
+  return {
+    ok: true,
+    firedPct: pct,
+    baselinePct,
+    estimatedGainPct: decision.estimatedGainPercent,
+  }
 }
 
 function pendingSourceMessages(): VisibleCcMessage[] {

@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Triggered by ai-companion-thinking-flush.timer, every 10 minutes. All the
 # real gating (busy turn, reset already in flight, a real tidal run in
-# progress, no completed summary yet to anchor to, ctx% not grown enough
-# since the last flush) lives server-side in checkThinkingFlush() —
+# progress, no safe recovery anchor, ctx% not grown enough, or too little
+# estimated benefit) lives server-side in checkThinkingFlush() —
 # see /internal/thinking-flush-check in channel-server.ts. This script is
 # just the cheap poll.
 set -u
@@ -23,7 +23,7 @@ RESULT="$(curl -fsS --max-time 30 -X POST "http://127.0.0.1:${PORT}/internal/thi
 # let them dominate brain.log. Anything else (a real fire, a skip worth
 # knowing about, an error) still gets logged.
 case "$RESULT" in
-  *'"skipped":"below_threshold"'*|*'"skipped":"baseline_primed"'*|*'"skipped":"no_completed_summary_yet"'*|*'"skipped":"turn_in_progress"'*)
+  *'"skipped":"below_threshold"'*|*'"skipped":"baseline_primed"'*|*'"skipped":"no_recovery_anchor"'*|*'"skipped":"low_estimated_benefit"'*|*'"skipped":"turn_in_progress"'*)
     ;;
   *)
     echo "[$(date -Iseconds)] thinking-flush-check: ${RESULT}" >> "$BRAIN_LOG"
