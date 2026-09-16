@@ -146,6 +146,20 @@ describe('lightweight thinking flush', () => {
     expect(packet.content).toContain('没有旧摘要、旧档案或更早的排障记录')
     expect(packet.fitsBudget).toBeTrue()
   })
+
+  test('persists an interrupted post-clear recovery and reuses the packet marker', () => {
+    const serverSource = readFileSync(new URL('../channel-server.ts', import.meta.url), 'utf8')
+    const run = serverSource.slice(
+      serverSource.indexOf('async function runThinkingFlush('),
+      serverSource.indexOf('function requestThinkingFlush('),
+    )
+    expect(run).toContain("recoveryPending: { beforePct, stage: 'clearing', startedAt }")
+    expect(run).toContain("recoveryPending: { beforePct, stage: 'recovering', startedAt }")
+    expect(run).toContain("startTurn(packet.marker, 'tidal_recovery', false)")
+    expect(run).toContain('sendClaudeChannelNotification(packet.marker, packet.content)')
+    expect(run).not.toContain("startTurn(marker, 'tidal_recovery', false)")
+    expect(serverSource).toContain('if (flushState.recoveryPending)')
+  })
 })
 
 describe('CC tidal review escalation', () => {

@@ -4761,6 +4761,11 @@ type ThinkingFlushState = {
   baselineContextTokens: number | null
   baselineRecoveryTokens: number | null
   contextWindowSize: number | null
+  recoveryPending: {
+    beforePct: number
+    stage: 'clearing' | 'recovering'
+    startedAt: number
+  } | null
   updatedAt: number
 }
 
@@ -4778,6 +4783,17 @@ function readThinkingFlushState(): ThinkingFlushState {
       baselineContextTokens: nullableFinite(parsed?.baselineContextTokens),
       baselineRecoveryTokens: nullableFinite(parsed?.baselineRecoveryTokens),
       contextWindowSize: nullableFinite(parsed?.contextWindowSize),
+      recoveryPending: parsed?.recoveryPending
+        && Number.isFinite(Number(parsed.recoveryPending.beforePct))
+        && (parsed.recoveryPending.stage === 'clearing' || parsed.recoveryPending.stage === 'recovering')
+        ? {
+            beforePct: Number(parsed.recoveryPending.beforePct),
+            stage: parsed.recoveryPending.stage,
+            startedAt: Number.isFinite(Number(parsed.recoveryPending.startedAt))
+              ? Number(parsed.recoveryPending.startedAt)
+              : 0,
+          }
+        : null,
       updatedAt: Number.isFinite(Number(parsed?.updatedAt)) ? Number(parsed.updatedAt) : 0,
     }
   } catch {
@@ -4786,6 +4802,7 @@ function readThinkingFlushState(): ThinkingFlushState {
       baselineContextTokens: null,
       baselineRecoveryTokens: null,
       contextWindowSize: null,
+      recoveryPending: null,
       updatedAt: 0,
     }
   }
@@ -4806,6 +4823,7 @@ function markThinkingFlushBaselineStale() {
     baselineContextTokens: null,
     baselineRecoveryTokens: null,
     contextWindowSize: null,
+    recoveryPending: null,
     updatedAt: Date.now(),
   })
 }
@@ -4862,35 +4880,58 @@ function prepareThinkingFlushPacket(): ReturnType<typeof buildRecoveryPacket> | 
 async function runThinkingFlush(
   beforePct: number,
   packet: NonNullable<ReturnType<typeof prepareThinkingFlushPacket>>,
+  resumeRecovery = false,
 ): Promise<{ ok: boolean; error?: string }> {
   if (!packet.fitsBudget) return { ok: false, error: 'recovery_packet_exceeds_budget' }
   if (!packet.recent.length) return { ok: false, error: 'recovery_packet_empty' }
 
-  const resetResult = await withTmuxLock(resetCcContext)
-  if (!resetResult.ok) return { ok: false, error: resetResult.error }
+  if (!resumeRecovery) {
+    const startedAt = Date.now()
+    writeThinkingFlushState({
+      ...readThinkingFlushState(),
+      recoveryPending: { beforePct, stage: 'clearing', startedAt },
+      updatedAt: startedAt,
+    })
+    const resetResult = await withTmuxLock(resetCcContext)
+    if (!resetResult.ok) {
+      writeThinkingFlushState({
+        ...readThinkingFlushState(),
+        recoveryPending: null,
+        updatedAt: Date.now(),
+      })
+      return { ok: false, error: resetResult.error }
+    }
 
-  // Mirrors the transient cleanup requestReset() does on a confirmed clear —
-  // this in-flight thinking belonged to the now-discarded context. Deliberately
-  // NOT touching `history`, NOT calling tidalStateAfterConversationClear, and
-  // NOT touching processedBoundaryId/rollingSummary/pending/queue — none of
-  // that changed. Only the live session id tracked on tidalState needs to
-  // follow /clear's brand-new internal session, so future tidal file lookups
-  // (transcriptContainsMarker etc.) point at the right transcript.
-  if (thinkingTail) clearInterval(thinkingTail.timer)
-  thinkingTail = null
-  pendingThinking = []
-  if (tidalRetryTimer) clearTimeout(tidalRetryTimer)
-  tidalRetryTimer = null
-  tidalState.sessionId = readBrainSessionId()
-  tidalState.lastContextTokens = null
-  persistTidalState()
+    // Mirrors the transient cleanup requestReset() does on a confirmed clear —
+    // this in-flight thinking belonged to the now-discarded context. Deliberately
+    // NOT touching `history`, NOT calling tidalStateAfterConversationClear, and
+    // NOT touching processedBoundaryId/rollingSummary/pending/queue — none of
+    // that changed. Only the live session id tracked on tidalState needs to
+    // follow /clear's brand-new internal session, so future tidal file lookups
+    // (transcriptContainsMarker etc.) point at the right transcript.
+    if (thinkingTail) clearInterval(thinkingTail.timer)
+    thinkingTail = null
+    pendingThinking = []
+    if (tidalRetryTimer) clearTimeout(tidalRetryTimer)
+    tidalRetryTimer = null
+    tidalState.sessionId = readBrainSessionId()
+    tidalState.lastContextTokens = null
+    persistTidalState()
+    writeThinkingFlushState({
+      ...readThinkingFlushState(),
+      recoveryPending: { beforePct, stage: 'recovering', startedAt },
+      updatedAt: Date.now(),
+    })
+  }
 
-  startTurn(marker, 'tidal_recovery', false)
+  startTurn(packet.marker, 'tidal_recovery', false)
   try {
-    await sendClaudeChannelNotification(marker, packet.content)
+    await sendClaudeChannelNotification(packet.marker, packet.content)
   } catch (err) {
-    if (currentTurn?.turnId === marker) currentTurn = null
-    return { ok: false, error: `recovery_send_failed:${String(err)}` }
+    if (currentTurn?.turnId === packet.marker) currentTurn = null
+    const error = `recovery_send_failed:${String(err)}`
+    tidalLog('thinking_flush_recovery_send_failed', { error })
+    return { ok: false, error }
   }
   markThinkingFlushBaselineStale()
   announceThinkingFlush(beforePct)
@@ -4901,9 +4942,10 @@ async function runThinkingFlush(
 function requestThinkingFlush(
   beforePct: number,
   packet: NonNullable<ReturnType<typeof prepareThinkingFlushPacket>>,
+  resumeRecovery = false,
 ): Promise<{ ok: boolean; error?: string }> {
   if (thinkingFlushInFlight) return thinkingFlushInFlight
-  const run = runThinkingFlush(beforePct, packet)
+  const run = runThinkingFlush(beforePct, packet, resumeRecovery)
   thinkingFlushInFlight = run
   resetInFlight = run
   const clear = () => { thinkingFlushInFlight = null; resetInFlight = null }
@@ -4934,8 +4976,22 @@ async function checkThinkingFlush(): Promise<{
       context_window_size?: number | null
     } | null
   }
-  const pct = Number(status?.context_window?.used_percentage)
-  if (!Number.isFinite(pct)) return { ok: false, skipped: 'ctx_unknown' }
+  const rawPct = status?.context_window?.used_percentage
+  const pct = typeof rawPct === 'number' && Number.isFinite(rawPct) ? rawPct : null
+  const flushState = readThinkingFlushState()
+  if (flushState.recoveryPending) {
+    const resumeRecovery = flushState.recoveryPending.stage === 'recovering' || pct === null
+    const result = await requestThinkingFlush(
+      flushState.recoveryPending.beforePct,
+      packet,
+      resumeRecovery,
+    )
+    if (!result.ok) {
+      return { ok: false, skipped: `recovery_retry_failed:${result.error}` }
+    }
+    return { ok: true, firedPct: flushState.recoveryPending.beforePct }
+  }
+  if (pct === null) return { ok: false, skipped: 'ctx_unknown' }
   const contextWindowSize = Number(status?.context_window?.context_window_size)
   if (!Number.isFinite(contextWindowSize) || contextWindowSize <= 0) {
     return { ok: false, skipped: 'ctx_window_unknown' }
@@ -4945,7 +5001,6 @@ async function checkThinkingFlush(): Promise<{
     ? exactContextTokens
     : Math.round(contextWindowSize * pct / 100)
 
-  const flushState = readThinkingFlushState()
   let baselineContextTokens = flushState.baselineContextTokens
   let baselineRecoveryTokens = flushState.baselineRecoveryTokens
 
@@ -4978,6 +5033,7 @@ async function checkThinkingFlush(): Promise<{
       baselineContextTokens,
       baselineRecoveryTokens,
       contextWindowSize,
+      recoveryPending: null,
       updatedAt: Date.now(),
     })
   }
@@ -4988,6 +5044,7 @@ async function checkThinkingFlush(): Promise<{
       baselineContextTokens,
       baselineRecoveryTokens,
       contextWindowSize,
+      recoveryPending: null,
       updatedAt: Date.now(),
     })
   }
