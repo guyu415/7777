@@ -90,6 +90,57 @@ describe('companion connection recovery', () => {
     await expect(stream.next()).resolves.toEqual({ value: undefined, done: true })
   })
 
+  it('treats a standalone live poke as a visible reply', async () => {
+    const companion = await import('../companion.js')
+    const stream = companion.streamChatViaCompanion({ text: '拍我一下', messageId: 'poke-turn' })
+    const firstChunk = stream.next()
+    await flush()
+
+    const socket = MockWebSocket.instances[0]
+    socket.open()
+    await flush()
+    socket.message({
+      type: 'msg', kind: 'poke', id: 'poke-reply', from: 'cc', text: '', ts: Date.now(),
+      turnId: 'poke-turn', before: '拍', after: '拍你的肩膀',
+    })
+    socket.message({ type: 'turn_end', turnId: 'poke-turn' })
+
+    await expect(firstChunk).resolves.toEqual({
+      value: { visibleAction: { type: 'poke', id: 'poke-reply' } },
+      done: false,
+    })
+    await expect(stream.next()).resolves.toEqual({ value: undefined, done: true })
+  })
+
+  it('recovers a standalone poke after reconnecting mid-turn', async () => {
+    const companion = await import('../companion.js')
+    const stream = companion.streamChatViaCompanion({ text: '还在吗', messageId: 'poke-reconnect-turn' })
+    const firstChunk = stream.next()
+    await flush()
+
+    const oldSocket = MockWebSocket.instances[0]
+    oldSocket.open()
+    await flush()
+    expect(oldSocket.sent.some(m => m.id === 'poke-reconnect-turn')).toBe(true)
+
+    companion.reconnectCompanion()
+    const freshSocket = MockWebSocket.instances[1]
+    freshSocket.open()
+    freshSocket.message({
+      type: 'history', openTurnId: null, queuedTurnIds: [], resetAt: 0,
+      items: [{
+        type: 'msg', kind: 'poke', id: 'poke-reconnect-reply', from: 'cc', text: '', ts: Date.now(),
+        turnId: 'poke-reconnect-turn', before: '戳', after: '戳你的脸颊',
+      }],
+    })
+
+    await expect(firstChunk).resolves.toEqual({
+      value: { visibleAction: { type: 'poke', id: 'poke-reconnect-reply' } },
+      done: false,
+    })
+    await expect(stream.next()).resolves.toEqual({ value: undefined, done: true })
+  })
+
   it('forwards server turn timestamps for an honest reasoning duration', async () => {
     const companion = await import('../companion.js')
     const stream = companion.streamChatViaCompanion({ text: '想一想', messageId: 'timed-turn' })

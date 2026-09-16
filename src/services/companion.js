@@ -1463,7 +1463,9 @@ export function sendDeleteNotice(text, messageIds = []) {
  * One call = one turn. Multiple `reply` calls from the same Claude turn are
  * delivered as multiple { text } yields before the generator returns (on
  * turn_end) — callers should accumulate them, matching how useChat.js already
- * accumulates streamChat's text deltas.
+ * accumulates streamChat's text deltas. A standalone user-visible action such
+ * as `poke_user` is yielded as { visibleAction } so it can complete the turn
+ * without requiring Claude to add filler text.
  *
  * Every delivered message is deduped by its Wire.id (never by text) against
  * the module-level `deliveredIds` set, so a reconnect-triggered history
@@ -1550,7 +1552,7 @@ export async function* streamChatViaCompanion({ text, imagePath, file, signal, m
       // recover from the replayed message history instead of hanging.
       if (evt.openTurnId === turnId || evt.queuedTurnIds?.includes(turnId)) return // still open/queued server-side, keep waiting
       const isOurs = it => it.turnId === turnId
-      const ccReplies = evt.items.filter(it => isOurs(it) && it.from === 'cc' && it.kind !== 'poke')
+      const ccReplies = evt.items.filter(it => isOurs(it) && it.from === 'cc')
       recoveredFromHistory = true
       if (ccReplies.length > 0) {
         // Dedup by Wire.id, never by text — a reply that happens to repeat
@@ -1563,7 +1565,8 @@ export async function* streamChatViaCompanion({ text, imagePath, file, signal, m
           // of this message's thinking a live 'thinking' wire event already
           // delivered before the disconnect, so appending would duplicate it.
           if (r.thinking) push({ reasoningReplace: r.thinking, reasoningCompletedAt: r.ts })
-          if (r.kind === 'voice') push({ voice: { id: r.id, text: r.text, voice: r.voice, style: r.style } })
+          if (r.kind === 'poke') push({ visibleAction: { type: 'poke', id: r.id } })
+          else if (r.kind === 'voice') push({ voice: { id: r.id, text: r.text, voice: r.voice, style: r.style } })
           else push({ text: r.text, wireId: r.id, ...(r.musicAction ? { musicAction: r.musicAction } : {}), ...(r.bedtimeCard ? { bedtimeCard: r.bedtimeCard } : {}) })
         }
         push({ done: true })
@@ -1623,7 +1626,12 @@ export async function* streamChatViaCompanion({ text, imagePath, file, signal, m
       if (m.tool) push({ toolUse: { tool: m.tool, detail: m.detail || '', ts: m.ts } })
       return
     }
-    if (m.type === 'msg' && m.from === 'cc' && m.kind !== 'poke') {
+    if (m.type === 'msg' && m.from === 'cc' && m.kind === 'poke') {
+      if (alreadyDelivered(m.id)) return
+      markDelivered(m.id)
+      thisTurnDeliveredIds.push(m.id)
+      push({ visibleAction: { type: 'poke', id: m.id } })
+    } else if (m.type === 'msg' && m.from === 'cc') {
       if (alreadyDelivered(m.id)) return // e.g. already delivered via an earlier history recovery
       markDelivered(m.id)
       thisTurnDeliveredIds.push(m.id)
@@ -1695,6 +1703,7 @@ export async function* streamChatViaCompanion({ text, imagePath, file, signal, m
       // below and got yielded as { text: undefined, wireId: undefined }
       // instead, so useChat.js's `chunk.toolUse` check never once saw it.
       else if (item.toolUse) yield { toolUse: item.toolUse }
+      else if (item.visibleAction) yield { visibleAction: item.visibleAction }
       // wireId rides along with each text chunk so the caller can persist
       // which server-side message ids this turn already displayed — the
       // history-snapshot dedup in App.jsx matches against them (voice chunks

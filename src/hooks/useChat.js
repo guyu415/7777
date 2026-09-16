@@ -315,6 +315,7 @@ export function useChat() {
     let currentTextTimestamp = assistantMsg.timestamp
     let currentTextAdded = true // assistantId was already added() above
     let vpsUsedVoiceThisTurn = false
+    let vpsVisibleActionThisTurn = false
     let vpsCurrentMusicAction = null
     // Server-side wire ids (Wire.id) this turn delivered live. Persisted onto
     // every bubble the turn saves (`wireIds` field) so App.jsx's proactive
@@ -689,6 +690,7 @@ export function useChat() {
             toolUses.push(chunk.toolUse)
             dirty = true
           }
+          if (isVpsProvider && chunk.visibleAction) vpsVisibleActionThisTurn = true
           // VPS-only: an authoritative post-reconnect value, not a delta —
           // see streamChatViaCompanion's doc comment. Overwrites rather than
           // appends so a live delta already accumulated before a disconnect
@@ -786,6 +788,15 @@ export function useChat() {
       if (toolUses.length && !(isVpsProvider && vpsUsedVoiceThisTurn)) {
         assistantMsg.toolUses = [...toolUses]
         updateMessage(assistantId, { toolUses: [...toolUses] })
+      }
+
+      // `poke_user` is itself a complete, visible answer. When it is the only
+      // response in this turn, discard the empty assistant placeholder and
+      // finish successfully instead of surfacing a false "no reply" error.
+      if (isVpsProvider && vpsVisibleActionThisTurn && !contentStarted && !vpsUsedVoiceThisTurn) {
+        deleteMessage(assistantId)
+        updateSession(CONVERSATION_ID, { lastMsgTime: Date.now() })
+        return
       }
 
       // VPS + at least one send_voice this turn: the shared post-stream
