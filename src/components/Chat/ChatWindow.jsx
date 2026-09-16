@@ -49,8 +49,19 @@ function chatTidalNotice(status) {
           : '正在整理对话记忆'
     return { key: `running:${tide.stage}:${tide.at}`, tone: 'running', text: `${stageText}${queued}`, transient: false }
   }
-  if (tide.status === 'retry_wait' || tide.status === 'failed') {
-    return { key: `${tide.status}:${tide.stage}:${tide.at}`, tone: 'failed', text: '潮汐整理失败，聊天已恢复；稍后会自动重试', transient: true }
+  if (tide.status === 'retry_wait') {
+    const deferred = tide.stage === 'review_deferred_by_cc' || tide.stage === 'review_no_safe_boundary'
+    return {
+      key: `retry_wait:${tide.stage}:${tide.at}`,
+      tone: deferred ? 'waiting' : 'failed',
+      text: deferred
+        ? `当前内容仍在延续，CC 已暂缓本次潮汐整理；稍后会自动重试${queued}`
+        : `潮汐整理未完成，聊天已恢复；稍后会自动重试${queued}`,
+      transient: true,
+    }
+  }
+  if (tide.status === 'failed') {
+    return { key: `failed:${tide.stage}:${tide.at}`, tone: 'failed', text: `潮汐整理失败，聊天已恢复${queued}`, transient: true }
   }
   if (tide.status === 'success' && tide.at && Date.now() - tide.at < 120_000) {
     return { key: `success:${tide.stage}:${tide.at}`, tone: 'success', text: '潮汐整理完成，CC 已恢复', transient: true }
@@ -887,8 +898,8 @@ export default function ChatWindow({ theme }) {
               aria-live="polite"
               className="flex items-center gap-1.5 px-3 py-1.5 text-[11px]"
               style={{
-                color: tidalNotice.tone === 'success' ? '#287a58' : tidalNotice.tone === 'failed' ? '#a1545e' : '#3c6f9d',
-                background: tidalNotice.tone === 'success' ? 'rgba(210,246,228,.82)' : tidalNotice.tone === 'failed' ? 'rgba(255,225,226,.84)' : 'rgba(220,239,255,.84)',
+                color: tidalNotice.tone === 'success' ? '#287a58' : tidalNotice.tone === 'failed' ? '#a1545e' : tidalNotice.tone === 'waiting' ? '#8a6728' : '#3c6f9d',
+                background: tidalNotice.tone === 'success' ? 'rgba(210,246,228,.82)' : tidalNotice.tone === 'failed' ? 'rgba(255,225,226,.84)' : tidalNotice.tone === 'waiting' ? 'rgba(255,241,205,.88)' : 'rgba(220,239,255,.84)',
                 borderRadius: '48% 52% 46% 54% / 57% 45% 55% 43%',
                 boxShadow: `0 3px 12px ${primaryColor}18`,
                 backdropFilter: 'blur(10px)',
