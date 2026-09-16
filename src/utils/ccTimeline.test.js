@@ -57,6 +57,35 @@ describe('CC timeline snapshot recovery', () => {
     ])
   })
 
+  it('repairs missing persisted reasoning for a known server wire on refresh', () => {
+    const local = [{
+      id: 'local-a', wireIds: ['wire-a'], serverWireIds: ['wire-a'],
+      role: 'assistant', content: '答复', timestamp: 1000,
+    }]
+    const snapshot = [{ ...msg('wire-a', 1000), thinking: '仍应显示的旧思考' }]
+
+    expect(selectCcSnapshotDelta(local, snapshot)).toEqual(snapshot)
+  })
+
+  it('does not replay reasoning when the first split bubble was deliberately deleted', () => {
+    const local = [{
+      id: 'wire-a::part:1', wireIds: ['wire-a::part:1'], serverWireIds: ['wire-a'],
+      wirePartIndex: 1, wirePartCount: 2, role: 'assistant', content: '第二段', timestamp: 1001,
+    }]
+    const snapshot = [{ ...msg('wire-a', 1000), text: '第一段\n\n第二段', thinking: '旧思考' }]
+
+    expect(selectCcSnapshotDelta(local, snapshot)).toEqual([])
+  })
+
+  it('attaches recovered reasoning only to the first paragraph bubble', () => {
+    const mapped = ccWireToTimelineMessages({
+      ...msg('reply-thinking', 1000), text: '第一段\n\n第二段', thinking: '思考内容',
+    }, 'cc-session')
+
+    expect(mapped[0].reasoning).toBe('思考内容')
+    expect(mapped[1].reasoning).toBeUndefined()
+  })
+
   it('keeps a persisted focus summary card when history is recovered', () => {
     const focusSummary = { task: '背单词', plannedMinutes: 25, actualMinutes: 25, reason: 'completed' }
     const mapped = ccWireToTimelineMessage({ ...msg('focus-card', 1000), focusSummary }, 'cc-session')

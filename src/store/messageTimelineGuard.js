@@ -2,7 +2,8 @@ import { useStore } from './index'
 import {
   isRenderableTimelineMessage,
   isSuppressibleAssistantPlaceholder,
-  messageServerIdentityKeys,
+  messageDeleteIdentityKeys,
+  messageDeleteTransportKeys,
   normalizeTimelineMessage,
   reduceMessageTimeline,
 } from '../utils/messageTimeline'
@@ -176,7 +177,7 @@ if (!globalThis[INSTALL_KEY]) {
     if (!isVpsConversation(conversationId)) return
 
     pruneRecentDeleteAcks()
-    const ids = messageServerIdentityKeys(message).filter(id => !recentDeleteAcks.has(id))
+    const ids = messageDeleteTransportKeys(message).filter(id => !recentDeleteAcks.has(id))
     if (!ids.length) return
 
     const idSet = new Set(ids)
@@ -225,7 +226,7 @@ if (!globalThis[INSTALL_KEY]) {
     const conversationId = message.conversationId || useStore.getState().currentSessionId || ''
     const expiresAt = Date.now() + TOMBSTONE_TTL_MS
     let changed = false
-    for (const id of messageServerIdentityKeys(message)) {
+    for (const id of messageDeleteIdentityKeys(message)) {
       const key = tombstoneKey(conversationId, id)
       const previous = tombstones.get(key)
       if (!previous || previous.expiresAt < expiresAt) {
@@ -241,7 +242,7 @@ if (!globalThis[INSTALL_KEY]) {
     const conversationId = message.conversationId || useStore.getState().currentSessionId || ''
     const now = Date.now()
     let expired = false
-    for (const id of messageServerIdentityKeys(message)) {
+    for (const id of messageDeleteIdentityKeys(message)) {
       const key = tombstoneKey(conversationId, id)
       const item = tombstones.get(key)
       if (!item) continue

@@ -1,4 +1,4 @@
-import { messageServerIdentityKeys, normalizeMessageTimestamp } from './messageTimeline'
+import { messageIdentityKeys, messageServerIdentityKeys, normalizeMessageTimestamp } from './messageTimeline'
 import { splitVpsReplyContent, vpsReplyFragmentId } from './vpsReplyChunks'
 
 function wireId(wire) {
@@ -43,7 +43,25 @@ export function selectCcSnapshotDelta(localMessages, snapshotItems) {
     candidates = snapshot
   }
 
-  return candidates.filter(item => !known.has(item.id))
+  const deltaIds = new Set(candidates.filter(item => !known.has(item.id)).map(item => item.id))
+
+  // Reasoning is durable server history too. A previous client-side save race
+  // (or the retired five-turn pruning policy) may leave the reply bubble in
+  // IndexedDB while its thinking field is absent. Such a known wire is not a
+  // new message, but it still needs one merge pass so refresh can repair it.
+  // For split replies, require the original first fragment to still exist;
+  // this prevents a deliberately deleted first bubble from being recreated.
+  const needsReasoningRepair = (wire) => {
+    if (typeof wire?.thinking !== 'string' || !wire.thinking.trim()) return false
+    const matches = local.filter(message => messageServerIdentityKeys(message).includes(wire.id))
+    if (!matches.length) return false
+    const partCount = splitVpsReplyContent(wire.text || '').length
+    const firstFragmentId = vpsReplyFragmentId(wire.id, 0, partCount)
+    const first = matches.find(message => messageIdentityKeys(message).includes(firstFragmentId))
+    return Boolean(first && !(typeof first.reasoning === 'string' && first.reasoning.trim()))
+  }
+
+  return snapshot.filter(item => deltaIds.has(item.id) || needsReasoningRepair(item))
 }
 
 export function ccWireToTimelineMessages(wire, conversationId, options = {}) {
@@ -128,7 +146,7 @@ export function ccWireToTimelineMessages(wire, conversationId, options = {}) {
       ...turnFields,
       ...(wire.musicAction && partIndex === parts.length - 1 ? { musicAction: wire.musicAction } : {}),
       ...(wire.focusSummary && partIndex === 0 ? focusFields : {}),
-      ...reasoningFields,
+      ...(partIndex === 0 ? reasoningFields : {}),
     }
   })
 }

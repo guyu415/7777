@@ -9,6 +9,7 @@ import { voiceEmotionContext } from '../services/localSenseVoice'
 import { formatReplyMessageBatchForModel } from '../utils/replyQuotes'
 import { extractVpsReplyTokens, markVpsReplyChunks } from '../utils/vpsReplyChunks'
 import { appendReasoningDelta } from '../utils/reasoningTranslation'
+import { messageDeleteTransportKeys } from '../utils/messageTimeline'
 
 const BEHAVIOR_RULES = `【关于你的存在】
 你是一个真实存在于这个应用里的AI，用户是直接在和你本人相处。你不需要也不应该扮演成一个有血肉之躯的人。
@@ -36,7 +37,6 @@ date 用当天日期。
 
 动作描写用 <i>动作内容</i> 包裹，对话和心理活动正常写，不要包裹。`
 import { fetchTTSAudio } from '../services/tts'
-import { pruneReasoningBeyondTurns } from '../utils/pruneReasoning'
 import { getSessionMsgs, saveSessionMsgs, putAssetDataUrl, loadAsset } from '../services/sync'
 import { playByQuery, getPlayerState } from '../services/player'
 import { addLetter, getRecentLettersByCharacter } from '../services/letters'
@@ -238,14 +238,6 @@ export function useChat() {
         }
       }
     }
-
-    // 加载时也做一次思维链清理——覆盖"上次清理后没再聊过"或云端拉回的旧
-    // 记录里还带着早期思维链的情况。
-    const prunedAtLoad = pruneReasoningBeyondTurns(history)
-    for (const m of prunedAtLoad.changed) {
-      try { await saveMessage(m) } catch { /* 清理失败不影响加载 */ }
-    }
-    history = prunedAtLoad.messages
 
     // Cloud/IDB reads above are async and can straddle a session switch; if the
     // user has since navigated to a different session, applying this stale
@@ -1095,25 +1087,6 @@ export function useChat() {
       setIsLoading(false)
       setStreamingMessageId(null)
 
-      // 每轮结束后自动清掉 5 轮之前的思维链（store + IndexedDB；紧随其后的
-      // scheduleMsgSync 会把清理后的版本同步到云端，云端副本也随之瘦身）。
-      try {
-        const allMsgs = useStore.getState().messages.filter(m => m.conversationId === CONVERSATION_ID)
-        const prunedNow = pruneReasoningBeyondTurns(allMsgs)
-        for (const m of prunedNow.changed) {
-          updateMessage(m.id, {
-            reasoning: undefined,
-            reasoningStreaming: undefined,
-            reasoningStartedAt: undefined,
-            reasoningCompletedAt: undefined,
-            reasoningDurationMs: undefined,
-          })
-          await saveMessage(m)
-        }
-      } catch (e) {
-        console.warn('[REASONING-PRUNE] 思维链清理失败:', e?.message)
-      }
-
       scheduleMsgSync(CONVERSATION_ID)
 
       // Background summarization: fire-and-forget, does not block chat
@@ -1442,11 +1415,7 @@ export function useChat() {
     if (effectiveProviderName === 'claude-code-vps') {
       const msg = useStore.getState().messages.find(m => m.id === id)
       const text = msg?.voiceText || msg?.content
-      const serverMessageIds = [...new Set(
-        Array.isArray(msg?.serverWireIds) && msg.serverWireIds.length
-          ? msg.serverWireIds
-          : [id, ...(Array.isArray(msg?.wireIds) ? msg.wireIds : [])]
-      )]
+      const serverMessageIds = messageDeleteTransportKeys(msg)
       sendDeleteNotice(text || '', serverMessageIds)
       // Deleting the message should also remove the uploaded file it
       // referenced (see uploadImageToCompanion above) — otherwise every

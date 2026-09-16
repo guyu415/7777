@@ -57,6 +57,26 @@ export function messageServerIdentityKeys(message) {
   return explicit.length ? explicit : messageIdentityKeys(message)
 }
 
+// Deletion identity is intentionally narrower than transport identity. One
+// server reply can render as several paragraph bubbles. Those bubbles share a
+// serverWireId for reconnect anchoring, but deleting one visible bubble must
+// tombstone/send only that fragment id or every sibling would disappear too.
+export function messageDeleteIdentityKeys(message) {
+  if (!message) return []
+  const splitReply = Number(message.wirePartCount) > 1
+  if (!splitReply) return messageServerIdentityKeys(message)
+  const fragmentIds = uniqueStrings(message.wireIds)
+  return uniqueStrings([message.id, ...(fragmentIds.length ? fragmentIds : [])])
+}
+
+export function messageDeleteTransportKeys(message) {
+  if (!message) return []
+  const splitReply = Number(message.wirePartCount) > 1
+  if (!splitReply) return messageServerIdentityKeys(message)
+  const fragmentIds = uniqueStrings(message.wireIds)
+  return fragmentIds.length ? fragmentIds : uniqueStrings([message.id])
+}
+
 function hasText(value) {
   return typeof value === 'string' && value.trim().length > 0
 }

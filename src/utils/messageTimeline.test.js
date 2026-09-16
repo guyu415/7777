@@ -5,6 +5,8 @@ import {
   isSuppressibleAssistantPlaceholder,
   reduceMessageTimeline,
   reconcileTimelineSnapshot,
+  messageDeleteIdentityKeys,
+  messageDeleteTransportKeys,
   messageServerIdentityKeys,
 } from './messageTimeline'
 
@@ -81,6 +83,22 @@ describe('message timeline', () => {
     expect(result.map(message => message.content)).toEqual(['one', 'two'])
     expect(messageServerIdentityKeys(result[0])).toEqual(['wire'])
     expect(messageServerIdentityKeys(result[1])).toEqual(['wire'])
+  })
+
+  it('deletes one split reply bubble by its fragment id, not the shared server id', () => {
+    const fragment = {
+      id: 'local-part', wireIds: ['wire::part:1'], serverWireIds: ['wire'],
+      wirePartIndex: 1, wirePartCount: 3,
+    }
+
+    expect(messageDeleteIdentityKeys(fragment)).toEqual(['local-part', 'wire::part:1'])
+    expect(messageDeleteTransportKeys(fragment)).toEqual(['wire::part:1'])
+  })
+
+  it('still deletes an unsplit reply by its durable server id', () => {
+    const message = { id: 'local', wireIds: ['wire'], serverWireIds: ['wire'], wirePartCount: 1 }
+    expect(messageDeleteIdentityKeys(message)).toEqual(['wire'])
+    expect(messageDeleteTransportKeys(message)).toEqual(['wire'])
   })
 
   it('never guesses that equal text means equal messages', () => {

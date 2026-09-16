@@ -21,6 +21,7 @@ import { getSettings, saveSettings, extractSettings, saveSessionMsgs, deleteSess
 import { compressImage, slimSettings } from './utils/image'
 import { ensureConnected as ensureCompanionConnected, reconnectCompanion, onProactiveActivity, onProactiveActivityAcknowledged, acknowledgeProactiveActivity, onCcMessageDeleted, onCcReset } from './services/companion'
 import { subscribeCcMessageInbox } from './services/ccMessageInbox'
+import { messageDeleteTransportKeys } from './utils/messageTimeline'
 import { themeWithUserBubbleText } from './utils/bubbleColors'
 import { PUSH_NAVIGATION_EVENT, isPushNavigationUrl } from './utils/notificationNavigation'
 
@@ -647,7 +648,7 @@ export default function App() {
       if (!vpsSession) return
       const idSet = new Set(serverIds)
       const existing = await getMessages(vpsSession.id)
-      const removed = existing.filter(m => idSet.has(m.id) || (Array.isArray(m.wireIds) && m.wireIds.some(id => idSet.has(id))))
+      const removed = existing.filter(m => messageDeleteTransportKeys(m).some(id => idSet.has(id)))
       if (!removed.length) return
       for (const msg of removed) await deleteMessageFromDB(msg.id)
       const state = useStore.getState()
