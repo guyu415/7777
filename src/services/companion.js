@@ -2094,9 +2094,9 @@ export async function switchCompanionModel(modelId) {
   })
 }
 
-// ---------- proactive-message master switch ----------
+// ---------- proactive-message + xinchao dream-sharing master switch ----------
 // State lives on the VPS (config/proactive.json), not just browser
-// localStorage — the systemd timer needs the real current state even when
+// localStorage — both systemd timers need the real current state even when
 // no phone/browser is open at all.
 
 export async function getProactiveSettings() {

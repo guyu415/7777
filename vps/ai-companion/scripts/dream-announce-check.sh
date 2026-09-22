@@ -4,10 +4,18 @@
 # prompt promises ("早上八点心潮会另外叫你把它讲给用户听") but nothing used to
 # actually fire — see /internal/dream-announce in channel-server.ts.
 #
-# Only ever looks at xinchao's LATEST dream, same "never resurrect a stale
-# dream days later" rule dreamPushAllowed itself uses — a dream from an
-# earlier day is left alone even if somehow never announced.
+# Shares the proactive-message master switch. When that switch is off, this
+# exits before reading xinchao state or touching the resident session. Only
+# ever looks at xinchao's LATEST dream, same "never resurrect a stale dream
+# days later" rule dreamPushAllowed itself uses — a dream from an earlier day
+# is left alone even if somehow never announced.
 set -u
+
+PROACTIVE_CONFIG_FILE="${AI_COMPANION_PROACTIVE_CONFIG_FILE:-/opt/ai-companion/config/proactive.json}"
+PROACTIVE_ENABLED="$(jq -r '.enabled // false' "$PROACTIVE_CONFIG_FILE" 2>/dev/null)"
+if [ "$PROACTIVE_ENABLED" != "true" ]; then
+  exit 0
+fi
 
 PORT="${AI_COMPANION_INTERNAL_PORT:-8789}"
 SECRET_FILE="${AI_COMPANION_INTERNAL_SECRET_FILE:-/opt/ai-companion/config/internal.secret}"

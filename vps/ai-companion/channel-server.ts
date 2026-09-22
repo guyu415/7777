@@ -4356,7 +4356,7 @@ async function refreshStatusIfStale(): Promise<void> {
   }
 }
 
-// ---------- proactive-message master switch ----------
+// ---------- proactive-message + xinchao dream-sharing master switch ----------
 
 type ProactiveConfig = {
   enabled: boolean
@@ -10830,8 +10830,9 @@ Bun.serve<{ authed: true }>({
       return jsonResponse(result, { headers: corsHeadersFor(origin) })
     }
 
-    // ---- proactive-message master switch (persisted on the VPS, not just
-    // browser localStorage, so the systemd timer always sees the real state) ----
+    // ---- proactive-message + xinchao dream-sharing master switch (persisted
+    // on the VPS, not just browser localStorage, so both systemd timers always
+    // see the real state) ----
     if (url.pathname === '/proactive/settings' && req.method === 'GET') {
       const gate = authGate()
       if (gate) return gate
@@ -12920,6 +12921,13 @@ const internalFetch = async (req: Request): Promise<Response> => {
 
     if (url.pathname === '/internal/dream-announce' && req.method === 'POST') {
       if (!internalAuthOk(req)) return unauthorized()
+      // The timer checks the same file before calling us, but enforce the
+      // unified switch again here so an off-toggle racing an already-running
+      // timer (or a direct internal caller) can never leak a dream message.
+      if (!readProactiveConfig().enabled) {
+        log('dream_announce_skipped', { reason: 'proactive_disabled' })
+        return jsonResponse({ ok: false, skipped: 'proactive_disabled' })
+      }
       if (currentTurn) return jsonResponse({ ok: false, reason: 'busy' }, { status: 503 })
       const body = await req.json().catch(() => ({} as Record<string, unknown>))
       const dream = typeof (body as any)?.dream === 'string' ? (body as any).dream : ''

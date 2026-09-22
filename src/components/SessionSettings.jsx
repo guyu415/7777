@@ -182,7 +182,7 @@ export default function SessionSettings({ theme }) {
     }
   }
 
-  // Proactive-message master switch — state lives on the VPS
+  // Proactive-message + xinchao dream-sharing master switch — state lives on the VPS
   // (config/proactive.json), not browser localStorage, and is independent
   // of the API Key: clearing/changing the key must never touch this.
   const [proactiveEnabled, setProactiveEnabled] = useState(false)
@@ -889,8 +889,8 @@ export default function SessionSettings({ theme }) {
                 </button>
                 <div className="flex items-center justify-between mt-3 pt-3" style={{ borderTop: '1px solid rgba(120,160,220,0.2)' }}>
                   <div>
-                    <div className="text-xs" style={{ color: '#2c5282' }}>主动消息</div>
-                    <p className="text-[10px] mt-0.5" style={{ color: '#a0b8d0' }}>默认关闭；开启后由常驻会话自行判断是否主动发消息</p>
+                    <div className="text-xs" style={{ color: '#2c5282' }}>主动消息与心潮梦境</div>
+                    <p className="text-[10px] mt-0.5" style={{ color: '#a0b8d0' }}>统一开关；关闭后不再主动发消息，也不会推送每日梦境</p>
                   </div>
                   <button
                     onClick={toggleProactive}
