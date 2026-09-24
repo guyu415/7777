@@ -7,6 +7,7 @@ import { useStore } from '../../store'
 // equivalent hardcoded list — its options come from the real model/list RPC
 // (see channel-server.ts's codexListModels), never copied from this one.
 const CC_MODEL_OPTIONS = [
+  { id: 'claude-opus-5-5', label: 'Opus 5.5' },
   { id: 'claude-opus-5', label: 'Opus 5' },
   { id: 'claude-opus-4-6', label: 'Opus 4.6' },
   { id: 'claude-sonnet-4-6', label: 'Sonnet 4.6' },

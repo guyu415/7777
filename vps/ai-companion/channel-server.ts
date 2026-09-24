@@ -466,7 +466,7 @@ const STATUS_FILE = join(ROOT, 'state', 'status.json')
 // statusLine-reported model.id, not just the display name. Injected as real
 // keystrokes into the brain pane so it goes through the same slash-command
 // path a human typing at the terminal would use.
-const MODEL_IDS = new Set(['claude-opus-5', 'claude-opus-4-6', 'claude-sonnet-4-6', 'claude-opus-4-7'])
+const MODEL_IDS = new Set(['claude-opus-5-5', 'claude-opus-5', 'claude-opus-4-6', 'claude-sonnet-4-6', 'claude-opus-4-7'])
 const TMUX_SESSION = process.env.AI_COMPANION_TMUX_SESSION ?? 'ai-companion-cc-1'
 
 // CC progressive-blur tidal memory only. None of these values are referenced by

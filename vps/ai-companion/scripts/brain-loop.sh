@@ -50,7 +50,7 @@ while true; do
     mode="fresh"
     session_args=(--session-id "$session_id")
     bytes=0
-    model_args=(--model claude-opus-5)
+    model_args=(--model claude-opus-5-5)
   fi
 
   # channel-server.ts reads this on boot and tells the user which kind of
