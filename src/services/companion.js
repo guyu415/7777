@@ -2090,7 +2090,10 @@ export async function switchCompanionModel(modelId) {
   return companionJson('/model/switch', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ model: modelId }),
+    // This helper is called only by RuntimeStatusBall's explicit button-click
+    // handler. The marker lets the backend reject old cached clients whose
+    // refresh path used to replay a stale browser model automatically.
+    body: JSON.stringify({ model: modelId, intent: 'explicit-user-selection' }),
   })
 }
 

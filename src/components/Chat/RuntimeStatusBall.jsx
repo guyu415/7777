@@ -134,14 +134,15 @@ export default function RuntimeStatusBall({ theme, isLoading, runtime }) {
   const refresh = async () => {
     try {
       const s = isCodex ? await getCodexModelStatus() : await getCompanionStatus()
-      // Claude Code lives on the VPS, but the model choice belongs to this
-      // fixed chat window too. Re-apply the last confirmed choice if the VPS
-      // starts/reconnects on another model, instead of briefly presenting its
-      // default (previously Sonnet 5) as the user's selection every visit.
-      if (!isCodex && savedCcModelId && s?.model?.id !== savedCcModelId && !isLoading) {
-        const switched = await switchCompanionModel(savedCcModelId)
-        setStatus({ ...s, model: switched.model })
-        return
+      // The resident VPS process is authoritative. A browser can retain an
+      // old per-window model after the resident session is intentionally
+      // replaced, so refresh must only heal that display cache — it must
+      // never turn stale local state into a real /model command.
+      if (!isCodex) {
+        const confirmedId = ccModelOption(s?.model?.id)?.id
+        if (confirmedId && confirmedId !== savedCcModelId && currentSessionId) {
+          updateSession(currentSessionId, { model: confirmedId })
+        }
       }
       setStatus(s)
     } catch {
@@ -150,8 +151,9 @@ export default function RuntimeStatusBall({ theme, isLoading, runtime }) {
   }
 
   useEffect(() => {
-    const saved = ccModelOption(savedCcModelId)
-    setStatus(saved ? { model: { id: saved.id, display_name: saved.label } } : null)
+    // Do not flash an unverified browser-cached model while the authoritative
+    // VPS status is loading.
+    setStatus(null)
     refresh()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [runtime, savedCcModelId])

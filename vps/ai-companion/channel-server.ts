@@ -11334,6 +11334,14 @@ Bun.serve<{ authed: true }>({
       } catch {
         return jsonResponse({ error: 'bad json' }, { status: 400, headers: cors })
       }
+      // A previously deployed frontend incorrectly replayed its stale local
+      // model whenever the chat opened. Requiring an explicit click marker
+      // makes those cached clients read-only while still allowing the current
+      // model picker to switch on a deliberate user action.
+      if ((body as any)?.intent !== 'explicit-user-selection') {
+        log('model_switch_rejected', { reason: 'explicit_user_intent_required' })
+        return jsonResponse({ error: 'explicit_user_intent_required' }, { status: 400, headers: cors })
+      }
       const modelId = typeof (body as any)?.model === 'string' ? (body as any).model.toLowerCase() : ''
       if (!MODEL_IDS.has(modelId)) {
         return jsonResponse({ error: 'unknown model id', allowed: [...MODEL_IDS] }, { status: 400, headers: cors })
