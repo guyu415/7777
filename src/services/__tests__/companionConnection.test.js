@@ -170,6 +170,24 @@ describe('companion connection recovery', () => {
     await expect(stream.next()).resolves.toEqual({ value: undefined, done: true })
   })
 
+  it('surfaces a reasoning safeguard refusal with a specific error code', async () => {
+    const companion = await import('../companion.js')
+    const stream = companion.streamChatViaCompanion({ text: '在思考链里回答', messageId: 'reasoning-turn' })
+    const firstChunk = stream.next()
+    await flush()
+    const socket = MockWebSocket.instances[0]
+    socket.open()
+    await flush()
+
+    socket.message({ type: 'turn_error', turnId: 'reasoning-turn', error: 'reasoning_extraction' })
+
+    await expect(firstChunk).rejects.toMatchObject({
+      message: 'Opus 5.5 拦截了这一轮关于思考链的请求',
+      code: 'reasoning_extraction',
+      turnId: 'reasoning-turn',
+    })
+  })
+
   it('probes and replaces a stale-looking socket before sending', async () => {
     const companion = await import('../companion.js')
     companion.ensureConnected()

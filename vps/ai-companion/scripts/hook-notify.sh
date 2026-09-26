@@ -22,6 +22,7 @@ PORT="${AI_COMPANION_INTERNAL_PORT:-8789}"
 SECRET_FILE="${AI_COMPANION_INTERNAL_SECRET_FILE:-/opt/ai-companion/config/internal.secret}"
 SECRET="$(cat "$SECRET_FILE" 2>/dev/null)"
 TMUX_SESSION="${AI_COMPANION_TMUX_SESSION:-ai-companion-cc-1}"
+TRANSCRIPT_DIR="${AI_COMPANION_TRANSCRIPT_DIR:-/home/companion/.claude/projects/-opt-ai-companion}"
 
 INPUT="$(cat)"
 EVENT="$(printf '%s' "$INPUT" | jq -r '.hook_event_name // empty' 2>/dev/null)"
@@ -52,6 +53,22 @@ case "$EVENT" in
     ;;
   StopFailure)
     ERROR="$(printf '%s' "$INPUT" | jq -r '.error // "unknown"' 2>/dev/null)"
+    # Claude Code currently collapses safeguard refusals to the generic
+    # `invalid_request` hook error. The transcript still contains the precise
+    # classifier reason, so preserve it for the frontend without mislabelling
+    # unrelated invalid requests (model parameters, expired tokens, etc.).
+    if [ "$ERROR" = "invalid_request" ]; then
+      TRANSCRIPT_PATH="$(printf '%s' "$INPUT" | jq -r '.transcript_path // empty' 2>/dev/null)"
+      case "$TRANSCRIPT_PATH" in
+        "$TRANSCRIPT_DIR"/*.jsonl)
+          if tail -n 12 -- "$TRANSCRIPT_PATH" 2>/dev/null \
+            | jq -s -e 'map(select(.type == "assistant")) | last | ((.message.content // "") | tostring | contains("Details: `[reasoning_extraction]`"))' \
+              >/dev/null 2>&1; then
+            ERROR="reasoning_extraction"
+          fi
+          ;;
+      esac
+    fi
     BODY="$(jq -nc --arg err "$ERROR" '{error:$err}')"
     curl -fsS --max-time 5 -X POST "http://127.0.0.1:${PORT}/internal/turn-error" \
       -H "X-Internal-Secret: ${SECRET}" -H "Content-Type: application/json" \

@@ -1086,6 +1086,7 @@ export function useChat() {
           auth_required: '（companion 未登录或登录已过期，请在设置中重新登录）',
           turn_busy: '（他上一轮还没回完，稍等一下再试）',
           turn_error: '（companion 这一轮失败了）',
+          reasoning_extraction: '（思考链被安全机制拦截了；改成让他在可见回复里回答即可）',
           connect_timeout: '（连接 companion 超时，请检查网络）',
           not_connected: '（companion 未连接）',
           reset_in_progress: '（正在清空对话，请稍候再试）',

@@ -1641,7 +1641,11 @@ export async function* streamChatViaCompanion({ text, imagePath, file, signal, m
     } else if (m.type === 'turn_end') {
       push({ done: true })
     } else if (m.type === 'turn_error') {
-      finishError = Object.assign(new Error(m.error || 'companion 轮次失败'), { code: 'turn_error', turnId })
+      const reasoningBlocked = m.error === 'reasoning_extraction'
+      finishError = Object.assign(
+        new Error(reasoningBlocked ? 'Opus 5.5 拦截了这一轮关于思考链的请求' : (m.error || 'companion 轮次失败')),
+        { code: reasoningBlocked ? 'reasoning_extraction' : 'turn_error', turnId },
+      )
       push({ done: true })
     }
   }
