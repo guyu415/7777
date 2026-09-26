@@ -4703,7 +4703,7 @@ async function injectPreservedSummaryAfterClear(reset: CcResetMarker): Promise<b
   }
 }
 
-// ---------- lightweight thinking flush (incremental /clear, no new summary) ----------
+// ---------- lightweight thinking flush (same-session /compact, no new rolling summary) ----------
 //
 // The real tidal-summary system above only fires at an absolute 45% ctx
 // threshold (activeTidalConfig().tokenThreshold) and generates a brand-new
@@ -4711,10 +4711,13 @@ async function injectPreservedSummaryAfterClear(reset: CcResetMarker): Promise<b
 // deliberately expensive, reserved for genuine long-range archiving. Between
 // those runs, extended-thinking traces alone can bloat context substantially
 // with nothing to show for it once the turn is done. This is a much cheaper
-// release valve: a real `/clear` (the only reset primitive verified safe —
-// see resetCcContext's header comment), followed by re-sending the *cached*
-// rolling summary (no LLM call, nothing regenerated) plus the raw,
-// unsummarized dialogue since the last REAL tidal boundary.
+// release valve: the same identity-preserving `/compact` primitive used by a
+// real tide, followed by re-sending the *cached* rolling summary (no new
+// rolling-summary call, nothing regenerated) plus the raw, unsummarized
+// dialogue since the last REAL tidal boundary. The resident Claude session
+// id is a hard continuity invariant: this path must fail closed rather than
+// invoke `/clear`, rotate the transcript, or fall back to any new-session
+// recovery path.
 //
 // INCIDENT 2026-08-24: the first version of this reused the existing
 // requestReset('after_summary') path outright. That turned out to be
@@ -4731,7 +4734,7 @@ async function injectPreservedSummaryAfterClear(reset: CcResetMarker): Promise<b
 // both CC's live memory and chat-history.json in one shot. Recovered by
 // replaying the still-intact pre-clear transcript file, but the fix is to
 // never share that code path again: this flush now (1) snapshots
-// visibleCcHistory() and builds the recovery packet BEFORE sending /clear,
+// visibleCcHistory() and builds the recovery packet BEFORE compacting,
 // (2) never touches `history` / chat-history.json at all — the local
 // record is the authoritative scrollback and must survive every lightweight
 // flush regardless of how stale the real boundary is, and (3) refuses to
@@ -4763,7 +4766,7 @@ type ThinkingFlushState = {
   contextWindowSize: number | null
   recoveryPending: {
     beforePct: number
-    stage: 'clearing' | 'recovering'
+    stage: 'compacting' | 'recovering' | 'clearing'
     startedAt: number
   } | null
   updatedAt: number
@@ -4785,7 +4788,11 @@ function readThinkingFlushState(): ThinkingFlushState {
       contextWindowSize: nullableFinite(parsed?.contextWindowSize),
       recoveryPending: parsed?.recoveryPending
         && Number.isFinite(Number(parsed.recoveryPending.beforePct))
-        && (parsed.recoveryPending.stage === 'clearing' || parsed.recoveryPending.stage === 'recovering')
+        && (parsed.recoveryPending.stage === 'compacting'
+          || parsed.recoveryPending.stage === 'recovering'
+          // Read-only migration for an interrupted pre-fix `/clear`. New
+          // writes must never create this stage again.
+          || parsed.recoveryPending.stage === 'clearing')
         ? {
             beforePct: Number(parsed.recoveryPending.beforePct),
             stage: parsed.recoveryPending.stage,
@@ -4815,8 +4822,9 @@ function writeThinkingFlushState(state: ThinkingFlushState) {
 
 // Re-primed (baseline cleared, so the next check just records whatever ctx%
 // it observes rather than comparing against a now-stale floor) after ANY
-// context-reducing event — this lightweight flush's own /clear, or a real
-// tidal run's /compact. See call sites in requestReset() and finalizeTidalSuccess().
+// context-reducing event — this lightweight flush's own /compact, a real
+// tidal run's /compact, or an explicit user-requested reset. See call sites
+// in requestReset() and finalizeTidalSuccess().
 function markThinkingFlushBaselineStale() {
   writeThinkingFlushState({
     baselinePct: null,
@@ -4838,7 +4846,7 @@ function announceThinkingFlush(beforePct: number) {
   const id = nextId()
   startTurn(id)
   backgroundPushTurnId = id
-  deliver(id, `[系统提示，不是用户发的消息]系统刚做了一次轻量清理：把上下文里堆积的旧思考过程清掉了（清理前约${Math.round(beforePct)}%），聊天记忆本身完全没受影响——这不是记忆丢失，只是清掉了思考过程占用的冗余空间。跟用户说一声，你自己决定怎么说。`)
+  deliver(id, `[系统提示，不是用户发的消息]系统刚做了一次轻量清理：把上下文里堆积的旧思考过程清掉了（清理前约${Math.round(beforePct)}%），聊天记忆和原对话文件 ID 都完全没受影响——这不是记忆丢失或换会话，只是清掉了思考过程占用的冗余空间。跟用户说一声，你自己决定怎么说。`)
   log('thinking_flush_announced', { id, beforePct })
 }
 
@@ -4877,6 +4885,41 @@ function prepareThinkingFlushPacket(): ReturnType<typeof buildRecoveryPacket> | 
   })
 }
 
+const SAME_SESSION_COMPACT_COMMAND = '/compact 只留下中文、80字以内的维护占位：旧上下文将由紧接着注入的权威恢复包接管。不要复述事实、关系、情绪、当前事项、约定、待办或压缩过程。'
+
+// The only automatic context-reduction primitive allowed for the resident
+// brain. `/compact` keeps the Claude transcript/session id; every poll checks
+// that invariant and fails closed if Claude ever reports otherwise. Callers
+// may retry or surface the failure, but must never fall back to `/clear`.
+async function runSameSessionCompact(
+  expectedSessionId: string,
+  startedAt: number,
+): Promise<{ ok: boolean; compacted: boolean; error?: string }> {
+  if (!expectedSessionId || readBrainSessionId() !== expectedSessionId) {
+    return { ok: false, compacted: false, error: 'session_id_mismatch_before_compact' }
+  }
+  const transcriptPath = brainTranscriptPath(expectedSessionId)
+  const beforeStatus = readStatus() as { context_window?: { used_percentage?: number | null }; capturedAt?: number }
+  const beforePct = Number(beforeStatus?.context_window?.used_percentage)
+  const sent = await withTmuxLock(() => tmuxTypeAndSubmit(SAME_SESSION_COMPACT_COMMAND))
+  if (!sent) return { ok: false, compacted: false, error: 'tmux_send_failed' }
+
+  const deadline = Date.now() + TIDAL_COMPACT_TIMEOUT_MS
+  while (Date.now() < deadline) {
+    await Bun.sleep(1_000)
+    const liveSessionId = readBrainSessionId()
+    if (liveSessionId !== expectedSessionId) return { ok: false, compacted: false, error: 'session_id_changed' }
+    if (transcriptHasCompactAfter(transcriptPath, startedAt)) return { ok: true, compacted: true }
+    const status = readStatus() as { context_window?: { used_percentage?: number | null }; capturedAt?: number }
+    const pct = Number(status?.context_window?.used_percentage)
+    const fresh = Number(status?.capturedAt) >= startedAt
+    if (fresh && Number.isFinite(beforePct) && Number.isFinite(pct) && pct <= Math.max(5, beforePct - 15)) {
+      return { ok: true, compacted: true }
+    }
+  }
+  return { ok: false, compacted: false, error: 'compact_timeout_or_rejected' }
+}
+
 async function runThinkingFlush(
   beforePct: number,
   packet: NonNullable<ReturnType<typeof prepareThinkingFlushPacket>>,
@@ -4887,34 +4930,34 @@ async function runThinkingFlush(
 
   if (!resumeRecovery) {
     const startedAt = Date.now()
+    const expectedSessionId = tidalState.sessionId
+    if (!expectedSessionId || readBrainSessionId() !== expectedSessionId) {
+      return { ok: false, error: 'session_id_mismatch_before_compact' }
+    }
     writeThinkingFlushState({
       ...readThinkingFlushState(),
-      recoveryPending: { beforePct, stage: 'clearing', startedAt },
+      recoveryPending: { beforePct, stage: 'compacting', startedAt },
       updatedAt: startedAt,
     })
-    const resetResult = await withTmuxLock(resetCcContext)
-    if (!resetResult.ok) {
+    const compactResult = await runSameSessionCompact(expectedSessionId, startedAt)
+    if (!compactResult.ok) {
       writeThinkingFlushState({
         ...readThinkingFlushState(),
         recoveryPending: null,
         updatedAt: Date.now(),
       })
-      return { ok: false, error: resetResult.error }
+      return { ok: false, error: compactResult.error }
     }
 
-    // Mirrors the transient cleanup requestReset() does on a confirmed clear —
-    // this in-flight thinking belonged to the now-discarded context. Deliberately
-    // NOT touching `history`, NOT calling tidalStateAfterConversationClear, and
-    // NOT touching processedBoundaryId/rollingSummary/pending/queue — none of
-    // that changed. Only the live session id tracked on tidalState needs to
-    // follow /clear's brand-new internal session, so future tidal file lookups
-    // (transcriptContainsMarker etc.) point at the right transcript.
+    // The compacted in-flight thinking belonged to the discarded context.
+    // Deliberately do NOT touch `history`, the resident/tidal session id,
+    // processedBoundaryId, rollingSummary, pending, or queue. A lightweight
+    // cleanup is not allowed to change transcript identity under any outcome.
     if (thinkingTail) clearInterval(thinkingTail.timer)
     thinkingTail = null
     pendingThinking = []
     if (tidalRetryTimer) clearTimeout(tidalRetryTimer)
     tidalRetryTimer = null
-    tidalState.sessionId = readBrainSessionId()
     tidalState.lastContextTokens = null
     persistTidalState()
     writeThinkingFlushState({
@@ -4984,16 +5027,24 @@ async function checkThinkingFlush(): Promise<{
   const pct = typeof rawPct === 'number' && Number.isFinite(rawPct) ? rawPct : null
   const flushState = readThinkingFlushState()
   if (flushState.recoveryPending) {
-    const resumeRecovery = flushState.recoveryPending.stage === 'recovering' || pct === null
+    const pending = flushState.recoveryPending
+    const compactAlreadyPresent = pending.stage === 'compacting'
+      && transcriptHasCompactAfter(brainTranscriptPath(tidalState.sessionId), pending.startedAt)
+    const resumeRecovery = pending.stage === 'recovering'
+      || compactAlreadyPresent
+      // A one-way compatibility path for an interrupted legacy clear. This
+      // can finish restoring an already-cleared session but never initiates a
+      // new clear or changes identity itself.
+      || (pending.stage === 'clearing' && pct === null)
     const result = await requestThinkingFlush(
-      flushState.recoveryPending.beforePct,
+      pending.beforePct,
       packet,
       resumeRecovery,
     )
     if (!result.ok) {
       return { ok: false, skipped: `recovery_retry_failed:${result.error}` }
     }
-    return { ok: true, firedPct: flushState.recoveryPending.beforePct }
+    return { ok: true, firedPct: pending.beforePct }
   }
   if (pct === null) return { ok: false, skipped: 'ctx_unknown' }
   const contextWindowSize = Number(status?.context_window?.context_window_size)
@@ -5267,33 +5318,12 @@ async function runRollingSummary(input: string, sourceCount: number): Promise<{ 
 
 async function runNativeCompact(pending: NonNullable<TidalState['pending']>): Promise<{ ok: boolean; compacted: boolean; error?: string }> {
   const expectedSessionId = tidalState.sessionId
-  const transcriptPath = brainTranscriptPath(expectedSessionId)
   const startedAt = Date.now()
-  const beforeStatus = readStatus() as { context_window?: { used_percentage?: number | null }; capturedAt?: number }
-  const beforePct = Number(beforeStatus?.context_window?.used_percentage)
   pending.phase = 'compact_sending'
   pending.compactStartedAt = startedAt
   persistTidalState()
   tidalLog('compact_sending')
-
-  const command = '/compact 只留下中文、80字以内的维护占位：旧上下文将由紧接着注入的权威恢复包接管。不要复述事实、关系、情绪、当前事项、约定、待办或压缩过程。'
-  const sent = await withTmuxLock(() => tmuxTypeAndSubmit(command))
-  if (!sent) return { ok: false, compacted: false, error: 'tmux_send_failed' }
-
-  const deadline = Date.now() + TIDAL_COMPACT_TIMEOUT_MS
-  while (Date.now() < deadline) {
-    await Bun.sleep(1_000)
-    const liveSessionId = readBrainSessionId()
-    if (liveSessionId !== expectedSessionId) return { ok: false, compacted: false, error: 'session_id_changed' }
-    if (transcriptHasCompactAfter(transcriptPath, startedAt)) return { ok: true, compacted: true }
-    const status = readStatus() as { context_window?: { used_percentage?: number | null }; capturedAt?: number }
-    const pct = Number(status?.context_window?.used_percentage)
-    const fresh = Number(status?.capturedAt) >= startedAt
-    if (fresh && Number.isFinite(beforePct) && Number.isFinite(pct) && pct <= Math.max(5, beforePct - 15)) {
-      return { ok: true, compacted: true }
-    }
-  }
-  return { ok: false, compacted: false, error: 'compact_timeout_or_rejected' }
+  return runSameSessionCompact(expectedSessionId, startedAt)
 }
 
 function readCoreMemorySummary(): string {

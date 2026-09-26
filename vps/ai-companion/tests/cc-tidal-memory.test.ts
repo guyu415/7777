@@ -147,19 +147,35 @@ describe('lightweight thinking flush', () => {
     expect(packet.fitsBudget).toBeTrue()
   })
 
-  test('persists an interrupted post-clear recovery and reuses the packet marker', () => {
+  test('persists an interrupted same-session compact recovery and reuses the packet marker', () => {
     const serverSource = readFileSync(new URL('../channel-server.ts', import.meta.url), 'utf8')
     const run = serverSource.slice(
       serverSource.indexOf('async function runThinkingFlush('),
       serverSource.indexOf('function requestThinkingFlush('),
     )
-    expect(run).toContain("recoveryPending: { beforePct, stage: 'clearing', startedAt }")
+    expect(run).toContain("recoveryPending: { beforePct, stage: 'compacting', startedAt }")
     expect(run).toContain("recoveryPending: { beforePct, stage: 'recovering', startedAt }")
+    expect(run).toContain('runSameSessionCompact(expectedSessionId, startedAt)')
     expect(run).toContain("startTurn(packet.marker, 'tidal_recovery', false)")
     expect(run).toContain('sendClaudeChannelNotification(packet.marker, packet.content)')
     expect(run).toContain('tidalState.lastContextTokens = null')
+    expect(run).not.toContain('resetCcContext')
+    expect(run).not.toContain('tidalState.sessionId =')
     expect(run).not.toContain("startTurn(marker, 'tidal_recovery', false)")
     expect(serverSource).toContain('if (flushState.recoveryPending)')
+  })
+
+  test('the automatic compact primitive fails closed if the transcript id changes', () => {
+    const serverSource = readFileSync(new URL('../channel-server.ts', import.meta.url), 'utf8')
+    const compact = serverSource.slice(
+      serverSource.indexOf('async function runSameSessionCompact('),
+      serverSource.indexOf('async function runThinkingFlush('),
+    )
+    expect(compact).toContain('tmuxTypeAndSubmit(SAME_SESSION_COMPACT_COMMAND)')
+    expect(compact).toContain("error: 'session_id_mismatch_before_compact'")
+    expect(compact).toContain("error: 'session_id_changed'")
+    expect(compact).not.toContain('resetCcContext')
+    expect(compact).not.toContain("tmuxTypeAndSubmit('/clear')")
   })
 })
 
