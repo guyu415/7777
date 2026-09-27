@@ -1,10 +1,11 @@
 import { memo } from 'react'
+import CompanionProgressBar from './CompanionProgressBar'
 
-export function GoldenRetrieverThinking({ theme, phase = 'thinking' }) {
+export function GoldenRetrieverThinking({ theme, phase = 'thinking', companionProgress, aiName }) {
   const isResponding = phase === 'responding'
 
   return (
-    <div style={{ display: 'flex', alignItems: 'flex-end', gap: 6, minWidth: 0 }}>
+    <div style={{ display: 'flex', alignItems: 'flex-end', gap: 6, minWidth: 0, width: '100%', flex: 1 }}>
       <div style={{
         // Keep the whole pending row below MessageList's 88px initial
         // estimate so scroll-to-bottom cannot leave the puppy clipped.
@@ -21,19 +22,22 @@ export function GoldenRetrieverThinking({ theme, phase = 'thinking' }) {
           style={{ width: '100%', height: '100%', objectFit: 'contain', objectPosition: 'center bottom' }}
         />
       </div>
-      <span style={{
-        marginBottom: 5, whiteSpace: 'nowrap',
+      <div style={{
+        marginBottom: 5, minWidth: 0, flex: 1,
+        whiteSpace: companionProgress ? undefined : 'nowrap',
         fontSize: 10.5, lineHeight: 1.3,
-        color: theme?.aiBubbleText || '#6f8068', opacity: 0.72,
+        color: theme?.aiBubbleText || '#6f8068', opacity: companionProgress ? 1 : 0.72,
         textShadow: '0 1px 2px rgba(255,255,255,0.75)',
       }}>
-        小鸡毛正在想要怎么回你……
-      </span>
+        {companionProgress
+          ? <CompanionProgressBar progress={companionProgress} theme={theme} aiName={aiName} />
+          : '小鸡毛正在想要怎么回你……'}
+      </div>
     </div>
   )
 }
 
-function PendingReplyIndicator({ aiAvatar, theme, variant = 'default' }) {
+function PendingReplyIndicator({ aiAvatar, theme, variant = 'default', companionProgress, aiName }) {
   const showGoldenRetriever = variant === 'golden-retriever'
 
   return (
@@ -57,7 +61,7 @@ function PendingReplyIndicator({ aiAvatar, theme, variant = 'default' }) {
         </div>
       </div>
       {showGoldenRetriever ? (
-        <GoldenRetrieverThinking theme={theme} phase="responding" />
+        <GoldenRetrieverThinking theme={theme} phase="responding" companionProgress={companionProgress} aiName={aiName} />
       ) : (
         <div style={{
           display: 'flex', alignItems: 'center', gap: 5,

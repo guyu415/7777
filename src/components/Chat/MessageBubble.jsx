@@ -244,7 +244,7 @@ function formatFileBytes(bytes) {
   return `${Math.max(1, Math.round(bytes / 1024))}KB`
 }
 
-function MessageBubble({ message, onLongPress, onRegenerate, onRegenerateRound, onRetry, isLoading, userAvatar, aiAvatar, theme, bubbleSkin = 'puppy', pendingReplyVariant = 'default', sameSenderAsPrev, sameSenderAsNext, onOpenReasoning, reasoningOpen = false, onAvatarDoubleClick }) {
+function MessageBubble({ message, onLongPress, onRegenerate, onRegenerateRound, onRetry, isLoading, userAvatar, aiAvatar, theme, bubbleSkin = 'puppy', pendingReplyVariant = 'default', companionProgress, aiName, sameSenderAsPrev, sameSenderAsNext, onOpenReasoning, reasoningOpen = false, onAvatarDoubleClick }) {
   const [viewerSrc, setViewerSrc] = useState(null)
   const [pressed, setPressed] = useState(false)
   const [showVoiceText, setShowVoiceText] = useState(false)
@@ -602,7 +602,7 @@ function MessageBubble({ message, onLongPress, onRegenerate, onRegenerateRound, 
           <div
             className={clsx('relative leading-relaxed select-none cursor-default', pressed ? 'bubble-press' : '')}
             style={showGoldenPending ? {
-              minWidth: 0, padding: 0, overflow: 'visible',
+              minWidth: 0, width: '100%', padding: 0, overflow: 'visible',
             } : {
               ...activeTextFrameStyle,
               // A one-word bubble still reads as part of a full conversation
@@ -641,7 +641,7 @@ function MessageBubble({ message, onLongPress, onRegenerate, onRegenerateRound, 
             />}
             {message.streaming && !message.content ? (
               showGoldenPending
-                ? <GoldenRetrieverThinking theme={theme} phase={hasReasoningContent ? 'thinking' : 'responding'} />
+                ? <GoldenRetrieverThinking theme={theme} phase={hasReasoningContent ? 'thinking' : 'responding'} companionProgress={companionProgress} aiName={aiName} />
                 : <TypingIndicator />
             ) : (
               <span className="whitespace-pre-wrap break-words" style={{ position: 'relative', zIndex: 1, display: 'block', minWidth: 0, maxWidth: '100%' }}>

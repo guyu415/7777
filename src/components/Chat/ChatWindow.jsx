@@ -5,7 +5,6 @@ import MessageList from './MessageList'
 import MessageSearch from './MessageSearch'
 import FallingParticles from './FallingParticles'
 import MessageInput from './MessageInput'
-import CompanionProgressBar from './CompanionProgressBar'
 import MemoryModal from './MemoryModal'
 import RuntimeStatusBall from './RuntimeStatusBall'
 import CarryOutPetModal from './CarryOutPetModal'
@@ -938,6 +937,7 @@ export default function ChatWindow({ theme }) {
             theme={theme}
             bubbleSkin={bubbleSkin}
             pendingReplyVariant={isVpsSession ? 'golden-retriever' : 'default'}
+            companionProgress={isVpsSession && isLoading && companionProgress?.conversationId === currentSessionId ? companionProgress : null}
             translateThinking={isVpsSession}
             onAvatarDoubleClick={isVpsSession ? handlePokeAi : null}
             pokeEvents={isVpsSession ? pokeEvents : []}
@@ -1136,9 +1136,6 @@ export default function ChatWindow({ theme }) {
               style={{ border: 'none', background: 'rgba(224,112,112,0.12)', color: '#c45f5f', borderRadius: 10, padding: '2px 8px', fontFamily: 'inherit' }}
             >重试</button>
           </div>
-        )}
-        {isVpsSession && isLoading && companionProgress?.conversationId === currentSessionId && (
-          <CompanionProgressBar progress={companionProgress} theme={theme} aiName={effectiveAiName || 'Claude'} />
         )}
         <MessageInput
           ref={inputRef}

@@ -161,7 +161,7 @@ const MessageList = forwardRef(function MessageList({
   messages: sourceMessages, sessionId,
   onLongPress, lastAiId, onRegenerate, onRegenerateRound, onRetry,
   isLoading, userAvatar, aiAvatar, theme, bubbleSkin,
-  pendingReplyVariant,
+  pendingReplyVariant, companionProgress,
   translateThinking = false,
   onAvatarDoubleClick,
   pokeEvents = [], onEditPoke,
@@ -358,7 +358,7 @@ const MessageList = forwardRef(function MessageList({
                   ref={virtualizer.measureElement}
                   style={{ position: 'absolute', top: 0, left: 0, width: '100%', transform: `translateY(${vi.start}px)` }}
                 >
-                  <PendingReplyIndicator aiAvatar={aiAvatar} theme={theme} variant={pendingReplyVariant} />
+                  <PendingReplyIndicator aiAvatar={aiAvatar} theme={theme} variant={pendingReplyVariant} companionProgress={companionProgress} aiName={emptyAiName} />
                 </div>
               )
             }
@@ -412,6 +412,8 @@ const MessageList = forwardRef(function MessageList({
                   theme={theme}
                   bubbleSkin={bubbleSkin}
                   pendingReplyVariant={pendingReplyVariant}
+                  companionProgress={companionProgress}
+                  aiName={emptyAiName}
                   sameSenderAsPrev={sameSenderAsPrev}
                   sameSenderAsNext={sameSenderAsNext}
                   onOpenReasoning={openReasoning}
