@@ -1512,6 +1512,8 @@ export async function* streamChatViaCompanion({ text, imagePath, file, signal, m
   let finishError = null
   let recoveredFromHistory = false
   const thisTurnDeliveredIds = [] // for forgetDelivered() when this turn closes
+  let liveReasoningSinceMessage = false
+  let visibleMessageDelivered = false
   // Every WS connection — including the very first one this generator opens —
   // gets a `history` snapshot immediately on open, before our own turn_start
   // could possibly have been broadcast back to us. That snapshot is NOT a
@@ -1627,7 +1629,10 @@ export async function* streamChatViaCompanion({ text, imagePath, file, signal, m
       return
     }
     if (m.type === 'thinking') {
-      if (m.delta) push({ reasoning: m.delta })
+      if (m.delta && !visibleMessageDelivered) {
+        liveReasoningSinceMessage = true
+        push({ reasoning: m.delta })
+      }
       return
     }
     // What CC is actually doing this turn (reading a file, running a command).
@@ -1644,10 +1649,29 @@ export async function* streamChatViaCompanion({ text, imagePath, file, signal, m
       thisTurnDeliveredIds.push(m.id)
       push({ visibleAction: { type: 'poke', id: m.id } })
     } else if (m.type === 'msg' && m.from === 'cc') {
-      if (alreadyDelivered(m.id)) return // e.g. already delivered via an earlier history recovery
+      if (alreadyDelivered(m.id)) {
+        // The server re-emits the same wire id when a thinking block reached
+        // the Claude transcript only after reply() had already painted the
+        // answer. This is an authoritative patch for that existing bubble,
+        // not a second reply and not a new empty thinking placeholder.
+        if (m.thinking) push({
+          reasoningPatch: m.thinking,
+          wireId: m.id,
+          ...(m.ts ? { reasoningCompletedAt: m.ts } : {}),
+        })
+        return
+      }
       markDelivered(m.id)
       thisTurnDeliveredIds.push(m.id)
+      visibleMessageDelivered = true
       const timing = m.thinking && m.ts ? { reasoningCompletedAt: m.ts } : {}
+      // Newer servers suppress a misleading live `thinking` event after an
+      // earlier reply. If that buffered thinking belongs to this new message,
+      // restore it immediately before yielding the text/media/voice payload.
+      if (m.thinking && !liveReasoningSinceMessage) {
+        push({ reasoningReplace: m.thinking, ...timing })
+      }
+      liveReasoningSinceMessage = false
       if (m.kind === 'voice') push({ voice: { id: m.id, text: m.text, voice: m.voice, style: m.style }, ...timing })
       else if (m.kind === 'media') push({
         media: {
@@ -1716,6 +1740,12 @@ export async function* streamChatViaCompanion({ text, imagePath, file, signal, m
       if (item.reasoningReplace !== undefined) {
         yield {
           reasoningReplace: item.reasoningReplace,
+          ...(item.reasoningCompletedAt ? { reasoningCompletedAt: item.reasoningCompletedAt } : {}),
+        }
+      } else if (item.reasoningPatch !== undefined) {
+        yield {
+          reasoningPatch: item.reasoningPatch,
+          wireId: item.wireId,
           ...(item.reasoningCompletedAt ? { reasoningCompletedAt: item.reasoningCompletedAt } : {}),
         }
       } else if (item.reasoning) yield { reasoning: item.reasoning }

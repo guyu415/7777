@@ -2211,7 +2211,16 @@ function pollThinkingTail(turnId: string) {
         }
         if (block?.type === 'thinking' && typeof block.thinking === 'string' && block.thinking.length > 0) {
           pendingThinking.push(block.thinking)
-          sendRaw({ type: 'thinking', turnId, delta: block.thinking })
+          // Once a visible reply exists, a transcript block that lands now is
+          // commonly the thinking that preceded that already-sent reply. If
+          // we broadcast it as fresh live thinking, the client paints a new
+          // empty "still thinking" bubble after the answer, then removes it
+          // at turn_end. Keep it buffered: the next reply consumes it, or
+          // persistLateThinking() patches the preceding reply by the same id.
+          const alreadyReplied = history.some(message => (
+            message.turnId === turnId && message.from === 'cc' && message.kind !== 'poke'
+          ))
+          if (!alreadyReplied) sendRaw({ type: 'thinking', turnId, delta: block.thinking })
         }
       }
     }

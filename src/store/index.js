@@ -5,10 +5,40 @@ import { reduceMessageTimeline } from '../utils/messageTimeline'
 import { createInitialReadingState } from '../data/readingBooks'
 
 let db
+let dbOpening
+const messageWriteQueues = new Map()
+
+function discardDatabase(database) {
+  if (db === database) db = undefined
+  try { database?.close() } catch { /* already closed */ }
+}
+
+function isRecoverableIndexedDbError(error) {
+  const name = String(error?.name || '')
+  const message = String(error?.message || error || '').toLowerCase()
+  return name === 'TransactionInactiveError'
+    || name === 'InvalidStateError'
+    || name === 'AbortError'
+    || message.includes('without an in-progress transaction')
+    || message.includes('transaction is inactive')
+    || message.includes('database connection is closing')
+}
+
+async function withDatabaseRetry(operation) {
+  let database = await getDB()
+  try {
+    return await operation(database)
+  } catch (error) {
+    if (!isRecoverableIndexedDbError(error)) throw error
+    discardDatabase(database)
+    database = await getDB()
+    return operation(database)
+  }
+}
 
 async function getDB() {
-  if (!db) {
-    db = await openDB('pink-chat', 5, {
+  if (!db && !dbOpening) {
+    dbOpening = openDB('pink-chat', 5, {
       upgrade(database, oldVersion, _newVersion, transaction) {
         let messagesStore
         if (!database.objectStoreNames.contains('messages')) {
@@ -34,27 +64,57 @@ async function getDB() {
           database.createObjectStore('reasoningTranslations', { keyPath: 'key' })
         }
       },
+      blocking() {
+        // Another tab is upgrading the schema. Keeping this connection alive
+        // leaves iOS Safari handing callers stores backed by an already-dead
+        // transaction after the app resumes.
+        discardDatabase(db)
+      },
+      terminated() {
+        db = undefined
+      },
+    }).then(database => {
+      db = database
+      return database
+    }).finally(() => {
+      dbOpening = undefined
     })
   }
-  return db
+  return db || dbOpening
 }
 
-export async function saveMessage(msg) {
-  const database = await getDB()
+async function saveMessageOnce(msg) {
   // Reasoning translations are a local display augmentation. Companion
   // history replays and the final authoritative stream save do not carry
   // these fields, so a plain put would erase a translation that completed a
-  // moment earlier (most visibly at turn_end / foreground reconnect). Keep
-  // them unless the caller explicitly supplies a replacement.
-  const transaction = database.transaction('messages', 'readwrite')
-  const store = transaction.objectStore('messages')
-  const existing = await store.get(msg.id)
-  const next = { ...msg }
-  for (const key of ['reasoningTranslation', 'reasoningTranslationSourceHash', 'reasoningTranslationUpdatedAt']) {
-    if (next[key] === undefined && existing?.[key] !== undefined) next[key] = existing[key]
-  }
-  await store.put(next)
-  await transaction.done
+  // moment earlier (most visibly at turn_end / foreground reconnect).
+  //
+  // Do not keep one explicit transaction alive across an `await`. WebKit may
+  // auto-commit it while an iOS tab is backgrounded, then throw "Attempt to
+  // get a record from database without an in-progress transaction" when the
+  // continuation resumes. Per-message serialization preserves the read/merge
+  // ordering while the two convenience calls each use their own short-lived
+  // transaction. A stale connection is reopened and retried once.
+  return withDatabaseRetry(async database => {
+    const existing = await database.get('messages', msg.id)
+    const next = { ...msg }
+    for (const key of ['reasoningTranslation', 'reasoningTranslationSourceHash', 'reasoningTranslationUpdatedAt']) {
+      if (next[key] === undefined && existing?.[key] !== undefined) next[key] = existing[key]
+    }
+    await database.put('messages', next)
+  })
+}
+
+export function saveMessage(msg) {
+  const id = msg?.id
+  if (id === undefined || id === null || id === '') return Promise.reject(new Error('message id is required'))
+  const queueKey = String(id)
+  const previous = messageWriteQueues.get(queueKey) || Promise.resolve()
+  const write = previous.catch(() => undefined).then(() => saveMessageOnce(msg))
+  messageWriteQueues.set(queueKey, write)
+  return write.finally(() => {
+    if (messageWriteQueues.get(queueKey) === write) messageWriteQueues.delete(queueKey)
+  })
 }
 
 export async function getMessages(conversationId) {

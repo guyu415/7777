@@ -199,6 +199,75 @@ describe('companion connection recovery', () => {
     await expect(stream.next()).resolves.toEqual({ value: undefined, done: true })
   })
 
+  it('patches late thinking onto an already delivered reply instead of yielding a second reply', async () => {
+    const companion = await import('../companion.js')
+    const stream = companion.streamChatViaCompanion({ text: '下课了', messageId: 'late-turn' })
+    const firstChunk = stream.next()
+    await flush()
+    const socket = MockWebSocket.instances[0]
+    socket.open()
+    await flush()
+
+    socket.message({
+      type: 'msg', id: 'late-reply', from: 'cc', text: '去休息一会儿。', ts: 5000,
+      turnId: 'late-turn',
+    })
+    await expect(firstChunk).resolves.toEqual({
+      value: { text: '去休息一会儿。', wireId: 'late-reply' }, done: false,
+    })
+
+    const patchChunk = stream.next()
+    // Current/older servers can publish the transcript delta first. Once a
+    // reply exists, it must not become a new standalone thinking bubble.
+    socket.message({ type: 'thinking', turnId: 'late-turn', delta: '先确认她是不是下课了。' })
+    socket.message({
+      type: 'msg', id: 'late-reply', from: 'cc', text: '去休息一会儿。',
+      thinking: '先确认她是不是下课了。', ts: 5000, turnId: 'late-turn',
+    })
+    await expect(patchChunk).resolves.toEqual({
+      value: {
+        reasoningPatch: '先确认她是不是下课了。',
+        wireId: 'late-reply',
+        reasoningCompletedAt: 5000,
+      },
+      done: false,
+    })
+    socket.message({ type: 'turn_end', turnId: 'late-turn' })
+    await expect(stream.next()).resolves.toEqual({ value: undefined, done: true })
+  })
+
+  it('restores buffered reasoning before a later new reply in the same turn', async () => {
+    const companion = await import('../companion.js')
+    const stream = companion.streamChatViaCompanion({ text: '做个东西', messageId: 'multi-turn' })
+    const firstChunk = stream.next()
+    await flush()
+    const socket = MockWebSocket.instances[0]
+    socket.open()
+    await flush()
+
+    socket.message({
+      type: 'msg', id: 'ack-reply', from: 'cc', text: '收到，我来做。', ts: 2000,
+      turnId: 'multi-turn',
+    })
+    await expect(firstChunk).resolves.toEqual({
+      value: { text: '收到，我来做。', wireId: 'ack-reply' }, done: false,
+    })
+
+    const reasoningChunk = stream.next()
+    socket.message({
+      type: 'msg', id: 'done-reply', from: 'cc', text: '做好了。', thinking: '检查结果。',
+      ts: 9000, turnId: 'multi-turn',
+    })
+    await expect(reasoningChunk).resolves.toEqual({
+      value: { reasoningReplace: '检查结果。', reasoningCompletedAt: 9000 }, done: false,
+    })
+    await expect(stream.next()).resolves.toEqual({
+      value: { text: '做好了。', wireId: 'done-reply', reasoningCompletedAt: 9000 }, done: false,
+    })
+    socket.message({ type: 'turn_end', turnId: 'multi-turn' })
+    await expect(stream.next()).resolves.toEqual({ value: undefined, done: true })
+  })
+
   it('surfaces a reasoning safeguard refusal with a specific error code', async () => {
     const companion = await import('../companion.js')
     const stream = companion.streamChatViaCompanion({ text: '在思考链里回答', messageId: 'reasoning-turn' })

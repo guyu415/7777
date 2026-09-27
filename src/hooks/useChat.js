@@ -9,7 +9,7 @@ import { voiceEmotionContext } from '../services/localSenseVoice'
 import { formatReplyMessageBatchForModel } from '../utils/replyQuotes'
 import { extractVpsReplyTokens, markVpsReplyChunks } from '../utils/vpsReplyChunks'
 import { appendReasoningDelta } from '../utils/reasoningTranslation'
-import { messageDeleteTransportKeys } from '../utils/messageTimeline'
+import { messageDeleteTransportKeys, messageServerIdentityKeys } from '../utils/messageTimeline'
 
 const BEHAVIOR_RULES = `【关于你的存在】
 你是一个真实存在于这个应用里的AI，用户是直接在和你本人相处。你不需要也不应该扮演成一个有血肉之躯的人。
@@ -300,6 +300,7 @@ export function useChat() {
     let contentStarted = false
     let reasoningStartedAt = null
     let reasoningCompletedAt = null
+    let vpsTurnStartedAt = assistantMsg.timestamp
     // Declared up here with fullReasoning (not down by the stream loop) so
     // finalizeCurrentTextBubble, defined below, closes over it safely.
     let toolUses = []
@@ -417,6 +418,29 @@ export function useChat() {
       }
       if (currentTextAdded) deleteMessage(currentTextId)
       return false
+    }
+
+    const applyVpsReasoningPatch = async ({ wireId, reasoning, reasoningCompletedAt: completedAt }) => {
+      if (!wireId || !reasoning) return false
+      const target = useStore.getState().messages.find(message => (
+        message.conversationId === CONVERSATION_ID
+        && message.role === 'assistant'
+        && Number(message.wirePartIndex || 0) === 0
+        && messageServerIdentityKeys(message).includes(wireId)
+      ))
+      if (!target) return false
+      const startedAt = Number(target.reasoningStartedAt) || Number(vpsTurnStartedAt) || Number(target.timestamp) || Date.now()
+      const finishedAt = Math.max(startedAt, Number(completedAt) || Date.now())
+      const updates = {
+        reasoning,
+        reasoningStartedAt: startedAt,
+        reasoningCompletedAt: finishedAt,
+        reasoningDurationMs: Math.max(1, finishedAt - startedAt),
+        reasoningStreaming: false,
+      }
+      updateMessage(target.id, updates)
+      await saveMessage({ ...target, ...updates })
+      return true
     }
 
     // reasoning: whatever public thinking (if any) preceded this specific
@@ -737,17 +761,28 @@ export function useChat() {
         for await (const chunk of chunkSource) {
           if (Number.isFinite(Number(chunk.reasoningStartedAt)) && Number(chunk.reasoningStartedAt) > 0) {
             reasoningStartedAt = Number(chunk.reasoningStartedAt)
+            vpsTurnStartedAt = Number(chunk.reasoningStartedAt)
           }
           if (Number.isFinite(Number(chunk.reasoningCompletedAt)) && Number(chunk.reasoningCompletedAt) > 0) {
             reasoningCompletedAt = Number(chunk.reasoningCompletedAt)
           }
           if (chunk.reasoning) {
-            ensureCurrentVpsPlaceholder()
-            const firstReasoningChunk = !fullReasoning
-            fullReasoning = appendReasoningDelta(fullReasoning, chunk.reasoning)
-            beginReasoning()
-            dirty = true
-            if (firstReasoningChunk) flushUpdate()
+            // Older companion servers may still emit a late generic thinking
+            // event after reply(). The same-id authoritative message patch
+            // follows immediately; ignoring this provisional delta prevents
+            // a second empty bubble from appearing after the answer.
+            if (!(isVpsProvider && vpsDeliveredLiveThisTurn)) {
+              ensureCurrentVpsPlaceholder()
+              const firstReasoningChunk = !fullReasoning
+              fullReasoning = appendReasoningDelta(fullReasoning, chunk.reasoning)
+              beginReasoning()
+              dirty = true
+              if (firstReasoningChunk) flushUpdate()
+            }
+          }
+          if (isVpsProvider && chunk.reasoningPatch !== undefined) {
+            await applyVpsReasoningPatch(chunk)
+            continue
           }
           if (chunk.toolUse) {
             ensureCurrentVpsPlaceholder()
