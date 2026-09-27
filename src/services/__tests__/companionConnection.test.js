@@ -249,7 +249,7 @@ describe('companion connection recovery', () => {
       value: { text: '去休息一会儿。', wireId: 'late-reply' }, done: false,
     })
 
-    const patchChunk = stream.next()
+    const provisionalChunk = stream.next()
     // Current/older servers can publish the transcript delta first. Once a
     // reply exists, it must not become a new standalone thinking bubble.
     socket.message({ type: 'thinking', turnId: 'late-turn', delta: '先确认她是不是下课了。' })
@@ -257,6 +257,11 @@ describe('companion connection recovery', () => {
       type: 'msg', id: 'late-reply', from: 'cc', text: '去休息一会儿。',
       thinking: '先确认她是不是下课了。', ts: 5000, turnId: 'late-turn',
     })
+    await expect(provisionalChunk).resolves.toEqual({
+      value: { reasoning: '先确认她是不是下课了。' },
+      done: false,
+    })
+    const patchChunk = stream.next()
     await expect(patchChunk).resolves.toEqual({
       value: {
         reasoningPatch: '先确认她是不是下课了。',
@@ -298,6 +303,41 @@ describe('companion connection recovery', () => {
       value: { text: '做好了。', wireId: 'done-reply', reasoningCompletedAt: 9000 }, done: false,
     })
     socket.message({ type: 'turn_end', turnId: 'multi-turn' })
+    await expect(stream.next()).resolves.toEqual({ value: undefined, done: true })
+  })
+
+  it('continues streaming real reasoning after an earlier reply in a multi-reply turn', async () => {
+    const companion = await import('../companion.js')
+    const stream = companion.streamChatViaCompanion({ text: '边做边告诉我', messageId: 'multi-live-turn' })
+    const firstChunk = stream.next()
+    await flush()
+    const socket = MockWebSocket.instances[0]
+    socket.open()
+    await flush()
+
+    socket.message({
+      type: 'msg', id: 'first-reply', from: 'cc', text: '我先开始。', ts: 2000,
+      turnId: 'multi-live-turn',
+    })
+    await expect(firstChunk).resolves.toEqual({
+      value: { text: '我先开始。', wireId: 'first-reply' }, done: false,
+    })
+
+    const reasoningChunk = stream.next()
+    socket.message({ type: 'thinking', turnId: 'multi-live-turn', delta: '继续检查结果。' })
+    await expect(reasoningChunk).resolves.toEqual({
+      value: { reasoning: '继续检查结果。' }, done: false,
+    })
+
+    const secondReply = stream.next()
+    socket.message({
+      type: 'msg', id: 'second-reply', from: 'cc', text: '检查好了。',
+      thinking: '继续检查结果。', ts: 4000, turnId: 'multi-live-turn',
+    })
+    await expect(secondReply).resolves.toEqual({
+      value: { text: '检查好了。', wireId: 'second-reply', reasoningCompletedAt: 4000 }, done: false,
+    })
+    socket.message({ type: 'turn_end', turnId: 'multi-live-turn' })
     await expect(stream.next()).resolves.toEqual({ value: undefined, done: true })
   })
 

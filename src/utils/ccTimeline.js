@@ -58,7 +58,7 @@ export function selectCcSnapshotDelta(localMessages, snapshotItems) {
     const partCount = splitVpsReplyContent(wire.text || '').length
     const firstFragmentId = vpsReplyFragmentId(wire.id, 0, partCount)
     const first = matches.find(message => messageIdentityKeys(message).includes(firstFragmentId))
-    return Boolean(first && !(typeof first.reasoning === 'string' && first.reasoning.trim()))
+    return Boolean(first && first.reasoning !== wire.thinking)
   }
 
   return snapshot.filter(item => deltaIds.has(item.id) || needsReasoningRepair(item))

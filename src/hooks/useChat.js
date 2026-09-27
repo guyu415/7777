@@ -790,18 +790,17 @@ export function useChat() {
             reasoningCompletedAt = Number(chunk.reasoningCompletedAt)
           }
           if (chunk.reasoning) {
-            // Older companion servers may still emit a late generic thinking
-            // event after reply(). The same-id authoritative message patch
-            // follows immediately; ignoring this provisional delta prevents
-            // a second empty bubble from appearing after the answer.
-            if (!(isVpsProvider && vpsDeliveredLiveThisTurn)) {
-              ensureCurrentVpsPlaceholder()
-              const firstReasoningChunk = !fullReasoning
-              fullReasoning = appendReasoningDelta(fullReasoning, chunk.reasoning)
-              beginReasoning()
-              dirty = true
-              if (firstReasoningChunk) flushUpdate()
-            }
+            // A turn may reply once, continue working, then expose more real
+            // thinking before its next reply. Bubble state is reset after
+            // each VPS message, so keep accepting those later deltas into the
+            // current pending bubble instead of treating the first reply as a
+            // permanent end of reasoning for the whole turn.
+            ensureCurrentVpsPlaceholder()
+            const firstReasoningChunk = !fullReasoning
+            fullReasoning = appendReasoningDelta(fullReasoning, chunk.reasoning)
+            beginReasoning()
+            dirty = true
+            if (firstReasoningChunk) flushUpdate()
           }
           if (isVpsProvider && chunk.reasoningPatch !== undefined) {
             await applyVpsReasoningPatch(chunk)

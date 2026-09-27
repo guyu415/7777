@@ -427,19 +427,25 @@ function announceCcMessageDeleted(ids) {
 function maybeAnnounceProactive(wireMsg) {
   const {
     id, text, ts, kind, voice, style, thinking, musicAction, bedtimeCard,
-    mediaId, mediaName, mediaSize, mediaType, mediaKind,
+    mediaId, mediaName, mediaSize, mediaType, mediaKind, turnId,
   } = wireMsg
   // Deferred to the next tick: lets any active generator's listener (which
   // runs synchronously within the same notify() call) markDelivered() first.
   // Only messages still unclaimed after that are genuinely spontaneous.
   setTimeout(() => {
-    if (alreadyDelivered(id)) return
-    markDelivered(id)
+    const claimedByActiveTurn = alreadyDelivered(id)
+    // A same-id message carrying thinking is an authoritative revision, not
+    // a duplicate. The active stream applies it immediately; the global inbox
+    // must also see it so a revision that lands after turn_end, during a
+    // reconnect, or in another tab can patch the existing durable bubble.
+    if (claimedByActiveTurn && !thinking) return
+    if (!claimedByActiveTurn) markDelivered(id)
     for (const fn of proactiveListeners) {
       try {
         fn({
           id, text, ts, kind, voice, style, thinking, musicAction, bedtimeCard,
-          mediaId, mediaName, mediaSize, mediaType, mediaKind,
+          mediaId, mediaName, mediaSize, mediaType, mediaKind, turnId,
+          ...(claimedByActiveTurn ? { revision: true } : {}),
         })
       } catch {
         // a subscriber throwing must not break delivery to the others
@@ -1525,7 +1531,6 @@ export async function* streamChatViaCompanion({ text, imagePath, file, signal, m
   let recoveredFromHistory = false
   const thisTurnDeliveredIds = [] // for forgetDelivered() when this turn closes
   let liveReasoningSinceMessage = false
-  let visibleMessageDelivered = false
   // Every WS connection — including the very first one this generator opens —
   // gets a `history` snapshot immediately on open, before our own turn_start
   // could possibly have been broadcast back to us. That snapshot is NOT a
@@ -1650,7 +1655,7 @@ export async function* streamChatViaCompanion({ text, imagePath, file, signal, m
       return
     }
     if (m.type === 'thinking') {
-      if (m.delta && !visibleMessageDelivered) {
+      if (m.delta) {
         reportProgress({ phase: 'thinking', detail: '正在组织回复' })
         liveReasoningSinceMessage = true
         push({ reasoning: m.delta })
@@ -1689,7 +1694,6 @@ export async function* streamChatViaCompanion({ text, imagePath, file, signal, m
       }
       markDelivered(m.id)
       thisTurnDeliveredIds.push(m.id)
-      visibleMessageDelivered = true
       reportProgress({ phase: 'continuing', detail: '已经回了一条，仍在继续处理' })
       const timing = m.thinking && m.ts ? { reasoningCompletedAt: m.ts } : {}
       // Newer servers suppress a misleading live `thinking` event after an

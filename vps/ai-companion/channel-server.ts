@@ -1780,6 +1780,57 @@ function broadcastMsg(m: MsgWire) {
   sendRaw(m)
 }
 
+// Claude Code assigns the thinking block its transcript timestamp before it
+// invokes reply/send_voice, but does not append that assistant JSONL row until
+// the MCP call has returned. Broadcasting from inside the handler therefore
+// always beat the transcript tail by a few dozen milliseconds and made real
+// thinking look "late". Persist immediately (so reconnect/endTurn still see
+// the reply), then give CC one short post-MCP flush window. The timer polls the
+// transcript synchronously and WebSocket ordering guarantees any real
+// `thinking` delta is sent before the visible message that consumes it.
+const CC_THINKING_DELIVERY_GRACE_MS = 180
+const pendingCcDeliveries = new Map<string, {
+  message: MsgWire
+  timer: ReturnType<typeof setTimeout>
+  queuedAt: number
+}>()
+
+function deliverPendingCcMessage(id: string) {
+  const pending = pendingCcDeliveries.get(id)
+  if (!pending) return
+  pendingCcDeliveries.delete(id)
+  clearTimeout(pending.timer)
+
+  if (thinkingTail && currentTurn?.turnId === pending.message.turnId) {
+    pollThinkingTail(currentTurn.turnId)
+  }
+  const thinking = consumePendingThinking()
+  if (thinking) pending.message.thinking = `${pending.message.thinking || ''}${thinking}`
+  // persist() already appended this exact object. Save again after enriching
+  // it so reconnect snapshots and the live wire carry the same authoritative
+  // value without appending a duplicate history row.
+  saveHistory()
+  sendRaw(pending.message)
+  log('cc_msg_live_delivered', {
+    id: pending.message.id,
+    turnId: pending.message.turnId,
+    queuedMs: Date.now() - pending.queuedAt,
+    thinkingChars: pending.message.thinking?.length || 0,
+  })
+}
+
+function broadcastCcMessageAfterThinking(m: MsgWire) {
+  persist(m)
+  const timer = setTimeout(() => deliverPendingCcMessage(m.id), CC_THINKING_DELIVERY_GRACE_MS)
+  pendingCcDeliveries.set(m.id, { message: m, timer, queuedAt: Date.now() })
+}
+
+function flushPendingCcMessages(turnId: string) {
+  for (const [id, pending] of pendingCcDeliveries) {
+    if (pending.message.turnId === turnId) deliverPendingCcMessage(id)
+  }
+}
+
 // Tools whose "CC is doing X" line would be noise: reply/send_voice ARE the
 // message the user is about to see, and the gomoku/group tools narrate
 // themselves through their own wire events. Announcing them would just put a
@@ -2211,16 +2262,14 @@ function pollThinkingTail(turnId: string) {
         }
         if (block?.type === 'thinking' && typeof block.thinking === 'string' && block.thinking.length > 0) {
           pendingThinking.push(block.thinking)
-          // Once a visible reply exists, a transcript block that lands now is
-          // commonly the thinking that preceded that already-sent reply. If
-          // we broadcast it as fresh live thinking, the client paints a new
-          // empty "still thinking" bubble after the answer, then removes it
-          // at turn_end. Keep it buffered: the next reply consumes it, or
-          // persistLateThinking() patches the preceding reply by the same id.
-          const alreadyReplied = history.some(message => (
-            message.turnId === turnId && message.from === 'cc' && message.kind !== 'poke'
+          // A message inside the short post-MCP delivery grace will consume
+          // this block and send it immediately before its own visible wire.
+          // Otherwise it belongs to the still-open next part of a multi-reply
+          // turn and must keep streaming even though an earlier reply exists.
+          const awaitingVisibleMessage = [...pendingCcDeliveries.values()].some(pending => (
+            pending.message.turnId === turnId
           ))
-          if (!alreadyReplied) sendRaw({ type: 'thinking', turnId, delta: block.thinking })
+          if (!awaitingVisibleMessage) sendRaw({ type: 'thinking', turnId, delta: block.thinking })
         }
       }
     }
@@ -2418,6 +2467,7 @@ function endTurn(): string | null {
   clearStopTurnFallback(turnId)
   currentTurn = null
   stopThinkingTail(turnId)
+  flushPendingCcMessages(turnId)
   broadcastPlainAssistantFallback(finished)
   persistLateThinking(turnId)
   flushProactiveActivities(turnId)
@@ -2462,6 +2512,7 @@ function failTurn(error: string): string | null {
   clearStopTurnFallback(turnId)
   currentTurn = null
   stopThinkingTail(turnId)
+  flushPendingCcMessages(turnId)
   persistLateThinking(turnId)
   flushProactiveActivities(turnId)
   let failedReadingSessionId: string | null = null
@@ -3285,7 +3336,7 @@ mcp.setRequestHandler(CallToolRequestSchema, async req => {
           : ''
         const id = nextId()
         const thinking = consumePendingThinking()
-        broadcastMsg({
+        broadcastCcMessageAfterThinking({
           type: 'msg', kind: 'media', id, from: 'cc', text: caption, ts: Date.now(), turnId,
           ...media,
           ...(thinking ? { thinking } : {}),
@@ -3348,7 +3399,7 @@ mcp.setRequestHandler(CallToolRequestSchema, async req => {
         } else if (isGomokuTurn) {
           appendGomokuChatMsg({ id, from: 'model', text, ts: Date.now(), interactionId: turnId })
         } else {
-          broadcastMsg({ type: 'msg', id, from: 'cc', text, ts: Date.now(), replyTo, turnId, ...(thinking ? { thinking } : {}) })
+          broadcastCcMessageAfterThinking({ type: 'msg', id, from: 'cc', text, ts: Date.now(), replyTo, turnId, ...(thinking ? { thinking } : {}) })
           if (isPushWorthyTurn(turnId)) void sendCompanionPush(text)
         }
         log('reply_sent', { id, chars: text.length, turnId, hasThinking: !!thinking, gomoku: isGomokuTurn, focus: isFocusTurn })
@@ -3393,7 +3444,7 @@ mcp.setRequestHandler(CallToolRequestSchema, async req => {
         const id = nextId()
         const thinking = consumePendingThinking()
         const bedtimeCard = { title, english, ...(translation ? { translation } : {}), ...(signature ? { signature } : {}), date }
-        broadcastMsg({
+        broadcastCcMessageAfterThinking({
           type: 'msg', id, from: 'cc', text: english, ts: Date.now(), turnId, bedtimeCard,
           ...(thinking ? { thinking } : {}),
         })
@@ -3414,7 +3465,7 @@ mcp.setRequestHandler(CallToolRequestSchema, async req => {
         const text = suppliedText || `给你找到《${action.name}》了，点一下在网易云播放。`
         const id = nextId()
         const thinking = consumePendingThinking()
-        broadcastMsg({
+        broadcastCcMessageAfterThinking({
           type: 'msg', id, from: 'cc', text, ts: Date.now(), turnId, musicAction: action,
           ...(thinking ? { thinking } : {}),
         })
@@ -3434,7 +3485,7 @@ mcp.setRequestHandler(CallToolRequestSchema, async req => {
         const value = randomInt(1, 7)
         const id = nextId()
         const thinking = consumePendingThinking()
-        broadcastMsg({
+        broadcastCcMessageAfterThinking({
           type: 'msg', id, from: 'cc', text: `[DICE:${value}]`, ts: Date.now(), turnId,
           ...(thinking ? { thinking } : {}),
         })
@@ -3479,7 +3530,7 @@ mcp.setRequestHandler(CallToolRequestSchema, async req => {
         } else if (isGomokuTurn) {
           appendGomokuChatMsg({ id, from: 'model', text, ts: Date.now(), kind: 'voice', voice, style, interactionId: turnId })
         } else {
-          broadcastMsg({ type: 'msg', id, from: 'cc', text, ts: Date.now(), replyTo, turnId, kind: 'voice', voice, style, ...(thinking ? { thinking } : {}) })
+          broadcastCcMessageAfterThinking({ type: 'msg', id, from: 'cc', text, ts: Date.now(), replyTo, turnId, kind: 'voice', voice, style, ...(thinking ? { thinking } : {}) })
           if (isPushWorthyTurn(turnId)) void sendCompanionPush(text)
         }
         log('voice_sent', { id, chars: text.length, turnId, hasThinking: !!thinking, gomoku: isGomokuTurn, focus: isFocusTurn })

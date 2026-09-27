@@ -80,6 +80,16 @@ describe('CC timeline snapshot recovery', () => {
     expect(selectCcSnapshotDelta(local, snapshot)).toEqual(snapshot)
   })
 
+  it('repairs a later longer same-id reasoning revision on reconnect', () => {
+    const local = [{
+      id: 'local-a', wireIds: ['wire-a'], serverWireIds: ['wire-a'],
+      wirePartIndex: 0, role: 'assistant', content: '答复', reasoning: '第一段', timestamp: 1000,
+    }]
+    const snapshot = [{ ...msg('wire-a', 1000), thinking: '第一段\n第二段' }]
+
+    expect(selectCcSnapshotDelta(local, snapshot)).toEqual(snapshot)
+  })
+
   it('does not replay reasoning when the first split bubble was deliberately deleted', () => {
     const local = [{
       id: 'wire-a::part:1', wireIds: ['wire-a::part:1'], serverWireIds: ['wire-a'],

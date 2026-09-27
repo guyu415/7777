@@ -17,6 +17,27 @@ function identitySet(messages) {
   return ids
 }
 
+export function findCcReasoningTarget(messages, wire) {
+  if (!wire?.id || typeof wire.thinking !== 'string' || !wire.thinking.trim()) return null
+  return (Array.isArray(messages) ? messages : []).find(message => (
+    message?.role === 'assistant'
+    && Number(message.wirePartIndex || 0) === 0
+    && messageServerIdentityKeys(message).includes(wire.id)
+  )) || null
+}
+
+export function ccReasoningUpdates(target, wire) {
+  const startedAt = Number(target.reasoningStartedAt) || Number(target.timestamp) || Date.now()
+  const completedAt = Math.max(startedAt, Number(wire.ts) || Date.now())
+  return {
+    reasoning: wire.thinking,
+    reasoningStartedAt: startedAt,
+    reasoningCompletedAt: completedAt,
+    reasoningDurationMs: Math.max(1, completedAt - startedAt),
+    reasoningStreaming: false,
+  }
+}
+
 function currentCcSession() {
   return useStore.getState().sessions?.find(session => session.providerName === 'claude-code-vps') || null
 }
@@ -104,19 +125,54 @@ export function subscribeCcMessageInbox() {
     const persisted = await getMessages(session.id).catch(() => [])
     const stateBefore = useStore.getState()
     const visible = stateBefore.currentSessionId === session.id ? stateBefore.messages : []
-    const known = identitySet([...persisted, ...visible])
+    const localMessages = [...visible, ...persisted]
+    const known = identitySet(localMessages)
+    const isReasoningRevision = wire => {
+      const target = findCcReasoningTarget(localMessages, wire)
+      return Boolean(target && target.reasoning !== wire.thinking)
+    }
     let candidates = snapshot
       ? selectCcSnapshotDelta([...persisted, ...visible], wires)
-      : (Array.isArray(wires) ? wires : []).filter(wire => wire?.id && !known.has(wire.id))
+      : (Array.isArray(wires) ? wires : []).filter(wire => (
+          wire?.id && (!known.has(wire.id) || isReasoningRevision(wire))
+        ))
     candidates = candidates.filter(wire => wire?.id && !inFlightIds.has(wire.id))
     if (!candidates.length) return
     for (const wire of candidates) inFlightIds.add(wire.id)
 
     try {
-      const messages = candidates
+      // Same-id thinking revisions update the existing first fragment in
+      // place. Mapping them as new wires would write a second IndexedDB row
+      // under the server id and rely on later timeline dedupe to hide it.
+      // Patching the real local id keeps store, IndexedDB and cloud history
+      // aligned for live delivery, late turn_end updates and reconnect repair.
+      const revisions = []
+      const newWires = []
+      for (const wire of candidates) {
+        const target = findCcReasoningTarget(localMessages, wire)
+        if (target && known.has(wire.id)) revisions.push({ wire, target })
+        else if (!known.has(wire.id)) newWires.push(wire)
+      }
+
+      let revised = false
+      for (const { wire, target } of revisions) {
+        if (target.reasoning === wire.thinking) continue
+        const updates = ccReasoningUpdates(target, wire)
+        const current = useStore.getState()
+        if (current.currentSessionId === session.id) current.updateMessage(target.id, updates)
+        await saveMessage({ ...target, ...updates }).catch(error => {
+          console.error('[CC-INBOX] 思考更新落库失败:', error?.message)
+        })
+        revised = true
+      }
+
+      const messages = newWires
         .flatMap(wire => ccWireToTimelineMessages(wire, session.id, { live }) || [])
         .filter(Boolean)
-      if (!messages.length) return
+      if (!messages.length) {
+        if (revised) scheduleCloudSync(session.id)
+        return
+      }
 
       // One store commit for the whole snapshot/live batch. This is the only
       // place recovered wires become visible, so no callback race can decide
@@ -140,7 +196,7 @@ export function subscribeCcMessageInbox() {
       scheduleCloudSync(session.id)
 
       if (live) {
-        for (const wire of candidates) {
+        for (const wire of newWires) {
           if (wire.kind === 'voice') {
             const voiceMessage = messages.find(message => message.id === wire.id)
             if (voiceMessage) void resolveLiveVoice(wire, voiceMessage, session)
