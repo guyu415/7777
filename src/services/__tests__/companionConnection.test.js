@@ -199,6 +199,39 @@ describe('companion connection recovery', () => {
     await expect(stream.next()).resolves.toEqual({ value: undefined, done: true })
   })
 
+  it('reports visible progress phases without inserting status chunks into the reply stream', async () => {
+    const companion = await import('../companion.js')
+    const progress = []
+    const stream = companion.streamChatViaCompanion({
+      text: '帮我看看', messageId: 'progress-turn', onProgress: update => progress.push(update),
+    })
+    const firstChunk = stream.next()
+    await flush()
+    const socket = MockWebSocket.instances[0]
+    socket.open()
+    await flush()
+
+    socket.message({ type: 'inbound_ack', id: 'progress-turn' })
+    socket.message({ type: 'turn_start', turnId: 'progress-turn', ts: 1000 })
+    await expect(firstChunk).resolves.toEqual({ value: { reasoningStartedAt: 1000 }, done: false })
+
+    const toolChunk = stream.next()
+    socket.message({ type: 'tool_use', turnId: 'progress-turn', tool: 'Read', detail: '/tmp/example.txt', ts: 2000 })
+    await expect(toolChunk).resolves.toEqual({
+      value: { toolUse: { tool: 'Read', detail: '/tmp/example.txt', ts: 2000 } }, done: false,
+    })
+
+    const replyChunk = stream.next()
+    socket.message({ type: 'msg', id: 'progress-reply', from: 'cc', text: '看好了', ts: 3000, turnId: 'progress-turn' })
+    socket.message({ type: 'turn_end', turnId: 'progress-turn' })
+    await expect(replyChunk).resolves.toEqual({ value: { text: '看好了', wireId: 'progress-reply' }, done: false })
+    await expect(stream.next()).resolves.toEqual({ value: undefined, done: true })
+
+    expect(progress.map(update => update.phase)).toEqual([
+      'sending', 'accepted', 'thinking', 'working', 'continuing',
+    ])
+  })
+
   it('patches late thinking onto an already delivered reply instead of yielding a second reply', async () => {
     const companion = await import('../companion.js')
     const stream = companion.streamChatViaCompanion({ text: '下课了', messageId: 'late-turn' })

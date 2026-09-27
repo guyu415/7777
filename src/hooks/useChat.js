@@ -1,4 +1,4 @@
-import { useCallback, useRef } from 'react'
+import { useCallback, useRef, useState } from 'react'
 import { useShallow } from 'zustand/react/shallow'
 import { useStore, saveMessage, saveBlob, getMessages, deleteMessageFromDB } from '../store'
 import { streamChat, generateSummary } from '../services/claude'
@@ -179,6 +179,11 @@ export function useChat() {
   const pendingNoteRef = useRef(null)
   const msgSyncTimerRef = useRef(null)
   const isSummarizingRef = useRef(false)
+  // Ephemeral transport/activity state for the resident Claude turn. This is
+  // deliberately separate from message bubbles and IndexedDB: even before a
+  // single thinking/tool/reply event arrives, ChatWindow can show an honest,
+  // fixed progress surface from the instant Send is tapped.
+  const [companionProgress, setCompanionProgress] = useState(null)
 
   // Debounced cloud sync for current session's messages. 2s 而不是 300ms：
   // KV 免费版每天只有 1000 次写入，同一 key 的写入频率上限也只有 1 次/秒，
@@ -277,6 +282,7 @@ export function useChat() {
     abortRef.current = () => controller.abort()
 
     const assistantId = genId()
+    const isVpsProvider = effectiveProviderName === 'claude-code-vps'
     const turnUserMessage = [...contextMessages].reverse().find(message => message.role === 'user')
     const replyToTurnId = turnUserMessage?.id || null
     const turnFields = replyToTurnId ? { turnId: replyToTurnId, replyToTurnId } : {}
@@ -294,6 +300,16 @@ export function useChat() {
     addMessage(assistantMsg)
     setIsLoading(true)
     setStreamingMessageId(assistantId)
+    if (isVpsProvider) {
+      setCompanionProgress({
+        conversationId: CONVERSATION_ID,
+        turnKey: assistantId,
+        phase: 'connecting',
+        detail: '正在连接常驻会话',
+        startedAt: assistantMsg.timestamp,
+        updatedAt: assistantMsg.timestamp,
+      })
+    }
 
     let fullContent = ''
     let fullReasoning = ''
@@ -304,8 +320,14 @@ export function useChat() {
     // Declared up here with fullReasoning (not down by the stream loop) so
     // finalizeCurrentTextBubble, defined below, closes over it safely.
     let toolUses = []
-    // Declared here (not inside the try below) so the catch block can also see it.
-    const isVpsProvider = effectiveProviderName === 'claude-code-vps'
+    // Declared here (not inside the stream loop) so both transport callbacks
+    // and final cleanup refer to this exact turn, never a later queued turn.
+    const updateCompanionProgress = (update) => {
+      if (!isVpsProvider) return
+      setCompanionProgress(current => current?.turnKey === assistantId
+        ? { ...current, ...update, updatedAt: update?.at || Date.now() }
+        : current)
+    }
 
     // VPS-only: reply() chunks accumulate for live turn handling while their
     // wire boundaries remain separately logged below. A send_voice() chunk
@@ -754,6 +776,7 @@ export function useChat() {
             messageId: lastUserMsg?.id,
             voiceEmotion: lastUserMsg?.voiceEmotion,
             voiceAcoustics: lastUserMsg?.voiceAcoustics,
+            onProgress: updateCompanionProgress,
           })
         : streamChat({ apiKey: effectiveApiKey, apiBaseUrl: effectiveBaseUrl, model: effectiveModel, systemPrompt: builtSystemPrompt, messages: trimmedMsgs, workerUrl, useWorkerProxy, signal: controller.signal, disableThinking: effectiveDisableThinking, webSearch: effectiveWebSearch, providerName: effectiveProviderName })
 
@@ -1237,6 +1260,9 @@ export function useChat() {
       abortRef.current = null
       setIsLoading(false)
       setStreamingMessageId(null)
+      if (isVpsProvider) {
+        setCompanionProgress(current => current?.turnKey === assistantId ? null : current)
+      }
 
       scheduleMsgSync(CONVERSATION_ID)
 
@@ -1597,5 +1623,5 @@ export function useChat() {
     scheduleMsgSync(CONVERSATION_ID)
   }, [updateMessage, scheduleMsgSync, CONVERSATION_ID])
 
-  return { messages, sendMessage, sendMessageBatch, sendImageMessageBatch, appendLocalMessage, loadHistory, isLoading, regenerate, regenerateRound, retryFailed, deleteMsg, editMessage, stopStreaming }
+  return { messages, sendMessage, sendMessageBatch, sendImageMessageBatch, appendLocalMessage, loadHistory, isLoading, companionProgress, regenerate, regenerateRound, retryFailed, deleteMsg, editMessage, stopStreaming }
 }

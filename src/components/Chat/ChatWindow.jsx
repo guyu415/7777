@@ -5,6 +5,7 @@ import MessageList from './MessageList'
 import MessageSearch from './MessageSearch'
 import FallingParticles from './FallingParticles'
 import MessageInput from './MessageInput'
+import CompanionProgressBar from './CompanionProgressBar'
 import MemoryModal from './MemoryModal'
 import RuntimeStatusBall from './RuntimeStatusBall'
 import CarryOutPetModal from './CarryOutPetModal'
@@ -141,7 +142,7 @@ export default function ChatWindow({ theme }) {
   // the file. cc/codex above are BOTH always called (Rules of Hooks); only
   // one is ever actually used per render.
   const active = isCodexSession ? codex : cc
-  const { messages, sendMessage, sendMessageBatch, sendImageMessageBatch, appendLocalMessage, loadHistory, isLoading, regenerate, regenerateRound, retryFailed, deleteMsg, editMessage, stopStreaming } = active
+  const { messages, sendMessage, sendMessageBatch, sendImageMessageBatch, appendLocalMessage, loadHistory, isLoading, companionProgress, regenerate, regenerateRound, retryFailed, deleteMsg, editMessage, stopStreaming } = active
 
   const effectiveAiName = currentSession?.aiName ?? globalAiName
   const effectiveAiAvatar = currentSession?.aiAvatar ?? globalAiAvatar
@@ -1135,6 +1136,9 @@ export default function ChatWindow({ theme }) {
               style={{ border: 'none', background: 'rgba(224,112,112,0.12)', color: '#c45f5f', borderRadius: 10, padding: '2px 8px', fontFamily: 'inherit' }}
             >重试</button>
           </div>
+        )}
+        {isVpsSession && isLoading && companionProgress?.conversationId === currentSessionId && (
+          <CompanionProgressBar progress={companionProgress} theme={theme} aiName={effectiveAiName || 'Claude'} />
         )}
         <MessageInput
           ref={inputRef}

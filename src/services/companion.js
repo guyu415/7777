@@ -1477,10 +1477,22 @@ export function sendDeleteNotice(text, messageIds = []) {
  * the module-level `deliveredIds` set, so a reconnect-triggered history
  * replay can never re-yield something already seen live, or vice versa.
  */
-export async function* streamChatViaCompanion({ text, imagePath, file, signal, messageId, voiceEmotion, voiceAcoustics, callMode = false }) {
+export async function* streamChatViaCompanion({ text, imagePath, file, signal, messageId, voiceEmotion, voiceAcoustics, callMode = false, onProgress }) {
   if (signal?.aborted) return
 
   await ensureFreshConnectionBeforeSend()
+
+  // Progress is a side channel rather than another yielded stream chunk.
+  // That keeps reconnect/status notices from changing reply ordering while
+  // still letting the UI stay informative during long event-free stretches.
+  const reportProgress = (update) => {
+    try {
+      onProgress?.({ ...update, at: Date.now() })
+    } catch (error) {
+      console.warn('[COMPANION] progress callback failed:', error?.message || error)
+    }
+  }
+  reportProgress({ phase: 'sending', detail: '正在发送消息' })
 
   // Reuse the local user bubble id when this turn originated in ChatWindow.
   // The server broadcasts the accepted user message back to every connected
@@ -1539,7 +1551,10 @@ export async function* streamChatViaCompanion({ text, imagePath, file, signal, m
     }
 
     if (evt.kind === 'inbound_ack') {
-      if (evt.id === id) ackReceived = true
+      if (evt.id === id) {
+        ackReceived = true
+        reportProgress({ phase: 'accepted', detail: '常驻会话已经收到消息' })
+      }
       return
     }
 
@@ -1549,6 +1564,7 @@ export async function* streamChatViaCompanion({ text, imagePath, file, signal, m
       // process never manages to reconnect, waitUntilOpenOrFail's caller-side
       // timeout on the *next* turn is what surfaces that, not this one.
       sawDisconnect = true
+      reportProgress({ phase: 'reconnecting', detail: '连接暂时中断，正在自动恢复' })
       return
     }
 
@@ -1558,11 +1574,15 @@ export async function* streamChatViaCompanion({ text, imagePath, file, signal, m
       // Reconnected mid-turn. If the server no longer considers our turn
       // open, we missed the live turn_end/turn_error while disconnected —
       // recover from the replayed message history instead of hanging.
-      if (evt.openTurnId === turnId || evt.queuedTurnIds?.includes(turnId)) return // still open/queued server-side, keep waiting
+      if (evt.openTurnId === turnId || evt.queuedTurnIds?.includes(turnId)) {
+        reportProgress({ phase: 'thinking', detail: '连接已恢复，Claude 仍在处理' })
+        return // still open/queued server-side, keep waiting
+      }
       const isOurs = it => it.turnId === turnId
       const ccReplies = evt.items.filter(it => isOurs(it) && it.from === 'cc')
       recoveredFromHistory = true
       if (ccReplies.length > 0) {
+        reportProgress({ phase: 'continuing', detail: '已恢复回复，正在同步到聊天里' })
         // Dedup by Wire.id, never by text — a reply that happens to repeat
         // the same words as an earlier one must still come through.
         for (const r of ccReplies) {
@@ -1625,11 +1645,13 @@ export async function* streamChatViaCompanion({ text, imagePath, file, signal, m
     }
     if (m.turnId !== turnId) return
     if (m.type === 'turn_start') {
+      reportProgress({ phase: 'thinking', detail: 'Claude 已开始处理' })
       if (m.ts) push({ reasoningStartedAt: m.ts })
       return
     }
     if (m.type === 'thinking') {
       if (m.delta && !visibleMessageDelivered) {
+        reportProgress({ phase: 'thinking', detail: '正在组织回复' })
         liveReasoningSinceMessage = true
         push({ reasoning: m.delta })
       }
@@ -1640,13 +1662,17 @@ export async function* streamChatViaCompanion({ text, imagePath, file, signal, m
     // these after a reconnect, so a turn recovered from history simply shows
     // no activity rather than a partial, misleading list.
     if (m.type === 'tool_use') {
-      if (m.tool) push({ toolUse: { tool: m.tool, detail: m.detail || '', ts: m.ts } })
+      if (m.tool) {
+        reportProgress({ phase: 'working', tool: m.tool, detail: m.detail || '' })
+        push({ toolUse: { tool: m.tool, detail: m.detail || '', ts: m.ts } })
+      }
       return
     }
     if (m.type === 'msg' && m.from === 'cc' && m.kind === 'poke') {
       if (alreadyDelivered(m.id)) return
       markDelivered(m.id)
       thisTurnDeliveredIds.push(m.id)
+      reportProgress({ phase: 'continuing', detail: '已经完成动作，正在收尾' })
       push({ visibleAction: { type: 'poke', id: m.id } })
     } else if (m.type === 'msg' && m.from === 'cc') {
       if (alreadyDelivered(m.id)) {
@@ -1664,6 +1690,7 @@ export async function* streamChatViaCompanion({ text, imagePath, file, signal, m
       markDelivered(m.id)
       thisTurnDeliveredIds.push(m.id)
       visibleMessageDelivered = true
+      reportProgress({ phase: 'continuing', detail: '已经回了一条，仍在继续处理' })
       const timing = m.thinking && m.ts ? { reasoningCompletedAt: m.ts } : {}
       // Newer servers suppress a misleading live `thinking` event after an
       // earlier reply. If that buffered thinking belongs to this new message,
