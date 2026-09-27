@@ -626,6 +626,8 @@ export default function ChatWindow({ theme }) {
             ? (msg.content || '图片')
             : msg.type === 'file'
               ? (msg.fileName || '文件')
+              : msg.type === 'media'
+                ? (msg.mediaName || (msg.mediaKind === 'video' ? '视频' : '动画'))
               : (msg.content || '')
         return {
           id: msg.id,
@@ -649,6 +651,8 @@ export default function ChatWindow({ theme }) {
         ? (msg.content || '图片')
         : msg.type === 'file'
           ? (msg.fileName || '文件')
+          : msg.type === 'media'
+            ? (msg.mediaName || (msg.mediaKind === 'video' ? '视频' : '动画'))
           : (msg.content || '')
     const preview = raw.replace(/\s+/g, ' ').trim().slice(0, 80)
     setReplyTargets((current) => current.some((target) => target.id === msg.id)

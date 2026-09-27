@@ -36,13 +36,19 @@ BODY="$(printf '%s' "$INPUT" | jq -c '
   {
     tool: (.tool_name // "unknown"),
     detail: (
+      (.tool_name // "") as $tool
+      |
       (.tool_input // {}) as $i
-      | if $i.file_path then ($i.file_path | tostring | base)
+      | if $tool == "Artifact" and $i.description then ($i.description | tostring | clip(80))
+        elif $tool == "Artifact" and $i.action == "quickstart" then "正在准备动画与页面方案"
+        elif $i.file_path then ($i.file_path | tostring | base)
         elif $i.command then ($i.command | tostring | clip(80))
         elif $i.pattern then ($i.pattern | tostring | clip(60))
         elif $i.url then ($i.url | tostring | clip(80))
         elif $i.query then ($i.query | tostring | clip(60))
         elif $i.description then ($i.description | tostring | clip(60))
+        elif $i.action then ($i.action | tostring | clip(60))
+        elif $i.name then ($i.name | tostring | clip(60))
         else "" end
     )
   }' 2>/dev/null)"

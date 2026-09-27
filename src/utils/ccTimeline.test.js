@@ -38,6 +38,19 @@ describe('CC timeline snapshot recovery', () => {
     expect(mapped).toMatchObject({ id: 'voice', type: 'text', voiceLoading: false, voiceFailed: true })
   })
 
+  it('hydrates assistant media as a native chat bubble', () => {
+    const mapped = ccWireToTimelineMessage({
+      ...msg('media-1', 1000), kind: 'media', text: '给你的小短片',
+      mediaId: '20260927-media-m1.html', mediaName: 'Clawd 泡泡浴.html',
+      mediaSize: 27318, mediaType: 'text/html; charset=utf-8', mediaKind: 'animation',
+    }, 'cc-session')
+
+    expect(mapped).toMatchObject({
+      id: 'media-1', type: 'media', content: '给你的小短片',
+      mediaId: '20260927-media-m1.html', mediaKind: 'animation',
+    })
+  })
+
   it('maps CC turn identity to causal parent fields, not semantic replyTo', () => {
     const user = ccWireToTimelineMessage({ ...msg('turn-a', 2000, 'user', 'A'), turnId: 'turn-a' }, 'cc-session')
     const reply = ccWireToTimelineMessage({ ...msg('reply-a', 1000), turnId: 'turn-a', replyTo: 'quoted-old-message' }, 'cc-session')

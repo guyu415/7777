@@ -746,6 +746,7 @@ export default function App() {
           : last.type === 'text' ? (last.content || '').slice(0, 40)
           : last.type === 'voice' ? `[语音] ${last.voiceText || ''}`.slice(0, 40)
           : last.type === 'file' ? `[文件] ${last.fileName || ''}`.trim().slice(0, 40)
+          : last.type === 'media' ? `[${last.mediaKind === 'video' ? '视频' : '动画'}] ${last.mediaName || ''}`.trim().slice(0, 40)
           : '[图片]'
         useStore.getState().updateSession(vpsSession.id, {
           lastMsgPreview: preview,

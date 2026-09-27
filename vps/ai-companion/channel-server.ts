@@ -30,8 +30,8 @@
 import { Server } from '@modelcontextprotocol/sdk/server/index.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { ListToolsRequestSchema, CallToolRequestSchema, InitializedNotificationSchema } from '@modelcontextprotocol/sdk/types.js'
-import { readFileSync, appendFileSync, mkdirSync, readdirSync, statSync, lstatSync, writeFileSync, unlinkSync, copyFileSync, existsSync, renameSync } from 'fs'
-import { join, dirname, resolve } from 'path'
+import { readFileSync, appendFileSync, mkdirSync, readdirSync, statSync, lstatSync, realpathSync, writeFileSync, unlinkSync, copyFileSync, existsSync, renameSync } from 'fs'
+import { join, dirname, extname, resolve } from 'path'
 import { randomInt } from 'node:crypto'
 import type { ServerWebSocket } from 'bun'
 import { runFishingCommand, summarizeFishingActivity } from './fishing-game.ts'
@@ -184,7 +184,13 @@ const ANNIVERSARY_FILE = process.env.AI_COMPANION_ANNIVERSARY_FILE ?? join(ROOT,
 const DIARY_LETTER_SCHEDULE_FILE = process.env.AI_COMPANION_DIARY_LETTER_SCHEDULE_FILE ?? join(ROOT, 'state', 'diary-letter-schedule.json')
 const COOKIE_NAME = 'ai_companion_token'
 const SELF_ORIGIN = 'https://companion.xiaoman.xyz'
-const TURN_WATCHDOG_MS = 10 * 60 * 1000 // generous — real completion comes from Stop/StopFailure hooks
+// Artifact/video work can legitimately spend well over ten minutes in one
+// model generation before the next tool call. The old 10-minute fallback
+// closed the browser turn while Claude was still working, so the eventual
+// media/reply lost its turnId and every later progress event was dropped.
+// Real completion still comes from Stop/StopFailure; this is only the
+// missing-hook backstop, so keep it comfortably above a normal long task.
+const TURN_WATCHDOG_MS = 30 * 60 * 1000
 const SENSEVOICE_BINARY = process.env.AI_COMPANION_SENSEVOICE_BINARY
   ?? join(ROOT, 'models', 'sensevoice', 'llama-funasr-sensevoice')
 const SENSEVOICE_MODEL = process.env.AI_COMPANION_SENSEVOICE_MODEL
@@ -430,6 +436,16 @@ const UPLOAD_DATA_URL_RE = /^data:(image\/(?:jpeg|png|webp|gif));base64,([A-Za-z
 const UPLOAD_FILE_MAX_BYTES = 10 * 1024 * 1024
 const UPLOAD_FILE_NAME_MAX_CHARS = 180
 const UPLOAD_FILE_DATA_URL_RE = /^data:([^;,]{1,200});base64,([A-Za-z0-9+/]+=*)$/
+const ASSISTANT_MEDIA_MAX_BYTES = 100 * 1024 * 1024
+const ASSISTANT_HTML_MAX_BYTES = 5 * 1024 * 1024
+const ASSISTANT_MEDIA_SOURCE_ROOTS = [resolve(ROOT), resolve('/tmp/claude-1001/-opt-ai-companion')]
+const ASSISTANT_MEDIA_TYPES: Record<string, { mimeType: string; kind: 'video' | 'animation' | 'image'; maxBytes: number }> = {
+  '.mp4': { mimeType: 'video/mp4', kind: 'video', maxBytes: ASSISTANT_MEDIA_MAX_BYTES },
+  '.webm': { mimeType: 'video/webm', kind: 'video', maxBytes: ASSISTANT_MEDIA_MAX_BYTES },
+  '.mov': { mimeType: 'video/quicktime', kind: 'video', maxBytes: ASSISTANT_MEDIA_MAX_BYTES },
+  '.html': { mimeType: 'text/html; charset=utf-8', kind: 'animation', maxBytes: ASSISTANT_HTML_MAX_BYTES },
+  '.gif': { mimeType: 'image/gif', kind: 'image', maxBytes: 20 * 1024 * 1024 },
+}
 const READING_STORE_ROOT = process.env.AI_COMPANION_READING_DIR ?? join(ROOT, 'state', 'reading')
 const readingStore = new ReadingStore(READING_STORE_ROOT)
 
@@ -987,7 +1003,7 @@ type Msg = {
   // kind omitted/'text' = normal reply-tool message. 'voice' = sent via the
   // send_voice tool — CC's own explicit choice to speak instead of type;
   // never inferred client-side from text content.
-  kind?: 'text' | 'voice' | 'poke'
+  kind?: 'text' | 'voice' | 'poke' | 'media'
   // Persistent, timeline-native 拍一拍 notice. `text` stays empty so this
   // never enters model memory/tidal summaries as pretend conversation text.
   userName?: string
@@ -1014,6 +1030,14 @@ type Msg = {
   fileName?: string
   fileSize?: number
   fileType?: string
+  // Assistant-created media copied into UPLOAD_DIR by send_media. Only the
+  // opaque generated id crosses the wire; the model's local source path is
+  // never exposed to browsers or persisted in chat history.
+  mediaId?: string
+  mediaName?: string
+  mediaSize?: number
+  mediaType?: string
+  mediaKind?: 'video' | 'animation' | 'image'
   // A safe handoff into the user's official NetEase app. This contains only
   // catalog metadata + app/web links; no audio URL, cookie, or media bytes.
   musicAction?: NeteasePhoneAction
@@ -1366,11 +1390,17 @@ function historySnapshotAfter(cursor: string | null): { items: MsgWire[]; cursor
 function deleteHistoryMessages(ids: string[]): number {
   if (!ids.length) return 0
   const idSet = new Set(ids)
+  const removedItems = history.filter(item => idSet.has(item.id))
   const kept = history.filter(item => !idSet.has(item.id))
   const removed = history.length - kept.length
   if (!removed) return 0
   history.splice(0, history.length, ...kept)
   saveHistory()
+  for (const item of removedItems) {
+    const mediaPath = assistantMediaPath(item.mediaId)
+    if (!mediaPath) continue
+    try { unlinkSync(mediaPath) } catch (err) { log('media_delete_error', { mediaId: item.mediaId, error: String(err) }) }
+  }
   return removed
 }
 function loadProactiveActivities(): ProactiveActivityWire[] {
@@ -1753,7 +1783,7 @@ function broadcastMsg(m: MsgWire) {
 // message the user is about to see, and the gomoku/group tools narrate
 // themselves through their own wire events. Announcing them would just put a
 // "正在回复…" line above every reply.
-const TOOL_USE_MUTED = new Set(['reply', 'poke_user', 'set_poke_text', 'send_voice', 'send_bedtime_card', 'play_music_on_phone', 'roll_dice', 'report_proactive_activity', 'gomoku_move', 'gomoku_banter', 'group_speak', 'group_pass'])
+const TOOL_USE_MUTED = new Set(['reply', 'send_media', 'poke_user', 'set_poke_text', 'send_voice', 'send_bedtime_card', 'play_music_on_phone', 'roll_dice', 'report_proactive_activity', 'gomoku_move', 'gomoku_banter', 'group_speak', 'group_pass'])
 
 // Live tool-activity for the open turn. Deliberately fire-and-forget and
 // never persisted: this is the "what is it doing right now" indicator, and a
@@ -2627,6 +2657,25 @@ mcp.setRequestHandler(ListToolsRequestSchema, async () => ({
       },
     },
     {
+      name: 'send_media',
+      _meta: { 'anthropic/alwaysLoad': true },
+      description:
+        'Send a LOCAL video or self-contained HTML animation directly into the user\'s Eunoia chat, hosted on ' +
+        'their own companion domain. Prefer this over Artifact when the user asks for a personal video/animation ' +
+        'or may not be able to access claude.ai. Supported files: .mp4, .webm, .mov, .html, .gif. The file must ' +
+        'already exist under /opt/ai-companion or this session\'s Claude scratchpad. This tool itself creates the ' +
+        'visible media bubble; caption is optional, and a duplicate reply is usually unnecessary.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          path: { type: 'string', description: 'absolute local path to the completed media file' },
+          name: { type: 'string', maxLength: 180, description: 'optional filename/title shown in chat' },
+          caption: { type: 'string', maxLength: 500, description: 'optional short message shown with the media' },
+        },
+        required: ['path'],
+      },
+    },
+    {
       name: 'poke_user',
       description:
         '拍一拍 the user. During an ordinary main-chat turn you may use this by itself or together with reply (in either order). ' +
@@ -3212,6 +3261,28 @@ mcp.setRequestHandler(CallToolRequestSchema, async req => {
         sendRaw({ type: 'poke_settings', settings: next, ts: Date.now() })
         log('poke_text_changed', { owner: 'cc', chars: ccBefore.length + ccAfter.length })
         return { content: [{ type: 'text', text: `saved — your poke sentence is now “你${ccBefore}了${ccAfter.replaceAll('{name}', '我')}”` }] }
+      }
+      case 'send_media': {
+        const turnId = currentTurn?.turnId
+        const allowedTurn = currentTurn?.surface === 'main' || turnId === proactiveTurnId
+        if (!turnId || !allowedTurn) {
+          return { content: [{ type: 'text', text: 'send_media is only available during a main-chat or proactive-check turn' }], isError: true }
+        }
+        const media = assistantMediaRecord(args.path, args.name)
+        if ('error' in media) return { content: [{ type: 'text', text: media.error }], isError: true }
+        const caption = typeof args.caption === 'string'
+          ? args.caption.replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, '').trim().slice(0, 500)
+          : ''
+        const id = nextId()
+        const thinking = consumePendingThinking()
+        broadcastMsg({
+          type: 'msg', kind: 'media', id, from: 'cc', text: caption, ts: Date.now(), turnId,
+          ...media,
+          ...(thinking ? { thinking } : {}),
+        })
+        if (isPushWorthyTurn(turnId)) void sendCompanionPush(caption || `发来一个${media.mediaKind === 'video' ? '视频' : '动画'}`)
+        log('media_sent', { id, turnId, mediaId: media.mediaId, mediaKind: media.mediaKind, bytes: media.mediaSize, hasThinking: !!thinking })
+        return { content: [{ type: 'text', text: `media sent in chat (${id})` }] }
       }
       case 'poke_user': {
         const turnId = currentTurn?.turnId
@@ -4703,7 +4774,7 @@ async function injectPreservedSummaryAfterClear(reset: CcResetMarker): Promise<b
   }
 }
 
-// ---------- lightweight thinking flush (incremental /clear, no new summary) ----------
+// ---------- lightweight thinking flush (same-session /compact, no new rolling summary) ----------
 //
 // The real tidal-summary system above only fires at an absolute 45% ctx
 // threshold (activeTidalConfig().tokenThreshold) and generates a brand-new
@@ -4711,10 +4782,13 @@ async function injectPreservedSummaryAfterClear(reset: CcResetMarker): Promise<b
 // deliberately expensive, reserved for genuine long-range archiving. Between
 // those runs, extended-thinking traces alone can bloat context substantially
 // with nothing to show for it once the turn is done. This is a much cheaper
-// release valve: a real `/clear` (the only reset primitive verified safe —
-// see resetCcContext's header comment), followed by re-sending the *cached*
-// rolling summary (no LLM call, nothing regenerated) plus the raw,
-// unsummarized dialogue since the last REAL tidal boundary.
+// release valve: the same identity-preserving `/compact` primitive used by a
+// real tide, followed by re-sending the *cached* rolling summary (no new
+// rolling-summary call, nothing regenerated) plus the raw, unsummarized
+// dialogue since the last REAL tidal boundary. The resident Claude session
+// id is a hard continuity invariant: this path must fail closed rather than
+// invoke `/clear`, rotate the transcript, or fall back to any new-session
+// recovery path.
 //
 // INCIDENT 2026-08-24: the first version of this reused the existing
 // requestReset('after_summary') path outright. That turned out to be
@@ -4731,7 +4805,7 @@ async function injectPreservedSummaryAfterClear(reset: CcResetMarker): Promise<b
 // both CC's live memory and chat-history.json in one shot. Recovered by
 // replaying the still-intact pre-clear transcript file, but the fix is to
 // never share that code path again: this flush now (1) snapshots
-// visibleCcHistory() and builds the recovery packet BEFORE sending /clear,
+// visibleCcHistory() and builds the recovery packet BEFORE compacting,
 // (2) never touches `history` / chat-history.json at all — the local
 // record is the authoritative scrollback and must survive every lightweight
 // flush regardless of how stale the real boundary is, and (3) refuses to
@@ -4763,7 +4837,7 @@ type ThinkingFlushState = {
   contextWindowSize: number | null
   recoveryPending: {
     beforePct: number
-    stage: 'clearing' | 'recovering'
+    stage: 'compacting' | 'recovering' | 'clearing'
     startedAt: number
   } | null
   updatedAt: number
@@ -4785,7 +4859,11 @@ function readThinkingFlushState(): ThinkingFlushState {
       contextWindowSize: nullableFinite(parsed?.contextWindowSize),
       recoveryPending: parsed?.recoveryPending
         && Number.isFinite(Number(parsed.recoveryPending.beforePct))
-        && (parsed.recoveryPending.stage === 'clearing' || parsed.recoveryPending.stage === 'recovering')
+        && (parsed.recoveryPending.stage === 'compacting'
+          || parsed.recoveryPending.stage === 'recovering'
+          // Read-only migration for an interrupted pre-fix `/clear`. New
+          // writes must never create this stage again.
+          || parsed.recoveryPending.stage === 'clearing')
         ? {
             beforePct: Number(parsed.recoveryPending.beforePct),
             stage: parsed.recoveryPending.stage,
@@ -4815,8 +4893,9 @@ function writeThinkingFlushState(state: ThinkingFlushState) {
 
 // Re-primed (baseline cleared, so the next check just records whatever ctx%
 // it observes rather than comparing against a now-stale floor) after ANY
-// context-reducing event — this lightweight flush's own /clear, or a real
-// tidal run's /compact. See call sites in requestReset() and finalizeTidalSuccess().
+// context-reducing event — this lightweight flush's own /compact, a real
+// tidal run's /compact, or an explicit user-requested reset. See call sites
+// in requestReset() and finalizeTidalSuccess().
 function markThinkingFlushBaselineStale() {
   writeThinkingFlushState({
     baselinePct: null,
@@ -4838,7 +4917,7 @@ function announceThinkingFlush(beforePct: number) {
   const id = nextId()
   startTurn(id)
   backgroundPushTurnId = id
-  deliver(id, `[系统提示，不是用户发的消息]系统刚做了一次轻量清理：把上下文里堆积的旧思考过程清掉了（清理前约${Math.round(beforePct)}%），聊天记忆本身完全没受影响——这不是记忆丢失，只是清掉了思考过程占用的冗余空间。跟用户说一声，你自己决定怎么说。`)
+  deliver(id, `[系统提示，不是用户发的消息]系统刚做了一次轻量清理：把上下文里堆积的旧思考过程清掉了（清理前约${Math.round(beforePct)}%），聊天记忆和原对话文件 ID 都完全没受影响——这不是记忆丢失或换会话，只是清掉了思考过程占用的冗余空间。跟用户说一声，你自己决定怎么说。`)
   log('thinking_flush_announced', { id, beforePct })
 }
 
@@ -4877,6 +4956,41 @@ function prepareThinkingFlushPacket(): ReturnType<typeof buildRecoveryPacket> | 
   })
 }
 
+const SAME_SESSION_COMPACT_COMMAND = '/compact 只留下中文、80字以内的维护占位：旧上下文将由紧接着注入的权威恢复包接管。不要复述事实、关系、情绪、当前事项、约定、待办或压缩过程。'
+
+// The only automatic context-reduction primitive allowed for the resident
+// brain. `/compact` keeps the Claude transcript/session id; every poll checks
+// that invariant and fails closed if Claude ever reports otherwise. Callers
+// may retry or surface the failure, but must never fall back to `/clear`.
+async function runSameSessionCompact(
+  expectedSessionId: string,
+  startedAt: number,
+): Promise<{ ok: boolean; compacted: boolean; error?: string }> {
+  if (!expectedSessionId || readBrainSessionId() !== expectedSessionId) {
+    return { ok: false, compacted: false, error: 'session_id_mismatch_before_compact' }
+  }
+  const transcriptPath = brainTranscriptPath(expectedSessionId)
+  const beforeStatus = readStatus() as { context_window?: { used_percentage?: number | null }; capturedAt?: number }
+  const beforePct = Number(beforeStatus?.context_window?.used_percentage)
+  const sent = await withTmuxLock(() => tmuxTypeAndSubmit(SAME_SESSION_COMPACT_COMMAND))
+  if (!sent) return { ok: false, compacted: false, error: 'tmux_send_failed' }
+
+  const deadline = Date.now() + TIDAL_COMPACT_TIMEOUT_MS
+  while (Date.now() < deadline) {
+    await Bun.sleep(1_000)
+    const liveSessionId = readBrainSessionId()
+    if (liveSessionId !== expectedSessionId) return { ok: false, compacted: false, error: 'session_id_changed' }
+    if (transcriptHasCompactAfter(transcriptPath, startedAt)) return { ok: true, compacted: true }
+    const status = readStatus() as { context_window?: { used_percentage?: number | null }; capturedAt?: number }
+    const pct = Number(status?.context_window?.used_percentage)
+    const fresh = Number(status?.capturedAt) >= startedAt
+    if (fresh && Number.isFinite(beforePct) && Number.isFinite(pct) && pct <= Math.max(5, beforePct - 15)) {
+      return { ok: true, compacted: true }
+    }
+  }
+  return { ok: false, compacted: false, error: 'compact_timeout_or_rejected' }
+}
+
 async function runThinkingFlush(
   beforePct: number,
   packet: NonNullable<ReturnType<typeof prepareThinkingFlushPacket>>,
@@ -4887,34 +5001,34 @@ async function runThinkingFlush(
 
   if (!resumeRecovery) {
     const startedAt = Date.now()
+    const expectedSessionId = tidalState.sessionId
+    if (!expectedSessionId || readBrainSessionId() !== expectedSessionId) {
+      return { ok: false, error: 'session_id_mismatch_before_compact' }
+    }
     writeThinkingFlushState({
       ...readThinkingFlushState(),
-      recoveryPending: { beforePct, stage: 'clearing', startedAt },
+      recoveryPending: { beforePct, stage: 'compacting', startedAt },
       updatedAt: startedAt,
     })
-    const resetResult = await withTmuxLock(resetCcContext)
-    if (!resetResult.ok) {
+    const compactResult = await runSameSessionCompact(expectedSessionId, startedAt)
+    if (!compactResult.ok) {
       writeThinkingFlushState({
         ...readThinkingFlushState(),
         recoveryPending: null,
         updatedAt: Date.now(),
       })
-      return { ok: false, error: resetResult.error }
+      return { ok: false, error: compactResult.error }
     }
 
-    // Mirrors the transient cleanup requestReset() does on a confirmed clear —
-    // this in-flight thinking belonged to the now-discarded context. Deliberately
-    // NOT touching `history`, NOT calling tidalStateAfterConversationClear, and
-    // NOT touching processedBoundaryId/rollingSummary/pending/queue — none of
-    // that changed. Only the live session id tracked on tidalState needs to
-    // follow /clear's brand-new internal session, so future tidal file lookups
-    // (transcriptContainsMarker etc.) point at the right transcript.
+    // The compacted in-flight thinking belonged to the discarded context.
+    // Deliberately do NOT touch `history`, the resident/tidal session id,
+    // processedBoundaryId, rollingSummary, pending, or queue. A lightweight
+    // cleanup is not allowed to change transcript identity under any outcome.
     if (thinkingTail) clearInterval(thinkingTail.timer)
     thinkingTail = null
     pendingThinking = []
     if (tidalRetryTimer) clearTimeout(tidalRetryTimer)
     tidalRetryTimer = null
-    tidalState.sessionId = readBrainSessionId()
     tidalState.lastContextTokens = null
     persistTidalState()
     writeThinkingFlushState({
@@ -4984,16 +5098,24 @@ async function checkThinkingFlush(): Promise<{
   const pct = typeof rawPct === 'number' && Number.isFinite(rawPct) ? rawPct : null
   const flushState = readThinkingFlushState()
   if (flushState.recoveryPending) {
-    const resumeRecovery = flushState.recoveryPending.stage === 'recovering' || pct === null
+    const pending = flushState.recoveryPending
+    const compactAlreadyPresent = pending.stage === 'compacting'
+      && transcriptHasCompactAfter(brainTranscriptPath(tidalState.sessionId), pending.startedAt)
+    const resumeRecovery = pending.stage === 'recovering'
+      || compactAlreadyPresent
+      // A one-way compatibility path for an interrupted legacy clear. This
+      // can finish restoring an already-cleared session but never initiates a
+      // new clear or changes identity itself.
+      || (pending.stage === 'clearing' && pct === null)
     const result = await requestThinkingFlush(
-      flushState.recoveryPending.beforePct,
+      pending.beforePct,
       packet,
       resumeRecovery,
     )
     if (!result.ok) {
       return { ok: false, skipped: `recovery_retry_failed:${result.error}` }
     }
-    return { ok: true, firedPct: flushState.recoveryPending.beforePct }
+    return { ok: true, firedPct: pending.beforePct }
   }
   if (pct === null) return { ok: false, skipped: 'ctx_unknown' }
   const contextWindowSize = Number(status?.context_window?.context_window_size)
@@ -5267,33 +5389,12 @@ async function runRollingSummary(input: string, sourceCount: number): Promise<{ 
 
 async function runNativeCompact(pending: NonNullable<TidalState['pending']>): Promise<{ ok: boolean; compacted: boolean; error?: string }> {
   const expectedSessionId = tidalState.sessionId
-  const transcriptPath = brainTranscriptPath(expectedSessionId)
   const startedAt = Date.now()
-  const beforeStatus = readStatus() as { context_window?: { used_percentage?: number | null }; capturedAt?: number }
-  const beforePct = Number(beforeStatus?.context_window?.used_percentage)
   pending.phase = 'compact_sending'
   pending.compactStartedAt = startedAt
   persistTidalState()
   tidalLog('compact_sending')
-
-  const command = '/compact 只留下中文、80字以内的维护占位：旧上下文将由紧接着注入的权威恢复包接管。不要复述事实、关系、情绪、当前事项、约定、待办或压缩过程。'
-  const sent = await withTmuxLock(() => tmuxTypeAndSubmit(command))
-  if (!sent) return { ok: false, compacted: false, error: 'tmux_send_failed' }
-
-  const deadline = Date.now() + TIDAL_COMPACT_TIMEOUT_MS
-  while (Date.now() < deadline) {
-    await Bun.sleep(1_000)
-    const liveSessionId = readBrainSessionId()
-    if (liveSessionId !== expectedSessionId) return { ok: false, compacted: false, error: 'session_id_changed' }
-    if (transcriptHasCompactAfter(transcriptPath, startedAt)) return { ok: true, compacted: true }
-    const status = readStatus() as { context_window?: { used_percentage?: number | null }; capturedAt?: number }
-    const pct = Number(status?.context_window?.used_percentage)
-    const fresh = Number(status?.capturedAt) >= startedAt
-    if (fresh && Number.isFinite(beforePct) && Number.isFinite(pct) && pct <= Math.max(5, beforePct - 15)) {
-      return { ok: true, compacted: true }
-    }
-  }
-  return { ok: false, compacted: false, error: 'compact_timeout_or_rejected' }
+  return runSameSessionCompact(expectedSessionId, startedAt)
 }
 
 function readCoreMemorySummary(): string {
@@ -7168,6 +7269,57 @@ function validUploadedPath(value: unknown): string | undefined {
   const raw = typeof value === 'string' ? value : ''
   const path = resolve(raw)
   return raw && dirname(path) === resolve(UPLOAD_DIR) && existsSync(path) ? path : undefined
+}
+
+function assistantMediaRecord(sourceValue: unknown, displayNameValue: unknown): {
+  mediaId: string
+  mediaName: string
+  mediaSize: number
+  mediaType: string
+  mediaKind: 'video' | 'animation' | 'image'
+} | { error: string } {
+  const raw = typeof sourceValue === 'string' ? sourceValue.trim() : ''
+  if (!raw) return { error: 'path is required' }
+  let source: string
+  try { source = realpathSync(raw) } catch { return { error: 'media file does not exist' } }
+  if (!ASSISTANT_MEDIA_SOURCE_ROOTS.some(root => source.startsWith(`${root}/`))) {
+    return { error: 'media path must be under the companion project or its Claude scratchpad' }
+  }
+  let info
+  try { info = statSync(source) } catch { return { error: 'media file is not readable' } }
+  if (!info.isFile()) return { error: 'media path must be a regular file' }
+  const extension = extname(source).toLowerCase()
+  const media = ASSISTANT_MEDIA_TYPES[extension]
+  if (!media) return { error: 'supported media: .mp4, .webm, .mov, .html, .gif' }
+  if (!info.size) return { error: 'media file is empty' }
+  if (info.size > media.maxBytes) return { error: `media file is too large (max ${media.maxBytes} bytes)` }
+
+  const requestedName = safeUploadedFilename(displayNameValue)
+  const mediaName = requestedName === 'file'
+    ? safeUploadedFilename(source.split('/').at(-1))
+    : requestedName
+  const mediaId = `${formatBeijingYYYYMMDD(Date.now())}-media-${nextId()}${extension}`
+  const destination = join(UPLOAD_DIR, mediaId)
+  try {
+    copyFileSync(source, destination)
+  } catch {
+    return { error: 'failed to copy media into chat storage' }
+  }
+  return {
+    mediaId,
+    mediaName,
+    mediaSize: info.size,
+    mediaType: media.mimeType,
+    mediaKind: media.kind,
+  }
+}
+
+function assistantMediaPath(mediaIdValue: unknown): string | null {
+  const mediaId = typeof mediaIdValue === 'string' ? mediaIdValue : ''
+  if (!/^[A-Za-z0-9._-]+$/.test(mediaId) || !mediaId.includes('-media-')) return null
+  const path = join(UPLOAD_DIR, mediaId)
+  if (dirname(path) !== resolve(UPLOAD_DIR) || !existsSync(path)) return null
+  return path
 }
 
 function groupNewTopic(chatId: string): { ok: true; chat: GroupChat } | { ok: false; reason: string } {
@@ -11206,6 +11358,60 @@ Bun.serve<{ authed: true }>({
         tidalLog('manual_summary_save_failed', { error: String(err) })
         return jsonResponse({ error: 'write_failed' }, { status: 500, headers: cors })
       }
+    }
+
+    if (url.pathname.startsWith('/media/') && (req.method === 'GET' || req.method === 'HEAD')) {
+      const gate = authGate()
+      if (gate) return gate
+      let mediaId = ''
+      try { mediaId = decodeURIComponent(url.pathname.slice('/media/'.length)) } catch {
+        return jsonResponse({ error: 'invalid media id' }, { status: 400, headers: corsHeadersFor(origin) })
+      }
+      const path = assistantMediaPath(mediaId)
+      if (!path) return jsonResponse({ error: 'media not found' }, { status: 404, headers: corsHeadersFor(origin) })
+      const media = ASSISTANT_MEDIA_TYPES[extname(path).toLowerCase()]
+      if (!media) return jsonResponse({ error: 'unsupported media' }, { status: 415, headers: corsHeadersFor(origin) })
+      const size = statSync(path).size
+      const commonHeaders: Record<string, string> = {
+        ...corsHeadersFor(origin),
+        'content-type': media.mimeType,
+        'content-disposition': `inline; filename="${mediaId}"`,
+        'cache-control': 'private, max-age=86400',
+        'x-content-type-options': 'nosniff',
+        'referrer-policy': 'no-referrer',
+        'accept-ranges': 'bytes',
+      }
+      if (media.kind === 'animation') {
+        const frameAncestors = ["'self'", ...ALLOWED_ORIGINS].join(' ')
+        commonHeaders['content-security-policy'] =
+          "sandbox allow-scripts; default-src 'none'; script-src 'unsafe-inline'; " +
+          "style-src 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com data:; " +
+          "img-src data: blob:; media-src data: blob:; connect-src 'none'; form-action 'none'; " +
+          `base-uri 'none'; frame-ancestors ${frameAncestors}`
+      }
+      if (req.method === 'HEAD') {
+        return new Response(null, { headers: { ...commonHeaders, 'content-length': String(size) } })
+      }
+      const range = req.headers.get('range')?.match(/^bytes=(\d*)-(\d*)$/)
+      if (range && media.kind === 'video') {
+        const suffixLength = !range[1] && range[2] ? Number(range[2]) : 0
+        const requestedStart = range[1] ? Number(range[1]) : Math.max(0, size - suffixLength)
+        const requestedEnd = range[1] && range[2] ? Number(range[2]) : size - 1
+        if (!size || !Number.isFinite(requestedStart) || !Number.isFinite(requestedEnd) || requestedStart >= size || requestedEnd < requestedStart) {
+          return new Response(null, { status: 416, headers: { ...commonHeaders, 'content-range': `bytes */${size}` } })
+        }
+        const start = Math.max(0, requestedStart)
+        const end = Math.min(requestedEnd, size - 1)
+        return new Response(Bun.file(path).slice(start, end + 1), {
+          status: 206,
+          headers: {
+            ...commonHeaders,
+            'content-range': `bytes ${start}-${end}/${size}`,
+            'content-length': String(end - start + 1),
+          },
+        })
+      }
+      return new Response(Bun.file(path), { headers: { ...commonHeaders, 'content-length': String(size) } })
     }
 
     if (url.pathname === '/upload/image' && req.method === 'POST') {

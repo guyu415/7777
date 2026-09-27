@@ -92,6 +92,27 @@ export function ccWireToTimelineMessages(wire, conversationId, options = {}) {
   const turnFields = wire.turnId
     ? { turnId: wire.turnId, replyToTurnId: wire.turnId }
     : {}
+  if (wire.kind === 'media' && wire.mediaId) {
+    return [{
+      id: wire.id,
+      wireIds: [wire.id],
+      serverWireIds: [wire.id],
+      conversationId,
+      role: 'assistant',
+      type: 'media',
+      content: wire.text || '',
+      mediaId: wire.mediaId,
+      mediaName: wire.mediaName || '媒体',
+      mediaSize: wire.mediaSize,
+      mediaType: wire.mediaType || 'application/octet-stream',
+      mediaKind: wire.mediaKind || 'video',
+      timestamp,
+      streaming: false,
+      source: 'cc-proactive',
+      ...turnFields,
+      ...reasoningFields,
+    }]
+  }
   if (wire.bedtimeCard) {
     return [{
       id: wire.id,

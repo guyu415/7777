@@ -263,7 +263,10 @@ export function useChat() {
     if (history.length > 0) {
       const last = history[history.length - 1]
       updateSession(CONVERSATION_ID, {
-        lastMsgPreview: last.type === 'text' ? (last.content || '').slice(0, 40) : last.type === 'file' ? `[文件] ${last.fileName || ''}`.trim() : '[图片]',
+        lastMsgPreview: last.type === 'text' ? (last.content || '').slice(0, 40)
+          : last.type === 'file' ? `[文件] ${last.fileName || ''}`.trim()
+            : last.type === 'media' ? `[${last.mediaKind === 'video' ? '视频' : '动画'}] ${last.mediaName || ''}`.trim()
+              : '[图片]',
         lastMsgTime: last.timestamp,
       })
     }
@@ -315,6 +318,8 @@ export function useChat() {
     let currentTextTimestamp = assistantMsg.timestamp
     let currentTextAdded = true // assistantId was already added() above
     let vpsUsedVoiceThisTurn = false
+    let vpsUsedMediaThisTurn = false
+    let vpsDeliveredLiveThisTurn = false
     let vpsVisibleActionThisTurn = false
     let vpsCurrentMusicAction = null
     // Server-side wire ids (Wire.id) this turn delivered live. Persisted onto
@@ -459,6 +464,35 @@ export function useChat() {
       }
     }
 
+    const deliverVpsMedia = async (media) => {
+      const id = media.id || genId()
+      const finishedReasoningFields = fullReasoning ? finishReasoning() : {}
+      const toolFields = toolUses.length ? { toolUses: [...toolUses] } : {}
+      const message = {
+        id,
+        wireIds: [id],
+        serverWireIds: [id],
+        conversationId: CONVERSATION_ID,
+        role: 'assistant',
+        type: 'media',
+        content: media.caption || '',
+        mediaId: media.mediaId,
+        mediaName: media.mediaName || '媒体',
+        mediaSize: media.mediaSize,
+        mediaType: media.mediaType || 'application/octet-stream',
+        mediaKind: media.mediaKind || 'video',
+        timestamp: Date.now(),
+        streaming: false,
+        ...turnFields,
+        ...finishedReasoningFields,
+        ...toolFields,
+      }
+      addMessage(message)
+      await saveMessage(message)
+      const label = message.mediaKind === 'video' ? '视频' : '动画'
+      updateSession(CONVERSATION_ID, { lastMsgPreview: `[${label}] ${message.mediaName}`.slice(0, 40), lastMsgTime: message.timestamp })
+    }
+
     try {
       console.log('[STREAM] streamResponse entered | model=', effectiveModel, '| useWorkerProxy=', useWorkerProxy, '| workerUrl=', workerUrl || '(empty)')
       const _now = new Date()
@@ -572,6 +606,34 @@ export function useChat() {
       // the list. `toolUses` itself is declared with fullReasoning above.
       let storedToolCount = 0
 
+      const ensureCurrentVpsPlaceholder = () => {
+        if (!isVpsProvider || currentTextAdded) return
+        addMessage({
+          id: currentTextId, conversationId: CONVERSATION_ID, role: 'assistant', type: 'text',
+          content: '', timestamp: currentTextTimestamp, streaming: true, ...turnFields,
+        })
+        currentTextAdded = true
+      }
+
+      const resetVpsBubble = () => {
+        currentTextId = genId()
+        currentTextTimestamp = Date.now()
+        currentTextAdded = false
+        fullContent = ''
+        contentStarted = false
+        storedContent = ''
+        fullReasoning = ''
+        storedReasoning = ''
+        reasoningStartedAt = null
+        reasoningCompletedAt = null
+        toolUses = []
+        storedToolCount = 0
+        vpsWireIds.length = 0
+        vpsWireIdLog.length = 0
+        vpsCurrentMusicAction = null
+        dirty = false
+      }
+
       const flushUpdate = () => {
         if (!dirty) return
         dirty = false
@@ -680,6 +742,7 @@ export function useChat() {
             reasoningCompletedAt = Number(chunk.reasoningCompletedAt)
           }
           if (chunk.reasoning) {
+            ensureCurrentVpsPlaceholder()
             const firstReasoningChunk = !fullReasoning
             fullReasoning = appendReasoningDelta(fullReasoning, chunk.reasoning)
             beginReasoning()
@@ -687,6 +750,7 @@ export function useChat() {
             if (firstReasoningChunk) flushUpdate()
           }
           if (chunk.toolUse) {
+            ensureCurrentVpsPlaceholder()
             toolUses.push(chunk.toolUse)
             dirty = true
           }
@@ -696,6 +760,7 @@ export function useChat() {
           // appends so a live delta already accumulated before a disconnect
           // can't get duplicated.
           if (chunk.reasoningReplace !== undefined) {
+            ensureCurrentVpsPlaceholder()
             fullReasoning = chunk.reasoningReplace
             if (fullReasoning) beginReasoning()
             dirty = true
@@ -705,6 +770,7 @@ export function useChat() {
           if (isVpsProvider && chunk.musicAction) vpsCurrentMusicAction = chunk.musicAction
           if (isVpsProvider && chunk.voice) {
             vpsUsedVoiceThisTurn = true
+            vpsDeliveredLiveThisTurn = true
             // Finalize whatever text bubble was accumulating (if any) before
             // handling the voice chunk, so bubbles land in the same order CC
             // actually called reply()/send_voice() in. Uses only the wire
@@ -721,25 +787,45 @@ export function useChat() {
             // this one. The voice bubble itself doesn't need an entry here:
             // deliverVpsVoice already uses the wire id as the bubble's own
             // local id.
-            currentTextId = genId()
-            currentTextTimestamp = Date.now()
-            currentTextAdded = false
-            fullContent = ''
-            contentStarted = false
-            storedContent = ''
-            fullReasoning = ''
-            storedReasoning = ''
-            reasoningStartedAt = null
-            reasoningCompletedAt = null
-            toolUses = []
-            storedToolCount = 0
-            vpsWireIds.length = 0
-            vpsWireIdLog.length = 0
-            vpsCurrentMusicAction = null
-            dirty = false
+            resetVpsBubble()
+            continue
+          }
+          if (isVpsProvider && chunk.media) {
+            vpsUsedMediaThisTurn = true
+            vpsDeliveredLiveThisTurn = true
+            await finalizeCurrentTextBubble()
+            await deliverVpsMedia(chunk.media)
+            resetVpsBubble()
             continue
           }
           if (chunk.text) {
+            if (isVpsProvider) {
+              // A companion text chunk is one complete reply() call, not a
+              // partial token. Paint and persist it immediately, then rotate
+              // to a fresh progress bubble while Claude keeps working. The
+              // old completion-only path hid "收到，我现在做" until a long
+              // video/Artifact task had fully finished.
+              ensureCurrentVpsPlaceholder()
+              vpsWireIdLog.push({
+                wireId: chunk.wireId || null,
+                text: chunk.text,
+                ...(chunk.bedtimeCard ? { bedtimeCard: chunk.bedtimeCard } : {}),
+              })
+              if (!contentStarted) {
+                flushUpdate()
+                const completedFields = finishReasoning()
+                contentStarted = true
+                storedReasoning = fullReasoning
+                updateMessage(currentTextId, completedFields)
+              }
+              fullContent = joinVpsReplyChunks(fullContent, chunk.text)
+              dirty = true
+              flushUpdate()
+              await finalizeCurrentTextBubble()
+              vpsDeliveredLiveThisTurn = true
+              resetVpsBubble()
+              continue
+            }
             const nextContent = isVpsProvider ? joinVpsReplyChunks(fullContent, chunk.text) : fullContent + chunk.text
             if (nextContent !== fullContent) {
               // Logged per raw reply() call (not merged into one shared pool)
@@ -779,13 +865,13 @@ export function useChat() {
       // Skipped when a voice chunk rotated bubbles this turn: finalizeCurrentTextBubble()
       // already attached the correct (bubble-scoped, reset-on-rotation) reasoning to
       // whichever bubble it actually belongs to; assistantId may not even be that bubble.
-      if (fullReasoning && !(isVpsProvider && vpsUsedVoiceThisTurn)) {
+      if (fullReasoning && !(isVpsProvider && vpsDeliveredLiveThisTurn)) {
         const completedFields = finishReasoning()
         Object.assign(assistantMsg, completedFields)
         updateMessage(assistantId, completedFields)
       }
       // Same bubble-scoping rule as reasoning above, for the same reason.
-      if (toolUses.length && !(isVpsProvider && vpsUsedVoiceThisTurn)) {
+      if (toolUses.length && !(isVpsProvider && vpsDeliveredLiveThisTurn)) {
         assistantMsg.toolUses = [...toolUses]
         updateMessage(assistantId, { toolUses: [...toolUses] })
       }
@@ -793,19 +879,19 @@ export function useChat() {
       // `poke_user` is itself a complete, visible answer. When it is the only
       // response in this turn, discard the empty assistant placeholder and
       // finish successfully instead of surfacing a false "no reply" error.
-      if (isVpsProvider && vpsVisibleActionThisTurn && !contentStarted && !vpsUsedVoiceThisTurn) {
+      if (isVpsProvider && vpsVisibleActionThisTurn && !vpsDeliveredLiveThisTurn && !contentStarted && !vpsUsedVoiceThisTurn && !vpsUsedMediaThisTurn) {
         deleteMessage(assistantId)
         updateSession(CONVERSATION_ID, { lastMsgTime: Date.now() })
         return
       }
 
-      // VPS + at least one send_voice this turn: the shared post-stream
+      // VPS + at least one live reply/send_voice/send_media this turn: the shared post-stream
       // pipeline below (LETTER/AC/MUSIC extraction, [VOICE]-tag tokenizing)
       // was never taught to CC and operates on a single fixed bubble id —
-      // voice bubbles were already delivered live in the loop above via
-      // deliverVpsVoice(), in true arrival order. Just finalize whatever
+      // bubbles were already delivered live in the loop above, in true
+      // arrival order. Just finalize whatever
       // trailing text bubble was still open when the turn ended, then stop.
-      if (isVpsProvider && vpsUsedVoiceThisTurn) {
+      if (isVpsProvider && vpsDeliveredLiveThisTurn) {
         await finalizeCurrentTextBubble()
         updateSession(CONVERSATION_ID, { lastMsgTime: Date.now() })
         return
@@ -1073,7 +1159,16 @@ export function useChat() {
         const savedContent = stripDisplayTags(fullContent) + stopNote
         const stoppedReasoningFields = finishReasoning()
         Object.assign(assistantMsg, stoppedReasoningFields)
-        if (savedContent.trim()) {
+        if (isVpsProvider && vpsDeliveredLiveThisTurn) {
+          await finalizeCurrentTextBubble()
+          const stoppedMessage = {
+            id: genId(), conversationId: CONVERSATION_ID, role: 'assistant', type: 'text',
+            content: stopNote.trim(), timestamp: Date.now(), streaming: false, ...turnFields,
+          }
+          addMessage(stoppedMessage)
+          await saveMessage(stoppedMessage)
+          updateSession(CONVERSATION_ID, { lastMsgPreview: stopNote.trim().slice(0, 40), lastMsgTime: stoppedMessage.timestamp })
+        } else if (savedContent.trim()) {
           updateMessage(assistantId, { content: savedContent, streaming: false, ...stoppedReasoningFields, ...wireIdsField() })
           await saveMessage({ ...assistantMsg, content: savedContent, streaming: false, ...stoppedReasoningFields, ...wireIdsField() })
           updateSession(CONVERSATION_ID, { lastMsgPreview: savedContent.slice(0, 40), lastMsgTime: Date.now() })
@@ -1092,7 +1187,16 @@ export function useChat() {
           reset_in_progress: '（正在清空对话，请稍候再试）',
         }[err.code]
         const displayMsg = companionHint ? `${err.message} ${companionHint}` : err.message
-        updateMessage(assistantId, { content: `❌ ${displayMsg}`, streaming: false, error: true, errorCode: err.code || 'unknown', ...failedReasoningFields })
+        const errorFields = { content: `❌ ${displayMsg}`, streaming: false, error: true, errorCode: err.code || 'unknown', ...failedReasoningFields }
+        if (isVpsProvider && vpsDeliveredLiveThisTurn) {
+          await finalizeCurrentTextBubble()
+          addMessage({
+            id: genId(), conversationId: CONVERSATION_ID, role: 'assistant', type: 'text',
+            timestamp: Date.now(), ...turnFields, ...errorFields,
+          })
+        } else {
+          updateMessage(assistantId, errorFields)
+        }
       }
     } finally {
       abortRef.current = null

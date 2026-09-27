@@ -141,6 +141,35 @@ describe('companion connection recovery', () => {
     await expect(stream.next()).resolves.toEqual({ value: undefined, done: true })
   })
 
+  it('delivers a native media bubble during an active turn', async () => {
+    const companion = await import('../companion.js')
+    const stream = companion.streamChatViaCompanion({ text: '做个视频', messageId: 'media-turn' })
+    const firstChunk = stream.next()
+    await flush()
+
+    const socket = MockWebSocket.instances[0]
+    socket.open()
+    await flush()
+    socket.message({
+      type: 'msg', kind: 'media', id: 'media-reply', from: 'cc', text: '做好了', ts: Date.now(),
+      turnId: 'media-turn', mediaId: '20260927-media-m1.html', mediaName: 'Clawd 泡泡浴.html',
+      mediaSize: 27318, mediaType: 'text/html; charset=utf-8', mediaKind: 'animation',
+    })
+    socket.message({ type: 'turn_end', turnId: 'media-turn' })
+
+    await expect(firstChunk).resolves.toEqual({
+      value: {
+        media: {
+          id: 'media-reply', caption: '做好了', mediaId: '20260927-media-m1.html',
+          mediaName: 'Clawd 泡泡浴.html', mediaSize: 27318,
+          mediaType: 'text/html; charset=utf-8', mediaKind: 'animation',
+        },
+      },
+      done: false,
+    })
+    await expect(stream.next()).resolves.toEqual({ value: undefined, done: true })
+  })
+
   it('forwards server turn timestamps for an honest reasoning duration', async () => {
     const companion = await import('../companion.js')
     const stream = companion.streamChatViaCompanion({ text: '想一想', messageId: 'timed-turn' })

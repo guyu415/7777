@@ -5,6 +5,7 @@ import ImageViewer from '../ImageViewer'
 import AcCard from './AcCard'
 import LetterCard from './LetterCard'
 import NeteasePlayCard from './NeteasePlayCard'
+import MediaBubble from './MediaBubble'
 import BedtimeCard from './BedtimeCard'
 import HealthDataCard from './HealthDataCard'
 import HeartRateCard from './HeartRateCard'
@@ -42,6 +43,7 @@ const TOOL_LABELS = {
   Grep: '搜索', Glob: '查找文件', WebFetch: '访问网页', WebSearch: '联网搜索',
   Task: '调度子任务', Agent: '调度子任务', Skill: '调用技能',
   TodoWrite: '整理任务', ExitPlanMode: '结束规划',
+  Artifact: '制作作品',
 }
 const TOOL_ICONS = {
   Read: '📖', Write: '✍️', Edit: '✏️', NotebookEdit: '✏️',
@@ -49,6 +51,7 @@ const TOOL_ICONS = {
   Grep: '🔍', Glob: '🗂️', WebFetch: '🌐', WebSearch: '🌐',
   Task: '🧩', Agent: '🧩', Skill: '🎯',
   TodoWrite: '📝', ExitPlanMode: '📋',
+  Artifact: '🎬',
 }
 // Unknown tools (new built-ins, any MCP tool) still show up — with the raw
 // name rather than being silently dropped, since an unexplained gap in the
@@ -524,8 +527,15 @@ function MessageBubble({ message, onLongPress, onRegenerate, onRegenerateRound, 
           >
             {visibleToolUses.map((t, i) => (
               <div key={i} className="flex items-center gap-1 min-w-0">
-                <span style={{ flexShrink: 0 }}>{toolIcon(t.tool)}</span>
-                <span style={{ flexShrink: 0 }}>{toolLabel(t.tool)}</span>
+                <span
+                  className={message.streaming && i === visibleToolUses.length - 1 ? 'animate-pulse' : ''}
+                  style={{ flexShrink: 0 }}
+                >
+                  {toolIcon(t.tool)}
+                </span>
+                <span style={{ flexShrink: 0 }}>
+                  {message.streaming && i === visibleToolUses.length - 1 ? '正在' : '已'}{toolLabel(t.tool)}
+                </span>
                 {t.detail && (
                   <span
                     className="truncate"
@@ -818,6 +828,10 @@ function MessageBubble({ message, onLongPress, onRegenerate, onRegenerateRound, 
               </div>
             )}
           </div>
+        )}
+
+        {message.type === 'media' && (
+          <MediaBubble message={message} theme={theme} isUser={isUser} />
         )}
 
         {message.type === 'file' && (

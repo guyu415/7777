@@ -425,7 +425,10 @@ function announceCcMessageDeleted(ids) {
 // routed server-side into the game's own `messages` log (see onGomokuUpdate),
 // never broadcast as a main-chat wire `msg` in the first place.
 function maybeAnnounceProactive(wireMsg) {
-  const { id, text, ts, kind, voice, style, thinking, musicAction, bedtimeCard } = wireMsg
+  const {
+    id, text, ts, kind, voice, style, thinking, musicAction, bedtimeCard,
+    mediaId, mediaName, mediaSize, mediaType, mediaKind,
+  } = wireMsg
   // Deferred to the next tick: lets any active generator's listener (which
   // runs synchronously within the same notify() call) markDelivered() first.
   // Only messages still unclaimed after that are genuinely spontaneous.
@@ -434,7 +437,10 @@ function maybeAnnounceProactive(wireMsg) {
     markDelivered(id)
     for (const fn of proactiveListeners) {
       try {
-        fn({ id, text, ts, kind, voice, style, thinking, musicAction, bedtimeCard })
+        fn({
+          id, text, ts, kind, voice, style, thinking, musicAction, bedtimeCard,
+          mediaId, mediaName, mediaSize, mediaType, mediaKind,
+        })
       } catch {
         // a subscriber throwing must not break delivery to the others
       }
@@ -1567,6 +1573,12 @@ export async function* streamChatViaCompanion({ text, imagePath, file, signal, m
           if (r.thinking) push({ reasoningReplace: r.thinking, reasoningCompletedAt: r.ts })
           if (r.kind === 'poke') push({ visibleAction: { type: 'poke', id: r.id } })
           else if (r.kind === 'voice') push({ voice: { id: r.id, text: r.text, voice: r.voice, style: r.style } })
+          else if (r.kind === 'media') push({
+            media: {
+              id: r.id, caption: r.text || '', mediaId: r.mediaId, mediaName: r.mediaName,
+              mediaSize: r.mediaSize, mediaType: r.mediaType, mediaKind: r.mediaKind,
+            },
+          })
           else push({ text: r.text, wireId: r.id, ...(r.musicAction ? { musicAction: r.musicAction } : {}), ...(r.bedtimeCard ? { bedtimeCard: r.bedtimeCard } : {}) })
         }
         push({ done: true })
@@ -1637,6 +1649,13 @@ export async function* streamChatViaCompanion({ text, imagePath, file, signal, m
       thisTurnDeliveredIds.push(m.id)
       const timing = m.thinking && m.ts ? { reasoningCompletedAt: m.ts } : {}
       if (m.kind === 'voice') push({ voice: { id: m.id, text: m.text, voice: m.voice, style: m.style }, ...timing })
+      else if (m.kind === 'media') push({
+        media: {
+          id: m.id, caption: m.text || '', mediaId: m.mediaId, mediaName: m.mediaName,
+          mediaSize: m.mediaSize, mediaType: m.mediaType, mediaKind: m.mediaKind,
+        },
+        ...timing,
+      })
       else push({ text: m.text, wireId: m.id, ...(m.musicAction ? { musicAction: m.musicAction } : {}), ...(m.bedtimeCard ? { bedtimeCard: m.bedtimeCard } : {}), ...timing })
     } else if (m.type === 'turn_end') {
       push({ done: true })
@@ -1708,6 +1727,10 @@ export async function* streamChatViaCompanion({ text, imagePath, file, signal, m
       // instead, so useChat.js's `chunk.toolUse` check never once saw it.
       else if (item.toolUse) yield { toolUse: item.toolUse }
       else if (item.visibleAction) yield { visibleAction: item.visibleAction }
+      else if (item.media) yield {
+        media: item.media,
+        ...(item.reasoningCompletedAt ? { reasoningCompletedAt: item.reasoningCompletedAt } : {}),
+      }
       // wireId rides along with each text chunk so the caller can persist
       // which server-side message ids this turn already displayed — the
       // history-snapshot dedup in App.jsx matches against them (voice chunks
@@ -2002,6 +2025,16 @@ export async function uploadFileToCompanion(file) {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ name: file.name, dataUrl }),
   })
+}
+
+export function companionMediaUrl(mediaId) {
+  return `${COMPANION_BASE}/media/${encodeURIComponent(String(mediaId || ''))}`
+}
+
+export async function checkCompanionMedia(mediaId) {
+  if (!mediaId) throw new Error('媒体不存在')
+  const response = await fetch(companionMediaUrl(mediaId), { method: 'HEAD', credentials: 'include' })
+  if (!response.ok) throw new Error(response.status === 401 ? '请重新登录后查看媒体' : '媒体加载失败')
 }
 
 export async function deleteUploadedFile(path) {
