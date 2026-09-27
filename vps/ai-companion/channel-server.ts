@@ -1805,7 +1805,19 @@ function deliverPendingCcMessage(id: string) {
     pollThinkingTail(currentTurn.turnId)
   }
   const thinking = consumePendingThinking()
-  if (thinking) pending.message.thinking = `${pending.message.thinking || ''}${thinking}`
+  if (thinking) {
+    pending.message.thinking = `${pending.message.thinking || ''}${thinking}`
+    // Separate WebSocket frames are dispatched as separate browser tasks.
+    // Sending the real delta first gives React/Zustand a render opportunity
+    // for the expandable thinking panel before the visible reply arrives;
+    // the following same-id msg still carries the full durable value.
+    sendRaw({ type: 'thinking', turnId: pending.message.turnId || '', delta: thinking })
+    log('thinking_live_delivered', {
+      turnId: pending.message.turnId,
+      id: pending.message.id,
+      chars: thinking.length,
+    })
+  }
   // persist() already appended this exact object. Save again after enriching
   // it so reconnect snapshots and the live wire carry the same authoritative
   // value without appending a duplicate history row.
