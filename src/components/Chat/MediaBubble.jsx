@@ -59,6 +59,7 @@ export default function MediaBubble({ message, theme, isUser = false }) {
             src={src}
             title={title}
             sandbox="allow-scripts"
+            allowFullScreen
             style={{ width: '100%', height: 440, display: 'block', border: 0, background: '#eef3ef' }}
           />
         )}
