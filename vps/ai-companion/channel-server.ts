@@ -112,6 +112,7 @@ import {
 import { buildSpicyVisual, spicyRollDelivery, spicyRollUserText } from './spicy-monopoly.ts'
 import { SENSEVOICE_MAX_AUDIO_BYTES, transcribeWithSenseVoice } from './sensevoice-stt.ts'
 import { analyzeVoiceAcoustics, type VoiceAcoustics } from './opensmile-acoustics.ts'
+import { isPublicAssistantMediaId, newAssistantMediaId } from './assistant-media.ts'
 import {
   CARE_ROLE_IDS,
   baziSolarMonthContext,
@@ -7298,7 +7299,7 @@ function assistantMediaRecord(sourceValue: unknown, displayNameValue: unknown): 
   const mediaName = requestedName === 'file'
     ? safeUploadedFilename(source.split('/').at(-1))
     : requestedName
-  const mediaId = `${formatBeijingYYYYMMDD(Date.now())}-media-${nextId()}${extension}`
+  const mediaId = newAssistantMediaId(formatBeijingYYYYMMDD(Date.now()), extension)
   const destination = join(UPLOAD_DIR, mediaId)
   try {
     copyFileSync(source, destination)
@@ -11361,11 +11362,16 @@ Bun.serve<{ authed: true }>({
     }
 
     if (url.pathname.startsWith('/media/') && (req.method === 'GET' || req.method === 'HEAD')) {
-      const gate = authGate()
-      if (gate) return gate
       let mediaId = ''
       try { mediaId = decodeURIComponent(url.pathname.slice('/media/'.length)) } catch {
         return jsonResponse({ error: 'invalid media id' }, { status: 400, headers: corsHeadersFor(origin) })
+      }
+      // New ids are unguessable bearer capabilities so a user can open the
+      // media directly outside the PWA. Old predictable ids remain protected
+      // by the normal companion cookie/origin gate.
+      if (!isPublicAssistantMediaId(mediaId)) {
+        const gate = authGate()
+        if (gate) return gate
       }
       const path = assistantMediaPath(mediaId)
       if (!path) return jsonResponse({ error: 'media not found' }, { status: 404, headers: corsHeadersFor(origin) })
