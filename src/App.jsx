@@ -21,7 +21,7 @@ import { getSettings, saveSettings, extractSettings, saveSessionMsgs, deleteSess
 import { compressImage, slimSettings } from './utils/image'
 import { ensureConnected as ensureCompanionConnected, reconnectCompanion, onCcMessageDeleted, onCcReset } from './services/companion'
 import { subscribeCcMessageInbox } from './services/ccMessageInbox'
-import { messageDeleteTransportKeys } from './utils/messageTimeline'
+import { messageDeleteTransportKeys, messageServerIdentityKeys } from './utils/messageTimeline'
 import { themeWithUserBubbleText } from './utils/bubbleColors'
 import { PUSH_NAVIGATION_EVENT, isPushNavigationUrl } from './utils/notificationNavigation'
 
@@ -650,7 +650,7 @@ export default function App() {
   // then discovers it happened (resetAt comparison — see onCcReset in
   // companion.js). Only ever touches the single VPS-bound session.
   useEffect(() => {
-    const unsub = onCcReset(async ({ mode = 'all', boundaryTs = null, resetAt = null } = {}) => {
+    const unsub = onCcReset(async ({ mode = 'all', boundaryId = null, boundaryTs = null, resetAt = null } = {}) => {
       const vpsSession = useStore.getState().sessions?.find(s => s.providerName === 'claude-code-vps')
       if (!vpsSession) return
       const password = localStorage.getItem('auth.password')
@@ -664,8 +664,14 @@ export default function App() {
         // pre-reset tail.
         const isNewBranch = msg => resetAt != null && Number.isFinite(Number(resetAt))
           && Number(msg.timestamp) >= Number(resetAt)
-        const kept = all.filter(msg => Number(msg.timestamp) <= boundaryTs || isNewBranch(msg))
-        const removed = all.filter(msg => Number(msg.timestamp) > boundaryTs && !isNewBranch(msg))
+        const boundaryIndex = boundaryId
+          ? all.findLastIndex(msg => messageServerIdentityKeys(msg).includes(boundaryId))
+          : -1
+        const throughBoundary = (msg, index) => boundaryIndex >= 0
+          ? index <= boundaryIndex
+          : Number(msg.timestamp) <= boundaryTs
+        const kept = all.filter((msg, index) => throughBoundary(msg, index) || isNewBranch(msg))
+        const removed = all.filter((msg, index) => !throughBoundary(msg, index) && !isNewBranch(msg))
         for (const msg of removed) await deleteMessageFromDB(msg.id)
 
         if (password) {
