@@ -322,20 +322,6 @@ function announcePokeHistory(items) {
   }
 }
 
-const proactiveActivityListeners = new Set()
-/** Subscribe to completed self-directed proactive activities. These are
- * durable-until-acknowledged UI hints, deliberately separate from chat history. */
-export function onProactiveActivity(fn) {
-  proactiveActivityListeners.add(fn)
-  return () => proactiveActivityListeners.delete(fn)
-}
-
-const proactiveActivityAckListeners = new Set()
-export function onProactiveActivityAcknowledged(fn) {
-  proactiveActivityAckListeners.add(fn)
-  return () => proactiveActivityAckListeners.delete(fn)
-}
-
 /** Durable reading-permission requests created by the resident Claude Code. */
 export function onCompanionReadingRequest(fn) {
   const listener = evt => {
@@ -343,18 +329,6 @@ export function onCompanionReadingRequest(fn) {
   }
   listeners.add(listener)
   return () => listeners.delete(listener)
-}
-
-function announceProactiveActivityAcknowledged(id) {
-  for (const fn of proactiveActivityAckListeners) {
-    try { fn(id) } catch { /* isolate subscribers */ }
-  }
-}
-
-function announceProactiveActivity(activity) {
-  for (const fn of proactiveActivityListeners) {
-    try { fn(activity) } catch { /* isolate subscribers */ }
-  }
 }
 
 const remoteUserMessageListeners = new Set()
@@ -1165,14 +1139,6 @@ listeners.add(evt => {
       maybeAnnounceReset({ resetAt: m.ts, mode: m.mode, boundaryId: m.boundaryId, boundaryTs: m.boundaryTs })
       return
     }
-    if (m.type === 'proactive_activity') {
-      announceProactiveActivity({ id: m.id, text: m.text, ts: m.ts })
-      return
-    }
-    if (m.type === 'proactive_activity_ack') {
-      announceProactiveActivityAcknowledged(m.id)
-      return
-    }
     if (m.type === 'poke') {
       announcePoke({ ...m, afterWireId: lastCcTimelineWireId, arrivalOrder: ++pokeArrivalOrder })
       return
@@ -1355,15 +1321,6 @@ function sendRaw(obj) {
     return true
   }
   return false
-}
-
-/** Remove a server-persisted activity note only after the user confirms it. */
-export async function acknowledgeProactiveActivity(id) {
-  if (!id) return false
-  ensureConnected()
-  await waitUntilOpenOrFail()
-  if (!sendRaw({ type: 'proactive_activity_ack', id })) throw new Error('companion 未连接')
-  return true
 }
 
 function waitUntilOpenOrFail(timeoutMs = 8000) {

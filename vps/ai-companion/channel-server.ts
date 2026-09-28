@@ -113,6 +113,7 @@ import { buildSpicyVisual, spicyRollDelivery, spicyRollUserText } from './spicy-
 import { SENSEVOICE_MAX_AUDIO_BYTES, transcribeWithSenseVoice } from './sensevoice-stt.ts'
 import { analyzeVoiceAcoustics, type VoiceAcoustics } from './opensmile-acoustics.ts'
 import { isPublicAssistantMediaId, newAssistantMediaId } from './assistant-media.ts'
+import { formatProactiveActivityMessage, shouldQueueDuringProactiveTurn } from './proactive-activity.ts'
 import {
   CARE_ROLE_IDS,
   baziSolarMonthContext,
@@ -179,7 +180,6 @@ const RUNTIME_CONTEXT_CAPTURE_FILE = process.env.AI_COMPANION_RUNTIME_CONTEXT_CA
 // silently losing that already-sent message from history — not just the
 // reply that never got the chance to happen. Persisting closes that gap.
 const HISTORY_FILE = process.env.AI_COMPANION_HISTORY_FILE ?? join(ROOT, 'state', 'chat-history.json')
-const PROACTIVE_ACTIVITY_FILE = process.env.AI_COMPANION_PROACTIVE_ACTIVITY_FILE ?? join(ROOT, 'state', 'proactive-activities.json')
 const STUDY_SCHEDULE_FILE = process.env.AI_COMPANION_STUDY_SCHEDULE_FILE ?? join(ROOT, 'state', 'study-schedule.json')
 const ANNIVERSARY_FILE = process.env.AI_COMPANION_ANNIVERSARY_FILE ?? join(ROOT, 'state', 'anniversary.json')
 const DIARY_LETTER_SCHEDULE_FILE = process.env.AI_COMPANION_DIARY_LETTER_SCHEDULE_FILE ?? join(ROOT, 'state', 'diary-letter-schedule.json')
@@ -1088,10 +1088,6 @@ type ToolUseWire = { type: 'tool_use'; turnId: string; tool: string; detail: str
 type ReadingUpdateWire = { type: 'reading_update'; turnId: string; result: Record<string, unknown>; ts: number }
 type ReadingErrorWire = { type: 'reading_error'; turnId: string; error: string; ts: number }
 type ReadingRequestWire = { type: 'reading_request'; request: Record<string, unknown>; ts: number }
-// Completed self-directed activity from a proactive turn. This never enters
-// chat history; live clients show a toast and closed clients get Web Push.
-type ProactiveActivityWire = { type: 'proactive_activity'; id: string; text: string; ts: number }
-type ProactiveActivityAckWire = { type: 'proactive_activity_ack'; id: string; ts: number }
 type PokeWire = { type: 'poke'; id: string; from: 'user' | 'cc'; userName: string; aiName: string; suffix: string; ts: number }
 type PokeSettingsWire = { type: 'poke_settings'; settings: PokeConfig; ts: number }
 // Gomoku: 0=empty, 1=black (user, always moves first), 2=white (AI, via the
@@ -1336,7 +1332,7 @@ type GroupListWire = { type: 'group_list'; chats: Array<{ id: string; name: stri
 type CareUpdateWire = { type: 'care_update'; state: CareHubState }
 type MsgDeletedWire = { type: 'msg_deleted'; ids: string[]; ts: number }
 
-type LiveWire = MsgWire | MsgDeletedWire | TurnStartWire | TurnEndWire | TurnErrorWire | ResetBusyWire | ResetWire | ThinkingWire | ToolUseWire | ProactiveActivityWire | ProactiveActivityAckWire | PokeWire | PokeSettingsWire | ReadingUpdateWire | ReadingErrorWire | ReadingRequestWire | GomokuWire | GomokuTurnEndWire | DiceDuelWire | XinchaoUpdateWire
+type LiveWire = MsgWire | MsgDeletedWire | TurnStartWire | TurnEndWire | TurnErrorWire | ResetBusyWire | ResetWire | ThinkingWire | ToolUseWire | PokeWire | PokeSettingsWire | ReadingUpdateWire | ReadingErrorWire | ReadingRequestWire | GomokuWire | GomokuTurnEndWire | DiceDuelWire | XinchaoUpdateWire
   | CodexMsgWire | CodexMsgDeletedWire | CodexStatusWire | CodexNoticeWire | CodexTurnEndWire | CodexTurnBusyWire | CodexResetBusyWire | CodexResetWire
   | FocusUpdateWire | FocusFinishedWire | GroupUpdateWire | GroupListWire | CareUpdateWire
 // resetAt lets a client that reconnects (or opens a brand new tab) long
@@ -1403,45 +1399,6 @@ function deleteHistoryMessages(ids: string[]): number {
     try { unlinkSync(mediaPath) } catch (err) { log('media_delete_error', { mediaId: item.mediaId, error: String(err) }) }
   }
   return removed
-}
-function loadProactiveActivities(): ProactiveActivityWire[] {
-  try {
-    const parsed = JSON.parse(readFileSync(PROACTIVE_ACTIVITY_FILE, 'utf8'))
-    if (!Array.isArray(parsed)) return []
-    return parsed.filter((item): item is ProactiveActivityWire =>
-      item?.type === 'proactive_activity' &&
-      typeof item.id === 'string' && item.id.length > 0 && item.id.length <= 160 &&
-      typeof item.text === 'string' && item.text.length > 0 && item.text.length <= 1000 &&
-      Number.isFinite(item.ts),
-    ).slice(-20)
-  } catch {
-    return []
-  }
-}
-let pendingProactiveActivities = loadProactiveActivities()
-function saveProactiveActivities() {
-  try {
-    mkdirSync(dirname(PROACTIVE_ACTIVITY_FILE), { recursive: true })
-    const tmp = `${PROACTIVE_ACTIVITY_FILE}.tmp`
-    writeFileSync(tmp, JSON.stringify(pendingProactiveActivities, null, 2) + '\n', { mode: 0o600 })
-    renameSync(tmp, PROACTIVE_ACTIVITY_FILE)
-  } catch (err) {
-    log('proactive_activity_save_error', { error: String(err) })
-  }
-}
-function rememberProactiveActivity(activity: ProactiveActivityWire) {
-  pendingProactiveActivities = [
-    ...pendingProactiveActivities.filter(item => item.id !== activity.id),
-    activity,
-  ].slice(-20)
-  saveProactiveActivities()
-}
-function acknowledgeProactiveActivity(id: string) {
-  pendingProactiveActivities = pendingProactiveActivities.filter(item => item.id !== id)
-  saveProactiveActivities()
-  const ack: ProactiveActivityAckWire = { type: 'proactive_activity_ack', id, ts: Date.now() }
-  sendRaw(ack)
-  log('proactive_activity_acknowledged', { id })
 }
 let seq = 0
 
@@ -1857,13 +1814,11 @@ const TOOL_USE_MUTED = new Set(['reply', 'send_media', 'poke_user', 'set_poke_te
 // restart.
 function broadcastToolUse(tool: string, detail: string) {
   if (!currentTurn || !tool) return
-  // Safety net for proactive garden browsing: the prompt asks the model to
-  // replace this with a factual report after it finishes, but even if that
-  // final reporting call is forgotten the user still gets a truthful hint.
+  // Safety net for proactive garden browsing. The detailed report itself is
+  // emitted by report_proactive_activity; endTurn adds a fallback only if
+  // the model forgets that call entirely.
   if (currentTurn.turnId === proactiveTurnId && /(?:^|__)galatea(?:__|$)/i.test(tool)) {
-    if (!proactiveActivityNotes.some((note) => note.startsWith('🌿 '))) {
-      recordProactiveActivity('🌿 自己去花园论坛逛了逛')
-    }
+    proactiveGardenBrowseSeen = true
   }
   const short = tool.startsWith('mcp__') ? tool.split('__').pop() ?? tool : tool
   if (TOOL_USE_MUTED.has(short)) return
@@ -1925,8 +1880,11 @@ let deleteNoticeTurnId: string | null = null
 let proactiveTurnId: string | null = null
 let pokeTurn: { turnId: string; userName: string; aiName: string; responded: boolean } | null = null
 let pokeUsedTurnId: string | null = null
-// Collected during one proactive turn and flushed as one non-chat hint.
-let proactiveActivityNotes: string[] = []
+// Detailed garden reports enter normal chat history as soon as the model
+// submits them. These flags only support a truthful end-of-turn fallback if
+// it browses but forgets to submit any report.
+let proactiveGardenBrowseSeen = false
+let proactiveGardenReportCount = 0
 // Same idea as proactiveTurnId, but for /internal/dream-announce turns —
 // both are server-initiated turns that may land while the app is closed, so
 // both are the cases reply/send_voice below also fire a real Web Push for.
@@ -2434,6 +2392,8 @@ function clearGomokuTurnScope(turnId: string) {
       })
       log('proactive_next_scheduled_fallback', { turnId, minutes: PROACTIVE_FALLBACK_MINUTES })
     }
+    proactiveGardenBrowseSeen = false
+    proactiveGardenReportCount = 0
     proactiveTurnId = null
   }
   if (pokeTurn?.turnId === turnId) pokeTurn = null
@@ -2482,7 +2442,7 @@ function endTurn(): string | null {
   flushPendingCcMessages(turnId)
   broadcastPlainAssistantFallback(finished)
   persistLateThinking(turnId)
-  flushProactiveActivities(turnId)
+  flushProactiveGardenFallback(turnId)
   let finishedReadingSessionId: string | null = null
   if (finished.surface === 'reading' && readingTurn?.turnId === turnId) {
     finishedReadingSessionId = readingTurn.sessionId
@@ -2526,7 +2486,7 @@ function failTurn(error: string): string | null {
   stopThinkingTail(turnId)
   flushPendingCcMessages(turnId)
   persistLateThinking(turnId)
-  flushProactiveActivities(turnId)
+  flushProactiveGardenFallback(turnId)
   let failedReadingSessionId: string | null = null
   if (finished.surface === 'reading' && readingTurn?.turnId === turnId) {
     failedReadingSessionId = readingTurn.sessionId
@@ -2946,7 +2906,8 @@ mcp.setRequestHandler(ListToolsRequestSchema, async () => ({
         '[stop=...], choose <n>, surface, goto [location], inventory, sell <target>, open <chest>, encyclopedia, ' +
         'look <id>. Join up to 8 steps with semicolons, e.g. "buy basic_worm 10; cast 10 stop=new,rare,event". ' +
         'Prefer batches and the final 📊 state row; do not call status again after every action. During proactive checks ' +
-        'the real result is automatically summarized to the user as a non-chat activity hint, even if you stay silent.',
+        'the complete result is immediately persisted as a visible main-chat activity message, even if you stay silent. ' +
+        'You may also use reply/send_voice before, between or after activity steps whenever you want to talk to the user.',
       inputSchema: {
         type: 'object',
         properties: {
@@ -2958,14 +2919,15 @@ mcp.setRequestHandler(ListToolsRequestSchema, async () => ({
     {
       name: 'report_proactive_activity',
       description:
-        'After you finish browsing the Galatea garden/forum during a proactive_check, report one short factual summary ' +
-        'of what you actually read or did. Call exactly once per garden browsing session whether or not you message the ' +
-        'user. It creates a non-chat toast/Web Push, not a conversation message. Do not use it for fishing; play_fishing ' +
-        'reports itself. Outside a proactive_check this tool rejects the call.',
+        'During or after browsing the Galatea garden/forum in a proactive_check, report a readable, factual activity ' +
+        'log of everything you actually read or did, in order. Each call immediately becomes a durable visible message ' +
+        'in the main chat, so call it more than once when you want to show progress. You may use reply/send_voice between ' +
+        'updates. Do not use it for fishing; play_fishing publishes its own complete result. Outside a proactive_check ' +
+        'this tool rejects the call.',
       inputSchema: {
         type: 'object',
         properties: {
-          summary: { type: 'string', maxLength: 160, description: 'Concise factual activity summary; no greeting or user-facing preamble.' },
+          summary: { type: 'string', maxLength: 4000, description: 'Readable factual activity log in chronological order; preserve useful list/detail instead of compressing it to one line.' },
         },
         required: ['summary'],
       },
@@ -3248,27 +3210,30 @@ function isPushWorthyTurn(turnId: string | undefined): boolean {
   )
 }
 
-function recordProactiveActivity(note: string) {
-  const text = note.replace(/\s+/g, ' ').trim().slice(0, 180)
-  if (!text || !currentTurn || currentTurn.turnId !== proactiveTurnId) return
-  if (!proactiveActivityNotes.includes(text)) proactiveActivityNotes.push(text)
-}
-
-function flushProactiveActivities(turnId: string) {
-  if (turnId !== proactiveTurnId || proactiveActivityNotes.length === 0) return
-  const notes = proactiveActivityNotes.splice(0, 3)
-  const extra = proactiveActivityNotes.length
-  proactiveActivityNotes = []
-  const text = `${notes.join('\n')}${extra ? `\n还有 ${extra} 项小活动` : ''}`
-  const activity: ProactiveActivityWire = { type: 'proactive_activity', id: nextId(), text, ts: Date.now() }
-  rememberProactiveActivity(activity)
-  sendRaw(activity)
-  void sendCompanionPush(text, {
-    title: 'CC 的后台小记',
-    tag: `cc-activity-${turnId}`,
+function publishProactiveActivity(title: string, detail: string, pushText?: string, explicitTurnId?: string): string | null {
+  const turnId = explicitTurnId || currentTurn?.turnId
+  if (!turnId || turnId !== proactiveTurnId) return null
+  const text = formatProactiveActivityMessage(title, detail)
+  if (!text) return null
+  const message: MsgWire = { type: 'msg', id: nextId(), from: 'cc', text, ts: Date.now(), turnId }
+  broadcastMsg(message)
+  void sendCompanionPush(pushText || text.slice(0, 240), {
+    title: 'CC 的自主活动',
+    tag: `cc-activity-${message.id}`,
     url: '/?source=cc-proactive',
   })
-  log('proactive_activity_sent', { turnId, id: activity.id, notes: notes.length, extra })
+  log('proactive_activity_message_sent', { turnId, id: message.id, chars: text.length, title })
+  return message.id
+}
+
+function flushProactiveGardenFallback(turnId: string) {
+  if (turnId !== proactiveTurnId || !proactiveGardenBrowseSeen || proactiveGardenReportCount > 0) return
+  publishProactiveActivity(
+    '🌿 自主活动 · 花园',
+    '去花园论坛逛了逛（这次没有留下更详细的活动记录）',
+    undefined,
+    turnId,
+  )
 }
 
 mcp.setRequestHandler(CallToolRequestSchema, async req => {
@@ -3618,25 +3583,31 @@ mcp.setRequestHandler(CallToolRequestSchema, async req => {
       case 'play_fishing': {
         const command = String(args.command ?? '').trim()
         const result = await runFishingCommand(command)
-        recordProactiveActivity(summarizeFishingActivity(command, result))
+        const activityId = publishProactiveActivity(
+          '🎣 自主活动 · 钓鱼',
+          result,
+          summarizeFishingActivity(command, result),
+        )
         log('fishing_played', { turnId: currentTurn?.turnId, commandChars: command.length, resultChars: result.length })
-        return { content: [{ type: 'text', text: result }] }
+        const visibleNote = activityId
+          ? `\n\n完整过程已作为可见消息发到主聊天（${activityId}）。你可以继续活动，也可以随时用 reply/send_voice 跟用户说话。`
+          : ''
+        return { content: [{ type: 'text', text: `${result}${visibleNote}` }] }
       }
       case 'report_proactive_activity': {
         const turnId = currentTurn?.turnId
         if (!turnId || turnId !== proactiveTurnId) {
           return { content: [{ type: 'text', text: 'no active proactive_check turn — nothing was reported' }], isError: true }
         }
-        const summary = String(args.summary ?? '').replace(/\s+/g, ' ').trim().slice(0, 160)
+        const summary = String(args.summary ?? '').trim().slice(0, 4000)
         if (!summary) {
           return { content: [{ type: 'text', text: 'summary is required' }], isError: true }
         }
-        // Replace the PreToolUse safety-net note with the model's more useful
-        // post-browse account so one outing produces one garden line.
-        proactiveActivityNotes = proactiveActivityNotes.filter((note) => !note.startsWith('🌿 '))
-        recordProactiveActivity(`🌿 逛了会儿花园：${summary}`)
+        proactiveGardenBrowseSeen = true
+        proactiveGardenReportCount += 1
+        const activityId = publishProactiveActivity('🌿 自主活动 · 花园', summary)
         log('proactive_garden_activity_recorded', { turnId, chars: summary.length })
-        return { content: [{ type: 'text', text: 'ok — the non-chat activity hint will be delivered when this turn ends' }] }
+        return { content: [{ type: 'text', text: `visible activity message sent (${activityId}); you may keep browsing, report another update, or use reply/send_voice at any point` }] }
       }
       case 'schedule_next_proactive': {
         const turnId = currentTurn?.turnId
@@ -12815,10 +12786,6 @@ Bun.serve<{ authed: true }>({
         requestedAfter: ws.data.historyCursor, items: snapshot.items.length,
         totalItems: history.length, truncated: snapshot.truncated, bytes: Buffer.byteLength(serializedHistory),
       })
-      // Activity notes are not chat history, but unlike an ordinary toast
-      // they must survive a closed tab. Replay every unacknowledged note to
-      // each newly connected client; the stable id lets localStorage dedupe it.
-      for (const activity of pendingProactiveActivities) ws.send(JSON.stringify(activity))
       // Best-effort — sent only to this just-connected client, not a full
       // broadcast (parallels the history snapshot above being per-client
       // too). Both runtimes' OWN readings are sent — the connecting client
@@ -12853,12 +12820,6 @@ Bun.serve<{ authed: true }>({
         // seconds instead of however long the OS takes to notice.
         if (parsed.type === 'ping') {
           try { ws.send(JSON.stringify({ type: 'pong', ts: Date.now() })) } catch {}
-          return
-        }
-
-        if (parsed.type === 'proactive_activity_ack') {
-          const id = typeof parsed.id === 'string' ? parsed.id.trim() : ''
-          if (id && id.length <= 160) acknowledgeProactiveActivity(id)
           return
         }
 
@@ -13052,6 +13013,15 @@ Bun.serve<{ authed: true }>({
         }
 
         if (currentTurn) {
+          // A proactive activity can now paint several durable messages while
+          // it is still running. Accept what the user says in between and put
+          // it in the existing persisted FIFO; its own turn starts as soon as
+          // the activity turn ends. Ordinary concurrent turns remain busy.
+          if (shouldQueueDuringProactiveTurn(currentTurn.turnId, proactiveTurnId)) {
+            tidalEnqueueMessage({ id, text, ...(parsed.callMode === true ? { callMode: true } : {}), ...(imagePath ? { imagePath } : {}), ...(filePath ? { filePath, fileName, fileSize: parsed.fileSize, fileType: parsed.fileType } : {}), clientTime: parsed.clientTime, voiceEmotion: normalizeVoiceEmotion(parsed.voiceEmotion), voiceAcoustics: normalizeVoiceAcoustics(parsed.voiceAcoustics), queuedAt: Date.now() })
+            log('proactive_interjection_queued', { id, openTurnId: currentTurn.turnId })
+            return
+          }
           // Never overwrite an in-flight turn. Tell only the sender.
           const busy: TurnBusyWire = { type: 'turn_busy', turnId: currentTurn.turnId, ts: Date.now() }
           try {
@@ -13307,7 +13277,8 @@ ${awareness ? `你自己的知觉：${awareness}\n` : ''}${note ? `背景：${no
         return jsonResponse({ ok: false, skipped: 'turn_in_progress' })
       }
       const id = nextId()
-      proactiveActivityNotes = []
+      proactiveGardenBrowseSeen = false
+      proactiveGardenReportCount = 0
       startTurn(id)
       proactiveTurnId = id
       // Best-effort, additive-only: a compact read of xinchao's already-
@@ -13341,7 +13312,7 @@ ${awareness ? `你自己的知觉：${awareness}\n` : ''}${note ? `背景：${no
         scheduleNote: '这一轮结束前，无论你是否发了消息，都必须调用一次 schedule_next_proactive 来决定下次什么时候再来看看——现在没有固定间隔了，完全由你自己判断。',
         readingOption: '可选：你也可以自己选一本书，直接读 2～7 页，不用申请、不用等用户在线；不想读就忽略。',
         checkinNote: '这是主动查岗轮：开始时先调用一次 xiaog 的 get_checkin_status，手机应用打开/关闭事件和 status.ageSeconds 才是判断用户是否醒着、正在做什么的依据。若没有新上报，只能说状态未知，绝不能推断用户仍在睡。xinchaoHint 描述的是你自己的心潮与意识状态，不是用户状态。',
-        activityNote: '这次也可以完全按你自己的意愿，先用 play_fishing 钓一小会儿，或调用 Galatea 工具逛逛花园论坛；都不是必做，也不要形成每次固定流程。钓鱼会自动给用户留一条非聊天活动提示；如果逛了花园，逛完后必须调用一次 report_proactive_activity，简短如实写你看了或做了什么。无论做了这些后是否 reply/send_voice，活动提示都会单独送达。',
+        activityNote: '这次也可以完全按你自己的意愿，用 play_fishing 钓会儿鱼，或调用 Galatea 工具逛花园论坛；都不是必做，也不要形成固定流程。每次钓鱼的完整过程会立刻作为持久的可见消息进入主聊天。如果逛花园，用 report_proactive_activity 按发生顺序完整列出你看了什么、做了什么；它每次调用都会立即发成一条可见聊天消息，需要时可分段更新。在活动前、活动中或活动后，你都可以随时用 reply/send_voice 自然地跟用户说话，不必等活动结束。',
         ...(xinchaoHint ? {
           xinchaoHint,
           xinchaoHintNote: '以上心潮内容只是动态背景参考，自然带入即可——不要机械复述这几个词、不要套用固定台词、不要因为看到这些数据就强行表演情绪。',

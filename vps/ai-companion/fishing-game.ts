@@ -71,7 +71,7 @@ export function runFishingCommand(rawCommand: unknown): Promise<string> {
   return next
 }
 
-/** A short, truthful hint for the user's non-chat proactive-activity toast. */
+/** A short, truthful Web Push body; the main chat receives the full output. */
 export function summarizeFishingActivity(command: string, output: string): string {
   const lines = output.split('\n')
     .map((line) => line.trim())

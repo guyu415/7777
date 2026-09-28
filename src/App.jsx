@@ -19,7 +19,7 @@ import CodexMemory from './components/CodexMemory'
 import DesktopPet from './components/DesktopPet'
 import { getSettings, saveSettings, extractSettings, saveSessionMsgs, deleteSessionMsgs, putAsset, putAssetDataUrl, loadAsset } from './services/sync'
 import { compressImage, slimSettings } from './utils/image'
-import { ensureConnected as ensureCompanionConnected, reconnectCompanion, onProactiveActivity, onProactiveActivityAcknowledged, acknowledgeProactiveActivity, onCcMessageDeleted, onCcReset } from './services/companion'
+import { ensureConnected as ensureCompanionConnected, reconnectCompanion, onCcMessageDeleted, onCcReset } from './services/companion'
 import { subscribeCcMessageInbox } from './services/ccMessageInbox'
 import { messageDeleteTransportKeys } from './utils/messageTimeline'
 import { themeWithUserBubbleText } from './utils/bubbleColors'
@@ -31,29 +31,6 @@ const FONT_MAP = {
   noto: "'Noto Sans SC', 'PingFang SC', -apple-system, sans-serif",
   zcool: "'ZCOOL XiaoWei', serif",
   mashan: "'Ma Shan Zheng', cursive",
-}
-
-const PROACTIVE_ACTIVITY_STORAGE_KEY = 'eunoia.pendingProactiveActivities.v1'
-const MAX_PENDING_PROACTIVE_ACTIVITIES = 20
-
-function loadPendingProactiveActivities() {
-  try {
-    const value = JSON.parse(localStorage.getItem(PROACTIVE_ACTIVITY_STORAGE_KEY) || '[]')
-    if (!Array.isArray(value)) return []
-    return value
-      .filter(item => item && typeof item.id === 'string' && typeof item.text === 'string')
-      .slice(-MAX_PENDING_PROACTIVE_ACTIVITIES)
-  } catch {
-    return []
-  }
-}
-
-function formatProactiveActivityTime(ts) {
-  const date = new Date(Number(ts))
-  if (!Number.isFinite(date.getTime())) return ''
-  return new Intl.DateTimeFormat('zh-CN', {
-    month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false,
-  }).format(date)
 }
 
 // 用于「settings 是否真的变了」的对比指纹。lastMsgTime/lastMsgPreview 每条消息都在变，
@@ -173,8 +150,6 @@ export default function App() {
   const [loggedIn, setLoggedIn] = useState(() => !!localStorage.getItem('auth.password'))
   const [syncError, setSyncError] = useState(null)
   const [migrationStatus, setMigrationStatus] = useState(null)
-  const [pendingProactiveActivities, setPendingProactiveActivities] = useState(loadPendingProactiveActivities)
-  const dismissedProactiveActivityIds = useRef(new Set())
   const syncReady = useRef(false)
   const syncTimer = useRef(null)
   const lastSyncedSettings = useRef('')
@@ -665,50 +640,6 @@ export default function App() {
     return unsub
   }, [])
 
-  // Self-directed fishing/garden outings stay outside chat history, but the
-  // notice itself is durable until the user acknowledges it. Queue multiple
-  // outings instead of replacing an unread one; localStorage also preserves
-  // them across a refresh. Closed/backgrounded clients additionally receive
-  // the matching Web Push from the VPS.
-  useEffect(() => {
-    return onProactiveActivity(({ id, text, ts }) => {
-      // A reconnect may replay a server-persisted note while its optimistic
-      // acknowledgement is still travelling. Never make a card the user has
-      // just dismissed jump back onto the screen in that window.
-      if (dismissedProactiveActivityIds.current.has(id)) return
-      setPendingProactiveActivities(current => {
-        if (current.some(item => item.id === id)) return current
-        return [...current, { id, text, ts }].slice(-MAX_PENDING_PROACTIVE_ACTIVITIES)
-      })
-    })
-  }, [])
-
-  useEffect(() => {
-    return onProactiveActivityAcknowledged(id => {
-      dismissedProactiveActivityIds.current.delete(id)
-      setPendingProactiveActivities(current => current.filter(item => item.id !== id))
-    })
-  }, [])
-
-  useEffect(() => {
-    try {
-      localStorage.setItem(PROACTIVE_ACTIVITY_STORAGE_KEY, JSON.stringify(pendingProactiveActivities))
-    } catch { /* a full/private storage area must not break the chat UI */ }
-  }, [pendingProactiveActivities])
-
-  const confirmProactiveActivity = async (activity) => {
-    if (!activity || dismissedProactiveActivityIds.current.has(activity.id)) return
-    // Dismiss immediately. Server persistence is durability plumbing, not a
-    // reason for the close button to block behind a reconnect/8s timeout.
-    dismissedProactiveActivityIds.current.add(activity.id)
-    setPendingProactiveActivities(current => current.filter(item => item.id !== activity.id))
-    try {
-      await acknowledgeProactiveActivity(activity.id)
-    } catch (error) {
-      console.error('[PROACTIVE-ACTIVITY] 确认失败:', error?.message)
-    }
-  }
-
   // CC context reset: the server clears either the whole conversation or
   // only the part newer than the latest completed tidal summary, and
   // genuinely resets the VPS Claude Code context via /cc/reset. This side
@@ -939,64 +870,6 @@ export default function App() {
         </div>
       )}
 
-      {/* Compact, independently dismissible non-chat activity cards. Keep
-          them at the top so they never cover the composer or bottom nav. */}
-      {pendingProactiveActivities.length > 0 && (
-        <div
-          className="fixed"
-          role="region"
-          aria-label="CC 的后台小记"
-          style={{
-            top: 'calc(env(safe-area-inset-top, 0px) + 10px)',
-            left: '50%', transform: 'translateX(-50%)',
-            width: 'min(360px, calc(100vw - 24px))',
-            maxHeight: 'min(46vh, 390px)', overflowY: 'auto',
-            display: 'flex', flexDirection: 'column', gap: 7,
-            padding: 2, scrollbarWidth: 'none',
-            zIndex: 90,
-          }}
-        >
-          {pendingProactiveActivities.map((activity, index) => (
-            <div
-              key={activity.id}
-              role="alertdialog"
-              aria-modal="false"
-              style={{
-                background: 'linear-gradient(135deg, rgba(71,112,91,.72), rgba(73,91,126,.68))',
-                backdropFilter: 'blur(14px) saturate(1.15)',
-                WebkitBackdropFilter: 'blur(14px) saturate(1.15)',
-                border: '1px solid rgba(255,255,255,.24)',
-                color: 'white', fontSize: 11, fontWeight: 500,
-                lineHeight: 1.45, whiteSpace: 'pre-line',
-                padding: '9px 10px 8px 11px', borderRadius: 13,
-                boxShadow: '0 4px 14px rgba(42,61,53,.15)',
-              }}
-            >
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 3 }}>
-                <span style={{ fontSize: 9, opacity: .76, flex: 1 }}>
-                  CC 的后台小记{pendingProactiveActivities.length > 1 ? ` · ${index + 1}/${pendingProactiveActivities.length}` : ''}
-                </span>
-                <span style={{ fontSize: 9, opacity: .65 }}>
-                  {formatProactiveActivityTime(activity.ts)}
-                </span>
-                <button
-                  type="button"
-                  aria-label="知道了"
-                  title="知道了"
-                  onClick={() => confirmProactiveActivity(activity)}
-                  style={{
-                    width: 22, height: 22, padding: 0, flexShrink: 0,
-                    border: '1px solid rgba(255,255,255,.34)', borderRadius: 999,
-                    background: 'rgba(255,255,255,.12)', color: 'white',
-                    font: 'inherit', fontSize: 14, lineHeight: '18px', cursor: 'pointer',
-                  }}
-                >×</button>
-              </div>
-              <div>{activity.text}</div>
-            </div>
-          ))}
-        </div>
-      )}
     </div>
   )
 }
