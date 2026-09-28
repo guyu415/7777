@@ -114,6 +114,7 @@ import { SENSEVOICE_MAX_AUDIO_BYTES, transcribeWithSenseVoice } from './sensevoi
 import { analyzeVoiceAcoustics, type VoiceAcoustics } from './opensmile-acoustics.ts'
 import { isPublicAssistantMediaId, newAssistantMediaId } from './assistant-media.ts'
 import { formatProactiveActivityMessage, shouldQueueDuringProactiveTurn } from './proactive-activity.ts'
+import { remainingThinkingPaintDelay } from './thinking-delivery.ts'
 import {
   CARE_ROLE_IDS,
   baziSolarMonthContext,
@@ -1742,21 +1743,24 @@ function broadcastMsg(m: MsgWire) {
 // the MCP call has returned. Broadcasting from inside the handler therefore
 // always beat the transcript tail by a few dozen milliseconds and made real
 // thinking look "late". Persist immediately (so reconnect/endTurn still see
-// the reply), then give CC one short post-MCP flush window. The timer polls the
-// transcript synchronously and WebSocket ordering guarantees any real
-// `thinking` delta is sent before the visible message that consumes it.
+// the reply), then actively poll through one short post-MCP flush window. The
+// fallback catches later writes, and the paint grace ensures any real
+// `thinking` delta gets a browser render before its visible reply.
 const CC_THINKING_DELIVERY_GRACE_MS = 180
+const CC_THINKING_POST_TOOL_POLL_MS = [16, 48, 96]
 const pendingCcDeliveries = new Map<string, {
   message: MsgWire
   timer: ReturnType<typeof setTimeout>
+  pollTimers: ReturnType<typeof setTimeout>[]
   queuedAt: number
 }>()
 
-function deliverPendingCcMessage(id: string) {
+function deliverPendingCcMessage(id: string, force = false) {
   const pending = pendingCcDeliveries.get(id)
   if (!pending) return
-  pendingCcDeliveries.delete(id)
   clearTimeout(pending.timer)
+  for (const timer of pending.pollTimers) clearTimeout(timer)
+  pending.pollTimers = []
 
   if (thinkingTail && currentTurn?.turnId === pending.message.turnId) {
     pollThinkingTail(currentTurn.turnId)
@@ -1764,17 +1768,13 @@ function deliverPendingCcMessage(id: string) {
   const thinking = consumePendingThinking()
   if (thinking) {
     pending.message.thinking = `${pending.message.thinking || ''}${thinking}`
-    // Separate WebSocket frames are dispatched as separate browser tasks.
-    // Sending the real delta first gives React/Zustand a render opportunity
-    // for the expandable thinking panel before the visible reply arrives;
-    // the following same-id msg still carries the full durable value.
-    sendRaw({ type: 'thinking', turnId: pending.message.turnId || '', delta: thinking })
-    log('thinking_live_delivered', {
-      turnId: pending.message.turnId,
-      id: pending.message.id,
-      chars: thinking.length,
-    })
   }
+  const paintDelay = force ? 0 : remainingThinkingPaintDelay(lastThinkingBroadcastAt)
+  if (paintDelay > 0) {
+    pending.timer = setTimeout(() => deliverPendingCcMessage(id), paintDelay)
+    return
+  }
+  pendingCcDeliveries.delete(id)
   // persist() already appended this exact object. Save again after enriching
   // it so reconnect snapshots and the live wire carry the same authoritative
   // value without appending a duplicate history row.
@@ -1785,18 +1785,26 @@ function deliverPendingCcMessage(id: string) {
     turnId: pending.message.turnId,
     queuedMs: Date.now() - pending.queuedAt,
     thinkingChars: pending.message.thinking?.length || 0,
+    thinkingLeadMs: lastThinkingBroadcastAt
+      ? Date.now() - lastThinkingBroadcastAt
+      : null,
   })
 }
 
 function broadcastCcMessageAfterThinking(m: MsgWire) {
   persist(m)
+  const pollTimers = CC_THINKING_POST_TOOL_POLL_MS.map(delay => setTimeout(() => {
+    if (!pendingCcDeliveries.has(m.id)) return
+    if (!thinkingTail || currentTurn?.turnId !== m.turnId) return
+    pollThinkingTail(m.turnId || '')
+  }, delay))
   const timer = setTimeout(() => deliverPendingCcMessage(m.id), CC_THINKING_DELIVERY_GRACE_MS)
-  pendingCcDeliveries.set(m.id, { message: m, timer, queuedAt: Date.now() })
+  pendingCcDeliveries.set(m.id, { message: m, timer, pollTimers, queuedAt: Date.now() })
 }
 
 function flushPendingCcMessages(turnId: string) {
   for (const [id, pending] of pendingCcDeliveries) {
-    if (pending.message.turnId === turnId) deliverPendingCcMessage(id)
+    if (pending.message.turnId === turnId) deliverPendingCcMessage(id, true)
   }
 }
 
@@ -2177,6 +2185,7 @@ function notifyCcOfFocusRequest(request: FocusRequest) {
 // this account currently uses) — that is the expected, common case, not an
 // error, and results in no thinking data at all, which is correct.
 let pendingThinking: string[] = []
+let lastThinkingBroadcastAt = 0
 // Claude Code can finish a turn with an ordinary assistant text block when
 // its dynamically-loaded `reply` tool was lost during a transcript rewrite.
 // Keep those blocks alongside thinking so endTurn() can publish a safe
@@ -2232,14 +2241,16 @@ function pollThinkingTail(turnId: string) {
         }
         if (block?.type === 'thinking' && typeof block.thinking === 'string' && block.thinking.length > 0) {
           pendingThinking.push(block.thinking)
-          // A message inside the short post-MCP delivery grace will consume
-          // this block and send it immediately before its own visible wire.
-          // Otherwise it belongs to the still-open next part of a multi-reply
-          // turn and must keep streaming even though an earlier reply exists.
-          const awaitingVisibleMessage = [...pendingCcDeliveries.values()].some(pending => (
-            pending.message.turnId === turnId
-          ))
-          if (!awaitingVisibleMessage) sendRaw({ type: 'thinking', turnId, delta: block.thinking })
+          // Never hold a real thinking block behind a pending reply. The
+          // visible message waits for a browser paint window instead, so the
+          // reasoning panel can actually update before the answer appears.
+          sendRaw({ type: 'thinking', turnId, delta: block.thinking })
+          lastThinkingBroadcastAt = Date.now()
+          log('thinking_live_delivered', {
+            turnId,
+            chars: block.thinking.length,
+            pendingReply: [...pendingCcDeliveries.values()].some(pending => pending.message.turnId === turnId),
+          })
         }
       }
     }
@@ -2252,6 +2263,7 @@ function startThinkingTail(turnId: string) {
   if (thinkingTail) clearInterval(thinkingTail.timer) // defensive — should already be stopped
   thinkingTail = null
   pendingThinking = []
+  lastThinkingBroadcastAt = 0
   pendingPlainAssistantText = []
   const path = latestTranscriptPath()
   if (!path) return // no transcript yet — thinking just stays absent, not an error
