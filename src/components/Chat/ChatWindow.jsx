@@ -5,7 +5,6 @@ import MessageList from './MessageList'
 import MessageSearch from './MessageSearch'
 import FallingParticles from './FallingParticles'
 import MessageInput from './MessageInput'
-import MemoryModal from './MemoryModal'
 import RuntimeStatusBall from './RuntimeStatusBall'
 import CarryOutPetModal from './CarryOutPetModal'
 import VoiceCall from '../Voice/VoiceCall'
@@ -23,14 +22,14 @@ import { useChat } from '../../hooks/useChat'
 import { useCodexChat } from '../../hooks/useCodexChat'
 import { useScheduledMessages } from '../../hooks/useScheduledMessages'
 import { useFocusRuntime } from '../../hooks/useFocusRuntime'
-import { useStore, deleteMessageFromDB, getBlob } from '../../store'
+import { useStore, getBlob } from '../../store'
 import { putAsset } from '../../services/sync'
 import { formatLocationMessage, distanceMeters } from '../../services/location'
 import LocationPreview from './LocationPreview'
 import PokeHapticTarget, { usePokeHapticArm } from './PokeHapticTarget'
 import { rollD6 } from '../../utils/dice'
 import { isPokeDoubleTap, POKE_RECEIVE_HAPTIC, POKE_SEND_HAPTIC } from '../../utils/poke'
-import { getXinchaoStatus, onXinchaoUpdate, getCodexMemoryFile, putCodexMemoryFile, uploadFileToCompanion, getTidalMemoryStatus, onPoke, onPokeHistorySnapshot, onCcReset, sendPoke, setUserPokeText, rollSpicyMonopoly } from '../../services/companion'
+import { getXinchaoStatus, onXinchaoUpdate, uploadFileToCompanion, getTidalMemoryStatus, onPoke, onPokeHistorySnapshot, onCcReset, sendPoke, setUserPokeText, rollSpicyMonopoly } from '../../services/companion'
 
 const SYNC_BASE = 'https://chat.xiaoman.xyz'
 const FAV_LIST_KEY = 'user:xiaoman2.26:voice_fav_list'
@@ -120,12 +119,12 @@ export default function ChatWindow({ theme }) {
   const {
     currentView, setCurrentView, apiKey, aiAvatar: globalAiAvatar, aiName: globalAiName,
     userAvatar: globalUserAvatar,
-    deleteMessagesFrom, workerUrl, currentSessionId, sessions, providers, selectedProviderId,
+    workerUrl, currentSessionId, sessions, providers, selectedProviderId,
     summaryToast, setSummaryToast, showFallingParticles, bubbleSkin,
   } = useStore(useShallow(s => ({
     currentView: s.currentView, setCurrentView: s.setCurrentView, apiKey: s.apiKey,
     aiAvatar: s.aiAvatar, aiName: s.aiName, userAvatar: s.userAvatar,
-    deleteMessagesFrom: s.deleteMessagesFrom, workerUrl: s.workerUrl, currentSessionId: s.currentSessionId,
+    workerUrl: s.workerUrl, currentSessionId: s.currentSessionId,
     sessions: s.sessions, providers: s.providers, selectedProviderId: s.selectedProviderId,
     summaryToast: s.summaryToast, setSummaryToast: s.setSummaryToast,
     showFallingParticles: s.showFallingParticles, bubbleSkin: s.bubbleSkin,
@@ -141,7 +140,7 @@ export default function ChatWindow({ theme }) {
   // the file. cc/codex above are BOTH always called (Rules of Hooks); only
   // one is ever actually used per render.
   const active = isCodexSession ? codex : cc
-  const { messages, sendMessage, sendMessageBatch, sendImageMessageBatch, appendLocalMessage, loadHistory, isLoading, companionProgress, regenerate, regenerateRound, retryFailed, deleteMsg, editMessage, stopStreaming } = active
+  const { messages, sendMessage, sendMessageBatch, sendImageMessageBatch, appendLocalMessage, loadHistory, isLoading, companionProgress, regenerate, regenerateRound, retryFailed, deleteMsg, rewindConversation, stopStreaming } = active
 
   const effectiveAiName = currentSession?.aiName ?? globalAiName
   const effectiveAiAvatar = currentSession?.aiAvatar ?? globalAiAvatar
@@ -154,11 +153,11 @@ export default function ChatWindow({ theme }) {
   const truthDareAiTimerRef = useRef(null)
   const [pendingTruthDareCard, setPendingTruthDareCard] = useState(null)
   const [menuMsg, setMenuMsg] = useState(null)
+  const [resayMsg, setResayMsg] = useState(null)
+  const [resayText, setResayText] = useState('')
+  const [resaySaving, setResaySaving] = useState(false)
   const [selectedMessageIds, setSelectedMessageIds] = useState(() => new Set())
   const [replyTargets, setReplyTargets] = useState([])
-  const [memoryMsg, setMemoryMsg] = useState(null)
-  const [editMsg, setEditMsg] = useState(null)
-  const [editText, setEditText] = useState('')
   const [toast, setToast] = useState(null)
   const [locationSessionId, setLocationSessionId] = useState(null)
   useEffect(() => { setLocationSessionId(null) }, [currentSessionId])
@@ -211,9 +210,18 @@ export default function ChatWindow({ theme }) {
   useEffect(() => {
     setReplyTargets([])
     setMenuMsg(null)
+    setResayMsg(null)
+    setResayText('')
+    setResaySaving(false)
     setSelectedMessageIds(new Set())
     setPendingTruthDareCard(null)
   }, [currentSessionId])
+  useEffect(() => {
+    if (resayMsg && !messages.some(message => message.id === resayMsg.id)) {
+      setResayMsg(null)
+      setResayText('')
+    }
+  }, [messages, resayMsg])
   const [showXinchaoPanel, setShowXinchaoPanel] = useState(false)
   const [showSearch, setShowSearch] = useState(false)
   const callAudioRef = useRef(null)
@@ -541,35 +549,49 @@ export default function ChatWindow({ theme }) {
   // button) — same stability requirement as regenerateBlocked above.
   const goToGlobalSettings = useCallback(() => setCurrentView('globalSettings'), [setCurrentView])
 
-  const handleEdit = async (msg) => {
+  const handleOpenResay = (msg) => {
     setMenuMsg(null)
-    const idx = messages.findIndex(m => m.id === msg.id)
-    if (idx === -1) return
-    try {
-      if (isCodexSession) {
-        for (const m of messages.slice(idx)) await deleteMsg(m.id)
-      } else {
-        for (const m of messages.slice(idx)) await deleteMessageFromDB(m.id)
-        deleteMessagesFrom(msg.id)
-      }
-      inputRef.current?.fill(msg.type === 'text' ? msg.content : '')
-    } catch (error) {
-      showToast(`编辑失败：${error.message}`)
+    if (!isVpsSession || msg.role !== 'user' || msg.type !== 'text') return
+    if (isLoading) {
+      showToast('当前回复尚未结束，稍后再重说~')
+      return
     }
+    setResayText(msg.content || '')
+    setResayMsg(msg)
   }
 
-  // AI text message: in-place content edit (not the user "撤回重发" flow above)
-  const handleEditAI = (msg) => {
-    setMenuMsg(null)
-    setEditText(msg.content || '')
-    setEditMsg(msg)
-  }
-
-  const handleSaveEditAI = async () => {
-    if (!editMsg) return
-    await editMessage(editMsg.id, editText)
-    setEditMsg(null)
-    showToast('已修改~')
+  const handleSaveResay = async () => {
+    if (!resayMsg || resaySaving || !rewindConversation) return
+    const nextText = resayText.trim()
+    if (!nextText) {
+      showToast('重说内容不能为空~')
+      return
+    }
+    setResaySaving(true)
+    let rewound = false
+    try {
+      const result = await rewindConversation(resayMsg.id)
+      rewound = true
+      setResayMsg(null)
+      setResayText('')
+      if (result?.ready === false) {
+        inputRef.current?.fill(nextText)
+        showToast('历史已撤回，但常驻会话仍在恢复；文字已放回输入框')
+        return
+      }
+      await sendMessage(nextText, 'text')
+    } catch (error) {
+      if (rewound) {
+        setResayMsg(null)
+        setResayText('')
+        inputRef.current?.fill(nextText)
+        showToast(`历史已撤回，重发失败；文字已放回输入框：${error.message}`)
+      } else {
+        showToast(`重说失败：${error.message}`)
+      }
+    } finally {
+      setResaySaving(false)
+    }
   }
 
   const handleDelete = async (msg) => {
@@ -708,19 +730,6 @@ export default function ChatWindow({ theme }) {
     } catch (e) {
       showToast('收藏失败：' + e.message)
     }
-  }
-
-  const saveCodexQuickMemory = async ({ subject, predicate, value }) => {
-    const name = 'saved-messages.md'
-    let existing = ''
-    try {
-      existing = (await getCodexMemoryFile(currentSessionId, name))?.content || ''
-    } catch (error) {
-      if (error?.status !== 404) throw error
-    }
-    const label = [subject, predicate].filter(Boolean).join(' · ')
-    const line = `- ${label ? `**${label}**：` : ''}${value}`
-    await putCodexMemoryFile(currentSessionId, name, [existing.trim(), line].filter(Boolean).join('\n'))
   }
 
   // Find the last assistant message id (the only one that gets a regenerate
@@ -979,22 +988,14 @@ export default function ChatWindow({ theme }) {
             >
               ↩️ 回复
             </button>
-            {menuMsg.role === 'user' && menuMsg.type === 'text' && (
+            {isVpsSession && menuMsg.role === 'user' && menuMsg.type === 'text' && (
               <button
-                onClick={() => handleEdit(menuMsg)}
+                onClick={() => handleOpenResay(menuMsg)}
+                disabled={isLoading || resaySaving}
                 className="w-full flex items-center gap-3 px-5 py-3.5 text-sm hover:bg-pink-50 transition-colors"
                 style={{ color: '#8b5060', borderBottom: '1px solid rgba(255,182,209,0.25)' }}
               >
-                ✏️ 编辑
-              </button>
-            )}
-            {menuMsg.role === 'assistant' && menuMsg.type === 'text' && (
-              <button
-                onClick={() => handleEditAI(menuMsg)}
-                className="w-full flex items-center gap-3 px-5 py-3.5 text-sm hover:bg-pink-50 transition-colors"
-                style={{ color: '#8b5060', borderBottom: '1px solid rgba(255,182,209,0.25)' }}
-              >
-                📝 修改文字
+                ✏️ 重说
               </button>
             )}
             {menuMsg.type === 'text' && menuMsg.content && (
@@ -1008,15 +1009,6 @@ export default function ChatWindow({ theme }) {
                 style={{ color: '#8b5060', borderBottom: '1px solid rgba(255,182,209,0.25)' }}
               >
                 📋 复制
-              </button>
-            )}
-            {menuMsg.type === 'text' && menuMsg.content && (
-              <button
-                onClick={() => { setMenuMsg(null); setMemoryMsg(menuMsg) }}
-                className="w-full flex items-center gap-3 px-5 py-3.5 text-sm hover:bg-pink-50 transition-colors"
-                style={{ color: '#8b5060', borderBottom: '1px solid rgba(255,182,209,0.25)' }}
-              >
-                🧠 存入记忆
               </button>
             )}
             {/* Codex's own real voice bubbles (see useCodexChat.js's
@@ -1060,12 +1052,13 @@ export default function ChatWindow({ theme }) {
         </div>
       )}
 
-      {/* AI message in-place edit modal */}
-      {editMsg && (
+      {/* Re-saying a user turn rewinds the resident transcript first, then
+          sends the edited text as the new branch's first real message. */}
+      {resayMsg && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center px-6"
           style={{ background: 'rgba(0,0,0,0.18)', backdropFilter: 'blur(2px)' }}
-          onClick={() => setEditMsg(null)}
+          onClick={() => { if (!resaySaving) setResayMsg(null) }}
         >
           <div
             className="rounded-2xl overflow-hidden w-full"
@@ -1078,11 +1071,15 @@ export default function ChatWindow({ theme }) {
             }}
             onClick={e => e.stopPropagation()}
           >
-            <div className="px-5 pt-4 pb-2 text-sm font-semibold" style={{ color: '#8b5060' }}>📝 修改文字</div>
+            <div className="px-5 pt-4 pb-1 text-sm font-semibold" style={{ color: '#8b5060' }}>✏️ 重说</div>
+            <div className="px-5 pb-3 text-xs leading-5" style={{ color: '#a47b88' }}>
+              保存后会撤回这条消息以及之后的全部对话，再从修改后的内容继续。
+            </div>
             <div className="px-5">
               <textarea
-                value={editText}
-                onChange={e => setEditText(e.target.value)}
+                value={resayText}
+                onChange={e => setResayText(e.target.value)}
+                disabled={resaySaving}
                 rows={5}
                 autoFocus
                 className="w-full rounded-xl px-3 py-2 text-sm outline-none"
@@ -1095,18 +1092,24 @@ export default function ChatWindow({ theme }) {
             </div>
             <div className="flex items-center justify-end gap-2 px-5 py-3">
               <button
-                onClick={() => setEditMsg(null)}
+                onClick={() => setResayMsg(null)}
+                disabled={resaySaving}
                 className="px-4 py-2 rounded-full text-sm"
                 style={{ color: '#8b8b8b', background: 'rgba(0,0,0,0.05)' }}
               >
                 取消
               </button>
               <button
-                onClick={handleSaveEditAI}
+                onClick={handleSaveResay}
+                disabled={resaySaving || !resayText.trim()}
                 className="px-4 py-2 rounded-full text-sm font-medium text-white"
-                style={{ background: `linear-gradient(135deg, ${primaryColor}, ${primaryDarkColor})` }}
+                style={{
+                  background: resaySaving || !resayText.trim()
+                    ? 'rgba(180,145,160,.45)'
+                    : `linear-gradient(135deg, ${primaryColor}, ${primaryDarkColor})`,
+                }}
               >
-                保存
+                {resaySaving ? '正在回到这里…' : '保存并重说'}
               </button>
             </div>
           </div>
@@ -1210,17 +1213,6 @@ export default function ChatWindow({ theme }) {
           theme={theme}
           onClose={() => setLocationSessionId(null)}
           onConfirm={handleConfirmLocation}
-        />
-      )}
-
-      {/* Memory modal */}
-      {memoryMsg && (
-        <MemoryModal
-          message={memoryMsg}
-          endpoint={workerUrl}
-          onSave={isCodexSession ? saveCodexQuickMemory : undefined}
-          onClose={() => setMemoryMsg(null)}
-          onSuccess={showToast}
         />
       )}
 

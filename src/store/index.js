@@ -453,8 +453,12 @@ export const useStore = create(
       })),
       setIsLoading: (v) => set({ isLoading: v }),
       setStreamingMessageId: (id) => set({ streamingMessageId: id }),
-      setMessages: (messages) => set((state) => ({
-        messages: reduceMessageTimeline(state.messages, { type: 'snapshot', messages, finalizeTransient: true }),
+      setMessages: (messages, options = {}) => set((state) => ({
+        // A reset/rewind is an authoritative branch cut, not a potentially
+        // stale hydration snapshot. Reconcile ordinary loads against live
+        // rows, but intentionally start from an empty timeline for a cut so
+        // newer rows from the abandoned branch cannot be carried forward.
+        messages: reduceMessageTimeline(options.authoritative ? [] : state.messages, { type: 'snapshot', messages, finalizeTransient: true }),
       })),
       mergeMessages: (messages) => set((state) => ({
         messages: reduceMessageTimeline(state.messages, { type: 'merge', messages }),

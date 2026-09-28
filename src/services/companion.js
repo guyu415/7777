@@ -2198,6 +2198,50 @@ export async function resetCcConversation(mode = 'all') {
   })
 }
 
+// Rewinds the resident Claude session to immediately before one real user
+// message. The backend resolves these stable transport ids against both its
+// durable chat history and Claude Code's transcript before it stops/reloads
+// anything; an unmatched/stale id fails closed without deleting bubbles.
+export async function rewindCcConversation(messageIds) {
+  const ids = [...new Set((Array.isArray(messageIds) ? messageIds : [])
+    .filter(id => typeof id === 'string' && id.trim()))]
+  const nonce = globalThis.crypto?.randomUUID?.().replaceAll('-', '')
+    || `${Math.random().toString(36).slice(2)}${Math.random().toString(36).slice(2)}`
+  const requestId = `rewind-${Date.now()}-${nonce}`.slice(0, 120)
+  try {
+    await companionJson('/cc/rewind', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        intent: 'explicit-user-rewind',
+        requestId,
+        messageIds: ids,
+      }),
+    })
+  } catch (error) {
+    // The accepting channel is a child of the Claude process it is about to
+    // stop. A transport-level 502/503/504 (or fetch failure) can mean the
+    // durable request was accepted and the process exited before the response
+    // crossed the network. Explicit application rejections are still final.
+    if (error?.code || (error?.status && ![502, 503, 504].includes(error.status))) throw error
+  }
+
+  const deadline = Date.now() + 120_000
+  let lastTransportError = null
+  while (Date.now() < deadline) {
+    await new Promise(resolve => setTimeout(resolve, 500))
+    try {
+      const result = await companionJson(`/cc/rewind/status?requestId=${encodeURIComponent(requestId)}`)
+      if (result?.ok) return result
+    } catch (error) {
+      if (error?.code?.startsWith('rewind_helper_failed:')) throw error
+      if (error?.status && ![404, 502, 503, 504].includes(error.status)) throw error
+      lastTransportError = error
+    }
+  }
+  throw new Error(lastTransportError?.message || '重说请求已提交，但等待常驻会话恢复超时。')
+}
+
 // ---------- Mystery game (剧本杀) — isolated CC/Codex character turns ----------
 // Every call is scoped by (gameId, charId) — the VPS spins up (and keeps
 // alive for the life of that game) a genuinely separate CC tmux session /

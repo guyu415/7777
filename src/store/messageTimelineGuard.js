@@ -261,7 +261,7 @@ if (!globalThis[INSTALL_KEY]) {
     }
   }
 
-  const guardedSetMessages = (messages) => {
+  const guardedSetMessages = (messages, options = {}) => {
     useStore.setState((state) => {
       const rawIncoming = Array.isArray(messages) ? messages : []
       const activeConversationId = rawIncoming.find(message => message?.conversationId)?.conversationId
@@ -273,7 +273,9 @@ if (!globalThis[INSTALL_KEY]) {
       // filtering it must not mean "clear the whole live timeline". Preserve
       // the current non-deleted rows instead. A genuinely empty setMessages([])
       // still means clear and continues to work as before.
-      const next = rawIncoming.length > 0 && incoming.length === 0
+      const next = options.authoritative === true
+        ? reduceMessageTimeline([], { type: 'snapshot', messages: incoming, finalizeTransient: true })
+        : rawIncoming.length > 0 && incoming.length === 0
         ? current
         : incoming.length === 0
           ? []

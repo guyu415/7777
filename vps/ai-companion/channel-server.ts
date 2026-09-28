@@ -96,6 +96,7 @@ import {
   type VisibleCcMessage,
 } from './cc-tidal-memory.ts'
 import { splitCompletedCodexMessage } from './codex-chat-history.ts'
+import { normalizeRewindMessageIds, planConversationRewind } from './conversation-rewind.ts'
 import { validCoordinates, resolveLocationAddress, resolveLocationAddressViaProxy, fetchLocationMap } from './location.ts'
 import { enqueueGroupRelayTargets, type GroupRoundQueueEntry } from './group-round.ts'
 import {
@@ -490,6 +491,8 @@ const TMUX_SESSION = process.env.AI_COMPANION_TMUX_SESSION ?? 'ai-companion-cc-1
 // CC progressive-blur tidal memory only. None of these values are referenced by
 // ordinary API sessions, Codex, group chat, gomoku, focus, or mystery turns.
 const TIDAL_STATE_FILE = process.env.AI_COMPANION_TIDAL_STATE_FILE ?? join(ROOT, 'state', 'cc-tidal-memory.json')
+const CONVERSATION_REWIND_REQUEST_FILE = process.env.AI_COMPANION_REWIND_REQUEST_FILE ?? join(ROOT, 'state', 'conversation-rewind-request.json')
+const CONVERSATION_REWIND_RESULT_FILE = process.env.AI_COMPANION_REWIND_RESULT_FILE ?? join(ROOT, 'state', 'conversation-rewind-result.json')
 const TIDAL_LUNA_INPUT_FILE = join(ROOT, 'state', 'tidal', 'luna-input.txt')
 const TIDAL_LUNA_OUTPUT_FILE = join(ROOT, 'state', 'tidal', 'luna-output.json')
 const TIDAL_LUNA_RUNNER = join(ROOT, 'scripts', 'tidal-luna-summary.sh')
@@ -4728,6 +4731,7 @@ function broadcastReset(marker: CcResetMarker) {
 // a second /cc/reset call while one is already running joins the same
 // result instead of firing a second /clear or racing the first).
 type CcResetResult = { ok: boolean; error?: string; marker?: CcResetMarker; recoveryStarted?: boolean }
+type CcRewindAccepted = { ok: boolean; error?: string; requestId?: string; alreadyCompleted?: boolean }
 let resetInFlight: Promise<CcResetResult> | null = null
 let resetInFlightMode: CcResetMode | null = null
 
@@ -4791,6 +4795,114 @@ function requestReset(mode: CcResetMode): Promise<CcResetResult> {
     resetInFlightMode = null
   })
   return resetInFlight
+}
+
+function normalizeConversationRewindRequestId(value: unknown): string | null {
+  if (typeof value !== 'string') return null
+  const requestId = value.trim()
+  return /^[a-zA-Z0-9_-]{8,120}$/.test(requestId) ? requestId : null
+}
+
+function readConversationRewindJson(path: string): any {
+  try { return JSON.parse(readFileSync(path, 'utf8')) } catch { return null }
+}
+
+function writeConversationRewindResult(result: Record<string, unknown>) {
+  mkdirSync(dirname(CONVERSATION_REWIND_RESULT_FILE), { recursive: true })
+  const tmp = `${CONVERSATION_REWIND_RESULT_FILE}.tmp.${process.pid}`
+  writeFileSync(tmp, JSON.stringify(result, null, 2) + '\n', { mode: 0o600 })
+  renameSync(tmp, CONVERSATION_REWIND_RESULT_FILE)
+}
+
+// A real user-visible rewind is stronger than deleting bubbles: it trims the
+// resident Claude transcript immediately before the selected user message,
+// then resumes the SAME session id from that exact checkpoint. The channel
+// process is itself a child of Claude and therefore cannot wait across /exit.
+// It durably accepts a caller-supplied request id, schedules the exit only
+// after the HTTP response can flush, and the replacement channel process
+// serves the helper's durable result through /cc/rewind/status.
+function requestConversationRewind(rawMessageIds: unknown, rawRequestId: unknown): CcRewindAccepted {
+  const requestId = normalizeConversationRewindRequestId(rawRequestId)
+  if (!requestId) return { ok: false, error: 'invalid_request_id' }
+
+  const previousResult = readConversationRewindJson(CONVERSATION_REWIND_RESULT_FILE)
+  if (previousResult?.requestId === requestId) {
+    return previousResult.ok === true
+      ? { ok: true, requestId, alreadyCompleted: true }
+      : { ok: false, requestId, error: `rewind_helper_failed:${String(previousResult.error || 'unknown')}` }
+  }
+  const previousRequest = readConversationRewindJson(CONVERSATION_REWIND_REQUEST_FILE)
+  if (previousRequest?.requestId === requestId) return { ok: true, requestId }
+
+  if (resetInFlight) return { ok: false, error: 'maintenance_in_progress' }
+  if (currentTurn) return { ok: false, error: 'turn_in_progress' }
+  if (tidalIsActive()) return { ok: false, error: 'tidal_in_progress' }
+  if (tidalState.queue.length) return { ok: false, error: 'queued_messages_pending' }
+  const messageIds = normalizeRewindMessageIds(rawMessageIds)
+  if (!messageIds.length) return { ok: false, error: 'missing_message_id' }
+
+  const liveSessionId = readBrainSessionId()
+  if (!liveSessionId || liveSessionId !== tidalState.sessionId) {
+    return { ok: false, error: 'session_mismatch' }
+  }
+  try {
+    const transcript = readFileSync(brainTranscriptPath(liveSessionId), 'utf8')
+    const transcriptLines = transcript.split('\n')
+    if (transcriptLines.at(-1) === '') transcriptLines.pop()
+    planConversationRewind({ history, transcriptLines, messageIds })
+  } catch (err) {
+    return { ok: false, error: String(err instanceof Error ? err.message : err) }
+  }
+
+  const requestedAt = Date.now()
+  const request = { version: 1, requestId, sessionId: liveSessionId, messageIds, requestedAt }
+  try { unlinkSync(CONVERSATION_REWIND_RESULT_FILE) } catch {}
+  try {
+    mkdirSync(dirname(CONVERSATION_REWIND_REQUEST_FILE), { recursive: true })
+    const tmp = `${CONVERSATION_REWIND_REQUEST_FILE}.tmp.${process.pid}`
+    writeFileSync(tmp, JSON.stringify(request, null, 2) + '\n', { mode: 0o600 })
+    renameSync(tmp, CONVERSATION_REWIND_REQUEST_FILE)
+  } catch (err) {
+    return { ok: false, error: `request_write_failed:${String(err)}` }
+  }
+
+  let releaseMaintenance: ((result: CcResetResult) => void) | null = null
+  const maintenance = new Promise<CcResetResult>(resolve => { releaseMaintenance = resolve })
+  resetInFlight = maintenance
+  resetInFlightMode = null
+  setTimeout(() => {
+    withTmuxLock(async () => {
+      const sent = await tmuxTypeAndSubmit('/exit')
+      if (sent) {
+        // Normally this process disappears with Claude within a moment. If
+        // /exit was typed but ignored by an unexpected UI state, fail closed
+        // and reopen chat instead of leaving maintenance locked forever.
+        setTimeout(() => {
+          const pending = readConversationRewindJson(CONVERSATION_REWIND_REQUEST_FILE)
+          if (pending?.requestId !== requestId) return
+          try { unlinkSync(CONVERSATION_REWIND_REQUEST_FILE) } catch {}
+          const error = 'tmux_exit_timeout'
+          try { writeConversationRewindResult({ ok: false, requestId, error, completedAt: Date.now() }) } catch {}
+          releaseMaintenance?.({ ok: false, error })
+          if (resetInFlight === maintenance) resetInFlight = null
+        }, 15_000)
+        return
+      }
+      try { unlinkSync(CONVERSATION_REWIND_REQUEST_FILE) } catch {}
+      const error = 'tmux_exit_failed'
+      try { writeConversationRewindResult({ ok: false, requestId, error, completedAt: Date.now() }) } catch {}
+      releaseMaintenance?.({ ok: false, error })
+      if (resetInFlight === maintenance) resetInFlight = null
+    }).catch((err) => {
+      try { unlinkSync(CONVERSATION_REWIND_REQUEST_FILE) } catch {}
+      const error = `tmux_exit_failed:${String(err)}`
+      try { writeConversationRewindResult({ ok: false, requestId, error, completedAt: Date.now() }) } catch {}
+      releaseMaintenance?.({ ok: false, error })
+      if (resetInFlight === maintenance) resetInFlight = null
+    })
+  }, 250)
+  log('conversation_rewind_accepted', { requestId, targetWireId: messageIds[0], messageIdCount: messageIds.length })
+  return { ok: true, requestId }
 }
 
 // ---------- CC progressive-blur tidal memory ----------
@@ -11659,6 +11771,84 @@ Bun.serve<{ authed: true }>({
         boundaryTs: result.marker?.boundaryTs ?? null,
         recoveryStarted: result.recoveryStarted ?? false,
       }, { headers: cors })
+    }
+
+    // ---- CC conversation rewind: selected USER message and everything
+    // after it. Unlike delete_notice this changes Claude's real same-id
+    // transcript, and unlike /clear it restores an exact earlier checkpoint.
+    // The POST is only durable acceptance; the old channel dies with Claude.
+    // The replacement channel serves the helper result here under the same
+    // caller-generated request id, making the operation survive that restart.
+    if (url.pathname === '/cc/rewind/status' && req.method === 'GET') {
+      const gate = authGate()
+      if (gate) return gate
+      const cors = corsHeadersFor(origin)
+      const requestId = normalizeConversationRewindRequestId(url.searchParams.get('requestId'))
+      if (!requestId) return jsonResponse({ error: 'invalid_request_id' }, { status: 400, headers: cors })
+      const result = readConversationRewindJson(CONVERSATION_REWIND_RESULT_FILE)
+      if (result?.requestId !== requestId) {
+        const pending = readConversationRewindJson(CONVERSATION_REWIND_REQUEST_FILE)
+        if (pending?.requestId === requestId) {
+          return jsonResponse({ ok: false, pending: true, requestId }, { status: 202, headers: cors })
+        }
+        return jsonResponse({ error: 'rewind_request_not_found' }, { status: 404, headers: cors })
+      }
+      if (result.ok !== true) {
+        return jsonResponse({ error: `rewind_helper_failed:${String(result.error || 'unknown')}` }, { status: 500, headers: cors })
+      }
+      const liveSessionId = readBrainSessionId()
+      let sessionMode: SessionMode = {}
+      try { sessionMode = JSON.parse(readFileSync(SESSION_MODE_FILE, 'utf8')) as SessionMode } catch {}
+      const marker = result.marker as CcResetMarker | undefined
+      const ready = result.sessionId === liveSessionId
+        && tidalState.sessionId === liveSessionId
+        && sessionMode.sessionId === liveSessionId
+        && Number(sessionMode.ts) >= Number(marker?.resetAt)
+        && sessionMode.announced === true
+      if (!ready) {
+        return jsonResponse({ ok: false, pending: true, requestId }, { status: 202, headers: cors })
+      }
+      log('conversation_rewind_ok', {
+        requestId,
+        targetWireId: result.targetWireId,
+        removedCount: result.removedCount,
+        branchTailUuid: result.branchTailUuid ?? null,
+        ready: true,
+      })
+      return jsonResponse({
+        ok: true,
+        requestId,
+        removedCount: Number(result.removedCount) || 0,
+        targetWireId: typeof result.targetWireId === 'string' ? result.targetWireId : null,
+        resetAt: marker?.resetAt ?? null,
+        boundaryId: marker?.boundaryId ?? null,
+        boundaryTs: marker?.boundaryTs ?? null,
+        ready: true,
+      }, { headers: cors })
+    }
+
+    if (url.pathname === '/cc/rewind' && req.method === 'POST') {
+      const gate = authGate()
+      if (gate) return gate
+      const cors = corsHeadersFor(origin)
+      let body: { intent?: unknown; messageIds?: unknown; requestId?: unknown } = {}
+      try { body = await req.json() } catch {
+        return jsonResponse({ error: 'bad json' }, { status: 400, headers: cors })
+      }
+      if (body.intent !== 'explicit-user-rewind') {
+        return jsonResponse({ error: 'explicit_user_intent_required' }, { status: 400, headers: cors })
+      }
+      const result = requestConversationRewind(body.messageIds, body.requestId)
+      if (!result.ok) {
+        const conflict = ['maintenance_in_progress', 'turn_in_progress', 'tidal_in_progress', 'queued_messages_pending'].includes(result.error || '')
+        const badRequest = ['invalid_request_id', 'missing_message_id'].includes(result.error || '')
+        const notFound = ['user_message_not_found', 'transcript_checkpoint_not_found', 'transcript_parent_not_found', 'transcript_parent_missing'].includes(result.error || '')
+        return jsonResponse({ error: result.error }, { status: badRequest ? 400 : conflict ? 409 : notFound ? 404 : 504, headers: cors })
+      }
+      return jsonResponse({
+        ok: true, accepted: true, requestId: result.requestId,
+        alreadyCompleted: result.alreadyCompleted === true,
+      }, { status: result.alreadyCompleted ? 200 : 202, headers: cors })
     }
 
     // ---- Gomoku (五子棋) ----

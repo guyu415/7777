@@ -1,5 +1,6 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
+import { readFileSync } from 'node:fs'
 import MessageBubble from '../MessageBubble'
 
 describe('MessageBubble reasoning and Claude Code loader integration', () => {
@@ -71,5 +72,25 @@ describe('MessageBubble reasoning and Claude Code loader integration', () => {
     expect(html).toContain('Let the day go gently.')
     expect(html).toContain('轻轻放下今天。')
     expect(html).toContain('已存入纪念日')
+  })
+
+  it('does not add a direct rewind control beside user-message timestamps', () => {
+    const html = renderToStaticMarkup(
+      <MessageBubble
+        message={{ id: 'user-1', conversationId: 'cc', role: 'user', type: 'text', content: 'hello', timestamp: 1_000 }}
+        theme={{}}
+      />,
+    )
+    expect(html).not.toContain('从这条消息开始撤回')
+    expect(html).not.toContain('>撤回<')
+  })
+
+  it('offers resident user messages one resay action and removes the ineffective legacy actions', () => {
+    const source = readFileSync(new URL('../ChatWindow.jsx', import.meta.url), 'utf8')
+    expect(source).toContain('✏️ 重说')
+    expect(source).toContain('保存并重说')
+    expect(source).not.toContain('存入记忆')
+    expect(source).not.toContain('修改文字')
+    expect(source).not.toContain('撤回到这里')
   })
 })

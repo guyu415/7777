@@ -434,6 +434,35 @@ describe('companion connection recovery', () => {
     expect(deleted).toEqual([['reply-1', 'reply-2']])
   })
 
+  it('recovers a rewind result by request id when the accepting channel restarts before replying', async () => {
+    let acceptedRequestId = null
+    let statusCalls = 0
+    const response = (status, body) => ({ ok: status >= 200 && status < 300, status, json: async () => body })
+    const fetchMock = vi.fn(async (url, init) => {
+      if (String(url).endsWith('/cc/rewind')) {
+        acceptedRequestId = JSON.parse(init.body).requestId
+        throw new TypeError('connection closed during restart')
+      }
+      if (String(url).includes('/cc/rewind/status')) {
+        statusCalls++
+        if (statusCalls === 1) return response(202, { ok: false, pending: true, requestId: acceptedRequestId })
+        return response(200, { ok: true, ready: true, requestId: acceptedRequestId, removedCount: 4 })
+      }
+      throw new Error(`unexpected fetch ${url}`)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const companion = await import('../companion.js')
+
+    const rewind = companion.rewindCcConversation(['user-wire'])
+    await flush()
+    await vi.advanceTimersByTimeAsync(500)
+    await vi.advanceTimersByTimeAsync(500)
+
+    await expect(rewind).resolves.toMatchObject({ ok: true, ready: true, removedCount: 4 })
+    expect(acceptedRequestId).toMatch(/^rewind-/)
+    expect(fetchMock.mock.calls[1][0]).toContain(encodeURIComponent(acceptedRequestId))
+  })
+
   it('delivers reconnect history as one snapshot instead of replaying live messages', async () => {
     const companion = await import('../companion.js')
     const snapshots = []

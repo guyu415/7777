@@ -25,6 +25,8 @@ if [ -z "$session_id" ]; then
 fi
 
 attempt=0
+suppress_next_announcement=false
+rewind_same_id_guard=false
 while true; do
   attempt=$((attempt + 1))
 
@@ -57,8 +59,9 @@ while true; do
   # session just came up. `announced:false` is the flag it flips once it has;
   # written before the spawn so it is always in place by the time the MCP
   # server starts as this process's child.
-  printf '{"mode":"%s","sessionId":"%s","transcriptBytes":%s,"attempt":%s,"ts":%s,"announced":false}\n' \
-    "$mode" "$session_id" "$bytes" "$attempt" "$(date +%s000)" > "$SESSION_MODE_FILE"
+  printf '{"mode":"%s","sessionId":"%s","transcriptBytes":%s,"attempt":%s,"ts":%s,"announced":%s}\n' \
+    "$mode" "$session_id" "$bytes" "$attempt" "$(date +%s000)" "$suppress_next_announcement" > "$SESSION_MODE_FILE"
+  suppress_next_announcement=false
 
   echo "[$(date -Iseconds)] starting claude (attempt ${attempt}, mode=${mode}, session=${session_id}, transcript=${bytes}B)" >> "$BRAIN_LOG"
 
@@ -83,16 +86,45 @@ while true; do
   elapsed=$(( $(date +%s) - started ))
   echo "[$(date -Iseconds)] claude exited with code ${code} after ${elapsed}s (mode=${mode})" >> "$BRAIN_LOG"
 
+  # A user-triggered conversation rewind is applied only while Claude is
+  # fully stopped, never while it can still append to the transcript. The
+  # channel writes the request and submits /exit; this loop owns the narrow
+  # stopped window, applies the atomic/backup-first rewrite, then resumes the
+  # exact same session id. Whether the helper succeeds or rolls back, suppress
+  # the ordinary "session restarted" announcement: the frontend reports the
+  # rewind result itself and no surprise chat bubble should be created.
+  rewind_requested=false
+  rewind_request_file="${PROJECT_DIR}/state/conversation-rewind-request.json"
+  if [ -s "$rewind_request_file" ]; then
+    rewind_requested=true
+    if bun "${SCRIPT_DIR}/apply-conversation-rewind.ts" >> "$BRAIN_LOG" 2>&1; then
+      echo "[$(date -Iseconds)] conversation rewind applied for session ${session_id}" >> "$BRAIN_LOG"
+    else
+      echo "[$(date -Iseconds)] conversation rewind failed and was rolled back for session ${session_id}" >> "$BRAIN_LOG"
+    fi
+    suppress_next_announcement=true
+    # A rewind is allowed to change the active branch, never the resident
+    # session identity. Keep this guard armed across repeated short resume
+    # failures; only a later process that demonstrably stayed alive clears it.
+    rewind_same_id_guard=true
+  fi
+
   # Resume that dies almost immediately means the transcript is unusable
   # (corrupt, truncated, too large to load). Retrying it forever would be a
   # crash loop with no companion at all, so rotate to a new id — losing the
   # context is bad, being permanently down is worse.
-  if [ "$mode" = "resumed" ] && [ "$code" -ne 0 ] && [ "$elapsed" -lt 20 ]; then
-    old="$session_id"
-    session_id="$(newuuid)"
-    printf '%s\n' "$session_id" > "$BRAIN_SESSION_ID_FILE"
-    echo "[$(date -Iseconds)] resume of ${old} died in ${elapsed}s (code ${code}); rotated to ${session_id}" >> "$BRAIN_LOG"
+  if [ "$rewind_requested" != true ] && [ "$mode" = "resumed" ] && [ "$code" -ne 0 ] && [ "$elapsed" -lt 20 ]; then
+    if [ "$rewind_same_id_guard" = true ]; then
+      echo "[$(date -Iseconds)] post-rewind resume died in ${elapsed}s (code ${code}); preserving same session ${session_id}" >> "$BRAIN_LOG"
+    else
+      old="$session_id"
+      session_id="$(newuuid)"
+      printf '%s\n' "$session_id" > "$BRAIN_SESSION_ID_FILE"
+      echo "[$(date -Iseconds)] resume of ${old} died in ${elapsed}s (code ${code}); rotated to ${session_id}" >> "$BRAIN_LOG"
+    fi
+  elif [ "$mode" = "resumed" ] && [ "$elapsed" -ge 20 ]; then
+    rewind_same_id_guard=false
   fi
 
-  sleep 5
+  if [ "$rewind_requested" = true ]; then sleep 1; else sleep 5; fi
 done

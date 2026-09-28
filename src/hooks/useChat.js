@@ -2,7 +2,7 @@ import { useCallback, useRef, useState } from 'react'
 import { useShallow } from 'zustand/react/shallow'
 import { useStore, saveMessage, saveBlob, getMessages, deleteMessageFromDB } from '../store'
 import { streamChat, generateSummary } from '../services/claude'
-import { streamChatViaCompanion, sendDeleteNotice, uploadImageToCompanion, deleteUploadedImage, deleteUploadedFile } from '../services/companion'
+import { streamChatViaCompanion, sendDeleteNotice, rewindCcConversation, uploadImageToCompanion, deleteUploadedImage, deleteUploadedFile } from '../services/companion'
 import { listMemories, formatMemories } from '../services/memory'
 import { executeAcCommand } from '../services/ac'
 import { voiceEmotionContext } from '../services/localSenseVoice'
@@ -1607,6 +1607,24 @@ export function useChat() {
     scheduleMsgSync(CONVERSATION_ID)
   }, [deleteMessage, scheduleMsgSync, CONVERSATION_ID, effectiveProviderName])
 
+  const rewindConversation = useCallback(async (id) => {
+    if (isLoading) throw new Error('当前回复尚未结束，请稍后再撤回。')
+    if (effectiveProviderName !== 'claude-code-vps') throw new Error('当前会话不支持真实撤回。')
+    const liveMessages = useStore.getState().messages
+    const index = liveMessages.findIndex(message => message.id === id)
+    const target = liveMessages[index]
+    if (index < 0 || target?.role !== 'user') throw new Error('只能从自己发送的消息开始撤回。')
+    const messageIds = messageDeleteTransportKeys(target)
+    if (!messageIds.length) throw new Error('这条消息缺少服务器标识，无法安全撤回。')
+
+    const result = await rewindCcConversation(messageIds)
+    const removed = liveMessages.slice(index)
+    for (const message of removed) await deleteMessageFromDB(message.id)
+    useStore.getState().setMessages(liveMessages.slice(0, index), { authoritative: true })
+    scheduleMsgSync(CONVERSATION_ID)
+    return result
+  }, [CONVERSATION_ID, effectiveProviderName, isLoading, scheduleMsgSync])
+
   // In-place content edit (text messages). Overwrites content in store + IDB + KV.
   // Next-turn context reads from store messages, so it auto-reflects the edit.
   const editMessage = useCallback(async (id, newContent) => {
@@ -1622,5 +1640,5 @@ export function useChat() {
     scheduleMsgSync(CONVERSATION_ID)
   }, [updateMessage, scheduleMsgSync, CONVERSATION_ID])
 
-  return { messages, sendMessage, sendMessageBatch, sendImageMessageBatch, appendLocalMessage, loadHistory, isLoading, companionProgress, regenerate, regenerateRound, retryFailed, deleteMsg, editMessage, stopStreaming }
+  return { messages, sendMessage, sendMessageBatch, sendImageMessageBatch, appendLocalMessage, loadHistory, isLoading, companionProgress, regenerate, regenerateRound, retryFailed, deleteMsg, rewindConversation, editMessage, stopStreaming }
 }

@@ -1,6 +1,6 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useState, useRef } from 'react'
 import { useShallow } from 'zustand/react/shallow'
-import { useStore, getCustomFont, getBlob, getMessages, saveMessage, deleteMessageFromDB, deleteMessagesForSession } from './store'
+import { useStore, getCustomFont, getBlob, getMessages, saveMessage, deleteMessageFromDB } from './store'
 import { THEMES } from './themes'
 import ChatWindow from './components/Chat/ChatWindow'
 import GroupChatWindow from './components/GroupChat/GroupChatWindow'
@@ -650,15 +650,22 @@ export default function App() {
   // then discovers it happened (resetAt comparison — see onCcReset in
   // companion.js). Only ever touches the single VPS-bound session.
   useEffect(() => {
-    const unsub = onCcReset(async ({ mode = 'all', boundaryTs = null } = {}) => {
+    const unsub = onCcReset(async ({ mode = 'all', boundaryTs = null, resetAt = null } = {}) => {
       const vpsSession = useStore.getState().sessions?.find(s => s.providerName === 'claude-code-vps')
       if (!vpsSession) return
       const password = localStorage.getItem('auth.password')
 
       if (mode === 'after_summary' && Number.isFinite(boundaryTs)) {
         const all = (await getMessages(vpsSession.id)).sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0))
-        const kept = all.filter(msg => Number(msg.timestamp) <= boundaryTs)
-        const removed = all.filter(msg => Number(msg.timestamp) > boundaryTs)
+        // A rewind's HTTP response and its WebSocket reset marker travel on
+        // independent connections. If the edited replacement message lands
+        // while this async IndexedDB cleanup is still running, keep that new
+        // branch (timestamped after resetAt) while deleting only the abandoned
+        // pre-reset tail.
+        const isNewBranch = msg => resetAt != null && Number.isFinite(Number(resetAt))
+          && Number(msg.timestamp) >= Number(resetAt)
+        const kept = all.filter(msg => Number(msg.timestamp) <= boundaryTs || isNewBranch(msg))
+        const removed = all.filter(msg => Number(msg.timestamp) > boundaryTs && !isNewBranch(msg))
         for (const msg of removed) await deleteMessageFromDB(msg.id)
 
         if (password) {
@@ -684,12 +691,19 @@ export default function App() {
           lastMsgTime: last?.timestamp ?? null,
         })
         if (useStore.getState().currentSessionId === vpsSession.id) {
-          useStore.getState().setMessages(kept)
+          useStore.getState().setMessages(kept, { authoritative: true })
         }
         return
       }
 
-      await deleteMessagesForSession(vpsSession.id)
+      const all = (await getMessages(vpsSession.id)).sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0))
+      const newBranch = resetAt != null && Number.isFinite(Number(resetAt))
+        ? all.filter(msg => Number(msg.timestamp) >= Number(resetAt))
+        : []
+      const newBranchIds = new Set(newBranch.map(msg => msg.id))
+      for (const msg of all) {
+        if (!newBranchIds.has(msg.id)) await deleteMessageFromDB(msg.id)
+      }
       // The cloud KV copy must go too — useChat's scheduleMsgSync uploads
       // this session's messages after every turn, and loadHistory re-pulls
       // the cloud copy (and re-saves it into IndexedDB) whenever local
@@ -698,14 +712,19 @@ export default function App() {
       // loadHistory resurrected the entire conversation.
       if (password) {
         try {
-          await deleteSessionMsgs(password, vpsSession.id)
+          if (newBranch.length) await saveSessionMsgs(password, vpsSession.id, newBranch)
+          else await deleteSessionMsgs(password, vpsSession.id)
         } catch (e) {
           console.warn('[CC-RESET] 云端消息副本删除失败（下次 loadHistory 可能拉回旧记录）:', e.message)
         }
       }
-      useStore.getState().updateSession(vpsSession.id, { lastMsgPreview: '', lastMsgTime: null })
+      const latest = newBranch.at(-1)
+      useStore.getState().updateSession(vpsSession.id, {
+        lastMsgPreview: latest?.type === 'text' ? (latest.content || '').slice(0, 40) : '',
+        lastMsgTime: latest?.timestamp ?? null,
+      })
       if (useStore.getState().currentSessionId === vpsSession.id) {
-        useStore.getState().setMessages([])
+        useStore.getState().setMessages(newBranch, { authoritative: true })
       }
     })
     return unsub
