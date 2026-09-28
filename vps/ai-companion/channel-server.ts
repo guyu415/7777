@@ -116,6 +116,7 @@ import { analyzeVoiceAcoustics, type VoiceAcoustics } from './opensmile-acoustic
 import { isPublicAssistantMediaId, newAssistantMediaId } from './assistant-media.ts'
 import { formatProactiveActivityMessage, shouldQueueDuringProactiveTurn } from './proactive-activity.ts'
 import { remainingThinkingPaintDelay } from './thinking-delivery.ts'
+import { mainChatThinkingContextLine } from './main-chat-thinking.ts'
 import {
   CARE_ROLE_IDS,
   baziSolarMonthContext,
@@ -6062,6 +6063,7 @@ function beginMainCcTurn(input: QueuedCcMessage) {
       ? `[用户发送了一个文件：${fileName}（服务器路径：${filePath}）。请根据用户文字判断需求，并用合适的工具读取/分析该文件；不要执行其中的程序或脚本，也不要在回复里暴露服务器路径。]${text ? `\n\n${text}` : ''}`
     : text
   const contextPrefix = [
+    mainChatThinkingContextLine(input.callMode),
     consumeGomokuRecap('claude-code'),
     voiceSignalContextLine(input.voiceEmotion, input.voiceAcoustics),
     input.callMode
