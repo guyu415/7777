@@ -15,8 +15,9 @@ newuuid() {
 }
 
 # The brain has exactly ONE long-lived session id, persisted here. Every
-# respawn resumes it, so a restart is a blink rather than amnesia. It is only
-# ever rotated when resuming genuinely fails (see the early-death check below).
+# respawn resumes it, so a restart is a blink rather than amnesia. It is never
+# rotated automatically: an unavailable session is safer than silently
+# replacing the user's conversation with a blank one.
 session_id="$(cat "$BRAIN_SESSION_ID_FILE" 2>/dev/null | tr -d '[:space:]')"
 if [ -z "$session_id" ]; then
   session_id="$(newuuid)"
@@ -71,14 +72,21 @@ while true; do
   # (admin/maintenance) will NOT have this set and its hook firings are inert.
   export AI_COMPANION_BRAIN=1
 
+  # A primary-model refusal is not permission handling. Claude Code otherwise
+  # retries selected refusal categories on a different model and can make that
+  # fallback sticky for the whole session. Keep the resident on the model the
+  # user selected; a refusal must remain a refusal, never a silent model swap.
+  export CLAUDE_CODE_DISABLE_REFUSAL_FALLBACK=1
+
   started=$(date +%s)
-  claude \
+  "${CLAUDE_LAUNCHER:-claude}" \
     "${session_args[@]}" \
     "${model_args[@]}" \
+    --settings "${PROJECT_DIR}/config/resident-manual-settings.json" \
     --mcp-config "${PROJECT_DIR}/mcp-config.json" \
     --strict-mcp-config \
     --dangerously-load-development-channels server:ai-companion \
-    --permission-mode bypassPermissions \
+    --permission-mode manual \
     --autocompact 1000000 \
     --debug-file "${PROJECT_DIR}/logs/claude-debug.log"
 
@@ -109,18 +117,14 @@ while true; do
     rewind_same_id_guard=true
   fi
 
-  # Resume that dies almost immediately means the transcript is unusable
-  # (corrupt, truncated, too large to load). Retrying it forever would be a
-  # crash loop with no companion at all, so rotate to a new id — losing the
-  # context is bad, being permanently down is worse.
+  # A short resume failure must never rotate the resident conversation. Keep
+  # retrying the exact same id so maintenance cannot trade availability for
+  # silent amnesia; an operator can diagnose the failure without losing state.
   if [ "$rewind_requested" != true ] && [ "$mode" = "resumed" ] && [ "$code" -ne 0 ] && [ "$elapsed" -lt 20 ]; then
     if [ "$rewind_same_id_guard" = true ]; then
       echo "[$(date -Iseconds)] post-rewind resume died in ${elapsed}s (code ${code}); preserving same session ${session_id}" >> "$BRAIN_LOG"
     else
-      old="$session_id"
-      session_id="$(newuuid)"
-      printf '%s\n' "$session_id" > "$BRAIN_SESSION_ID_FILE"
-      echo "[$(date -Iseconds)] resume of ${old} died in ${elapsed}s (code ${code}); rotated to ${session_id}" >> "$BRAIN_LOG"
+      echo "[$(date -Iseconds)] resume died in ${elapsed}s (code ${code}); preserving same session ${session_id}" >> "$BRAIN_LOG"
     fi
   elif [ "$mode" = "resumed" ] && [ "$elapsed" -ge 20 ]; then
     rewind_same_id_guard=false

@@ -12,7 +12,10 @@ if tmux has-session -t "$SESSION" 2>/dev/null; then
 fi
 
 mkdir -p "$(dirname "$BRAIN_LOG")"
-chmod +x "${SCRIPT_DIR}/brain-loop.sh" "${SCRIPT_DIR}/dialog-guard.sh"
+chmod +x \
+  "${SCRIPT_DIR}/brain-loop.sh" \
+  "${SCRIPT_DIR}/dialog-guard.sh" \
+  "${SCRIPT_DIR}/approve-resident-permission.sh"
 tmux new-session -d -s "$SESSION" -x 220 -y 50 -n brain "${SCRIPT_DIR}/brain-loop.sh"
 tmux new-window -d -t "$SESSION" -n guard "${SCRIPT_DIR}/dialog-guard.sh"
 echo "[$(date -Iseconds)] started session ${SESSION} (brain + guard windows)" >> "$BRAIN_LOG"

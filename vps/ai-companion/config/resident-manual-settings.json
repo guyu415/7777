@@ -1,0 +1,17 @@
+{
+  "switchModelsOnFlag": false,
+  "hooks": {
+    "PermissionRequest": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/opt/ai-companion/scripts/approve-resident-permission.sh",
+            "timeout": 5
+          }
+        ]
+      }
+    ]
+  }
+}
