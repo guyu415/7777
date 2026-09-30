@@ -17,7 +17,7 @@ register(`data:text/javascript,${encodeURIComponent(`
 Object.defineProperty(globalThis, "Cloudflare", {
   value: { compatibilityFlags: { global_fetch_strictly_public: true } }, configurable: true,
 });
-const { OAuthProvider, AuthorizationError } = await import("@cloudflare/workers-oauth-provider");
+const { OAuthProvider, AuthorizationError, CimdFetchError } = await import("@cloudflare/workers-oauth-provider");
 const { completeMcpAuthorization, authorizationFailure } = await import("../src/oauth-authorization.ts");
 const origin = "https://mcp.xiaoman.xyz";
 const clientId = "https://chatgpt.com/oauth/client.json";
@@ -180,4 +180,16 @@ test("authorization failures become controlled responses without leaking credent
   const body = await limit.text();
   assert.match(body, /authorization_storage_limit/);
   assert.doesNotMatch(body, /secret-test-code/);
+  assert.equal(limit.headers.get("Content-Type"), "application/json; charset=utf-8");
+  const metadata = authorizationFailure(new CimdFetchError(
+    "https://chatgpt.com/oauth/test-callback/client.json",
+    new Error("Failed to fetch client metadata: HTTP 404")
+  ));
+  const diagnostic = await metadata.json() as any;
+  assert.equal(diagnostic.metadata_http_status, 404);
+  assert.equal(diagnostic.metadata_url, "https://chatgpt.com/oauth/test-callback/client.json");
+  const sensitive = authorizationFailure(new CimdFetchError(
+    "https://other.example/client.json?token=secret-test-code", new Error("fetch failed secret-test-code")
+  ));
+  assert.doesNotMatch(await sensitive.text(), /secret-test-code|other\.example/);
 });
