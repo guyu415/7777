@@ -17,7 +17,8 @@ register(`data:text/javascript,${encodeURIComponent(`
 Object.defineProperty(globalThis, "Cloudflare", {
   value: { compatibilityFlags: { global_fetch_strictly_public: true } }, configurable: true,
 });
-const { OAuthProvider } = await import("@cloudflare/workers-oauth-provider");
+const { OAuthProvider, AuthorizationError } = await import("@cloudflare/workers-oauth-provider");
+const { completeMcpAuthorization, authorizationFailure } = await import("../src/oauth-authorization.ts");
 const origin = "https://mcp.xiaoman.xyz";
 const clientId = "https://chatgpt.com/oauth/client.json";
 const redirectUri = "https://chatgpt.com/connector_platform_oauth_redirect";
@@ -25,6 +26,7 @@ const verifier = "test-pkce-verifier-that-is-at-least-forty-three-characters";
 
 class MemoryKV {
   values = new Map<string, string>();
+  listCalls = 0;
   async get(key: string, options?: { type?: string } | string) {
     const value = this.values.get(key);
     if (value === undefined) return null;
@@ -34,13 +36,14 @@ class MemoryKV {
   async put(key: string, value: string) { this.values.set(key, value); }
   async delete(key: string) { this.values.delete(key); }
   async list(options: { prefix?: string } = {}) {
+    this.listCalls++;
     return { keys: [...this.values.keys()].filter(name => name.startsWith(options.prefix ?? ""))
       .map(name => ({ name })), list_complete: true, cursor: "" };
   }
 }
 
-function harness() {
-  const env: any = { OAUTH_KV: new MemoryKV() };
+function harness(kv = new MemoryKV()) {
+  const env: any = { OAUTH_KV: kv };
   const ctx: any = { props: {}, waitUntil() {} };
   const provider = new OAuthProvider({
     apiHandlers: Object.fromEntries(["/mcp", "/sse"].map(path => [path, {
@@ -49,13 +52,7 @@ function harness() {
     defaultHandler: {
       async fetch(request: Request, workerEnv: any) {
         const authRequest = await workerEnv.OAUTH_PROVIDER.parseAuthRequest(request);
-        const result = await workerEnv.OAUTH_PROVIDER.completeAuthorization({
-          request: authRequest,
-          userId: "test-user",
-          metadata: { test: true },
-          scope: authRequest.scope,
-          props: { userId: "test-user" },
-        });
+        const result = await completeMcpAuthorization(workerEnv.OAUTH_PROVIDER, authRequest);
         return Response.redirect(result.redirectTo, 302);
       },
     },
@@ -112,7 +109,9 @@ test("ChatGPT CIMD negotiates none, exchanges PKCE codes and refreshes tokens", 
   for (const path of ["/mcp", "/sse"]) {
     const result = await request(path, { headers: { Authorization: `Bearer ${tokens.access_token}` } });
     assert.equal(result.status, 200);
-    assert.deepEqual(await result.json(), { userId: "test-user" });
+    const props = await result.json() as any;
+    assert.equal(props.userId, "local-user");
+    assert.ok(props.approvedAt);
   }
   const refresh = await request("/token", tokenRequest({ grant_type: "refresh_token",
     client_id: clientId, refresh_token: tokens.refresh_token, resource: origin }));
@@ -145,4 +144,40 @@ test("DCR remains usable and an incorrect PKCE verifier is rejected", async () =
   const unauthenticated = await request("/mcp");
   assert.equal(unauthenticated.status, 401);
   assert.match(unauthenticated.headers.get("WWW-Authenticate")!, /resource_metadata=/);
+});
+
+test("approval preserves existing connections without scanning legacy KV grants", async t => {
+  const kv = new MemoryKV();
+  for (let i = 0; i < 100; i++) {
+    const id = String(i).padStart(16, "0");
+    kv.values.set(`grant:local-user:${id}`, JSON.stringify({ id, userId: "local-user",
+      clientId: `existing-client-${i}`, resource: origin, scope: ["mcp"] }));
+  }
+  const existing = new Map(kv.values);
+  // A legacy scan would exceed the free Worker's 50 KV-operation budget.
+  let reads = 0;
+  const get = kv.get.bind(kv);
+  t.mock.method(kv, "get", async (...args: Parameters<MemoryKV["get"]>) => {
+    if (++reads > 50) throw new Error("Too many API requests by single worker invocation");
+    return get(...args);
+  });
+  const { request } = harness(kv);
+  const registration = await request("/register", { method: "POST",
+    headers: { "Content-Type": "application/json" }, body: JSON.stringify({ client_name: "Another client",
+      redirect_uris: ["http://localhost:8787/callback"], token_endpoint_auth_method: "none" }) });
+  const client = await registration.json() as any;
+  await authorize(request, client.client_id, "http://localhost:8787/callback");
+  assert.equal(kv.listCalls, 0);
+  for (const [key, value] of existing) assert.equal(kv.values.get(key), value);
+});
+
+test("authorization failures become controlled responses without leaking credentials", async () => {
+  const invalid = authorizationFailure(new AuthorizationError("invalid_request", { description: "Invalid client_id" }));
+  assert.equal(invalid.status, 400);
+  assert.equal(invalid.headers.has("Location"), false);
+  const limit = authorizationFailure(new Error("Too many API requests by single worker invocation secret-test-code"));
+  assert.equal(limit.status, 503);
+  const body = await limit.text();
+  assert.match(body, /authorization_storage_limit/);
+  assert.doesNotMatch(body, /secret-test-code/);
 });

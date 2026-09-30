@@ -4,6 +4,7 @@ import { DeviceStateStore, reverseGeocodeWithAmap } from "./device-state";
 import { HeartStateStore } from "./heart-state";
 import { handleNeteaseRecentProbe } from "./netease";
 import { extractLatestHistory, handleBilibiliRecentProbe } from "./bilibili";
+import { authorizationFailure, completeMcpAuthorization } from "./oauth-authorization";
 
 // Re-export the Durable Object class so Cloudflare can find it
 export { AcMcpAgent, DeviceStateStore, HeartStateStore };
@@ -302,6 +303,14 @@ function escHtml(s: string): string {
 }
 
 async function handleAuthorize(request: Request, env: Env): Promise<Response> {
+  try {
+    return await renderAuthorize(request, env);
+  } catch (error) {
+    return authorizationFailure(error);
+  }
+}
+
+async function renderAuthorize(request: Request, env: Env): Promise<Response> {
   const oauthReq = await env.OAUTH_PROVIDER.parseAuthRequest(request);
   const clientInfo = await env.OAUTH_PROVIDER.lookupClient(oauthReq.clientId);
   const clientName = clientInfo?.clientName ?? oauthReq.clientId;
@@ -309,14 +318,7 @@ async function handleAuthorize(request: Request, env: Env): Promise<Response> {
   if (request.method === "POST") {
     const form = await request.formData();
     if (form.get("action") === "approve") {
-      const now = new Date().toISOString();
-      const { redirectTo } = await env.OAUTH_PROVIDER.completeAuthorization({
-        request: oauthReq,
-        userId: "local-user",
-        metadata: { approvedAt: now },
-        scope: oauthReq.scope,
-        props: { userId: "local-user", approvedAt: now },
-      });
+      const { redirectTo } = await completeMcpAuthorization(env.OAUTH_PROVIDER, oauthReq);
       return Response.redirect(redirectTo, 302);
     }
     return new Response("授权已拒绝", { status: 400 });
