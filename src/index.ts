@@ -492,13 +492,14 @@ export default new OAuthProvider({
   clientRegistrationEndpoint: "https://mcp.xiaoman.xyz/register",
   scopesSupported: ["mcp"],
   accessTokenTTL: 86400, // 24 h
-  // Tokens carry an origin-only resource; accept them for /sse and /mcp paths.
-  resourceMatchOriginOnly: true,
   // CIMD (URL-shaped client_ids) preferred by ChatGPT; DCR stays as fallback.
   // Requires the global_fetch_strictly_public compatibility flag.
   clientIdMetadataDocumentEnabled: true,
   // RFC 9728 — served at /.well-known/oauth-protected-resource
   resourceMetadata: {
+    // The canonical origin covers both /sse and /mcp. OAuth provider 1.x
+    // validates token audiences against this resource without the removed
+    // resourceMatchOriginOnly option, including existing origin-bound grants.
     resource: "https://mcp.xiaoman.xyz",
     authorization_servers: ["https://mcp.xiaoman.xyz"],
     scopes_supported: ["mcp"],
