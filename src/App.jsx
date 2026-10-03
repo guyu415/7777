@@ -25,6 +25,7 @@ import { messageDeleteTransportKeys, messageServerIdentityKeys } from './utils/m
 import { themeWithUserBubbleText } from './utils/bubbleColors'
 import { PUSH_NAVIGATION_EVENT, isPushNavigationUrl } from './utils/notificationNavigation'
 
+const MemePocket = lazy(() => import('./components/MemePocket'))
 const XinchaoDashboard = lazy(() => import('./components/XinchaoDashboard'))
 
 const FONT_MAP = {
@@ -148,6 +149,9 @@ export default function App() {
 
   // ── Auth ───────────────────────────────────────────────────────
   const [loggedIn, setLoggedIn] = useState(() => !!localStorage.getItem('auth.password'))
+  useEffect(() => {
+    if (loggedIn && new URLSearchParams(window.location.search).get('view') === 'memes') setCurrentView('memePocket')
+  }, [loggedIn, setCurrentView])
   const [syncError, setSyncError] = useState(null)
   const [migrationStatus, setMigrationStatus] = useState(null)
   const syncReady = useRef(false)
@@ -840,6 +844,11 @@ export default function App() {
               onOpenAnniversary={() => setCurrentView('anniversary')}
               onOpenXinchao={() => setCurrentView('xinchao')}
             />
+          )}
+          {currentView === 'memePocket' && (
+            <Suspense fallback={<div className="h-full grid place-items-center">正在打开表情包口袋…</div>}>
+              <MemePocket onBack={() => { const url = new URL(window.location.href); url.searchParams.delete('view'); window.history.replaceState(null, '', url); setCurrentView('globalSettings') }} />
+            </Suspense>
           )}
           {currentView === 'globalSettings' && <GlobalSettings theme={theme} onLogout={handleLogout} onForceSync={handleForceSync} />}
           {currentView === 'sessionSettings' && <SessionSettings theme={theme} />}

@@ -692,6 +692,10 @@ export default function GlobalSettings({ theme, onLogout, onForceSync }) {
               </div>
             </GlassCard>
 
+            <GlassCard icon="😼" title="表情包口袋">
+              <button className="w-full py-3 rounded-full text-sm font-medium" style={{ background: 'rgba(255,255,255,.65)', color: '#b43f78' }} onClick={() => useStore.getState().setCurrentView('memePocket')}>收藏图片、GIF 和标签</button>
+            </GlassCard>
+
             {/* 数据同步 */}
             <GlassCard icon="🔄" title="数据同步">
               <p className="text-xs mb-3" style={{ color: '#7a9cc0' }}>
