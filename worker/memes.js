@@ -63,6 +63,13 @@ export async function handleMemeRequest(request, env) {
     const isBridge = path.startsWith('/memes/bridge/')
     const owner = isBridge ? await bridgeOwner(request, env) : await userOwner(request, env)
     if (!owner) return json({ error: '请先登录小手机，或重新连接表情包库。' }, 401, cors)
+    if (path === '/memes/bridge/catalog' && request.method === 'GET') {
+      const cursor = url.searchParams.get('cursor') || ''
+      if (cursor.length > 2048) return json({ error: '目录分页参数不正确。' }, 400)
+      const page = await env.CHAT_KV.list({ prefix: `memes:${owner}:meta:`, limit: 100, ...(cursor ? { cursor } : {}) })
+      const memes = (await Promise.all(page.keys.map(k => env.CHAT_KV.get(k.name, 'json')))).filter(Boolean)
+      return json({ memes, nextCursor: page.list_complete ? null : page.cursor })
+    }
     if ((path === '/memes/api' || path === '/memes/bridge/search') && request.method === 'GET') {
       return json({ memes: await list(env, owner, (url.searchParams.get('q') || '').slice(0,200), isBridge ? 12 : 100) }, 200, cors)
     }
