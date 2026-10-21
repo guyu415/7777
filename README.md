@@ -81,3 +81,9 @@ Focused issues and pull requests are welcome. Please:
 5. avoid committing credentials, personal data, generated transcripts, or runtime state.
 
 This project is evolving quickly. Architecture and interfaces may change while the companion runtime is being hardened for broader use.
+
+## Project policies
+
+- Contributions: [CONTRIBUTING.md](CONTRIBUTING.md)
+- Vulnerability reporting: [SECURITY.md](SECURITY.md)
+- License: [MIT](LICENSE)
