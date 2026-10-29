@@ -33,7 +33,7 @@ jobs:
         run: |
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add -- yuangu/dist/assets yuangu/dist/audio yuangu/dist/icons yuangu/ASSETS_PENDING.md
+          git add -f -- yuangu/dist/assets yuangu/dist/audio yuangu/dist/icons yuangu/ASSETS_PENDING.md
           if git diff --cached --quiet; then
             echo 'All original assets are already committed.'
           else

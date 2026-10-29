@@ -8,3 +8,7 @@ node_modules/
 *.zip
 *.tar
 .DS_Store
+
+# This game serves committed static files; override the parent app's dist rule.
+!dist/
+!dist/**
