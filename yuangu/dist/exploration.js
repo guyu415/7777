@@ -48,16 +48,18 @@ export const explorationMap = areas.map(a => ({ scene: a.id,title: a.name,note: 
 }));
 export const explorationNodes = {
   sahaiStart: { scene: 'battlefield',actor: null,speaker: 'narrator',
-    text: '容衡的身影已没入远处的热浪。你摸了摸安静下来的金铃，展开心中记下的路线。打开右上角「地图」，便能选一处地点前往；也可以留下调查遗址。',next: 'arrive_battlefield' },
+    text: '容衡的身影已经没进远处的热浪里。你摸了摸安静下来的金铃——总算只剩你一个了。打开右上角「地图」，挑一处地方去；也可以先留下，把遗址看仔细。',next: 'arrive_battlefield' },
   sahaiConverge: { scene: 'buriedInn',actor: 'wu',speaker: 'narrator',
-    text: '风沙稍歇，容衡还未从沙幕中现身。驿站里，一个少年正拽着马缰拍去脸上的沙，红发带歪在额边。他听见动静，立刻站直了，仿佛方才钻门洞时并没有踉跄。你看得有趣，忍不住笑了一下。',next: 'sahaiAsk' },
-  sahaiAsk: { scene: 'buriedInn',actor: 'wu',speaker: 'yuan',text: '我是来应愿的神明。你要不要许个愿？',choices: [
-    { label: '收住笑，等他开口',detail: '继续主线 · 不消耗行动',target: 'sahaiLily',effects: { flags: ['approach-listen'],hidden: { rushi: 1 } } },
+    text: '风沙刚歇，容衡还没从沙幕里现身。门洞深处先传来一声马的响鼻。一个少年一手拽着缰绳，一手胡乱拍着脸上的沙，越拍越花；红发带斜挂在额角，耳侧的红坠里也灌满了沙。听见你的脚步，他立刻挺直了背，把缰绳在掌心绕了两圈，好像方才钻门洞时那一下踉跄根本没发生过。你没忍住，笑了一下。',next: 'sahaiAsk' },
+  sahaiAsk: { scene: 'buriedInn',actor: 'wu',speaker: 'yuan',text: '你脸上的沙还没拍干净呢。……我是来应愿的神明。你要不要许个愿？',choices: [
+    { label: '收住笑，等他开口',detail: '继续主线 · 不消耗行动',target: 'sahaiDoubt',effects: { flags: ['approach-listen'],hidden: { rushi: 1 } } },
     { label: '忍不住又瞧了一眼他的发带',detail: '短暂停留 · 不消耗行动',target: 'sahaiRibbon',effects: { flags: ['approach-ribbon'],hidden: { yuejie: 1 } } },
   ] },
-  sahaiRibbon: { scene: 'buriedInn',actor: 'wu',speaker: 'narrator',text: '他顺着你的目光摸到额边，胡乱把发带扯正。“看什么。”耳侧的红坠还挂着沙。你抿住嘴，等他继续说。',next: 'sahaiLily' },
+  sahaiRibbon: { scene: 'buriedInn',actor: 'wu',speaker: 'narrator',text: '他顺着你的目光往额角一摸，摸到那截歪掉的发带，耳根腾地红了，三两下扯正。“看什么看。”红坠上的沙簌簌往下掉。你赶紧抿住嘴，嘴角却怎么也压不下去。',next: 'sahaiDoubt' },
+  sahaiDoubt: { scene: 'buriedInn',actor: 'wu',speaker: 'wu',text: '神明？神明会跟我一起躲在破驿站里吃沙？要骗人，也编个像样些的。',next: 'sahaiWeigh' },
+  sahaiWeigh: { scene: 'buriedInn',actor: 'wu',speaker: 'narrator',text: '话是这么说，他却没走。他盯着你看了好一会儿：你发间没沾几粒沙，腰上那只金铃一路走来，一声也没响。他把缰绳又绕了一圈，声音压低了些，像是怕被谁听去笑话。',next: 'sahaiLily' },
   sahaiLily: { scene: 'buriedInn',actor: 'wu',speaker: 'wu',text: '我想亲眼看看铃兰花。',next: 'sahaiEnd' },
-  sahaiEnd: { scene: 'buriedInn',actor: 'wu',speaker: 'narrator',text: '“母妃说，江南有这种花。”他看着你，握缰的手却紧了一点。腰间的金铃无声地轻震。铃兰——你记住了这个由他亲口说出的名字。',end: true },
+  sahaiEnd: { scene: 'buriedInn',actor: 'wu',speaker: 'narrator',text: '“母妃说，江南遍地都是，一到春天，就低着头开。”话一出口，他又像后悔了，别开脸，“……沙海里种不活的。你要是做不到，就当我没说。”握缰的手却攥紧了。腰间的金铃贴着你，无声地震了一下。铃兰——你把这个他亲口说出的名字记住了。',end: true },
 };
 export const explorationEvents = [];
 for (const a of areas) {
