@@ -4,7 +4,7 @@ export const musicTracks=Object.freeze({
   quiet:Object.freeze({src:'./audio/quiet-sad.mp3',name:'安静、悲伤氛围乐'}),
   encounter:Object.freeze({src:'./audio/wu-encounter.mp3',name:'忘记时间 · 无谌初遇'}),
 });
-export const encounterMusicNodes=Object.freeze(['sahaiConverge','sahaiAsk','sahaiRibbon','sahaiLily','sahaiEnd','sahaiPalm','sahaiSeed','sahaiBloom','sahaiThread','sahaiOutside','sahaiCall','sahaiFinalChoice','endingWalk','endingLookback','endingProtect','endingAsk']);
+export const encounterMusicNodes=Object.freeze(['sahaiConverge','sahaiAsk','sahaiRibbon','sahaiDoubt','sahaiWeigh','sahaiLily','sahaiEnd','sahaiPalm','sahaiSeed','sahaiBloom','sahaiThread','sahaiOutside','sahaiCall','sahaiFinalChoice','endingWalk','endingLookback','endingProtect','endingAsk']);
 // Presentation cues only; never stored in the story/save or used as a condition.
 export function musicForScene(id,node,{title=false,returned=false}={}){
   if(title)return 'opening';

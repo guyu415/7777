@@ -10,7 +10,7 @@ const expressions = Object.freeze({
   prologueCourtRule:{rong:'stop'},prologueBoundary:{rong:'stop'},
   prologueLook:{rong:'displeased'},prologueAnswer:{yuan:'hesitant'},
   sahaiConverge:{wu:'guarded'},sahaiAsk:{wu:'guarded',yuan:'happy'},
-  sahaiRibbon:{wu:'guarded'},sahaiPalm:{wu:'guarded'},
+  sahaiRibbon:{wu:'guarded'},sahaiDoubt:{wu:'guarded'},sahaiPalm:{wu:'guarded'},
   sahaiBloom:{wu:'lily'},sahaiThread:{wu:'lily'},endingLookback:{wu:'lily'},
   sahaiOutside:{rong:'displeased'},sahaiCall:{rong:'displeased'},
   sahaiFinalChoice:{rong:'displeased'},endingProtect:{rong:'displeased'},
