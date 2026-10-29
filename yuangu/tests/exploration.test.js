@@ -70,7 +70,8 @@ test('all five locations with and without their corresponding clue select distin
     assert.ok(g.state.flags.includes(`storm-from-${area.id}`));assert.equal(g.state.minutes,900);
     assert.equal(g.canTravel(place('well')),false);resume(g);
     assert.equal(g.state.node,'sahaiConverge');assert.equal(g.node.scene,'buriedInn');
-    g.next();g.choose(0);g.markRead();g.next();assert.equal(g.state.node,'sahaiEnd');assert.equal(g.state.activeEvent,null);
+    g.next();g.choose(0);assert.equal(g.state.node,'sahaiDoubt');
+    for(const id of ['sahaiWeigh','sahaiLily','sahaiEnd']){g.markRead();g.next();assert.equal(g.state.node,id);}assert.equal(g.state.activeEvent,null);
     assert.equal(g.state.eventLog.filter(e=>e.id.startsWith('sahai-storm-')).length,1);
     assert.ok(g.debugEdit({minutes:960}).ok);assert.equal(g.state.activeEvent,null);assert.ok(g.validate(g.state));
   }
