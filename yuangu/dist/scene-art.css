@@ -1,0 +1,46 @@
+/* Finished scenic paintings below the retained dialogue and gameplay layers. */
+#game-screen #scene-background{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;object-position:center;z-index:0;pointer-events:none}
+#game-screen .court-scenery{display:none}
+#game-screen .scene-weather{position:absolute;inset:0;z-index:1;pointer-events:none;opacity:0;background:linear-gradient(110deg,#9c723188,#d1af7188 40%,#92714baa);transition:opacity .45s}
+#game-screen[data-storm="true"] .scene-weather{opacity:1}
+#game-screen .court-scene .court-tree{left:1%;top:0;width:56%;height:96%;clip-path:polygon(0 0,90% 0,100% 82%,70% 100%,5% 95%)}
+#game-screen .court-scene .court-bell{left:5%;top:40%;width:14%;height:48%}
+#game-screen .court-scene .court-platform{left:80%;top:25%;width:17%;height:65%}
+#game-screen .court-object-label{color:#fdf6db;text-shadow:0 1px 3px #1c3049,0 0 7px #1c3049}
+#game-screen .court-tree .court-object-label{bottom:12%;left:58%}
+/* A restrained clue glint stays outside the centered choices; item logic is unchanged. */
+#game-screen .explore-prop{left:16%;top:78%;padding:0;width:44px;height:44px;color:#fff2bb;text-shadow:0 0 7px #d8a34b,0 1px 3px #543a1d}
+#game-screen .explore-prop svg{display:none}
+#game-screen .explore-prop:after{content:'✧';font:25px/44px var(--serif)}
+/* Tree records are accessed on a painted tree, not a row of framed cards. */
+#modal:has(.wish-tree-explorer){width:min(1180px,calc(100vw - 20px));max-width:calc(100vw - 20px);height:min(650px,calc(100dvh - 20px));max-height:calc(100dvh - 20px);border:0;background:#cbd9db url('./assets/scenes/wish-tree.png') center/cover no-repeat;box-shadow:0 20px 90px #061222aa;isolation:isolate}
+#modal:has(.wish-tree-explorer) .modal-header{position:absolute;inset:0 0 auto;z-index:3;min-height:60px;padding:12px 24px;background:linear-gradient(#0d283767,transparent)}
+#modal:has(.wish-tree-explorer) .modal-header:after{display:none}
+#modal:has(.wish-tree-explorer) .modal-header h2{color:#fff2ce;text-shadow:0 1px 5px #183247}
+#modal:has(.wish-tree-explorer) #modal-close{background:#183449bb;color:#fff0cd;border-color:#ebd6a577}
+#modal:has(.wish-tree-explorer) #modal-body{position:relative;flex:1;min-height:0;padding:0;overflow:hidden}
+.wish-tree-explorer{position:absolute;inset:0;min-height:0}
+.wish-tree-canopy{position:absolute;inset:60px 32% 0 0}
+#modal .tree-place-nav{position:absolute;inset:0;pointer-events:none}
+#modal .tree-place-nav .tree-tab{position:absolute;min-width:64px;min-height:44px;padding:9px 10px;border:0;background:none;box-shadow:none;color:#244958;font:15px/24px var(--wenkai);letter-spacing:.14em;text-shadow:0 1px 4px #fff,0 0 8px #fff;pointer-events:auto;transform:translate(-50%,-50%);white-space:nowrap}
+#modal .tree-place-nav .tree-tab:before{content:'✦';display:inline-block;margin-right:6px;color:#f7db94;font-size:13px;text-shadow:0 0 9px #fff4ae}
+#modal .tree-place-nav .tree-tab.selected{background:none;color:#213b46;text-shadow:0 0 5px #fff,0 0 14px #fff0a1;text-decoration:underline;text-underline-offset:5px}
+#modal .tree-place-nav [data-tree-place="leaves"]{left:40%;top:26%}
+#modal .tree-place-nav [data-tree-place="glimmers"]{left:18%;top:42%}
+#modal .tree-place-nav [data-tree-place="roots"]{left:38%;top:81%}
+#modal .tree-place-nav [data-tree-place="rings"]{left:34%;top:57%}
+#modal .tree-place-nav [data-tree-place="archive"]{left:58%;top:34%}
+#modal .wish-tree-records{position:absolute;left:69%;right:2%;top:70px;bottom:18px;overflow:auto;padding:14px 17px;background:linear-gradient(100deg,#f8f4e9ee,#f5f1e6dc);border-left:1px solid #b7a472;box-shadow:-8px 10px 30px #273a461a;color:#344f56;scrollbar-width:thin;scrollbar-color:#9f9773 transparent;overscroll-behavior:contain}
+#modal .wish-tree-records>h3{margin:0 0 12px;font:20px/1.5 var(--wenkai);color:#35525b;letter-spacing:.16em}
+#modal #modal-body .wish-tree-records p,#modal #modal-body .wish-tree-records .hint{color:#4a6268;font-size:12px;line-height:1.8}
+#modal .wish-tree-records .tree-signal,#modal .wish-tree-records .tree-record{border:0;border-bottom:1px solid #b9b29477;border-radius:0;background:none;padding:9px 0;color:#405b60;box-shadow:none;margin:0}
+#modal .wish-tree-records .tree-record strong,#modal .wish-tree-records .tree-signal strong{color:#3f5758;font-size:14px}
+#modal #modal-body .wish-tree-records .tree-record>span,#modal #modal-body .wish-tree-records .tree-record small,#modal #modal-body .wish-tree-records .tree-signal small{color:#65787a;font-size:10px}
+#modal .wish-tree-records .tree-status{border-color:#b2a16e;background:none}
+#modal .wish-tree-records .tree-rings{padding-left:15px}
+#modal .wish-tree-records .tree-rings li{color:#50656a;font-size:12px;border-color:#acb5a1}
+#modal .wish-tree-canopy .first-leaf{left:48%;top:20%;border:0;border-radius:0;background:none;color:#fff3b6;box-shadow:none;text-shadow:0 0 10px #9d7c21,0 1px 3px #23434c;font:14px/24px var(--wenkai);padding:7px 9px;min-height:44px;transform:translateX(-50%)}
+#modal .wish-tree-canopy .first-leaf:before{content:'❧';display:block;font-size:30px;line-height:30px;color:#f9dfa0;text-shadow:0 0 12px #ffed9a}
+#modal .wish-glimmer{position:absolute;width:40px;height:40px;padding:0;border:0;background:none;box-shadow:none;color:#fff5bb;text-shadow:0 0 9px #ffe585,0 0 18px #a78c37;font-size:20px;transform:translate(-50%,-50%)}
+@media(orientation:landscape) and (max-height:450px){#modal:has(.wish-tree-explorer) .modal-header{min-height:48px;padding:5px 20px}#modal .wish-tree-records{top:54px;bottom:12px;padding:10px 12px}#modal .wish-tree-records>h3{font-size:17px;margin-bottom:7px}#modal .wish-tree-records p,#modal .wish-tree-records .hint{font-size:11px!important}#modal .tree-place-nav .tree-tab{font-size:13px}.wish-tree-canopy{top:48px}}
+@media(orientation:portrait){#modal .wish-tree-records{left:8%;right:8%;top:64%;bottom:12px;background:#f8f4e9f2;border-left:0;border-top:1px solid #b7a472}#modal .tree-place-nav [data-tree-place="roots"]{top:59%}.wish-tree-canopy{right:0;bottom:38%}}

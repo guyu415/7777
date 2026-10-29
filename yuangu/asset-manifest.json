@@ -1,0 +1,248 @@
+[
+  {
+    "path": "dist/assets/cg/sahai-atlas.png",
+    "size": 3454311,
+    "sha": "6a5795a324b10727d933debe063c62861777c084",
+    "text": false
+  },
+  {
+    "path": "dist/assets/characters/rong-displeased.png",
+    "size": 2528805,
+    "sha": "c1b0aa563fe0b79e923aaa23f4206f9482bd851a",
+    "text": false
+  },
+  {
+    "path": "dist/assets/characters/rong-neutral.png",
+    "size": 2691980,
+    "sha": "c73376feb533556ae392b51393ce718f10dd03b8",
+    "text": false
+  },
+  {
+    "path": "dist/assets/characters/rong-stop.png",
+    "size": 2567215,
+    "sha": "cf414e7ee50ad2f49da0d0fd94ef9f72dcf4959d",
+    "text": false
+  },
+  {
+    "path": "dist/assets/characters/wu-guarded.png",
+    "size": 2425586,
+    "sha": "675467434abefea3e3034a9be7f4200ebc4f60dc",
+    "text": false
+  },
+  {
+    "path": "dist/assets/characters/wu-lily.png",
+    "size": 2496144,
+    "sha": "a5d1aa7ac586e49205a75166d281789fbb702b33",
+    "text": false
+  },
+  {
+    "path": "dist/assets/characters/wu-neutral.png",
+    "size": 2477565,
+    "sha": "81ad8fc2bc0e8b801cc09954b74409e889c3995f",
+    "text": false
+  },
+  {
+    "path": "dist/assets/characters/yuan-happy.png",
+    "size": 2591986,
+    "sha": "dade2ff71d5de80c14780d62ca1df0aa44890a33",
+    "text": false
+  },
+  {
+    "path": "dist/assets/characters/yuan-hesitant.png",
+    "size": 2583421,
+    "sha": "6f5c300de073beef2a2a41d6009b5be150032133",
+    "text": false
+  },
+  {
+    "path": "dist/assets/characters/yuan-neutral.png",
+    "size": 2759684,
+    "sha": "b302415d3adbfe6da970fd11f90fb35822c46c48",
+    "text": false
+  },
+  {
+    "path": "dist/assets/fonts/LXGWWenKai-Regular.woff2",
+    "size": 8098332,
+    "sha": "3f6b35071e17205e0182fe226a97d07c3fcc8345",
+    "text": false
+  },
+  {
+    "path": "dist/assets/fonts/SourceHanSerifSC-Regular.woff2",
+    "size": 16707864,
+    "sha": "5ff88eecfcc91466dd88ebd5af3bb37fe1b12dc9",
+    "text": false
+  },
+  {
+    "path": "dist/assets/scenes/battlefield.png",
+    "size": 3100625,
+    "sha": "8dc8c9bba098e8666f0a9e58b7477c32dfb5b05b",
+    "text": false
+  },
+  {
+    "path": "dist/assets/scenes/cg-collection.png",
+    "size": 3019466,
+    "sha": "192a4145fc678f82ce785feee884c9069068767b",
+    "text": false
+  },
+  {
+    "path": "dist/assets/scenes/cg-lily-ink-still.jpg",
+    "size": 623815,
+    "sha": "298b642e91f0110654d0def843ececf036528b1c",
+    "text": false
+  },
+  {
+    "path": "dist/assets/scenes/cg-lily.png",
+    "size": 2729962,
+    "sha": "7c0a160e4ac6a7d5f5fab62420bd50ffc884d4be",
+    "text": false
+  },
+  {
+    "path": "dist/assets/scenes/cg-thread.png",
+    "size": 2551889,
+    "sha": "154a5eb2e4451ef43b39467a7c3f1714a0fc2c85",
+    "text": false
+  },
+  {
+    "path": "dist/assets/scenes/inn-exterior.png",
+    "size": 2797574,
+    "sha": "b46938b057efe8711a52c5b8423a0f22e02f5563",
+    "text": false
+  },
+  {
+    "path": "dist/assets/scenes/inn-interior.png",
+    "size": 2434270,
+    "sha": "74c5bd4d7fe553601ac458e780676ef8c82a469a",
+    "text": false
+  },
+  {
+    "path": "dist/assets/scenes/market.png",
+    "size": 2991515,
+    "sha": "50aa9f6952596b35e331584af45591a9f9ce41a2",
+    "text": false
+  },
+  {
+    "path": "dist/assets/scenes/paddock.png",
+    "size": 3026434,
+    "sha": "6b2c86887106f66d7c09cb0f88a390ad5a7bc69e",
+    "text": false
+  },
+  {
+    "path": "dist/assets/scenes/upper-court.png",
+    "size": 3191391,
+    "sha": "13fe55d0096e1a80a6873832130e810394b815a9",
+    "text": false
+  },
+  {
+    "path": "dist/assets/scenes/well.png",
+    "size": 2942867,
+    "sha": "6cfafe91145833af675bfbf04b863adff483eff2",
+    "text": false
+  },
+  {
+    "path": "dist/assets/scenes/wish-tree.png",
+    "size": 3223131,
+    "sha": "5e3a3ee64bd1e8e52e1690bc9c06bfe29f5852a6",
+    "text": false
+  },
+  {
+    "path": "dist/assets/ui/choice-ribbon.png",
+    "size": 1375289,
+    "sha": "642355a735e09554f41081465592239d862a874f",
+    "text": false
+  },
+  {
+    "path": "dist/assets/ui/dialogue-overlay.png",
+    "size": 1060930,
+    "sha": "1c29c4d417d85999183462ab5e801cba2b96c0f2",
+    "text": false
+  },
+  {
+    "path": "dist/assets/ui/reference-controls.jpeg",
+    "size": 565568,
+    "sha": "3ac63f7e4e45c84da2c47020b1e1a2c43d8c0797",
+    "text": false
+  },
+  {
+    "path": "dist/assets/ui/title-cover-baked.png",
+    "size": 2834426,
+    "sha": "6d5641d163cb55d30ccceee9e362227b5d42dac3",
+    "text": false
+  },
+  {
+    "path": "dist/assets/ui/title-cover-lit.png",
+    "size": 2755574,
+    "sha": "133383f91d3d1b424e9939e7c72287ab09c19953",
+    "text": false
+  },
+  {
+    "path": "dist/audio/air.wav",
+    "size": 529244,
+    "sha": "86219c2d8c32e89c23b60bd697928d0fbe1d4faa",
+    "text": false
+  },
+  {
+    "path": "dist/audio/light-scene.mp3",
+    "size": 2191827,
+    "sha": "f6b0937d4f1356fcd1492f0e9cb70e7cb6e022f4",
+    "text": false
+  },
+  {
+    "path": "dist/audio/opening.mp3",
+    "size": 900240,
+    "sha": "6a5213361a42f3ebd40674ef164457a65bae0dac",
+    "text": false
+  },
+  {
+    "path": "dist/audio/quiet-sad.mp3",
+    "size": 1722421,
+    "sha": "23c428f0a058b82f6724bfaad4493836b0619525",
+    "text": false
+  },
+  {
+    "path": "dist/audio/touch.wav",
+    "size": 3572,
+    "sha": "05be58525b107f466f19d4ba4dc558644887cbe7",
+    "text": false
+  },
+  {
+    "path": "dist/audio/ui-cover.wav",
+    "size": 40616,
+    "sha": "a652d5921498d5fbd42faa87817df6c76078b47e",
+    "text": false
+  },
+  {
+    "path": "dist/audio/ui-option.wav",
+    "size": 16802,
+    "sha": "965c94a8e5c638a20b4f34259499f7095614d6cc",
+    "text": false
+  },
+  {
+    "path": "dist/audio/wish-collect.wav",
+    "size": 493964,
+    "sha": "a6732528291eec2ecb2a34663b5c67c02f4dfc2d",
+    "text": false
+  },
+  {
+    "path": "dist/audio/wu-encounter.mp3",
+    "size": 2794355,
+    "sha": "358c3799f17d9411601ff0c770b3f550161b8ca4",
+    "text": false
+  },
+  {
+    "path": "dist/icons/apple-touch-icon.png",
+    "size": 14409,
+    "sha": "3cc91964e1f09db268d4cf7795dd6f5315b654de",
+    "text": false
+  },
+  {
+    "path": "dist/icons/icon-192.png",
+    "size": 15548,
+    "sha": "a6369768ac3171ce6d588849af0816a6d036ccd2",
+    "text": false
+  },
+  {
+    "path": "dist/icons/icon-512.png",
+    "size": 39294,
+    "sha": "5ee88dc4b41a99f43fdf8d94d7733b58d9cc4c43",
+    "text": false
+  }
+]

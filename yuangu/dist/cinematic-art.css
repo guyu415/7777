@@ -1,0 +1,48 @@
+/* Finished story CG sits behind the unchanged approved dialogue artwork. */
+#game-screen.cg-mode #character-stage,#game-screen.cg-mode #court-scene,#game-screen.cg-mode #explore-scene{visibility:hidden}
+#game-screen #wish-effects{position:absolute;inset:0;width:100%;height:100%;z-index:2;pointer-events:none;user-select:none}
+#game-screen #wish-effects[hidden]{display:none}
+#game-screen.cg-mode #scene-background{object-position:center;filter:blur(14px) brightness(.72);transform:scale(1.05)}
+/* Preserve the full painting on extra-wide iPhone canvases: no stretched faces or cropped heads. */
+#game-screen #cg-painting{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;z-index:0;pointer-events:none}
+#game-screen #cg-painting[hidden]{display:none}
+#game-screen.ui-hidden #wish-effects{visibility:hidden}
+/* The map is one painting with real, accessible hit targets on its landmarks. */
+#modal[data-kind="atlas"]{width:min(1120px,calc(100vw - 20px));height:min(650px,calc(100dvh - 16px));max-height:calc(100dvh - 16px);border:1px solid #b49d70;border-radius:8px;background:#3a2c20;box-shadow:0 20px 90px #07111fbb;isolation:isolate}
+#modal[data-kind="atlas"] .modal-header{position:absolute;inset:0 0 auto;z-index:3;min-height:48px;padding:8px 22px;background:linear-gradient(#201c18dd,transparent)}
+#modal[data-kind="atlas"] .modal-header:after{display:none}
+#modal[data-kind="atlas"] .modal-header h2{font-size:19px;text-shadow:0 1px 5px #24180e}
+#modal[data-kind="atlas"] #modal-close{background:#32291fc9}
+#modal[data-kind="atlas"] #modal-body{position:static;padding:0;overflow:hidden;flex:1}
+#modal[data-kind="atlas"] .map-canvas{position:absolute;inset:0;height:auto;display:block;padding:0;border:0;border-radius:0;background:linear-gradient(#29231c44,#29231c44),url('./assets/cg/sahai-atlas.png') center/cover;overflow:hidden;z-index:0}
+#modal[data-kind="atlas"] .atlas-stage{position:absolute;left:0;top:50%;width:100%;aspect-ratio:1672/941;transform:translateY(-50%);container-type:inline-size}
+#modal[data-kind="atlas"] .atlas-painting{display:block;width:100%;height:100%;pointer-events:none}
+#modal[data-kind="atlas"] .map-trail{display:none}
+#modal[data-kind="atlas"] .map-point{position:absolute;transform:translate(-50%,-50%);display:block;width:24%;max-width:180px;min-height:44px;padding:3px 4px;border:0;border-radius:0;background:none;box-shadow:none;color:#fff2cf;text-align:center;text-shadow:0 1px 3px #281e14,0 0 6px #281e14,0 0 12px #281e14;touch-action:manipulation}
+#modal[data-kind="atlas"] .map-point:before{content:'✧';position:absolute;top:-18px;left:calc(50% - 12px);width:24px;height:24px;font:22px/24px var(--serif);color:#fff3bc;text-shadow:0 0 10px #fff4b8,0 1px 3px #40301c}
+#modal[data-kind="atlas"] .map-point.current:before{content:'✦';color:#fff8d2;text-shadow:0 0 12px #fff0ae}
+#modal[data-kind="atlas"] .map-point.current{color:#fff2b0}
+#modal[data-kind="atlas"] .map-point:disabled{opacity:.72;cursor:default}
+#modal[data-kind="atlas"] .map-point.current:disabled{opacity:1}
+#modal[data-kind="atlas"] .map-point[data-locked="true"]{opacity:.48}
+#modal[data-kind="atlas"] .map-point strong{display:block;font:clamp(13px,1.8cqw,18px)/1.5 var(--wenkai);color:inherit;letter-spacing:.1em}
+#modal[data-kind="atlas"] .map-point small{display:block;font:10px/1.35 var(--serif);color:#f8e9cf}
+#modal[data-kind="atlas"] .map-visit{opacity:.8}
+#modal[data-kind="atlas"] .atlas-instructions{position:absolute;top:45px;left:24px;right:65px;z-index:2;pointer-events:none;margin:0!important;text-shadow:0 1px 4px #20170d,0 0 8px #20170d;color:#fff2d8!important;font-size:10px!important}
+#modal[data-kind="atlas"] .atlas-legend{position:absolute;left:22px;bottom:58px;z-index:2;margin:0;color:#f8e7c3;font-size:11px;text-shadow:0 1px 4px #1b1510;gap:20px}
+#modal[data-kind="atlas"] .atlas-time{position:absolute;right:22px;bottom:55px;z-index:2;margin:0!important;color:#f8e7c3!important;text-shadow:0 1px 4px #1b1510}
+#modal[data-kind="atlas"] .atlas-actions{position:absolute;left:0;right:0;bottom:0;z-index:2;margin:0;padding:12px 22px 10px;display:flex;justify-content:flex-end;gap:12px;background:linear-gradient(transparent,#261f17e6 35%)}
+#modal[data-kind="atlas"] .atlas-actions .action-button{min-height:38px;padding:6px 14px;background:#3e3829bb;border-color:#d5be8677;border-radius:3px;box-shadow:none;font-size:13px;color:#fff0c9}
+#modal[data-kind="atlas"] .map-canvas:after{content:'';position:absolute;inset:0;background:linear-gradient(#251d1333,transparent 22%,transparent 75%,#251d1377);pointer-events:none}
+@media(max-height:450px) and (orientation:landscape){
+  #modal[data-kind="atlas"] .modal-header{min-height:38px;padding:4px 18px}
+  #modal[data-kind="atlas"] .modal-header h2{font-size:16px}
+  #modal[data-kind="atlas"] #modal-close{width:34px;height:34px;min-width:34px;min-height:34px}
+  #modal[data-kind="atlas"] .atlas-instructions{top:36px;left:20px;font-size:9px!important}
+  #modal[data-kind="atlas"] .map-point .map-visit{display:none}
+  #modal[data-kind="atlas"] .map-point small{font-size:9px}
+  #modal[data-kind="atlas"] .atlas-actions{padding:9px 18px 6px}
+  #modal[data-kind="atlas"] .atlas-legend{bottom:49px;left:20px;font-size:10px}
+  #modal[data-kind="atlas"] .atlas-time{bottom:47px;right:20px;font-size:10px!important}
+}
+@media(orientation:portrait){#modal[data-kind="atlas"] .atlas-instructions{top:58px;right:22px}#modal[data-kind="atlas"] .map-point strong{font-size:12px}#modal[data-kind="atlas"] .map-point .map-visit{display:none}#modal[data-kind="atlas"] .atlas-legend{right:22px;bottom:103px;flex-wrap:wrap}#modal[data-kind="atlas"] .atlas-time{bottom:81px}#modal[data-kind="atlas"] .atlas-actions{justify-content:center;flex-wrap:wrap}#modal[data-kind="atlas"] .atlas-stage{top:46%}}

@@ -1,0 +1,57 @@
+/* 矮屏使用共享三行布局；场景不再靠固定 bottom 猜测对话高度。 */
+.scene-stage{position:static}
+.dialogue{cursor:pointer}
+@media (orientation:landscape) and (max-height:500px){
+  html,body{width:100%;height:100%;overflow:hidden;overscroll-behavior:none}
+  body{-webkit-text-size-adjust:100%;text-size-adjust:100%}
+  #app{height:100dvh;min-height:0;overflow:hidden}
+  .game-screen{
+    position:absolute;inset:0;height:100dvh;min-height:0;overflow:hidden;
+    display:grid;grid-template-rows:52px minmax(0,1fr) auto;gap:0;
+    padding-top:env(safe-area-inset-top,0px);
+    padding-bottom:env(safe-area-inset-bottom,0px);
+    padding-left:calc(env(safe-area-inset-left,0px) + 10px);
+    padding-right:calc(env(safe-area-inset-right,0px) + 10px);
+  }
+  .game-header{position:static;grid-row:1;min-width:0;height:52px;gap:14px;padding:4px 2px;align-items:center}
+  .brand{font-size:22px;letter-spacing:.12em}.brand span{font-size:10px;margin-left:8px}
+  .stats{position:static;gap:14px;font-size:11px;justify-content:center;min-width:0}
+  .stats>span{font-size:11px;padding-right:14px}.stats>span:last-child{border-right:0;padding-right:0}
+  .stats b{font-size:14px;margin-left:6px}.map-open{min-height:40px;min-width:70px;padding:6px 12px;font-size:13px}
+  .scene-stage{grid-row:2;position:relative;min-width:0;min-height:0;overflow:hidden}
+  .court-scene{position:absolute;inset:0;gap:6px;padding:4px 2px 8px;min-height:0}
+  .court-step{min-height:18px;line-height:18px;font-size:12px;letter-spacing:.04em}
+  .court-hotspots{min-height:0;grid-template-rows:repeat(3,minmax(40px,1fr));gap:6px 12px}
+  .court-object{min-height:40px;padding:4px 12px;gap:12px}
+  .court-object-label{gap:2px}.court-object-label strong{font-size:15px}.court-object-label small{font-size:11px;line-height:1.2}
+  .court-tree .tree-art{height:calc(100% - 38px);min-height:0;max-height:none}
+  .court-leaf-hotspot{min-height:40px;min-width:64px;font-size:12px}
+  .dialogue-wrap{
+    position:static;grid-row:3;min-width:0;min-height:0;height:auto;max-height:34dvh;
+    margin:0;padding:0 12px;border-width:1px;overflow:hidden;
+    display:flex;flex-direction:column;box-shadow:0 -3px 18px #534e3214;
+  }
+  .dialogue-top{height:20px;min-height:20px;flex:0 0 20px;gap:16px}
+  .speaker{font-size:14px;line-height:20px;min-width:42px}#scene-subtitle{font-size:10px;line-height:18px}
+  .dialogue{
+    position:relative;display:flex;flex-direction:column;flex:0 1 auto;
+    width:100%;min-height:40px;max-height:none;
+    padding:3px 0 0;margin:0;overflow:hidden;touch-action:pan-y;
+    font:16px/1.4 var(--serif);letter-spacing:.02em;
+  }
+  #text{display:block;min-height:0;flex:0 1 auto;overflow-x:hidden;overflow-y:auto;overflow-wrap:anywhere;
+    overscroll-behavior-y:contain;-webkit-overflow-scrolling:touch;touch-action:pan-y}
+  #text:focus-visible{outline:1px solid #71866d;outline-offset:-1px}
+  .advance-hint{position:static;display:block;flex:0 0 15px;line-height:15px;min-height:15px;text-align:right;font-size:10px;margin:0;padding:0}
+  .game-toolbar{height:40px;min-height:40px;flex:0 0 40px;gap:10px;font-size:10px}
+  .game-toolbar>div{gap:4px;min-width:0}.game-toolbar button{height:40px;min-height:40px;min-width:40px;padding:0 8px;font-size:12px}
+  .chapter-label{top:8px;left:8px}.chapter-label h2{font-size:20px;margin:6px 0}.chapter-label p{margin:7px 0;font-size:11px}
+  .chapter-label .tiny{font-size:9px}.placeholder-label{top:8px;right:8px}
+  .actor{top:0;bottom:0;right:24%;height:100%;width:25%}
+  .choices{top:4px;bottom:6px;right:4px;width:42%;max-height:calc(100% - 10px);gap:6px;overflow-y:auto;align-content:start}
+  .choice{min-height:40px;padding:7px 12px;gap:12px}.choice strong{font-size:14px}.choice small{font-size:10px;margin-top:3px}
+  .end-actions{top:12px;bottom:auto;left:8px;max-width:45%}.end-actions button{min-height:40px;font-size:12px}
+  dialog{max-height:calc(100dvh - env(safe-area-inset-top,0px) - env(safe-area-inset-bottom,0px) - 12px);
+    max-width:calc(100vw - env(safe-area-inset-left,0px) - env(safe-area-inset-right,0px) - 20px)}
+  dialog button{min-height:40px}#modal-close{min-width:40px;min-height:40px}
+}

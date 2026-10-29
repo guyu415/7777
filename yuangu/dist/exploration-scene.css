@@ -1,0 +1,8 @@
+/* 小件实物的场景热区，避免覆盖右侧的行动选择。 */
+.explore-scene{position:absolute;inset:0;pointer-events:none;z-index:2}
+.explore-prop{position:absolute;left:42%;top:65%;width:48px;height:44px;min-width:40px;min-height:40px;
+  border:0;background:transparent;padding:3px;pointer-events:auto;color:#81724e}
+.explore-prop svg{width:100%;height:100%;fill:#b2a07b66;stroke:currentColor;stroke-width:1.1;filter:drop-shadow(0 0 3px #fff4cb)}
+.explore-prop:focus-visible{outline:1px dashed #81724e}
+.explore-prop:hover svg{fill:#d7c58c;filter:drop-shadow(0 0 5px #fff4cb)}
+@media(orientation:landscape) and (max-height:500px){.explore-prop{top:62%}}

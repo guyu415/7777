@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#101b29">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="愿骨">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <link rel="manifest" href="./manifest.webmanifest">
+  <link rel="apple-touch-icon" sizes="180x180" href="./icons/apple-touch-icon.png">
+  <meta name="description" content="《愿骨》静态 Galgame 序章预览。初次下凡，愿起沙海。">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'none'; manifest-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'">
+  <title>愿骨 · 上庭初行</title>
+  <link rel="stylesheet" href="./style.css?v=10">
+  <link rel="stylesheet" href="./short-landscape.css?v=10">
+  <link rel="stylesheet" href="./court-scene.css?v=10">
+  <link rel="stylesheet" href="./exploration-scene.css?v=10">
+  <link rel="stylesheet" href="./vn-ui.css?v=10">
+  <link rel="stylesheet" href="./production-ui.css?v=17">
+  <link rel="stylesheet" href="./system-panels.css?v=14">
+  <link rel="stylesheet" href="./character-art.css?v=15">
+  <link rel="stylesheet" href="./scene-art.css?v=16">
+  <link rel="stylesheet" href="./title-effects.css?v=20">
+  <link rel="stylesheet" href="./cinematic-art.css?v=18">
+  <link rel="stylesheet" href="./ink-still.css?v=21">
+  <link rel="stylesheet" href="./touch-effects.css?v=22">
+  <script type="module" src="./app.js?v=22"></script>
+  <script type="module" src="./system-menu.js?v=13"></script>
+  <script type="module" src="./title-effects.js?v=20"></script>
+</head>
+<body>
+<main id="app">
+  <div id="landscape" class="landscape" aria-hidden="true">
+    <div class="sun"></div><div class="orbit orbit-one"></div><div class="orbit orbit-two"></div>
+    <div class="dune dune-back"></div><div class="dune dune-middle"></div><div class="dune dune-front"></div>
+    <div class="ruin"><i></i><i></i><i></i></div><div class="grain"></div>
+  </div>
+  <section id="title-screen" class="screen title-screen" aria-label="标题页">
+    <div id="title-art-stage" class="title-art-stage">
+      <h1 class="cover-sr-only">愿骨</h1>
+      <img id="title-cover" src="./assets/ui/title-cover-baked.png" alt="愿骨，白树与云上天庭" width="1672" height="941" fetchpriority="high" decoding="async" draggable="false">
+      <canvas id="title-bells" aria-hidden="true"></canvas>
+      <canvas id="title-petals" aria-hidden="true"></canvas>
+      <img class="lit-cover lit-new" src="./assets/ui/title-cover-lit.png" alt="" aria-hidden="true">
+      <img class="lit-cover lit-continue" src="./assets/ui/title-cover-lit.png" alt="" aria-hidden="true">
+      <img class="lit-cover lit-load" src="./assets/ui/title-cover-lit.png" alt="" aria-hidden="true">
+      <img class="lit-cover lit-settings" src="./assets/ui/title-cover-lit.png" alt="" aria-hidden="true">
+      <nav class="cover-hotspots" aria-label="开始游戏">
+        <button id="new-game" class="cover-hotspot cover-new" aria-label="新游戏" disabled></button>
+        <button id="continue-game" class="cover-hotspot cover-continue" aria-label="继续游戏" aria-describedby="continue-note" disabled><span id="continue-note" class="cover-sr-only">尚无记录</span></button>
+        <button id="title-load" class="cover-hotspot cover-load" aria-label="读取存档" disabled></button>
+        <button id="title-settings" class="cover-hotspot cover-settings" aria-label="设置" disabled></button>
+      </nav>
+    </div>
+    <footer class="cover-utilities"><button id="title-audio-toggle" aria-pressed="false">点击开启声音</button><button id="help" disabled>游玩说明</button><button id="speed" disabled>文字速度 · 标准</button><button id="chapter-open" disabled>章节重开</button></footer>
+  </section>
+  <section id="game-screen" class="screen game-screen" aria-label="游戏场景" hidden>
+    <img id="scene-background" src="./assets/scenes/upper-court.png" alt="上庭" width="1672" height="941" decoding="async" draggable="false"><div class="scene-weather" aria-hidden="true"></div>
+    <img id="cg-painting" src="./assets/scenes/cg-lily.png" alt="" aria-hidden="true" width="1672" height="941" decoding="async" draggable="false" hidden>
+    <canvas id="wish-effects" aria-hidden="true" hidden></canvas>
+    <img class="production-dialogue-art" src="./assets/ui/dialogue-overlay.png" alt="" aria-hidden="true">
+    <header class="game-header"><div class="brand" hidden>愿骨 <span id="chapter-kind">预览章</span></div><div class="stats" aria-label="游戏状态"><span id="time-stat"></span><span id="ap-stat"></span><span id="wish-stat"></span></div></header>
+    <nav class="system-tools" aria-label="快捷功能"><button id="quick-tree" class="reference-tool tool-leaf" aria-label="打开愿力树"></button><button id="system-menu-toggle" class="system-menu-toggle reference-tool tool-moon" aria-label="展开功能菜单" aria-controls="system-menu" aria-expanded="false"></button><button id="quick-bag" class="reference-tool tool-bell" aria-label="打开随身"></button></nav>
+    <aside id="system-menu" class="system-menu" aria-label="功能菜单" hidden><button id="tree-open">愿力树</button><button id="state-open">随身</button><button id="map-open">地图</button><button id="skip-read" aria-pressed="false">快进</button><button id="hide-ui">隐藏界面</button><button id="settings-open">设置</button><button id="home-open">返回标题</button></aside>
+    <div class="scene-stage">
+    <div class="chapter-label"><span id="chapter-code" class="tiny">SAHAI / PREVIEW 01</span><h2 id="chapter-title">沙海初愿</h2><span class="chapter-rule"></span><p id="location"></p><p id="chapter-hint"></p></div>
+    <div class="placeholder-label">SCENE STUDY <span>背景占位</span></div>
+    <div id="actor" class="actor" aria-label="占位立绘"><div class="figure"><div class="figure-hair"></div><div class="figure-head"></div><div class="figure-neck"></div><div class="figure-body"></div><div class="figure-collar"></div><div class="figure-belt"></div></div><div class="actor-tag"><span id="actor-name"></span><small>立绘占位</small></div></div>
+    <section id="court-scene" class="court-scene" aria-label="上庭可交互场景" hidden><img id="court-character" src="./assets/characters/rong-neutral.png" alt="容衡 · 常态" width="1024" height="1536" decoding="async" draggable="false" hidden><div id="court-hotspots" class="court-hotspots"></div></section>
+    <section id="explore-scene" class="explore-scene" aria-label="可探索的场景物件" hidden></section>
+    <div id="choices" class="choices" aria-label="行动选择" hidden></div>
+    <div id="end-actions" class="end-actions" hidden><span>序章预览至此 · 愿望尚未回应</span><button id="end-save">保存此刻</button><button id="end-home">返回标题</button></div>
+    </div>
+    <section id="character-stage" aria-label="角色立绘"><img id="main-character" class="character-sprite" alt="" width="1024" height="1536" decoding="async" draggable="false" hidden><img id="player-character" class="character-sprite" alt="" width="1024" height="1536" decoding="async" draggable="false" hidden></section>
+    <div class="dialogue-wrap"><div class="dialogue-top"><span id="speaker" class="speaker"></span><span id="scene-subtitle"></span></div><div id="dialogue" class="dialogue" role="button" tabindex="0" aria-label="继续对话"><div id="text" role="region" aria-label="对话正文" tabindex="0"></div><span id="advance-hint" class="advance-hint">点击显示全文 <b>◇</b></span></div></div>
+    <footer class="game-toolbar"><span id="save-indicator" class="sr-only" role="status">进度自动保存</span><div><button id="save-open">存档</button><button id="load-open">读档</button><span class="toolbar-gap" aria-hidden="true"></span><button id="auto-play" aria-pressed="false">自动</button><button id="log-open">回顾</button></div></footer><button id="ui-restore" class="ui-restore" aria-label="显示界面" hidden><span>显示界面</span></button>
+  </section>
+  <section id="ending-screen" class="ending-screen" aria-label="预览章结束" hidden><div class="ending-card"><span class="tiny">YUAN GU</span><h1>愿骨</h1><p>预览章结束</p><span class="ending-rule"></span></div><nav class="ending-menu" aria-label="结尾功能"><button id="ending-home">返回标题</button><button id="ending-record">本轮记录</button><button id="ending-save">存档</button><button id="ending-load">读档</button><button id="ending-restart">章节重开</button></nav></section>
+  <audio id="ambient-audio" src="./audio/opening.mp3" preload="none" loop hidden></audio><audio id="next-music-audio" src="./audio/light-scene.mp3" preload="none" loop hidden></audio><audio id="ui-audio" src="./audio/ui-cover.wav" preload="auto" hidden></audio><audio id="option-audio" src="./audio/ui-option.wav" preload="auto" hidden></audio>
+  <audio id="collection-audio" src="./audio/wish-collect.wav" preload="auto" hidden></audio>
+  <button id="ink-still" type="button" aria-label="水墨定格画面，轻触继续剧情" aria-busy="false" hidden><canvas id="ink-still-canvas" aria-hidden="true"></canvas><span class="ink-still-hint">轻触继续</span></button>
+  <img id="ink-still-painting" alt="无谌与苑在古驿中共同护着掌心的新芽，水墨定格" decoding="async" hidden>
+  <div id="pointer-fx-layer" popover="manual" aria-hidden="true" hidden><canvas id="pointer-fx-canvas"></canvas></div>
+  <span id="music-status" class="sr-only" role="status"></span>
+  <button id="debug-open" class="debug-launch" hidden>制作调试</button>
+  <div class="orientation-note" aria-hidden="true"><span>↻</span>横过手机，风景更开阔</div>
+  <div id="toast" class="toast" role="status" hidden></div>
+  <dialog id="modal" aria-labelledby="modal-title"><div class="modal-header"><div><span id="modal-kicker" class="tiny"></span><h2 id="modal-title"></h2></div><button id="modal-close" aria-label="关闭窗口">×</button></div><div id="modal-body"></div></dialog>
+  <noscript>请开启 JavaScript 以游玩《愿骨》。</noscript>
+</main>
+</body>
+</html>

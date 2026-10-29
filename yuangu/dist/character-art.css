@@ -1,0 +1,15 @@
+/* The approved transparent artwork replaces figures; existing UI coordinates stay intact. */
+#game-screen #actor{display:none!important}
+#game-screen .court-scenery [data-scenery="rong"]{display:none}
+#game-screen .court-scene{overflow:visible}
+#game-screen #character-stage{position:absolute;inset:0;z-index:1;pointer-events:none;overflow:hidden}
+#game-screen .character-sprite{display:block;position:absolute;max-width:none;max-height:none;object-fit:contain;pointer-events:none;user-select:none;-webkit-user-select:none;transform:translateX(-50%)}
+#game-screen .character-sprite[hidden]{display:none}
+#game-screen #main-character{left:42%;top:-2cqh;width:100cqh;height:150cqh}
+#game-screen #player-character{left:83%;top:19cqh;width:76.667cqh;height:115cqh}
+#game-screen #court-character{position:absolute;left:71.5%;top:8cqh;width:54.667cqh;height:82cqh;max-height:none;z-index:0;object-fit:contain;transform:translateX(-50%);pointer-events:none;user-select:none}
+#game-screen #court-character[hidden]{display:none}
+@media(orientation:portrait){
+  #game-screen #main-character{left:38%;top:4cqh;width:74cqh;height:111cqh}
+  #game-screen #player-character{left:83%;top:23cqh;width:55cqh;height:82.5cqh}
+}
