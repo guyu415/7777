@@ -1,0 +1,46 @@
+name: Restore Yuangu assets
+
+on:
+  push:
+    branches: [yuangu]
+    paths:
+      - '.github/workflows/yuangu-restore-assets.yml'
+      - 'yuangu/scripts/restore-assets.py'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: yuangu-restore-assets
+  cancel-in-progress: false
+
+jobs:
+  restore:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: yuangu
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Fetch and verify original assets
+        run: python3 yuangu/scripts/restore-assets.py
+      - name: Commit verified assets without changing story code
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -- yuangu/dist/assets yuangu/dist/audio yuangu/dist/icons yuangu/ASSETS_PENDING.md
+          if git diff --cached --quiet; then
+            echo 'All original assets are already committed.'
+          else
+            git commit -m 'Restore and verify all 41 Yuangu binary assets'
+            git pull --rebase origin yuangu
+            git push origin HEAD:yuangu
+          fi
+      - name: Test the complete current game
+        working-directory: yuangu
+        run: npm test
