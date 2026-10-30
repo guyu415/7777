@@ -1,0 +1,39 @@
+name: Deploy Yuangu game
+
+on:
+  push:
+    branches: [yuangu]
+    paths:
+      - 'yuangu/**'
+      - '.github/workflows/yuangu-deploy.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: yuangu-deploy
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: yuangu
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Test game
+        working-directory: yuangu
+        run: npm test
+      - name: Deploy static game to Cloudflare Worker odd-disk-c531
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: e364fa0eb012df759b774bfcada11422
+          workingDirectory: yuangu
+          wranglerVersion: '4'
+          command: deploy
