@@ -1,0 +1,19 @@
+name = "gomoku-mcp"
+main = "src/index.js"
+compatibility_date = "2025-03-01"
+
+[[durable_objects.bindings]]
+name = "GAME"
+class_name = "GomokuGame"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["GomokuGame"]
+
+# *.workers.dev 在国内被屏蔽，所以绑自定义域名（部署时由 Cloudflare 自动创建 DNS 和证书）
+[[routes]]
+pattern = "gomoku.xiaoman.xyz"
+custom_domain = true
+
+# 可选：如果想给棋盘加访问密钥，在 Cloudflare 里给这个 Worker 设一个 secret 叫 GOMOKU_KEY
+# （网页用 ?key=密钥 访问，MCP 用 Authorization: Bearer 密钥）。不设就是公开的。
