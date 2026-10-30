@@ -1,0 +1,30 @@
+name: Deploy Gomoku MCP
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'gomoku/**'
+      - '.github/workflows/deploy-gomoku.yml'
+  workflow_dispatch:
+
+jobs:
+  deploy-gomoku:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Test
+        working-directory: gomoku
+        run: node test/smoke.mjs
+
+      - name: Deploy Worker
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: e364fa0eb012df759b774bfcada11422
+          workingDirectory: gomoku
+          command: deploy
