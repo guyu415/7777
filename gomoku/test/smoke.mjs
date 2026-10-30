@@ -126,6 +126,8 @@ const web = (env, path, body) =>
   r = await mcp(env, 'tools/call', { name: 'gomoku_move', arguments: { position: 'i9' } })
   assert.equal(r.body.result.isError, undefined)
   assert.match(r.body.result.content[0].text, /落子 I9/)
+  assert.doesNotMatch(r.body.result.content[0].text, /· · ·/) // 对局进行中，落子结果不带整张棋盘
+  assert.match(r.body.result.content[0].text, /棋面事实/)
   r = await mcp(env, 'tools/call', { name: 'gomoku_move', arguments: { position: 'Z9' } })
   assert.equal(r.body.result.isError, true)
 
