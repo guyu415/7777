@@ -115,7 +115,11 @@ async function runTool(env, name, args) {
     const m = g.moves[g.moves.length - 1]
     const head = `你（${colorName(g.ai)}）落子 ${posName(m.r, m.c)}。` +
       (g.winner ? '你赢了！' : g.draw ? '和棋。' : '现在轮到人类（在网页上点击落子，让用户告诉你下好了）。')
-    return textResult(head + '\n\n' + describeForAi(g))
+    // 对局还在继续时只回简短结果 + 棋面事实，省 token；下一轮用 gomoku_state 看完整棋盘。
+    if (g.winner || g.draw) return textResult(head + '\n\n' + describeForAi(g))
+    const full = describeForAi(g)
+    const at = full.indexOf('棋面事实')
+    return textResult(head + (at >= 0 ? '\n\n' + full.slice(at) : ''))
   }
   if (name === 'gomoku_new') {
     const res = await callGame(env, 'new', { human_color: args.human_color })
